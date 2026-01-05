@@ -19,6 +19,39 @@ const DEFAULT_SHARED_STRING: SharedString = SharedString::new_static("");
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_SHARED_STRING: Option<&SharedString> = Some(&DEFAULT_SHARED_STRING);
 
+macro_rules! concat_sections {
+    (@vec, $($arr:expr),+ $(,)?) => {{
+        let total_len = 0_usize $(+ $arr.len())+;
+        let mut out = Vec::with_capacity(total_len);
+
+        $(
+            out.extend($arr);
+        )+
+
+        out
+    }};
+
+    ($($arr:expr),+ $(,)?) => {{
+        let total_len = 0_usize $(+ $arr.len())+;
+
+        let mut out: Box<[std::mem::MaybeUninit<_>]> = Box::new_uninit_slice(total_len);
+
+        let mut index = 0usize;
+        $(
+            let array = $arr;
+            for item in array {
+                out[index].write(item);
+                index += 1;
+            }
+        )+
+
+        debug_assert_eq!(index, total_len);
+
+        // SAFETY: we wrote exactly `total_len` elements.
+        unsafe { out.assume_init() }
+    }};
+}
+
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         general_page(),
@@ -39,9 +72,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    SettingsPage {
-        title: "General",
-        items: Box::new([
+    fn general_settings_section() -> [SettingsPageItem; 8] {
+        [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 files: PROJECT,
@@ -159,6 +191,10 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+    fn security_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Security"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Trust All Projects By Default",
@@ -181,6 +217,11 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn workspace_restoration_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Workspace Restoration"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Restore Unsaved Buffers",
@@ -216,6 +257,11 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn scoped_settings_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Scoped Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 files: USER,
@@ -245,6 +291,11 @@ fn general_page() -> SettingsPage {
                 ),
                 metadata: None,
             }),
+        ]
+    }
+
+    fn privacy_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Privacy"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Telemetry Diagnostics",
@@ -285,6 +336,11 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn auto_update_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Auto Update"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Update",
@@ -299,815 +355,888 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "General",
+        items: concat_sections!(
+            general_settings_section(),
+            security_section(),
+            workspace_restoration_section(),
+            scoped_settings_section(),
+            privacy_section(),
+            auto_update_section(),
+        ),
     }
 }
 
 fn appearance_page() -> SettingsPage {
+    fn theme_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Theme"),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Theme Mode",
+                    description: "Choose a static, fixed theme or dynamically select themes based on appearance and light/dark modes.",
+                    field: Box::new(SettingField {
+                        json_path: Some("theme$"),
+                        pick: |settings_content| {
+                            Some(&dynamic_variants::<settings::ThemeSelection>()[
+                                settings_content
+                                    .theme
+                                    .theme
+                                    .as_ref()?
+                                    .discriminant() as usize])
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content.theme.theme = None;
+                                return;
+                            };
+                            let settings_value = settings_content.theme.theme.get_or_insert_default();
+                            *settings_value = match value {
+                                settings::ThemeSelectionDiscriminants::Static => {
+                                    let name = match settings_value {
+                                        settings::ThemeSelection::Static(_) => return,
+                                        settings::ThemeSelection::Dynamic { mode, light, dark } => {
+                                            match mode {
+                                                theme::ThemeAppearanceMode::Light => light.clone(),
+                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                            }
+                                        },
+                                    };
+                                    settings::ThemeSelection::Static(name)
+                                },
+                                settings::ThemeSelectionDiscriminants::Dynamic => {
+                                    let static_name = match settings_value {
+                                        settings::ThemeSelection::Static(theme_name) => theme_name.clone(),
+                                        settings::ThemeSelection::Dynamic {..} => return,
+                                    };
+
+                                    settings::ThemeSelection::Dynamic {
+                                        mode: settings::ThemeAppearanceMode::System,
+                                        light: static_name.clone(),
+                                        dark: static_name,
+                                    }
+                                },
+                            };
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(settings_content.theme.theme.as_ref()?.discriminant() as usize)
+                },
+                fields: dynamic_variants::<settings::ThemeSelection>().into_iter().map(|variant| {
+                    match variant {
+                        settings::ThemeSelectionDiscriminants::Static => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Theme Name",
+                                description: "The name of your selected theme.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("theme"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.theme.as_ref() {
+                                            Some(settings::ThemeSelection::Static(name)) => Some(name),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .theme.get_or_insert_default() {
+                                                settings::ThemeSelection::Static(theme_name) => *theme_name = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            }
+                        ],
+                        settings::ThemeSelectionDiscriminants::Dynamic => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Mode",
+                                description: "Choose whether to use the selected light or dark theme or to follow your OS appearance configuration.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("theme.mode"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.theme.as_ref() {
+                                            Some(settings::ThemeSelection::Dynamic { mode, ..}) => Some(mode),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .theme.get_or_insert_default() {
+                                                settings::ThemeSelection::Dynamic{ mode, ..} => *mode = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Light Theme",
+                                description: "The theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("theme.light"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.theme.as_ref() {
+                                            Some(settings::ThemeSelection::Dynamic { light, ..}) => Some(light),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .theme.get_or_insert_default() {
+                                                settings::ThemeSelection::Dynamic{ light, ..} => *light = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Dark Theme",
+                                description: "The theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("theme.dark"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.theme.as_ref() {
+                                            Some(settings::ThemeSelection::Dynamic { dark, ..}) => Some(dark),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .theme.get_or_insert_default() {
+                                                settings::ThemeSelection::Dynamic{ dark, ..} => *dark = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            }
+                        ],
+                    }
+                }).collect(),
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Icon Theme",
+                    description: "The custom set of icons Zed will associate with files and directories.",
+                    field: Box::new(SettingField {
+                        json_path: Some("icon_theme$"),
+                        pick: |settings_content| {
+                            Some(&dynamic_variants::<settings::IconThemeSelection>()[
+                                settings_content
+                                    .theme
+                                    .icon_theme
+                                    .as_ref()?
+                                    .discriminant() as usize])
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content.theme.icon_theme = None;
+                                return;
+                            };
+                            let settings_value = settings_content.theme.icon_theme.get_or_insert_with(|| {
+                                settings::IconThemeSelection::Static(settings::IconThemeName(theme::default_icon_theme().name.clone().into()))
+                            });
+                            *settings_value = match value {
+                                settings::IconThemeSelectionDiscriminants::Static => {
+                                    let name = match settings_value {
+                                        settings::IconThemeSelection::Static(_) => return,
+                                        settings::IconThemeSelection::Dynamic { mode, light, dark } => {
+                                            match mode {
+                                                theme::ThemeAppearanceMode::Light => light.clone(),
+                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                            }
+                                        },
+                                    };
+                                    settings::IconThemeSelection::Static(name)
+                                },
+                                settings::IconThemeSelectionDiscriminants::Dynamic => {
+                                    let static_name = match settings_value {
+                                        settings::IconThemeSelection::Static(theme_name) => theme_name.clone(),
+                                        settings::IconThemeSelection::Dynamic {..} => return,
+                                    };
+
+                                    settings::IconThemeSelection::Dynamic {
+                                        mode: settings::ThemeAppearanceMode::System,
+                                        light: static_name.clone(),
+                                        dark: static_name,
+                                    }
+                                },
+                            };
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(settings_content.theme.icon_theme.as_ref()?.discriminant() as usize)
+                },
+                fields: dynamic_variants::<settings::IconThemeSelection>().into_iter().map(|variant| {
+                    match variant {
+                        settings::IconThemeSelectionDiscriminants::Static => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Icon Theme Name",
+                                description: "The name of your selected icon theme.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("icon_theme$string"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.icon_theme.as_ref() {
+                                            Some(settings::IconThemeSelection::Static(name)) => Some(name),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .icon_theme.as_mut() {
+                                                Some(settings::IconThemeSelection::Static(theme_name)) => *theme_name = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            }
+                        ],
+                        settings::IconThemeSelectionDiscriminants::Dynamic => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Mode",
+                                description: "Choose whether to use the selected light or dark icon theme or to follow your OS appearance configuration.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("icon_theme"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.icon_theme.as_ref() {
+                                            Some(settings::IconThemeSelection::Dynamic { mode, ..}) => Some(mode),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .icon_theme.as_mut() {
+                                                Some(settings::IconThemeSelection::Dynamic{ mode, ..}) => *mode = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Light Icon Theme",
+                                description: "The icon theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("icon_theme.light"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.icon_theme.as_ref() {
+                                            Some(settings::IconThemeSelection::Dynamic { light, ..}) => Some(light),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .icon_theme.as_mut() {
+                                                Some(settings::IconThemeSelection::Dynamic{ light, ..}) => *light = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Dark Icon Theme",
+                                description: "The icon theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("icon_theme.dark"),
+                                    pick: |settings_content| {
+                                        match settings_content.theme.icon_theme.as_ref() {
+                                            Some(settings::IconThemeSelection::Dynamic { dark, ..}) => Some(dark),
+                                            _ => None
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .theme
+                                            .icon_theme.as_mut() {
+                                                Some(settings::IconThemeSelection::Dynamic{ dark, ..}) => *dark = value,
+                                                _ => return
+                                            }
+                                    },
+                                }),
+                                metadata: None,
+                            }
+                        ],
+                    }
+                }).collect(),
+            }),
+        ]
+    }
+
+    fn buffer_font_section() -> [SettingsPageItem; 7] {
+        [
+            SettingsPageItem::SectionHeader("Buffer Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Family",
+                description: "Font family for editor text.",
+                field: Box::new(SettingField {
+                    json_path: Some("buffer_font_family"),
+                    pick: |settings_content| settings_content.theme.buffer_font_family.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.buffer_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Size",
+                description: "Font size for editor text.",
+                field: Box::new(SettingField {
+                    json_path: Some("buffer_font_size"),
+                    pick: |settings_content| settings_content.theme.buffer_font_size.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.buffer_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Weight",
+                description: "Font weight for editor text (100-900).",
+                field: Box::new(SettingField {
+                    json_path: Some("buffer_font_weight"),
+                    pick: |settings_content| settings_content.theme.buffer_font_weight.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.buffer_font_weight = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Line Height",
+                    description: "Line height for editor text.",
+                    field: Box::new(SettingField {
+                        json_path: Some("buffer_line_height$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::BufferLineHeight>()[settings_content
+                                    .theme
+                                    .buffer_line_height
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content.theme.buffer_line_height = None;
+                                return;
+                            };
+                            let settings_value = settings_content
+                                .theme
+                                .buffer_line_height
+                                .get_or_insert_with(|| settings::BufferLineHeight::default());
+                            *settings_value = match value {
+                                settings::BufferLineHeightDiscriminants::Comfortable => {
+                                    settings::BufferLineHeight::Comfortable
+                                }
+                                settings::BufferLineHeightDiscriminants::Standard => {
+                                    settings::BufferLineHeight::Standard
+                                }
+                                settings::BufferLineHeightDiscriminants::Custom => {
+                                    let custom_value =
+                                        theme::BufferLineHeight::from(*settings_value).value();
+                                    settings::BufferLineHeight::Custom(custom_value)
+                                }
+                            };
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .theme
+                            .buffer_line_height
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::BufferLineHeight>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::BufferLineHeightDiscriminants::Comfortable => vec![],
+                        settings::BufferLineHeightDiscriminants::Standard => vec![],
+                        settings::BufferLineHeightDiscriminants::Custom => vec![SettingItem {
+                            files: USER,
+                            title: "Custom Line Height",
+                            description: "Custom line height value (must be at least 1.0).",
+                            field: Box::new(SettingField {
+                                json_path: Some("buffer_line_height"),
+                                pick: |settings_content| match settings_content
+                                    .theme
+                                    .buffer_line_height
+                                    .as_ref()
+                                {
+                                    Some(settings::BufferLineHeight::Custom(value)) => Some(value),
+                                    _ => None,
+                                },
+                                write: |settings_content, value| {
+                                    let Some(value) = value else {
+                                        return;
+                                    };
+                                    match settings_content.theme.buffer_line_height.as_mut() {
+                                        Some(settings::BufferLineHeight::Custom(line_height)) => {
+                                            *line_height = f32::max(value, 1.0)
+                                        }
+                                        _ => return,
+                                    }
+                                },
+                            }),
+                            metadata: None,
+                        }],
+                    })
+                    .collect(),
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Font Features",
+                description: "The OpenType features to enable for rendering in text buffers.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("buffer_font_features"),
+                        pick: |settings_content| {
+                            settings_content.theme.buffer_font_features.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.theme.buffer_font_features = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Font Fallbacks",
+                description: "The font fallbacks to use for rendering in text buffers.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("buffer_font_fallbacks"),
+                        pick: |settings_content| {
+                            settings_content.theme.buffer_font_fallbacks.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.theme.buffer_font_fallbacks = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+            }),
+        ]
+    }
+
+    fn ui_font_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("UI Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Family",
+                description: "Font family for UI elements.",
+                field: Box::new(SettingField {
+                    json_path: Some("ui_font_family"),
+                    pick: |settings_content| settings_content.theme.ui_font_family.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.ui_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Size",
+                description: "Font size for UI elements.",
+                field: Box::new(SettingField {
+                    json_path: Some("ui_font_size"),
+                    pick: |settings_content| settings_content.theme.ui_font_size.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.ui_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Weight",
+                description: "Font weight for UI elements (100-900).",
+                field: Box::new(SettingField {
+                    json_path: Some("ui_font_weight"),
+                    pick: |settings_content| settings_content.theme.ui_font_weight.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.ui_font_weight = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Font Features",
+                description: "The OpenType features to enable for rendering in UI elements.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("ui_font_features"),
+                        pick: |settings_content| settings_content.theme.ui_font_features.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.theme.ui_font_features = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Font Fallbacks",
+                description: "The font fallbacks to use for rendering in the UI.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("ui_font_fallbacks"),
+                        pick: |settings_content| settings_content.theme.ui_font_fallbacks.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.theme.ui_font_fallbacks = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+            }),
+        ]
+    }
+
+    fn agent_panel_font_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Agent Panel Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "UI Font Size",
+                description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_ui_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .agent_ui_font_size
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_size.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content.theme.agent_ui_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Buffer Font Size",
+                description: "Font size for user messages text in the agent panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_buffer_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .agent_buffer_font_size
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_size.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content.theme.agent_buffer_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn text_rendering_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Text Rendering"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Text Rendering Mode",
+                description: "The text rendering mode to use.",
+                field: Box::new(SettingField {
+                    json_path: Some("text_rendering_mode"),
+                    pick: |settings_content| {
+                        settings_content.workspace.text_rendering_mode.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.text_rendering_mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn cursor_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("Cursor"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Multi Cursor Modifier",
+                description: "Modifier key for adding multiple cursors.",
+                field: Box::new(SettingField {
+                    json_path: Some("multi_cursor_modifier"),
+                    pick: |settings_content| settings_content.editor.multi_cursor_modifier.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.multi_cursor_modifier = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Blink",
+                description: "Whether the cursor blinks in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_blink"),
+                    pick: |settings_content| settings_content.editor.cursor_blink.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.cursor_blink = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Shape",
+                description: "Cursor shape for the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_shape"),
+                    pick: |settings_content| settings_content.editor.cursor_shape.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.cursor_shape = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Mouse",
+                description: "When to hide the mouse cursor.",
+                field: Box::new(SettingField {
+                    json_path: Some("hide_mouse"),
+                    pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.hide_mouse = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn highlighting_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Highlighting"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Unnecessary Code Fade",
+                description: "How much to fade out unused code (0.0 - 0.9).",
+                field: Box::new(SettingField {
+                    json_path: Some("unnecessary_code_fade"),
+                    pick: |settings_content| settings_content.theme.unnecessary_code_fade.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.theme.unnecessary_code_fade = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Current Line Highlight",
+                description: "How to highlight the current line.",
+                field: Box::new(SettingField {
+                    json_path: Some("current_line_highlight"),
+                    pick: |settings_content| {
+                        settings_content.editor.current_line_highlight.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.current_line_highlight = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Selection Highlight",
+                description: "Highlight all occurrences of selected text.",
+                field: Box::new(SettingField {
+                    json_path: Some("selection_highlight"),
+                    pick: |settings_content| settings_content.editor.selection_highlight.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.selection_highlight = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Rounded Selection",
+                description: "Whether the text selection should have rounded corners.",
+                field: Box::new(SettingField {
+                    json_path: Some("rounded_selection"),
+                    pick: |settings_content| settings_content.editor.rounded_selection.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.rounded_selection = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimum Contrast For Highlights",
+                description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimum_contrast_for_highlights"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimum_contrast_for_highlights
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.minimum_contrast_for_highlights = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn guides_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Guides"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Wrap Guides",
+                description: "Show wrap guides (vertical rulers).",
+                field: Box::new(SettingField {
+                    json_path: Some("show_wrap_guides"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .show_wrap_guides
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .show_wrap_guides = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            // todo(settings_ui): This needs a custom component
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Wrap Guides",
+                description: "Character counts at which to show wrap guides.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("wrap_guides"),
+                        pick: |settings_content| {
+                            settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .wrap_guides
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project.all_languages.defaults.wrap_guides = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    let items: Box<[SettingsPageItem]> = concat_sections!(
+        theme_section(),
+        buffer_font_section(),
+        ui_font_section(),
+        agent_panel_font_section(),
+        text_rendering_section(),
+        cursor_section(),
+        highlighting_section(),
+        guides_section(),
+    );
+
     SettingsPage {
         title: "Appearance",
-        items: Box::new([
-                SettingsPageItem::SectionHeader("Theme"),
-                SettingsPageItem::DynamicItem(DynamicItem {
-                    discriminant: SettingItem {
-                        files: USER,
-                        title: "Theme Mode",
-                        description: "Choose a static, fixed theme or dynamically select themes based on appearance and light/dark modes.",
-                        field: Box::new(SettingField {
-                            json_path: Some("theme$"),
-                            pick: |settings_content| {
-                                Some(&dynamic_variants::<settings::ThemeSelection>()[
-                                    settings_content
-                                        .theme
-                                        .theme
-                                        .as_ref()?
-                                        .discriminant() as usize])
-                            },
-                            write: |settings_content, value| {
-                                let Some(value) = value else {
-                                    settings_content.theme.theme = None;
-                                    return;
-                                };
-                                let settings_value = settings_content.theme.theme.get_or_insert_default();
-                                *settings_value = match value {
-                                    settings::ThemeSelectionDiscriminants::Static => {
-                                        let name = match settings_value {
-                                            settings::ThemeSelection::Static(_) => return,
-                                            settings::ThemeSelection::Dynamic { mode, light, dark } => {
-                                                match mode {
-                                                    theme::ThemeAppearanceMode::Light => light.clone(),
-                                                    theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                    theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
-                                                }
-                                            },
-                                        };
-                                        settings::ThemeSelection::Static(name)
-                                    },
-                                    settings::ThemeSelectionDiscriminants::Dynamic => {
-                                        let static_name = match settings_value {
-                                            settings::ThemeSelection::Static(theme_name) => theme_name.clone(),
-                                            settings::ThemeSelection::Dynamic {..} => return,
-                                        };
-
-                                        settings::ThemeSelection::Dynamic {
-                                            mode: settings::ThemeAppearanceMode::System,
-                                            light: static_name.clone(),
-                                            dark: static_name,
-                                        }
-                                    },
-                                };
-                            },
-                        }),
-                        metadata: None,
-                    },
-                    pick_discriminant: |settings_content| {
-                        Some(settings_content.theme.theme.as_ref()?.discriminant() as usize)
-                    },
-                    fields: dynamic_variants::<settings::ThemeSelection>().into_iter().map(|variant| {
-                        match variant {
-                            settings::ThemeSelectionDiscriminants::Static => vec![
-                                SettingItem {
-                                    files: USER,
-                                    title: "Theme Name",
-                                    description: "The name of your selected theme.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("theme"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.theme.as_ref() {
-                                                Some(settings::ThemeSelection::Static(name)) => Some(name),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .theme.get_or_insert_default() {
-                                                    settings::ThemeSelection::Static(theme_name) => *theme_name = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
-                            settings::ThemeSelectionDiscriminants::Dynamic => vec![
-                                SettingItem {
-                                    files: USER,
-                                    title: "Mode",
-                                    description: "Choose whether to use the selected light or dark theme or to follow your OS appearance configuration.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("theme.mode"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.theme.as_ref() {
-                                                Some(settings::ThemeSelection::Dynamic { mode, ..}) => Some(mode),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .theme.get_or_insert_default() {
-                                                    settings::ThemeSelection::Dynamic{ mode, ..} => *mode = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                },
-                                SettingItem {
-                                    files: USER,
-                                    title: "Light Theme",
-                                    description: "The theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("theme.light"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.theme.as_ref() {
-                                                Some(settings::ThemeSelection::Dynamic { light, ..}) => Some(light),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .theme.get_or_insert_default() {
-                                                    settings::ThemeSelection::Dynamic{ light, ..} => *light = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                },
-                                SettingItem {
-                                    files: USER,
-                                    title: "Dark Theme",
-                                    description: "The theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("theme.dark"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.theme.as_ref() {
-                                                Some(settings::ThemeSelection::Dynamic { dark, ..}) => Some(dark),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .theme.get_or_insert_default() {
-                                                    settings::ThemeSelection::Dynamic{ dark, ..} => *dark = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
-                        }
-                    }).collect(),
-                }),
-                SettingsPageItem::DynamicItem(DynamicItem {
-                    discriminant: SettingItem {
-                        files: USER,
-                        title: "Icon Theme",
-                        description: "The custom set of icons Zed will associate with files and directories.",
-                        field: Box::new(SettingField {
-                            json_path: Some("icon_theme$"),
-                            pick: |settings_content| {
-                                Some(&dynamic_variants::<settings::IconThemeSelection>()[
-                                    settings_content
-                                        .theme
-                                        .icon_theme
-                                        .as_ref()?
-                                        .discriminant() as usize])
-                            },
-                            write: |settings_content, value| {
-                                let Some(value) = value else {
-                                    settings_content.theme.icon_theme = None;
-                                    return;
-                                };
-                                let settings_value = settings_content.theme.icon_theme.get_or_insert_with(|| {
-                                    settings::IconThemeSelection::Static(settings::IconThemeName(theme::default_icon_theme().name.clone().into()))
-                                });
-                                *settings_value = match value {
-                                    settings::IconThemeSelectionDiscriminants::Static => {
-                                        let name = match settings_value {
-                                            settings::IconThemeSelection::Static(_) => return,
-                                            settings::IconThemeSelection::Dynamic { mode, light, dark } => {
-                                                match mode {
-                                                    theme::ThemeAppearanceMode::Light => light.clone(),
-                                                    theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                    theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
-                                                }
-                                            },
-                                        };
-                                        settings::IconThemeSelection::Static(name)
-                                    },
-                                    settings::IconThemeSelectionDiscriminants::Dynamic => {
-                                        let static_name = match settings_value {
-                                            settings::IconThemeSelection::Static(theme_name) => theme_name.clone(),
-                                            settings::IconThemeSelection::Dynamic {..} => return,
-                                        };
-
-                                        settings::IconThemeSelection::Dynamic {
-                                            mode: settings::ThemeAppearanceMode::System,
-                                            light: static_name.clone(),
-                                            dark: static_name,
-                                        }
-                                    },
-                                };
-                            },
-                        }),
-                        metadata: None,
-                    },
-                    pick_discriminant: |settings_content| {
-                        Some(settings_content.theme.icon_theme.as_ref()?.discriminant() as usize)
-                    },
-                    fields: dynamic_variants::<settings::IconThemeSelection>().into_iter().map(|variant| {
-                        match variant {
-                            settings::IconThemeSelectionDiscriminants::Static => vec![
-                                SettingItem {
-                                    files: USER,
-                                    title: "Icon Theme Name",
-                                    description: "The name of your selected icon theme.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("icon_theme$string"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.icon_theme.as_ref() {
-                                                Some(settings::IconThemeSelection::Static(name)) => Some(name),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .icon_theme.as_mut() {
-                                                    Some(settings::IconThemeSelection::Static(theme_name)) => *theme_name = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
-                            settings::IconThemeSelectionDiscriminants::Dynamic => vec![
-                                SettingItem {
-                                    files: USER,
-                                    title: "Mode",
-                                    description: "Choose whether to use the selected light or dark icon theme or to follow your OS appearance configuration.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("icon_theme"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.icon_theme.as_ref() {
-                                                Some(settings::IconThemeSelection::Dynamic { mode, ..}) => Some(mode),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .icon_theme.as_mut() {
-                                                    Some(settings::IconThemeSelection::Dynamic{ mode, ..}) => *mode = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                },
-                                SettingItem {
-                                    files: USER,
-                                    title: "Light Icon Theme",
-                                    description: "The icon theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("icon_theme.light"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.icon_theme.as_ref() {
-                                                Some(settings::IconThemeSelection::Dynamic { light, ..}) => Some(light),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .icon_theme.as_mut() {
-                                                    Some(settings::IconThemeSelection::Dynamic{ light, ..}) => *light = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                },
-                                SettingItem {
-                                    files: USER,
-                                    title: "Dark Icon Theme",
-                                    description: "The icon theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("icon_theme.dark"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.icon_theme.as_ref() {
-                                                Some(settings::IconThemeSelection::Dynamic { dark, ..}) => Some(dark),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .icon_theme.as_mut() {
-                                                    Some(settings::IconThemeSelection::Dynamic{ dark, ..}) => *dark = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
-                        }
-                    }).collect(),
-                }),
-                SettingsPageItem::SectionHeader("Buffer Font"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Family",
-                    description: "Font family for editor text.",
-                    field: Box::new(SettingField {
-                        json_path: Some("buffer_font_family"),
-                        pick: |settings_content| settings_content.theme.buffer_font_family.as_ref(),
-                        write: |settings_content, value|{  settings_content.theme.buffer_font_family = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Size",
-                    description: "Font size for editor text.",
-                    field: Box::new(SettingField {
-                        json_path: Some("buffer_font_size"),
-                        pick: |settings_content| settings_content.theme.buffer_font_size.as_ref(),
-                        write: |settings_content, value|{  settings_content.theme.buffer_font_size = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Weight",
-                    description: "Font weight for editor text (100-900).",
-                    field: Box::new(SettingField {
-                        json_path: Some("buffer_font_weight"),
-                        pick: |settings_content| settings_content.theme.buffer_font_weight.as_ref(),
-                        write: |settings_content, value|{  settings_content.theme.buffer_font_weight = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::DynamicItem(DynamicItem {
-                    discriminant: SettingItem {
-                        files: USER,
-                        title: "Line Height",
-                        description: "Line height for editor text.",
-                        field: Box::new(SettingField {
-                            json_path: Some("buffer_line_height$"),
-                            pick: |settings_content| {
-                                Some(&dynamic_variants::<settings::BufferLineHeight>()[
-                                    settings_content
-                                        .theme
-                                        .buffer_line_height
-                                        .as_ref()?
-                                        .discriminant() as usize])
-                            },
-                            write: |settings_content, value| {
-                                let Some(value) = value else {
-                                    settings_content.theme.buffer_line_height = None;
-                                    return;
-                                };
-                                let settings_value = settings_content.theme.buffer_line_height.get_or_insert_with(|| {
-                                    settings::BufferLineHeight::default()
-                                });
-                                *settings_value = match value {
-                                    settings::BufferLineHeightDiscriminants::Comfortable => {
-                                        settings::BufferLineHeight::Comfortable
-                                    },
-                                    settings::BufferLineHeightDiscriminants::Standard => {
-                                        settings::BufferLineHeight::Standard
-                                    },
-                                    settings::BufferLineHeightDiscriminants::Custom => {
-                                        let custom_value = theme::BufferLineHeight::from(*settings_value).value();
-                                        settings::BufferLineHeight::Custom(custom_value)
-                                    },
-                                };
-                            },
-                        }),
-                        metadata: None,
-                    },
-                    pick_discriminant: |settings_content| {
-                        Some(settings_content.theme.buffer_line_height.as_ref()?.discriminant() as usize)
-                    },
-                    fields: dynamic_variants::<settings::BufferLineHeight>().into_iter().map(|variant| {
-                        match variant {
-                            settings::BufferLineHeightDiscriminants::Comfortable => vec![],
-                            settings::BufferLineHeightDiscriminants::Standard => vec![],
-                            settings::BufferLineHeightDiscriminants::Custom => vec![
-                                SettingItem {
-                                    files: USER,
-                                    title: "Custom Line Height",
-                                    description: "Custom line height value (must be at least 1.0).",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("buffer_line_height"),
-                                        pick: |settings_content| {
-                                            match settings_content.theme.buffer_line_height.as_ref() {
-                                                Some(settings::BufferLineHeight::Custom(value)) => Some(value),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .theme
-                                                .buffer_line_height.as_mut() {
-                                                    Some(settings::BufferLineHeight::Custom(line_height)) => *line_height = f32::max(value, 1.0),
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
-                        }
-                    }).collect(),
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Font Features",
-                    description: "The OpenType features to enable for rendering in text buffers.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("buffer_font_features"),
-                            pick: |settings_content| {
-                                settings_content.theme.buffer_font_features.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content.theme.buffer_font_features = value;
-
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Font Fallbacks",
-                    description: "The font fallbacks to use for rendering in text buffers.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("buffer_font_fallbacks"),
-                            pick: |settings_content| {
-                                settings_content.theme.buffer_font_fallbacks.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content.theme.buffer_font_fallbacks = value;
-
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("UI Font"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Family",
-                    description: "Font family for UI elements.",
-                    field: Box::new(SettingField {
-                        json_path: Some("ui_font_family"),
-                        pick: |settings_content| settings_content.theme.ui_font_family.as_ref(),
-                        write: |settings_content, value|{  settings_content.theme.ui_font_family = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Size",
-                    description: "Font size for UI elements.",
-                    field: Box::new(SettingField {
-                        json_path: Some("ui_font_size"),
-                        pick: |settings_content| settings_content.theme.ui_font_size.as_ref(),
-                        write: |settings_content, value|{  settings_content.theme.ui_font_size = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Weight",
-                    description: "Font weight for UI elements (100-900).",
-                    field: Box::new(SettingField {
-                        json_path: Some("ui_font_weight"),
-                        pick: |settings_content| settings_content.theme.ui_font_weight.as_ref(),
-                        write: |settings_content, value|{  settings_content.theme.ui_font_weight = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Font Features",
-                    description: "The OpenType features to enable for rendering in UI elements.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("ui_font_features"),
-                            pick: |settings_content| {
-                                settings_content.theme.ui_font_features.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content.theme.ui_font_features = value;
-
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Font Fallbacks",
-                    description: "The font fallbacks to use for rendering in the UI.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("ui_font_fallbacks"),
-                            pick: |settings_content| {
-                                settings_content.theme.ui_font_fallbacks.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content.theme.ui_font_fallbacks = value;
-
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Agent Panel Font"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Size",
-                    description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent_ui_font_size"),
-                        pick: |settings_content| {
-                            settings_content
-                                .theme
-                                .agent_ui_font_size
-                                .as_ref()
-                                .or(settings_content.theme.ui_font_size.as_ref())
-                        },
-                        write: |settings_content, value|{  settings_content.theme.agent_ui_font_size = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Size",
-                    description: "Font size for user messages text in the agent panel.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent_buffer_font_size"),
-                        pick: |settings_content| {
-                            settings_content
-                                .theme
-                                .agent_buffer_font_size
-                                .as_ref()
-                                .or(settings_content.theme.buffer_font_size.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content.theme.agent_buffer_font_size = value;
-
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Text Rendering"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Text Rendering Mode",
-                    description: "The text rendering mode to use.",
-                    field: Box::new(SettingField {
-                        json_path: Some("text_rendering_mode"),
-                        pick: |settings_content| {
-                            settings_content.workspace.text_rendering_mode.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.workspace.text_rendering_mode = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Cursor"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Multi Cursor Modifier",
-                    description: "Modifier key for adding multiple cursors.",
-                    field: Box::new(SettingField {
-                        json_path: Some("multi_cursor_modifier"),
-                        pick: |settings_content| {
-                            settings_content.editor.multi_cursor_modifier.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.multi_cursor_modifier = value;
-
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Blink",
-                    description: "Whether the cursor blinks in the editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("cursor_blink"),
-                        pick: |settings_content| settings_content.editor.cursor_blink.as_ref(),
-                        write: |settings_content, value|{  settings_content.editor.cursor_blink = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Shape",
-                    description: "Cursor shape for the editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("cursor_shape"),
-                        pick: |settings_content| settings_content.editor.cursor_shape.as_ref(),
-                        write: |settings_content, value|{  settings_content.editor.cursor_shape = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hide Mouse",
-                    description: "When to hide the mouse cursor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("hide_mouse"),
-                        pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
-                        write: |settings_content, value|{  settings_content.editor.hide_mouse = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Highlighting"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Unnecessary Code Fade",
-                    description: "How much to fade out unused code (0.0 - 0.9).",
-                    field: Box::new(SettingField {
-                        json_path: Some("unnecessary_code_fade"),
-                        pick: |settings_content| {
-                            settings_content.theme.unnecessary_code_fade.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.theme.unnecessary_code_fade = value;
-
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Current Line Highlight",
-                    description: "How to highlight the current line.",
-                    field: Box::new(SettingField {
-                        json_path: Some("current_line_highlight"),
-                        pick: |settings_content| {
-                            settings_content.editor.current_line_highlight.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.current_line_highlight = value;
-
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Selection Highlight",
-                    description: "Highlight all occurrences of selected text.",
-                    field: Box::new(SettingField {
-                        json_path: Some("selection_highlight"),
-                        pick: |settings_content| {
-                            settings_content.editor.selection_highlight.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.selection_highlight = value;
-
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Rounded Selection",
-                    description: "Whether the text selection should have rounded corners.",
-                    field: Box::new(SettingField {
-                        json_path: Some("rounded_selection"),
-                        pick: |settings_content| settings_content.editor.rounded_selection.as_ref(),
-                        write: |settings_content, value|{  settings_content.editor.rounded_selection = value;},
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Minimum Contrast For Highlights",
-                    description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimum_contrast_for_highlights"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .minimum_contrast_for_highlights
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.minimum_contrast_for_highlights = value;
-
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Guides"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Wrap Guides",
-                    description: "Show wrap guides (vertical rulers).",
-                    field: Box::new(SettingField {
-                        json_path: Some("show_wrap_guides"),
-                        pick: |settings_content| {
-                            settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_wrap_guides
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_wrap_guides = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER | PROJECT,
-                }),
-                // todo(settings_ui): This needs a custom component
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Wrap Guides",
-                    description: "Character counts at which to show wrap guides.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("wrap_guides"),
-                            pick: |settings_content| {
-                                settings_content
-                                    .project
-                                    .all_languages
-                                    .defaults
-                                    .wrap_guides
-                                    .as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content.project.all_languages.defaults.wrap_guides = value;
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER | PROJECT,
-                }),
-        ]),
+        items,
     }
 }
 
 fn keymap_page() -> SettingsPage {
-    SettingsPage {
-        title: "Keymap",
-        items: Box::new([
+    fn keybindings_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Keybindings"),
             SettingsPageItem::ActionLink(ActionLink {
                 title: "Edit Keybindings".into(),
@@ -1127,6 +1256,11 @@ fn keymap_page() -> SettingsPage {
                     window.remove_window();
                 }),
             }),
+        ]
+    }
+
+    fn base_keymap_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Base Keymap"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Base Keymap",
@@ -1144,6 +1278,11 @@ fn keymap_page() -> SettingsPage {
                 })),
                 files: USER,
             }),
+        ]
+    }
+
+    fn modal_editing_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Modal Editing"),
             // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
             // behavior to have them both enabled at the same time
@@ -1173,1296 +1312,1392 @@ fn keymap_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    let items: Box<[SettingsPageItem]> = concat_sections!(
+        keybindings_section(),
+        base_keymap_section(),
+        modal_editing_section(),
+    );
+
+    SettingsPage {
+        title: "Keymap",
+        items,
     }
 }
 
 fn editor_page() -> SettingsPage {
-    SettingsPage {
-        title: "Editor",
-        items: {
-            let mut items = vec![
-                SettingsPageItem::SectionHeader("Auto Save"),
-                SettingsPageItem::DynamicItem(DynamicItem {
-                    discriminant: SettingItem {
-                        files: USER,
-                        title: "Auto Save Mode",
-                        description: "When to auto save buffer changes.",
-                        field: Box::new(SettingField {
-                            json_path: Some("autosave$"),
-                            pick: |settings_content| {
-                                Some(
-                                    &dynamic_variants::<settings::AutosaveSetting>()
-                                        [settings_content
-                                            .workspace
-                                            .autosave
-                                            .as_ref()?
-                                            .discriminant()
-                                            as usize],
-                                )
-                            },
-                            write: |settings_content, value| {
-                                let Some(value) = value else {
-                                    settings_content.workspace.autosave = None;
-                                    return;
-                                };
-                                let settings_value = settings_content
+    fn auto_save_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Auto Save"),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Auto Save Mode",
+                    description: "When to auto save buffer changes.",
+                    field: Box::new(SettingField {
+                        json_path: Some("autosave$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::AutosaveSetting>()[settings_content
                                     .workspace
                                     .autosave
-                                    .get_or_insert_with(|| settings::AutosaveSetting::Off);
-                                *settings_value = match value {
-                                    settings::AutosaveSettingDiscriminants::Off => {
-                                        settings::AutosaveSetting::Off
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content.workspace.autosave = None;
+                                return;
+                            };
+                            let settings_value = settings_content
+                                .workspace
+                                .autosave
+                                .get_or_insert_with(|| settings::AutosaveSetting::Off);
+                            *settings_value = match value {
+                                settings::AutosaveSettingDiscriminants::Off => {
+                                    settings::AutosaveSetting::Off
+                                }
+                                settings::AutosaveSettingDiscriminants::AfterDelay => {
+                                    let milliseconds = match settings_value {
+                                        settings::AutosaveSetting::AfterDelay { milliseconds } => {
+                                            *milliseconds
+                                        }
+                                        _ => settings::DelayMs(1000),
+                                    };
+                                    settings::AutosaveSetting::AfterDelay { milliseconds }
+                                }
+                                settings::AutosaveSettingDiscriminants::OnFocusChange => {
+                                    settings::AutosaveSetting::OnFocusChange
+                                }
+                                settings::AutosaveSettingDiscriminants::OnWindowChange => {
+                                    settings::AutosaveSetting::OnWindowChange
+                                }
+                            };
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(settings_content.workspace.autosave.as_ref()?.discriminant() as usize)
+                },
+                fields: dynamic_variants::<settings::AutosaveSetting>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::AutosaveSettingDiscriminants::Off => vec![],
+                        settings::AutosaveSettingDiscriminants::AfterDelay => vec![SettingItem {
+                            files: USER,
+                            title: "Delay (milliseconds)",
+                            description: "Save after inactivity period (in milliseconds).",
+                            field: Box::new(SettingField {
+                                json_path: Some("autosave.after_delay.milliseconds"),
+                                pick: |settings_content| match settings_content
+                                    .workspace
+                                    .autosave
+                                    .as_ref()
+                                {
+                                    Some(settings::AutosaveSetting::AfterDelay {
+                                        milliseconds,
+                                    }) => Some(milliseconds),
+                                    _ => None,
+                                },
+                                write: |settings_content, value| {
+                                    let Some(value) = value else {
+                                        settings_content.workspace.autosave = None;
+                                        return;
+                                    };
+                                    match settings_content.workspace.autosave.as_mut() {
+                                        Some(settings::AutosaveSetting::AfterDelay {
+                                            milliseconds,
+                                        }) => *milliseconds = value,
+                                        _ => return,
                                     }
-                                    settings::AutosaveSettingDiscriminants::AfterDelay => {
-                                        let milliseconds = match settings_value {
-                                            settings::AutosaveSetting::AfterDelay {
-                                                milliseconds,
-                                            } => *milliseconds,
-                                            _ => settings::DelayMs(1000),
-                                        };
-                                        settings::AutosaveSetting::AfterDelay { milliseconds }
-                                    }
-                                    settings::AutosaveSettingDiscriminants::OnFocusChange => {
-                                        settings::AutosaveSetting::OnFocusChange
-                                    }
-                                    settings::AutosaveSettingDiscriminants::OnWindowChange => {
-                                        settings::AutosaveSetting::OnWindowChange
-                                    }
-                                };
-                            },
-                        }),
-                        metadata: None,
+                                },
+                            }),
+                            metadata: None,
+                        }],
+                        settings::AutosaveSettingDiscriminants::OnFocusChange => vec![],
+                        settings::AutosaveSettingDiscriminants::OnWindowChange => vec![],
+                    })
+                    .collect(),
+            }),
+        ]
+    }
+
+    fn which_key_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Which-key Menu"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Which-key Menu",
+                description: "Display the which-key menu with matching bindings while a multi-stroke binding is pending.",
+                field: Box::new(SettingField {
+                    json_path: Some("which_key.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .which_key
+                            .as_ref()
+                            .and_then(|settings| settings.enabled.as_ref())
                     },
-                    pick_discriminant: |settings_content| {
-                        Some(settings_content.workspace.autosave.as_ref()?.discriminant() as usize)
+                    write: |settings_content, value| {
+                        settings_content.which_key.get_or_insert_default().enabled = value;
                     },
-                    fields: dynamic_variants::<settings::AutosaveSetting>()
-                        .into_iter()
-                        .map(|variant| match variant {
-                            settings::AutosaveSettingDiscriminants::Off => vec![],
-                            settings::AutosaveSettingDiscriminants::AfterDelay => {
-                                vec![SettingItem {
-                                    files: USER,
-                                    title: "Delay (milliseconds)",
-                                    description: "Save after inactivity period (in milliseconds).",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("autosave.after_delay.milliseconds"),
-                                        pick: |settings_content| match settings_content
-                                            .workspace
-                                            .autosave
-                                            .as_ref()
-                                        {
-                                            Some(settings::AutosaveSetting::AfterDelay {
-                                                milliseconds,
-                                            }) => Some(milliseconds),
-                                            _ => None,
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                settings_content.workspace.autosave = None;
-                                                return;
-                                            };
-                                            match settings_content.workspace.autosave.as_mut() {
-                                                Some(settings::AutosaveSetting::AfterDelay {
-                                                    milliseconds,
-                                                }) => *milliseconds = value,
-                                                _ => return,
-                                            }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }]
-                            }
-                            settings::AutosaveSettingDiscriminants::OnFocusChange => vec![],
-                            settings::AutosaveSettingDiscriminants::OnWindowChange => vec![],
-                        })
-                        .collect(),
                 }),
-                SettingsPageItem::SectionHeader("Which-key Menu"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Which-key Menu",
-                    description: "Display the which-key menu with matching bindings while a multi-stroke binding is pending.",
-                    field: Box::new(SettingField {
-                        json_path: Some("which_key.enabled"),
-                        pick: |settings_content| {
-                            settings_content
-                                .which_key
-                                .as_ref()
-                                .and_then(|settings| settings.enabled.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content.which_key.get_or_insert_default().enabled = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Menu Delay",
+                description: "Delay in milliseconds before the which-key menu appears.",
+                field: Box::new(SettingField {
+                    json_path: Some("which_key.delay_ms"),
+                    pick: |settings_content| {
+                        settings_content
+                            .which_key
+                            .as_ref()
+                            .and_then(|settings| settings.delay_ms.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content.which_key.get_or_insert_default().delay_ms = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Menu Delay",
-                    description: "Delay in milliseconds before the which-key menu appears.",
-                    field: Box::new(SettingField {
-                        json_path: Some("which_key.delay_ms"),
-                        pick: |settings_content| {
-                            settings_content
-                                .which_key
-                                .as_ref()
-                                .and_then(|settings| settings.delay_ms.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content.which_key.get_or_insert_default().delay_ms = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn multibuffer_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("Multibuffer"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Double Click In Multibuffer",
+                description: "What to do when multibuffer is double-clicked in some of its excerpts.",
+                field: Box::new(SettingField {
+                    json_path: Some("double_click_in_multibuffer"),
+                    pick: |settings_content| {
+                        settings_content.editor.double_click_in_multibuffer.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.double_click_in_multibuffer = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Multibuffer"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Double Click In Multibuffer",
-                    description: "What to do when multibuffer is double-clicked in some of its excerpts.",
-                    field: Box::new(SettingField {
-                        json_path: Some("double_click_in_multibuffer"),
-                        pick: |settings_content| {
-                            settings_content.editor.double_click_in_multibuffer.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.double_click_in_multibuffer = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Excerpt Lines",
+                description: "How many lines to expand the multibuffer excerpts by default.",
+                field: Box::new(SettingField {
+                    json_path: Some("expand_excerpt_lines"),
+                    pick: |settings_content| settings_content.editor.expand_excerpt_lines.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.expand_excerpt_lines = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Expand Excerpt Lines",
-                    description: "How many lines to expand the multibuffer excerpts by default.",
-                    field: Box::new(SettingField {
-                        json_path: Some("expand_excerpt_lines"),
-                        pick: |settings_content| {
-                            settings_content.editor.expand_excerpt_lines.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.expand_excerpt_lines = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Excerpt Context Lines",
+                description: "How many lines of context to provide in multibuffer excerpts by default.",
+                field: Box::new(SettingField {
+                    json_path: Some("excerpt_context_lines"),
+                    pick: |settings_content| settings_content.editor.excerpt_context_lines.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.excerpt_context_lines = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Excerpt Context Lines",
-                    description: "How many lines of context to provide in multibuffer excerpts by default.",
-                    field: Box::new(SettingField {
-                        json_path: Some("excerpt_context_lines"),
-                        pick: |settings_content| {
-                            settings_content.editor.excerpt_context_lines.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.excerpt_context_lines = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Outlines With Depth",
+                description: "Default depth to expand outline items in the current file.",
+                field: Box::new(SettingField {
+                    json_path: Some("outline_panel.expand_outlines_with_depth"),
+                    pick: |settings_content| {
+                        settings_content
+                            .outline_panel
+                            .as_ref()
+                            .and_then(|outline_panel| {
+                                outline_panel.expand_outlines_with_depth.as_ref()
+                            })
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .outline_panel
+                            .get_or_insert_default()
+                            .expand_outlines_with_depth = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Expand Outlines With Depth",
-                    description: "Default depth to expand outline items in the current file.",
-                    field: Box::new(SettingField {
-                        json_path: Some("outline_panel.expand_outlines_with_depth"),
-                        pick: |settings_content| {
-                            settings_content
-                                .outline_panel
-                                .as_ref()
-                                .and_then(|outline_panel| {
-                                    outline_panel.expand_outlines_with_depth.as_ref()
-                                })
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .outline_panel
-                                .get_or_insert_default()
-                                .expand_outlines_with_depth = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn scrolling_section() -> [SettingsPageItem; 8] {
+        [
+            SettingsPageItem::SectionHeader("Scrolling"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Scroll Beyond Last Line",
+                description: "Whether the editor will scroll beyond the last line.",
+                field: Box::new(SettingField {
+                    json_path: Some("scroll_beyond_last_line"),
+                    pick: |settings_content| {
+                        settings_content.editor.scroll_beyond_last_line.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.scroll_beyond_last_line = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Scrolling"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Scroll Beyond Last Line",
-                    description: "Whether the editor will scroll beyond the last line.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scroll_beyond_last_line"),
-                        pick: |settings_content| {
-                            settings_content.editor.scroll_beyond_last_line.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.scroll_beyond_last_line = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Vertical Scroll Margin",
+                description: "The number of lines to keep above/below the cursor when auto-scrolling.",
+                field: Box::new(SettingField {
+                    json_path: Some("vertical_scroll_margin"),
+                    pick: |settings_content| {
+                        settings_content.editor.vertical_scroll_margin.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.vertical_scroll_margin = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Vertical Scroll Margin",
-                    description: "The number of lines to keep above/below the cursor when auto-scrolling.",
-                    field: Box::new(SettingField {
-                        json_path: Some("vertical_scroll_margin"),
-                        pick: |settings_content| {
-                            settings_content.editor.vertical_scroll_margin.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.vertical_scroll_margin = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Horizontal Scroll Margin",
+                description: "The number of characters to keep on either side when scrolling with the mouse.",
+                field: Box::new(SettingField {
+                    json_path: Some("horizontal_scroll_margin"),
+                    pick: |settings_content| {
+                        settings_content.editor.horizontal_scroll_margin.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.horizontal_scroll_margin = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Horizontal Scroll Margin",
-                    description: "The number of characters to keep on either side when scrolling with the mouse.",
-                    field: Box::new(SettingField {
-                        json_path: Some("horizontal_scroll_margin"),
-                        pick: |settings_content| {
-                            settings_content.editor.horizontal_scroll_margin.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.horizontal_scroll_margin = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Scroll Sensitivity",
+                description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling.",
+                field: Box::new(SettingField {
+                    json_path: Some("scroll_sensitivity"),
+                    pick: |settings_content| settings_content.editor.scroll_sensitivity.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.scroll_sensitivity = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Scroll Sensitivity",
-                    description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scroll_sensitivity"),
-                        pick: |settings_content| {
-                            settings_content.editor.scroll_sensitivity.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.scroll_sensitivity = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Fast Scroll Sensitivity",
+                description: "Fast scroll sensitivity multiplier for both horizontal and vertical scrolling.",
+                field: Box::new(SettingField {
+                    json_path: Some("fast_scroll_sensitivity"),
+                    pick: |settings_content| {
+                        settings_content.editor.fast_scroll_sensitivity.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.fast_scroll_sensitivity = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Fast Scroll Sensitivity",
-                    description: "Fast scroll sensitivity multiplier for both horizontal and vertical scrolling.",
-                    field: Box::new(SettingField {
-                        json_path: Some("fast_scroll_sensitivity"),
-                        pick: |settings_content| {
-                            settings_content.editor.fast_scroll_sensitivity.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.fast_scroll_sensitivity = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Autoscroll On Clicks",
+                description: "Whether to scroll when clicking near the edge of the visible text area.",
+                field: Box::new(SettingField {
+                    json_path: Some("autoscroll_on_clicks"),
+                    pick: |settings_content| settings_content.editor.autoscroll_on_clicks.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.autoscroll_on_clicks = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Autoscroll On Clicks",
-                    description: "Whether to scroll when clicking near the edge of the visible text area.",
-                    field: Box::new(SettingField {
-                        json_path: Some("autoscroll_on_clicks"),
-                        pick: |settings_content| {
-                            settings_content.editor.autoscroll_on_clicks.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.autoscroll_on_clicks = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sticky Scroll",
+                description: "Whether to stick scopes to the top of the editor",
+                field: Box::new(SettingField {
+                    json_path: Some("sticky_scroll.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .sticky_scroll
+                            .as_ref()
+                            .and_then(|sticky_scroll| sticky_scroll.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .sticky_scroll
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Sticky Scroll",
-                    description: "Whether to stick scopes to the top of the editor",
-                    field: Box::new(SettingField {
-                        json_path: Some("sticky_scroll.enabled"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .sticky_scroll
-                                .as_ref()
-                                .and_then(|sticky_scroll| sticky_scroll.enabled.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .sticky_scroll
-                                .get_or_insert_default()
-                                .enabled = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn signature_help_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Signature Help"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Signature Help",
+                description: "Automatically show a signature help pop-up.",
+                field: Box::new(SettingField {
+                    json_path: Some("auto_signature_help"),
+                    pick: |settings_content| settings_content.editor.auto_signature_help.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.auto_signature_help = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Signature Help"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Signature Help",
-                    description: "Automatically show a signature help pop-up.",
-                    field: Box::new(SettingField {
-                        json_path: Some("auto_signature_help"),
-                        pick: |settings_content| {
-                            settings_content.editor.auto_signature_help.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.auto_signature_help = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Signature Help After Edits",
+                description: "Show the signature help pop-up after completions or bracket pairs are inserted.",
+                field: Box::new(SettingField {
+                    json_path: Some("show_signature_help_after_edits"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .show_signature_help_after_edits
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.show_signature_help_after_edits = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Signature Help After Edits",
-                    description: "Show the signature help pop-up after completions or bracket pairs are inserted.",
-                    field: Box::new(SettingField {
-                        json_path: Some("show_signature_help_after_edits"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .show_signature_help_after_edits
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.show_signature_help_after_edits = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Snippet Sort Order",
+                description: "Determines how snippets are sorted relative to other completion items.",
+                field: Box::new(SettingField {
+                    json_path: Some("snippet_sort_order"),
+                    pick: |settings_content| settings_content.editor.snippet_sort_order.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.snippet_sort_order = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Snippet Sort Order",
-                    description: "Determines how snippets are sorted relative to other completion items.",
-                    field: Box::new(SettingField {
-                        json_path: Some("snippet_sort_order"),
-                        pick: |settings_content| {
-                            settings_content.editor.snippet_sort_order.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.snippet_sort_order = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn hover_popover_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Hover Popover"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Show the informational hover box when moving the mouse over symbols in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_enabled"),
+                    pick: |settings_content| settings_content.editor.hover_popover_enabled.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.hover_popover_enabled = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Hover Popover"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enabled",
-                    description: "Show the informational hover box when moving the mouse over symbols in the editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("hover_popover_enabled"),
-                        pick: |settings_content| {
-                            settings_content.editor.hover_popover_enabled.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.hover_popover_enabled = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            // todo(settings ui): add units to this number input
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Delay",
+                description: "Time to wait in milliseconds before showing the informational hover box.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_enabled"),
+                    pick: |settings_content| settings_content.editor.hover_popover_delay.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.hover_popover_delay = value;
+                    },
                 }),
-                // todo(settings ui): add units to this number input
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Delay",
-                    description: "Time to wait in milliseconds before showing the informational hover box.",
-                    field: Box::new(SettingField {
-                        json_path: Some("hover_popover_enabled"),
-                        pick: |settings_content| {
-                            settings_content.editor.hover_popover_delay.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.hover_popover_delay = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn drag_and_drop_selection_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Drag And Drop Selection"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Enable drag and drop selection.",
+                field: Box::new(SettingField {
+                    json_path: Some("drag_and_drop_selection.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .drag_and_drop_selection
+                            .as_ref()
+                            .and_then(|drag_and_drop| drag_and_drop.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .drag_and_drop_selection
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Drag And Drop Selection"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enabled",
-                    description: "Enable drag and drop selection.",
-                    field: Box::new(SettingField {
-                        json_path: Some("drag_and_drop_selection.enabled"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .drag_and_drop_selection
-                                .as_ref()
-                                .and_then(|drag_and_drop| drag_and_drop.enabled.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .drag_and_drop_selection
-                                .get_or_insert_default()
-                                .enabled = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Delay",
+                description: "Delay in milliseconds before drag and drop selection starts.",
+                field: Box::new(SettingField {
+                    json_path: Some("drag_and_drop_selection.delay"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .drag_and_drop_selection
+                            .as_ref()
+                            .and_then(|drag_and_drop| drag_and_drop.delay.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .drag_and_drop_selection
+                            .get_or_insert_default()
+                            .delay = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Delay",
-                    description: "Delay in milliseconds before drag and drop selection starts.",
-                    field: Box::new(SettingField {
-                        json_path: Some("drag_and_drop_selection.delay"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .drag_and_drop_selection
-                                .as_ref()
-                                .and_then(|drag_and_drop| drag_and_drop.delay.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .drag_and_drop_selection
-                                .get_or_insert_default()
-                                .delay = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn gutter_section() -> [SettingsPageItem; 8] {
+        [
+            SettingsPageItem::SectionHeader("Gutter"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Line Numbers",
+                description: "Show line numbers in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.line_numbers"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.line_numbers.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .line_numbers = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Gutter"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Line Numbers",
-                    description: "Show line numbers in the gutter.",
-                    field: Box::new(SettingField {
-                        json_path: Some("gutter.line_numbers"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .as_ref()
-                                .and_then(|gutter| gutter.line_numbers.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .line_numbers = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Relative Line Numbers",
+                description: "Controls line number display in the editor's gutter. \"disabled\" shows absolute line numbers, \"enabled\" shows relative line numbers for each absolute line, and \"wrapped\" shows relative line numbers for every line, absolute or wrapped.",
+                field: Box::new(SettingField {
+                    json_path: Some("relative_line_numbers"),
+                    pick: |settings_content| settings_content.editor.relative_line_numbers.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.relative_line_numbers = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Relative Line Numbers",
-                    description: "Controls line number display in the editor's gutter. \"disabled\" shows absolute line numbers, \"enabled\" shows relative line numbers for each absolute line, and \"wrapped\" shows relative line numbers for every line, absolute or wrapped.",
-                    field: Box::new(SettingField {
-                        json_path: Some("relative_line_numbers"),
-                        pick: |settings_content| {
-                            settings_content.editor.relative_line_numbers.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.relative_line_numbers = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Runnables",
+                description: "Show runnable buttons in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.runnables"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.runnables.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .runnables = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Runnables",
-                    description: "Show runnable buttons in the gutter.",
-                    field: Box::new(SettingField {
-                        json_path: Some("gutter.runnables"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .as_ref()
-                                .and_then(|gutter| gutter.runnables.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .runnables = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Breakpoints",
+                description: "Show breakpoints in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.breakpoints"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.breakpoints.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .breakpoints = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Breakpoints",
-                    description: "Show breakpoints in the gutter.",
-                    field: Box::new(SettingField {
-                        json_path: Some("gutter.breakpoints"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .as_ref()
-                                .and_then(|gutter| gutter.breakpoints.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .breakpoints = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Folds",
+                description: "Show code folding controls in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.folds"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.folds.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.gutter.get_or_insert_default().folds = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Folds",
-                    description: "Show code folding controls in the gutter.",
-                    field: Box::new(SettingField {
-                        json_path: Some("gutter.folds"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .as_ref()
-                                .and_then(|gutter| gutter.folds.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.gutter.get_or_insert_default().folds = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Min Line Number Digits",
+                description: "Minimum number of characters to reserve space for in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.min_line_number_digits"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.min_line_number_digits.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .min_line_number_digits = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Min Line Number Digits",
-                    description: "Minimum number of characters to reserve space for in the gutter.",
-                    field: Box::new(SettingField {
-                        json_path: Some("gutter.min_line_number_digits"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .as_ref()
-                                .and_then(|gutter| gutter.min_line_number_digits.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .min_line_number_digits = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Inline Code Actions",
+                description: "Show code action button at start of buffer line.",
+                field: Box::new(SettingField {
+                    json_path: Some("inline_code_actions"),
+                    pick: |settings_content| settings_content.editor.inline_code_actions.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.inline_code_actions = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Code Actions",
-                    description: "Show code action button at start of buffer line.",
-                    field: Box::new(SettingField {
-                        json_path: Some("inline_code_actions"),
-                        pick: |settings_content| {
-                            settings_content.editor.inline_code_actions.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.inline_code_actions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn scrollbar_section() -> [SettingsPageItem; 10] {
+        [
+            SettingsPageItem::SectionHeader("Scrollbar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show",
+                description: "When to show the scrollbar in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar"),
+                    pick: |settings_content| {
+                        settings_content.editor.scrollbar.as_ref()?.show.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .show = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Scrollbar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show",
-                    description: "When to show the scrollbar in the editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar"),
-                        pick: |settings_content| {
-                            settings_content.editor.scrollbar.as_ref()?.show.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .show = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursors",
+                description: "Show cursor positions in the scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.cursors"),
+                    pick: |settings_content| {
+                        settings_content.editor.scrollbar.as_ref()?.cursors.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .cursors = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursors",
-                    description: "Show cursor positions in the scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.cursors"),
-                        pick: |settings_content| {
-                            settings_content.editor.scrollbar.as_ref()?.cursors.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .cursors = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Diff",
+                description: "Show Git diff indicators in the scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.git_diff"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .git_diff
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .git_diff = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Diff",
-                    description: "Show Git diff indicators in the scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.git_diff"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .git_diff
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .git_diff = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Search Results",
+                description: "Show buffer search result indicators in the scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.search_results"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .search_results
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .search_results = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Search Results",
-                    description: "Show buffer search result indicators in the scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.search_results"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .search_results
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .search_results = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Selected Text",
+                description: "Show selected text occurrences in the scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.selected_text"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .selected_text
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .selected_text = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Selected Text",
-                    description: "Show selected text occurrences in the scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.selected_text"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .selected_text
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .selected_text = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Selected Symbol",
+                description: "Show selected symbol occurrences in the scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.selected_symbol"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .selected_symbol
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .selected_symbol = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Selected Symbol",
-                    description: "Show selected symbol occurrences in the scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.selected_symbol"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .selected_symbol
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .selected_symbol = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diagnostics",
+                description: "Which diagnostic indicators to show in the scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.diagnostics"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .diagnostics
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .diagnostics = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Diagnostics",
-                    description: "Which diagnostic indicators to show in the scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.diagnostics"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .diagnostics
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .diagnostics = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Horizontal Scrollbar",
+                description: "When false, forcefully disables the horizontal scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.axes.horizontal"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .axes
+                            .as_ref()?
+                            .horizontal
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .axes
+                            .get_or_insert_default()
+                            .horizontal = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Horizontal Scrollbar",
-                    description: "When false, forcefully disables the horizontal scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.axes.horizontal"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .axes
-                                .as_ref()?
-                                .horizontal
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .axes
-                                .get_or_insert_default()
-                                .horizontal = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Vertical Scrollbar",
+                description: "When false, forcefully disables the vertical scrollbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("scrollbar.axes.vertical"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .as_ref()?
+                            .axes
+                            .as_ref()?
+                            .vertical
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .scrollbar
+                            .get_or_insert_default()
+                            .axes
+                            .get_or_insert_default()
+                            .vertical = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Vertical Scrollbar",
-                    description: "When false, forcefully disables the vertical scrollbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("scrollbar.axes.vertical"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .as_ref()?
-                                .axes
-                                .as_ref()?
-                                .vertical
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .scrollbar
-                                .get_or_insert_default()
-                                .axes
-                                .get_or_insert_default()
-                                .vertical = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn minimap_section() -> [SettingsPageItem; 7] {
+        [
+            SettingsPageItem::SectionHeader("Minimap"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show",
+                description: "When to show the minimap in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.show"),
+                    pick: |settings_content| {
+                        settings_content.editor.minimap.as_ref()?.show.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.minimap.get_or_insert_default().show = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Minimap"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show",
-                    description: "When to show the minimap in the editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimap.show"),
-                        pick: |settings_content| {
-                            settings_content.editor.minimap.as_ref()?.show.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.editor.minimap.get_or_insert_default().show = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Display In",
+                description: "Where to show the minimap in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.display_in"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .display_in
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .display_in = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Display In",
-                    description: "Where to show the minimap in the editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimap.display_in"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .as_ref()?
-                                .display_in
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .get_or_insert_default()
-                                .display_in = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Thumb",
+                description: "When to show the minimap thumb.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.thumb"),
+                    pick: |settings_content| {
+                        settings_content.editor.minimap.as_ref()?.thumb.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .thumb = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Thumb",
-                    description: "When to show the minimap thumb.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimap.thumb"),
-                        pick: |settings_content| {
-                            settings_content.editor.minimap.as_ref()?.thumb.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .get_or_insert_default()
-                                .thumb = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Thumb Border",
+                description: "Border style for the minimap's scrollbar thumb.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.thumb_border"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .thumb_border
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .thumb_border = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Thumb Border",
-                    description: "Border style for the minimap's scrollbar thumb.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimap.thumb_border"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .as_ref()?
-                                .thumb_border
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .get_or_insert_default()
-                                .thumb_border = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Current Line Highlight",
+                description: "How to highlight the current line in the minimap.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.current_line_highlight"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()
+                            .and_then(|minimap| minimap.current_line_highlight.as_ref())
+                            .or(settings_content.editor.current_line_highlight.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .current_line_highlight = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Current Line Highlight",
-                    description: "How to highlight the current line in the minimap.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimap.current_line_highlight"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .as_ref()
-                                .and_then(|minimap| minimap.current_line_highlight.as_ref())
-                                .or(settings_content.editor.current_line_highlight.as_ref())
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .get_or_insert_default()
-                                .current_line_highlight = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Width Columns",
+                description: "Maximum number of columns to display in the minimap.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.max_width_columns"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .max_width_columns
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .max_width_columns = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Max Width Columns",
-                    description: "Maximum number of columns to display in the minimap.",
-                    field: Box::new(SettingField {
-                        json_path: Some("minimap.max_width_columns"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .as_ref()?
-                                .max_width_columns
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .minimap
-                                .get_or_insert_default()
-                                .max_width_columns = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn toolbar_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Toolbar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Breadcrumbs",
+                description: "Show breadcrumbs.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.breadcrumbs"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .breadcrumbs
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .breadcrumbs = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Toolbar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Breadcrumbs",
-                    description: "Show breadcrumbs.",
-                    field: Box::new(SettingField {
-                        json_path: Some("toolbar.breadcrumbs"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .as_ref()?
-                                .breadcrumbs
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .breadcrumbs = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Quick Actions",
+                description: "Show quick action buttons (e.g., search, selection, editor controls, etc.).",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.quick_actions"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .quick_actions
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .quick_actions = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Quick Actions",
-                    description: "Show quick action buttons (e.g., search, selection, editor controls, etc.).",
-                    field: Box::new(SettingField {
-                        json_path: Some("toolbar.quick_actions"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .as_ref()?
-                                .quick_actions
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .quick_actions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Selections Menu",
+                description: "Show the selections menu in the editor toolbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.selections_menu"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .selections_menu
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .selections_menu = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Selections Menu",
-                    description: "Show the selections menu in the editor toolbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("toolbar.selections_menu"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .as_ref()?
-                                .selections_menu
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .selections_menu = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Review",
+                description: "Show agent review buttons in the editor toolbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.agent_review"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .agent_review
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .agent_review = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Review",
-                    description: "Show agent review buttons in the editor toolbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("toolbar.agent_review"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .as_ref()?
-                                .agent_review
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .agent_review = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Actions",
+                description: "Show code action buttons in the editor toolbar.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.code_actions"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .code_actions
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .code_actions = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Code Actions",
-                    description: "Show code action buttons in the editor toolbar.",
-                    field: Box::new(SettingField {
-                        json_path: Some("toolbar.code_actions"),
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .as_ref()?
-                                .code_actions
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .code_actions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ];
-            items.extend(language_settings_data());
-            items.into_boxed_slice()
-        },
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    let items = concat_sections!(
+        auto_save_section(),
+        which_key_section(),
+        multibuffer_section(),
+        scrolling_section(),
+        signature_help_section(),
+        hover_popover_section(),
+        drag_and_drop_selection_section(),
+        gutter_section(),
+        scrollbar_section(),
+        minimap_section(),
+        toolbar_section(),
+        language_settings_data(),
+    );
+
+    SettingsPage {
+        title: "Editor",
+        items: items,
     }
 }
 
 fn languages_and_tools_page(cx: &App) -> SettingsPage {
-    SettingsPage {
-        title: "Languages & Tools",
-        items: {
-            let mut items = vec![];
-            items.extend(non_editor_language_settings_data());
-            items.extend([
-                    SettingsPageItem::SectionHeader("File Types"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "File Type Associations",
-                        description: "A mapping from languages to files and file extensions that should be treated as that language.",
-                        field: Box::new(
-                            SettingField {
-                                json_path: Some("file_type_associations"),
-                                pick: |settings_content| {
-                                    settings_content.project.all_languages.file_types.as_ref()
-                                },
-                                write: |settings_content, value| {
-                                    settings_content.project.all_languages.file_types = value;
+    fn file_types_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("File Types"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "File Type Associations",
+                description: "A mapping from languages to files and file extensions that should be treated as that language.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("file_type_associations"),
+                        pick: |settings_content| {
+                            settings_content.project.all_languages.file_types.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project.all_languages.file_types = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
 
-                                },
-                            }
-                            .unimplemented(),
-                        ),
-                        metadata: None,
-                        files: USER | PROJECT,
-                    }),
-                ]);
+    fn diagnostics_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Diagnostics"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Severity",
+                description: "Which level to use to filter out diagnostics displayed in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics_max_severity"),
+                    pick: |settings_content| {
+                        settings_content.editor.diagnostics_max_severity.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.diagnostics_max_severity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Include Warnings",
+                description: "Whether to show warnings or not by default.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.include_warnings"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .include_warnings
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .include_warnings = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
 
-            items.extend([
-                    SettingsPageItem::SectionHeader("Diagnostics"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Max Severity",
-                        description: "Which level to use to filter out diagnostics displayed in the editor.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics_max_severity"),
-                            pick: |settings_content| settings_content.editor.diagnostics_max_severity.as_ref(),
-                            write: |settings_content, value| {
-                                settings_content.editor.diagnostics_max_severity = value;
+    fn inline_diagnostics_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("Inline Diagnostics"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Whether to show diagnostics inline or not.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.inline.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .inline
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .inline
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Update Debounce",
+                description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.inline.update_debounce_ms"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .inline
+                            .as_ref()?
+                            .update_debounce_ms
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .inline
+                            .get_or_insert_default()
+                            .update_debounce_ms = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Padding",
+                description: "The amount of padding between the end of the source line and the start of the inline diagnostic.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.inline.padding"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .inline
+                            .as_ref()?
+                            .padding
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .inline
+                            .get_or_insert_default()
+                            .padding = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimum Column",
+                description: "The minimum column at which to display inline diagnostics.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.inline.min_column"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .inline
+                            .as_ref()?
+                            .min_column
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .inline
+                            .get_or_insert_default()
+                            .min_column = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
 
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Include Warnings",
-                        description: "Whether to show warnings or not by default.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.include_warnings"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.include_warnings.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
+    fn lsp_pull_diagnostics_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("LSP Pull Diagnostics"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Whether to pull for language server-powered diagnostics or not.",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.lsp_pull_diagnostics.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .lsp_pull_diagnostics
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .lsp_pull_diagnostics
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // todo(settings_ui): Needs unit
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Debounce",
+                description: "Minimum time to wait before pulling diagnostics from the language server(s).",
+                field: Box::new(SettingField {
+                    json_path: Some("diagnostics.lsp_pull_diagnostics.debounce_ms"),
+                    pick: |settings_content| {
+                        settings_content
+                            .diagnostics
+                            .as_ref()?
+                            .lsp_pull_diagnostics
+                            .as_ref()?
+                            .debounce_ms
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .diagnostics
+                            .get_or_insert_default()
+                            .lsp_pull_diagnostics
+                            .get_or_insert_default()
+                            .debounce_ms = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
 
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .include_warnings
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SectionHeader("Inline Diagnostics"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Enabled",
-                        description: "Whether to show diagnostics inline or not.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.inline.enabled"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.enabled.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
+    fn lsp_highlights_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("LSP Highlights"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Debounce",
+                description: "The debounce delay before querying highlights from the language.",
+                field: Box::new(SettingField {
+                    json_path: Some("lsp_highlight_debounce"),
+                    pick: |settings_content| {
+                        settings_content.editor.lsp_highlight_debounce.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.lsp_highlight_debounce = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
 
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .inline
-                                    .get_or_insert_default()
-                                    .enabled
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Update Debounce",
-                        description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.inline.update_debounce_ms"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.update_debounce_ms.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .inline
-                                    .get_or_insert_default()
-                                    .update_debounce_ms
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Padding",
-                        description: "The amount of padding between the end of the source line and the start of the inline diagnostic.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.inline.padding"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.padding.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .inline
-                                    .get_or_insert_default()
-                                    .padding
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Minimum Column",
-                        description: "The minimum column at which to display inline diagnostics.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.inline.min_column"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.min_column.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .inline
-                                    .get_or_insert_default()
-                                    .min_column
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SectionHeader("LSP Pull Diagnostics"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Enabled",
-                        description: "Whether to pull for language server-powered diagnostics or not.",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.lsp_pull_diagnostics.enabled"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.enabled.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .lsp_pull_diagnostics
-                                    .get_or_insert_default()
-                                    .enabled
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    // todo(settings_ui): Needs unit
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Debounce",
-                        description: "Minimum time to wait before pulling diagnostics from the language server(s).",
-                        field: Box::new(SettingField {
-                            json_path: Some("diagnostics.lsp_pull_diagnostics.debounce_ms"),
-                            pick: |settings_content| {
-                                settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.debounce_ms.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-
-                                    .diagnostics
-                                    .get_or_insert_default()
-                                    .lsp_pull_diagnostics
-                                    .get_or_insert_default()
-                                    .debounce_ms
-                                    = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SectionHeader("LSP Highlights"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Debounce",
-                        description: "The debounce delay before querying highlights from the language.",
-                        field: Box::new(SettingField {
-                            json_path: Some("lsp_highlight_debounce"),
-                            pick: |settings_content| settings_content.editor.lsp_highlight_debounce.as_ref(),
-                            write: |settings_content, value| {
-                                settings_content.editor.lsp_highlight_debounce = value;
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                ]);
-
-            // todo(settings_ui): Refresh on extension (un)/installed
-            // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
-            items.push(SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER));
-            items.extend(all_language_names(cx).into_iter().map(|language_name| {
+    fn languages_list_section(cx: &App) -> Box<[SettingsPageItem]> {
+        // todo(settings_ui): Refresh on extension (un)/installed
+        // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
+        std::iter::once(SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER))
+            .chain(all_language_names(cx).into_iter().map(|language_name| {
                 let link = format!("languages.{language_name}");
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: language_name,
@@ -2471,24 +2706,38 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     in_json: true,
                     files: USER | PROJECT,
                     render: Arc::new(|this, window, cx| {
-                        let items: Box<[_]> = language_settings_data()
-                            .chain(non_editor_language_settings_data())
-                            .chain(edit_prediction_language_settings_section())
-                            .collect();
+                        let items: Box<[SettingsPageItem]> = concat_sections!(
+                            language_settings_data(),
+                            non_editor_language_settings_data(),
+                            edit_prediction_language_settings_section()
+                        );
                         this.render_sub_page_items(items.iter().enumerate(), None, window, cx)
                             .into_any_element()
                     }),
                 })
-            }));
-            items.into_boxed_slice()
+            }))
+            .collect()
+    }
+
+    SettingsPage {
+        title: "Languages & Tools",
+        items: {
+            concat_sections!(
+                non_editor_language_settings_data(),
+                file_types_section(),
+                diagnostics_section(),
+                inline_diagnostics_section(),
+                lsp_pull_diagnostics_section(),
+                lsp_highlights_section(),
+                languages_list_section(cx),
+            )
         },
     }
 }
 
 fn search_and_files_page() -> SettingsPage {
-    SettingsPage {
-        title: "Search & Files",
-        items: Box::new([
+    fn search_section() -> [SettingsPageItem; 9] {
+        [
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Whole Word",
@@ -2639,6 +2888,11 @@ fn search_and_files_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn file_finder_section() -> [SettingsPageItem; 6] {
+        [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
             SettingsPageItem::SettingItem(SettingItem {
@@ -2743,6 +2997,11 @@ fn search_and_files_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn file_scan_section() -> [SettingsPageItem; 5] {
+        [
             SettingsPageItem::SectionHeader("File Scan"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "File Scan Exclusions",
@@ -2818,14 +3077,18 @@ fn search_and_files_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Search & Files",
+        items: concat_sections![search_section(), file_finder_section(), file_scan_section()],
     }
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    SettingsPage {
-        title: "Window & Layout",
-        items: Box::new([
+    fn status_bar_section() -> [SettingsPageItem; 9] {
+        [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Panel Button",
@@ -2969,6 +3232,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn title_bar_section() -> [SettingsPageItem; 9] {
+        [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Branch Icon",
@@ -3134,6 +3402,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn tab_bar_section() -> [SettingsPageItem; 8] {
+        [
             SettingsPageItem::SectionHeader("Tab Bar"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Tab Bar",
@@ -3251,6 +3524,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn tab_settings_section() -> [SettingsPageItem; 4] {
+        [
             SettingsPageItem::SectionHeader("Tab Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Activate On Close",
@@ -3306,6 +3584,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn preview_tabs_section() -> [SettingsPageItem; 8] {
+        [
             SettingsPageItem::SectionHeader("Preview Tabs"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Preview Tabs Enabled",
@@ -3457,6 +3740,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn layout_section() -> [SettingsPageItem; 4] {
+        [
             SettingsPageItem::SectionHeader("Layout"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Bottom Dock Layout",
@@ -3519,6 +3807,11 @@ fn window_and_layout_page() -> SettingsPage {
                 }),
                 metadata: None,
             }),
+        ]
+    }
+
+    fn window_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Window"),
             // todo(settings_ui): Should we filter by platform.as_ref()?
             SettingsPageItem::SettingItem(SettingItem {
@@ -3549,6 +3842,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn pane_modifiers_section() -> [SettingsPageItem; 4] {
+        [
             SettingsPageItem::SectionHeader("Pane Modifiers"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Inactive Opacity",
@@ -3611,6 +3909,11 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn pane_split_direction_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Pane Split Direction"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Vertical Split Direction",
@@ -3648,14 +3951,28 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Window & Layout",
+        items: concat_sections![
+            status_bar_section(),
+            title_bar_section(),
+            tab_bar_section(),
+            tab_settings_section(),
+            preview_tabs_section(),
+            layout_section(),
+            window_section(),
+            pane_modifiers_section(),
+            pane_split_direction_section(),
+        ],
     }
 }
 
 fn panels_page() -> SettingsPage {
-    SettingsPage {
-        title: "Panels",
-        items: Box::new([
+    fn project_panel_section() -> [SettingsPageItem; 20] {
+        [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Panel Dock",
@@ -4060,6 +4377,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn auto_open_files_section() -> [SettingsPageItem; 5] {
+        [
             SettingsPageItem::SectionHeader("Auto Open Files"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "On Create",
@@ -4157,6 +4479,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn terminal_panel_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Terminal Dock",
@@ -4171,6 +4498,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn outline_panel_section() -> [SettingsPageItem; 11] {
+        [
             SettingsPageItem::SectionHeader("Outline Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Outline Panel Button",
@@ -4375,6 +4707,11 @@ fn panels_page() -> SettingsPage {
                 }),
                 metadata: None,
             }),
+        ]
+    }
+
+    fn git_panel_section() -> [SettingsPageItem; 10] {
+        [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Git Panel Button",
@@ -4543,6 +4880,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn debugger_panel_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Debugger Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Debugger Panel Dock",
@@ -4557,6 +4899,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn notification_panel_section() -> [SettingsPageItem; 4] {
+        [
             SettingsPageItem::SectionHeader("Notification Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Notification Panel Button",
@@ -4620,6 +4967,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn collaboration_panel_section() -> [SettingsPageItem; 4] {
+        [
             SettingsPageItem::SectionHeader("Collaboration Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Collaboration Panel Button",
@@ -4683,6 +5035,11 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn agent_panel_section() -> [SettingsPageItem; 5] {
+        [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Agent Panel Button",
@@ -4743,14 +5100,28 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Panels",
+        items: concat_sections![
+            project_panel_section(),
+            auto_open_files_section(),
+            terminal_panel_section(),
+            outline_panel_section(),
+            git_panel_section(),
+            debugger_panel_section(),
+            notification_panel_section(),
+            collaboration_panel_section(),
+            agent_panel_section(),
+        ],
     }
 }
 
 fn debugger_page() -> SettingsPage {
-    SettingsPage {
-        title: "Debugger",
-        items: Box::new([
+    fn general_section() -> [SettingsPageItem; 6] {
+        [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Stepping Granularity",
@@ -4853,14 +5224,18 @@ fn debugger_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Debugger",
+        items: concat_sections![general_section()],
     }
 }
 
 fn terminal_page() -> SettingsPage {
-    SettingsPage {
-        title: "Terminal",
-        items: Box::new([
+    fn environment_section() -> [SettingsPageItem; 5] {
+        [
                 SettingsPageItem::SectionHeader("Environment"),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
@@ -4877,7 +5252,8 @@ fn terminal_page() -> SettingsPage {
                                         .project
                                         .shell
                                         .as_ref()?
-                                        .discriminant() as usize])
+                                        .discriminant() as usize
+                                ])
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
@@ -4898,23 +5274,23 @@ fn terminal_page() -> SettingsPage {
                                     "sh"
                                 };
                                 *settings_value = match value {
-                                    settings::ShellDiscriminants::System => {
-                                        settings::Shell::System
-                                    },
+                                    settings::ShellDiscriminants::System => settings::Shell::System,
                                     settings::ShellDiscriminants::Program => {
                                         let program = match settings_value {
-                                            settings::Shell::Program(p) => p.clone(),
+                                            settings::Shell::Program(program) => program.clone(),
                                             settings::Shell::WithArguments { program, .. } => program.clone(),
                                             _ => String::from(default_shell),
                                         };
                                         settings::Shell::Program(program)
-                                    },
+                                    }
                                     settings::ShellDiscriminants::WithArguments => {
                                         let (program, args, title_override) = match settings_value {
-                                            settings::Shell::Program(p) => (p.clone(), vec![], None),
-                                            settings::Shell::WithArguments { program, args, title_override } => {
-                                                (program.clone(), args.clone(), title_override.clone())
-                                            },
+                                            settings::Shell::Program(program) => (program.clone(), vec![], None),
+                                            settings::Shell::WithArguments {
+                                                program,
+                                                args,
+                                                title_override,
+                                            } => (program.clone(), args.clone(), title_override.clone()),
                                             _ => (String::from(default_shell), vec![], None),
                                         };
                                         settings::Shell::WithArguments {
@@ -4922,48 +5298,56 @@ fn terminal_page() -> SettingsPage {
                                             args,
                                             title_override,
                                         }
-                                    },
+                                    }
                                 };
                             },
                         }),
                         metadata: None,
                     },
                     pick_discriminant: |settings_content| {
-                        Some(settings_content.terminal.as_ref()?.project.shell.as_ref()?.discriminant() as usize)
+                        Some(
+                            settings_content
+                                .terminal
+                                .as_ref()?
+                                .project
+                                .shell
+                                .as_ref()?
+                                .discriminant() as usize,
+                        )
                     },
-                    fields: dynamic_variants::<settings::Shell>().into_iter().map(|variant| {
-                        match variant {
+                    fields: dynamic_variants::<settings::Shell>()
+                        .into_iter()
+                        .map(|variant| match variant {
                             settings::ShellDiscriminants::System => vec![],
-                            settings::ShellDiscriminants::Program => vec![
-                                SettingItem {
-                                    files: USER | PROJECT,
-                                    title: "Program",
-                                    description: "The shell program to use.",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("terminal.shell"),
-                                        pick: |settings_content| {
-                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
-                                                Some(settings::Shell::Program(program)) => Some(program),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let Some(value) = value else {
-                                                return;
-                                            };
-                                            match settings_content
-                                                .terminal
-                                                .get_or_insert_default()
-                                                .project
-                                                .shell.as_mut() {
-                                                    Some(settings::Shell::Program(program)) => *program = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
+                            settings::ShellDiscriminants::Program => vec![SettingItem {
+                                files: USER | PROJECT,
+                                title: "Program",
+                                description: "The shell program to use.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("terminal.shell"),
+                                    pick: |settings_content| match settings_content.terminal.as_ref()?.project.shell.as_ref()
+                                    {
+                                        Some(settings::Shell::Program(program)) => Some(program),
+                                        _ => None,
+                                    },
+                                    write: |settings_content, value| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        match settings_content
+                                            .terminal
+                                            .get_or_insert_default()
+                                            .project
+                                            .shell
+                                            .as_mut()
+                                        {
+                                            Some(settings::Shell::Program(program)) => *program = value,
+                                            _ => return,
+                                        }
+                                    },
+                                }),
+                                metadata: None,
+                            }],
                             settings::ShellDiscriminants::WithArguments => vec![
                                 SettingItem {
                                     files: USER | PROJECT,
@@ -4974,7 +5358,7 @@ fn terminal_page() -> SettingsPage {
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
                                                 Some(settings::Shell::WithArguments { program, .. }) => Some(program),
-                                                _ => None
+                                                _ => None,
                                             }
                                         },
                                         write: |settings_content, value| {
@@ -4985,10 +5369,14 @@ fn terminal_page() -> SettingsPage {
                                                 .terminal
                                                 .get_or_insert_default()
                                                 .project
-                                                .shell.as_mut() {
-                                                    Some(settings::Shell::WithArguments { program, .. }) => *program = value,
-                                                    _ => return
+                                                .shell
+                                                .as_mut()
+                                            {
+                                                Some(settings::Shell::WithArguments { program, .. }) => {
+                                                    *program = value
                                                 }
+                                                _ => return,
+                                            }
                                         },
                                     }),
                                     metadata: None,
@@ -5003,7 +5391,7 @@ fn terminal_page() -> SettingsPage {
                                             pick: |settings_content| {
                                                 match settings_content.terminal.as_ref()?.project.shell.as_ref() {
                                                     Some(settings::Shell::WithArguments { args, .. }) => Some(args),
-                                                    _ => None
+                                                    _ => None,
                                                 }
                                             },
                                             write: |settings_content, value| {
@@ -5014,10 +5402,12 @@ fn terminal_page() -> SettingsPage {
                                                     .terminal
                                                     .get_or_insert_default()
                                                     .project
-                                                    .shell.as_mut() {
-                                                        Some(settings::Shell::WithArguments { args, .. }) => *args = value,
-                                                        _ => return
-                                                    }
+                                                    .shell
+                                                    .as_mut()
+                                                {
+                                                    Some(settings::Shell::WithArguments { args, .. }) => *args = value,
+                                                    _ => return,
+                                                }
                                             },
                                         }
                                         .unimplemented(),
@@ -5032,8 +5422,10 @@ fn terminal_page() -> SettingsPage {
                                         json_path: Some("terminal.shell.title_override"),
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
-                                                Some(settings::Shell::WithArguments { title_override, .. }) => title_override.as_ref().or(DEFAULT_EMPTY_SHARED_STRING),
-                                                _ => None
+                                                Some(settings::Shell::WithArguments { title_override, .. }) => {
+                                                    title_override.as_ref().or(DEFAULT_EMPTY_SHARED_STRING)
+                                                }
+                                                _ => None,
                                             }
                                         },
                                         write: |settings_content, value| {
@@ -5041,17 +5433,21 @@ fn terminal_page() -> SettingsPage {
                                                 .terminal
                                                 .get_or_insert_default()
                                                 .project
-                                                .shell.as_mut() {
-                                                    Some(settings::Shell::WithArguments { title_override, .. }) => *title_override = value.filter(|s| !s.is_empty()),
-                                                    _ => return
+                                                .shell
+                                                .as_mut()
+                                            {
+                                                Some(settings::Shell::WithArguments { title_override, .. }) => {
+                                                    *title_override = value.filter(|s| !s.is_empty())
                                                 }
+                                                _ => return,
+                                            }
                                         },
                                     }),
                                     metadata: None,
-                                }
+                                },
                             ],
-                        }
-                    }).collect(),
+                        })
+                        .collect(),
                 }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
@@ -5068,7 +5464,8 @@ fn terminal_page() -> SettingsPage {
                                         .project
                                         .working_directory
                                         .as_ref()?
-                                        .discriminant() as usize])
+                                        .discriminant() as usize
+                                ])
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
@@ -5086,63 +5483,72 @@ fn terminal_page() -> SettingsPage {
                                 *settings_value = match value {
                                     settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
                                         settings::WorkingDirectory::CurrentProjectDirectory
-                                    },
+                                    }
                                     settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => {
                                         settings::WorkingDirectory::FirstProjectDirectory
-                                    },
+                                    }
                                     settings::WorkingDirectoryDiscriminants::AlwaysHome => {
                                         settings::WorkingDirectory::AlwaysHome
-                                    },
+                                    }
                                     settings::WorkingDirectoryDiscriminants::Always => {
                                         let directory = match settings_value {
                                             settings::WorkingDirectory::Always { .. } => return,
                                             _ => String::new(),
                                         };
                                         settings::WorkingDirectory::Always { directory }
-                                    },
+                                    }
                                 };
                             },
                         }),
                         metadata: None,
                     },
                     pick_discriminant: |settings_content| {
-                        Some(settings_content.terminal.as_ref()?.project.working_directory.as_ref()?.discriminant() as usize)
+                        Some(
+                            settings_content
+                                .terminal
+                                .as_ref()?
+                                .project
+                                .working_directory
+                                .as_ref()?
+                                .discriminant() as usize,
+                        )
                     },
-                    fields: dynamic_variants::<settings::WorkingDirectory>().into_iter().map(|variant| {
-                        match variant {
+                    fields: dynamic_variants::<settings::WorkingDirectory>()
+                        .into_iter()
+                        .map(|variant| match variant {
                             settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
-                            settings::WorkingDirectoryDiscriminants::Always => vec![
-                                SettingItem {
-                                    files: USER | PROJECT,
-                                    title: "Directory",
-                                    description: "The directory path to use (will be shell expanded).",
-                                    field: Box::new(SettingField {
-                                        json_path: Some("terminal.working_directory.always"),
-                                        pick: |settings_content| {
-                                            match settings_content.terminal.as_ref()?.project.working_directory.as_ref() {
-                                                Some(settings::WorkingDirectory::Always { directory }) => Some(directory),
-                                                _ => None
-                                            }
-                                        },
-                                        write: |settings_content, value| {
-                                            let value = value.unwrap_or_default();
-                                            match settings_content
-                                                .terminal
-                                                .get_or_insert_default()
-                                                .project
-                                                .working_directory.as_mut() {
-                                                    Some(settings::WorkingDirectory::Always { directory }) => *directory = value,
-                                                    _ => return
-                                                }
-                                        },
-                                    }),
-                                    metadata: None,
-                                }
-                            ],
-                        }
-                    }).collect(),
+                            settings::WorkingDirectoryDiscriminants::Always => vec![SettingItem {
+                                files: USER | PROJECT,
+                                title: "Directory",
+                                description: "The directory path to use (will be shell expanded).",
+                                field: Box::new(SettingField {
+                                    json_path: Some("terminal.working_directory.always"),
+                                    pick: |settings_content| {
+                                        match settings_content.terminal.as_ref()?.project.working_directory.as_ref() {
+                                            Some(settings::WorkingDirectory::Always { directory }) => Some(directory),
+                                            _ => None,
+                                        }
+                                    },
+                                    write: |settings_content, value| {
+                                        let value = value.unwrap_or_default();
+                                        match settings_content
+                                            .terminal
+                                            .get_or_insert_default()
+                                            .project
+                                            .working_directory
+                                            .as_mut()
+                                        {
+                                            Some(settings::WorkingDirectory::Always { directory }) => *directory = value,
+                                            _ => return,
+                                        }
+                                    },
+                                }),
+                                metadata: None,
+                            }],
+                        })
+                        .collect(),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Environment Variables",
@@ -5150,15 +5556,9 @@ fn terminal_page() -> SettingsPage {
                     field: Box::new(
                         SettingField {
                             json_path: Some("terminal.env"),
-                            pick: |settings_content| {
-                                settings_content.terminal.as_ref()?.project.env.as_ref()
-                            },
+                            pick: |settings_content| settings_content.terminal.as_ref()?.project.env.as_ref(),
                             write: |settings_content, value| {
-                                settings_content
-                                    .terminal
-                                    .get_or_insert_default()
-                                    .project
-                                    .env = value;
+                                settings_content.terminal.get_or_insert_default().project.env = value;
                             },
                         }
                         .unimplemented(),
@@ -5172,14 +5572,7 @@ fn terminal_page() -> SettingsPage {
                     field: Box::new(
                         SettingField {
                             json_path: Some("terminal.detect_venv"),
-                            pick: |settings_content| {
-                                settings_content
-                                    .terminal
-                                    .as_ref()?
-                                    .project
-                                    .detect_venv
-                                    .as_ref()
-                            },
+                            pick: |settings_content| settings_content.terminal.as_ref()?.project.detect_venv.as_ref(),
                             write: |settings_content, value| {
                                 settings_content
                                     .terminal
@@ -5193,416 +5586,466 @@ fn terminal_page() -> SettingsPage {
                     metadata: None,
                     files: USER | PROJECT,
                 }),
-                SettingsPageItem::SectionHeader("Font"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Size",
-                    description: "Font size for terminal text. If not set, defaults to buffer font size.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.font_size"),
+            ]
+    }
+
+    fn font_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Size",
+                description: "Font size for terminal text. If not set, defaults to buffer font size.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()
+                            .and_then(|terminal| terminal.font_size.as_ref())
+                            .or(settings_content.theme.buffer_font_size.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content.terminal.get_or_insert_default().font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Family",
+                description: "Font family for terminal text. If not set, defaults to buffer font family.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()
+                            .and_then(|terminal| terminal.font_family.as_ref())
+                            .or(settings_content.theme.buffer_font_family.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Fallbacks",
+                description: "Font fallbacks for terminal text. If not set, defaults to buffer font fallbacks.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("terminal.font_fallbacks"),
                         pick: |settings_content| {
                             settings_content
                                 .terminal
                                 .as_ref()
-                                .and_then(|terminal| terminal.font_size.as_ref())
-                                .or(settings_content.theme.buffer_font_size.as_ref())
+                                .and_then(|terminal| terminal.font_fallbacks.as_ref())
+                                .or(settings_content.theme.buffer_font_fallbacks.as_ref())
                         },
                         write: |settings_content, value| {
-                            settings_content.terminal.get_or_insert_default().font_size = value;
+                            settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_fallbacks = value;
                         },
-                    }),
-                    metadata: None,
-                    files: USER,
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Weight",
+                description: "Font weight for terminal text in CSS weight units (100-900).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.font_weight"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.font_weight.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .font_weight = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Family",
-                    description: "Font family for terminal text. If not set, defaults to buffer font family.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.font_family"),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Features",
+                description: "Font features for terminal text.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("terminal.font_features"),
                         pick: |settings_content| {
                             settings_content
                                 .terminal
                                 .as_ref()
-                                .and_then(|terminal| terminal.font_family.as_ref())
-                                .or(settings_content.theme.buffer_font_family.as_ref())
+                                .and_then(|terminal| terminal.font_features.as_ref())
+                                .or(settings_content.theme.buffer_font_features.as_ref())
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .font_family = value;
+                                .font_features = value;
                         },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Fallbacks",
-                    description: "Font fallbacks for terminal text. If not set, defaults to buffer font fallbacks.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("terminal.font_fallbacks"),
-                            pick: |settings_content| {
-                                settings_content
-                                    .terminal
-                                    .as_ref()
-                                    .and_then(|terminal| terminal.font_fallbacks.as_ref())
-                                    .or(settings_content.theme.buffer_font_fallbacks.as_ref())
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-                                    .terminal
-                                    .get_or_insert_default()
-                                    .font_fallbacks = value;
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Weight",
-                    description: "Font weight for terminal text in CSS weight units (100-900).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.font_weight"),
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn display_settings_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Display Settings"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Height",
+                description: "Line height for terminal text.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("terminal.line_height"),
                         pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.font_weight.as_ref()
+                            settings_content.terminal.as_ref()?.line_height.as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .font_weight = value;
+                                .line_height = value;
                         },
-                    }),
-                    metadata: None,
-                    files: USER,
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Shape",
+                description: "Default cursor shape for the terminal (bar, block, underline, or hollow).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.cursor_shape"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.cursor_shape.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .cursor_shape = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Font Features",
-                    description: "Font features for terminal text.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("terminal.font_features"),
-                            pick: |settings_content| {
-                                settings_content
-                                    .terminal
-                                    .as_ref()
-                                    .and_then(|terminal| terminal.font_features.as_ref())
-                                    .or(settings_content.theme.buffer_font_features.as_ref())
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-                                    .terminal
-                                    .get_or_insert_default()
-                                    .font_features = value;
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Blinking",
+                description: "Sets the cursor blinking behavior in the terminal.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.blinking"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.blinking.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.terminal.get_or_insert_default().blinking = value;
+                    },
                 }),
-                SettingsPageItem::SectionHeader("Display Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Line Height",
-                    description: "Line height for terminal text.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("terminal.line_height"),
-                            pick: |settings_content| {
-                                settings_content.terminal.as_ref()?.line_height.as_ref()
-                            },
-                            write: |settings_content, value| {
-                                settings_content
-                                    .terminal
-                                    .get_or_insert_default()
-                                    .line_height = value;
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Alternate Scroll",
+                description: "Whether alternate scroll mode is active by default (converts mouse scroll to arrow keys in apps like Vim).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.alternate_scroll"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .alternate_scroll
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .alternate_scroll = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Shape",
-                    description: "Default cursor shape for the terminal (bar, block, underline, or hollow).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.cursor_shape"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.cursor_shape.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .cursor_shape = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimum Contrast",
+                description: "The minimum APCA perceptual contrast between foreground and background colors (0-106).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.minimum_contrast"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .minimum_contrast
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .minimum_contrast = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Blinking",
-                    description: "Sets the cursor blinking behavior in the terminal.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.blinking"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.blinking.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.terminal.get_or_insert_default().blinking = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Behavior Settings"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Option As Meta",
+                description: "Whether the option key behaves as the meta key.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.option_as_meta"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.option_as_meta.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .option_as_meta = value;
+                    },
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Alternate Scroll",
-                    description: "Whether alternate scroll mode is active by default (converts mouse scroll to arrow keys in apps like Vim).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.alternate_scroll"),
-                        pick: |settings_content| {
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Copy On Select",
+                description: "Whether selecting text in the terminal automatically copies to the system clipboard.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.copy_on_select"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.copy_on_select.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .copy_on_select = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Keep Selection On Copy",
+                description: "Whether to keep the text selection after copying it to the clipboard.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.keep_selection_on_copy"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .keep_selection_on_copy
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn layout_settings_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Layout Settings"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Width",
+                description: "Default width when the terminal is docked to the left or right (in pixels).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.default_width"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.default_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Height",
+                description: "Default height when the terminal is docked to the bottom (in pixels).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.default_height"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.default_height.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .default_height = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn advanced_settings_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Advanced Settings"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Scroll History Lines",
+                description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.max_scroll_history_lines"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .max_scroll_history_lines
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .max_scroll_history_lines = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Scroll Multiplier",
+                description: "The multiplier for scrolling in the terminal with the mouse wheel",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.scroll_multiplier"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .scroll_multiplier
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .scroll_multiplier = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn toolbar_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Toolbar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Breadcrumbs",
+                description: "Display the terminal title in breadcrumbs inside the terminal pane.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.toolbar.breadcrumbs"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .toolbar
+                            .as_ref()?
+                            .breadcrumbs
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .toolbar
+                            .get_or_insert_default()
+                            .breadcrumbs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn scrollbar_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Scrollbar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Scrollbar",
+                description: "When to show the scrollbar in the terminal.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.scrollbar.show"),
+                    pick: |settings_content| {
+                        show_scrollbar_or_editor(settings_content, |settings_content| {
                             settings_content
                                 .terminal
                                 .as_ref()?
-                                .alternate_scroll
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .alternate_scroll = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Minimum Contrast",
-                    description: "The minimum APCA perceptual contrast between foreground and background colors (0-106).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.minimum_contrast"),
-                        pick: |settings_content| {
-                            settings_content
-                                .terminal
-                                .as_ref()?
-                                .minimum_contrast
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .minimum_contrast = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Behavior Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Option As Meta",
-                    description: "Whether the option key behaves as the meta key.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.option_as_meta"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.option_as_meta.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .option_as_meta = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Copy On Select",
-                    description: "Whether selecting text in the terminal automatically copies to the system clipboard.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.copy_on_select"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.copy_on_select.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .copy_on_select = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Keep Selection On Copy",
-                    description: "Whether to keep the text selection after copying it to the clipboard.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.keep_selection_on_copy"),
-                        pick: |settings_content| {
-                            settings_content
-                                .terminal
-                                .as_ref()?
-                                .keep_selection_on_copy
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .keep_selection_on_copy = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Layout Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Default Width",
-                    description: "Default width when the terminal is docked to the left or right (in pixels).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.default_width"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.default_width.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .default_width = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Default Height",
-                    description: "Default height when the terminal is docked to the bottom (in pixels).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.default_height"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.default_height.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .default_height = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Advanced Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Max Scroll History Lines",
-                    description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling).",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.max_scroll_history_lines"),
-                        pick: |settings_content| {
-                            settings_content
-                                .terminal
-                                .as_ref()?
-                                .max_scroll_history_lines
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .max_scroll_history_lines = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Scroll Multiplier",
-                    description: "The multiplier for scrolling in the terminal with the mouse wheel",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.scroll_multiplier"),
-                        pick: |settings_content| {
-                            settings_content.terminal.as_ref()?.scroll_multiplier.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .scroll_multiplier = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Toolbar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Breadcrumbs",
-                    description: "Display the terminal title in breadcrumbs inside the terminal pane.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.toolbar.breadcrumbs"),
-                        pick: |settings_content| {
-                            settings_content
-                                .terminal
-                                .as_ref()?
-                                .toolbar
-                                .as_ref()?
-                                .breadcrumbs
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .toolbar
-                                .get_or_insert_default()
-                                .breadcrumbs = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Scrollbar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Scrollbar",
-                    description: "When to show the scrollbar in the terminal.",
-                    field: Box::new(SettingField {
-                        json_path: Some("terminal.scrollbar.show"),
-                        pick: |settings_content| {
-                            show_scrollbar_or_editor(settings_content, |settings_content| {
-                                settings_content
-                                    .terminal
-                                    .as_ref()?
-                                    .scrollbar
-                                    .as_ref()?
-                                    .show
-                                    .as_ref()
-                            })
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .terminal
-                                .get_or_insert_default()
                                 .scrollbar
-                                .get_or_insert_default()
-                                .show = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                                .as_ref()?
+                                .show
+                                .as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .scrollbar
+                            .get_or_insert_default()
+                            .show = value;
+                    },
                 }),
-        ]),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    SettingsPage {
+        title: "Terminal",
+        items: concat_sections![
+            environment_section(),
+            font_section(),
+            display_settings_section(),
+            behavior_settings_section(),
+            layout_settings_section(),
+            advanced_settings_section(),
+            toolbar_section(),
+            scrollbar_section(),
+        ],
     }
 }
 
 fn version_control_page() -> SettingsPage {
-    SettingsPage {
-        title: "Version Control",
-        items: Box::new([
+    fn git_integration_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Git Integration"),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
@@ -5699,6 +6142,11 @@ fn version_control_page() -> SettingsPage {
                     ],
                 ],
             }),
+        ]
+    }
+
+    fn git_gutter_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Git Gutter"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Visibility",
@@ -5729,6 +6177,11 @@ fn version_control_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn inline_git_blame_section() -> [SettingsPageItem; 6] {
+        [
             SettingsPageItem::SectionHeader("Inline Git Blame"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Enabled",
@@ -5860,6 +6313,11 @@ fn version_control_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn git_blame_view_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Git Blame View"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Avatar",
@@ -5887,6 +6345,11 @@ fn version_control_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn branch_picker_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("Branch Picker"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Author Name",
@@ -5914,6 +6377,11 @@ fn version_control_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn git_hunks_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Hunk Style",
@@ -5941,14 +6409,25 @@ fn version_control_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Version Control",
+        items: concat_sections![
+            git_integration_section(),
+            git_gutter_section(),
+            inline_git_blame_section(),
+            git_blame_view_section(),
+            branch_picker_section(),
+            git_hunks_section(),
+        ],
     }
 }
 
 fn collaboration_page() -> SettingsPage {
-    SettingsPage {
-        title: "Collaboration",
-        items: Box::new([
+    fn calls_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Calls"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Mute On Join",
@@ -5978,6 +6457,11 @@ fn collaboration_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+        ]
+    }
+
+    fn experimental_section() -> [SettingsPageItem; 6] {
+        [
             SettingsPageItem::SectionHeader("Experimental"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Rodio Audio",
@@ -6071,277 +6555,320 @@ fn collaboration_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Collaboration",
+        items: concat_sections![calls_section(), experimental_section()],
     }
 }
 
 fn ai_page() -> SettingsPage {
+    fn general_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("General"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Disable AI",
+                description: "Whether to disable all AI features in Zed.",
+                field: Box::new(SettingField {
+                    json_path: Some("disable_ai"),
+                    pick: |settings_content| settings_content.disable_ai.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.disable_ai = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn agent_configuration_section() -> [SettingsPageItem; 10] {
+        [
+            SettingsPageItem::SectionHeader("Agent Configuration"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Always Allow Tool Actions",
+                description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.always_allow_tool_actions"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .always_allow_tool_actions
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .always_allow_tool_actions = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Single File Review",
+                description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.single_file_review"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.single_file_review.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .single_file_review = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enable Feedback",
+                description: "Show voting thumbs up/down icon buttons for feedback on agent edits.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.enable_feedback"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.enable_feedback.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .enable_feedback = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Notify When Agent Waiting",
+                description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.notify_when_agent_waiting"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .notify_when_agent_waiting
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .notify_when_agent_waiting = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Play Sound When Agent Done",
+                description: "Whether to play a sound when the agent has either completed its response, or needs user input.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.play_sound_when_agent_done"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .play_sound_when_agent_done
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .play_sound_when_agent_done = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Edit Card",
+                description: "Whether to have edit cards in the agent panel expanded, showing a Preview of the diff.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.expand_edit_card"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.expand_edit_card.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .expand_edit_card = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Terminal Card",
+                description: "Whether to have terminal cards in the agent panel expanded, showing the whole command output.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.expand_terminal_card"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .expand_terminal_card
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .expand_terminal_card = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Use Modifier To Send",
+                description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.use_modifier_to_send"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .use_modifier_to_send
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .use_modifier_to_send = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Message Editor Min Lines",
+                description: "Minimum number of lines to display in the agent message editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.message_editor_min_lines"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .message_editor_min_lines
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .message_editor_min_lines = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn context_servers_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Context Servers"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Context Server Timeout",
+                description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
+                field: Box::new(SettingField {
+                    json_path: Some("context_server_timeout"),
+                    pick: |settings_content| {
+                        settings_content.project.context_server_timeout.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.project.context_server_timeout = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Display Mode",
+                description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
+                field: Box::new(SettingField {
+                    json_path: Some("edit_prediction.display_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .edit_predictions
+                            .as_ref()?
+                            .mode
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .edit_predictions
+                            .get_or_insert_default()
+                            .mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Display In Text Threads",
+                description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("edit_prediction.in_text_threads"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .edit_predictions
+                            .as_ref()?
+                            .enabled_in_text_threads
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .edit_predictions
+                            .get_or_insert_default()
+                            .enabled_in_text_threads = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "AI",
-        items: {
-            let mut items = vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Disable AI",
-                    description: "Whether to disable all AI features in Zed.",
-                    field: Box::new(SettingField {
-                        json_path: Some("disable_ai"),
-                        pick: |settings_content| settings_content.disable_ai.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.disable_ai = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Agent Configuration"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Always Allow Tool Actions",
-                    description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.always_allow_tool_actions"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .always_allow_tool_actions
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .always_allow_tool_actions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Single File Review",
-                    description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.single_file_review"),
-                        pick: |settings_content| {
-                            settings_content.agent.as_ref()?.single_file_review.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .single_file_review = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Feedback",
-                    description: "Show voting thumbs up/down icon buttons for feedback on agent edits.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.enable_feedback"),
-                        pick: |settings_content| {
-                            settings_content.agent.as_ref()?.enable_feedback.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .enable_feedback = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Notify When Agent Waiting",
-                    description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.notify_when_agent_waiting"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .notify_when_agent_waiting
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .notify_when_agent_waiting = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Play Sound When Agent Done",
-                    description: "Whether to play a sound when the agent has either completed its response, or needs user input.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.play_sound_when_agent_done"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .play_sound_when_agent_done
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .play_sound_when_agent_done = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Expand Edit Card",
-                    description: "Whether to have edit cards in the agent panel expanded, showing a Preview of the diff.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.expand_edit_card"),
-                        pick: |settings_content| {
-                            settings_content.agent.as_ref()?.expand_edit_card.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .expand_edit_card = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Expand Terminal Card",
-                    description: "Whether to have terminal cards in the agent panel expanded, showing the whole command output.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.expand_terminal_card"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .expand_terminal_card
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .expand_terminal_card = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Modifier To Send",
-                    description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.use_modifier_to_send"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .use_modifier_to_send
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .use_modifier_to_send = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Message Editor Min Lines",
-                    description: "Minimum number of lines to display in the agent message editor.",
-                    field: Box::new(SettingField {
-                        json_path: Some("agent.message_editor_min_lines"),
-                        pick: |settings_content| {
-                            settings_content
-                                .agent
-                                .as_ref()?
-                                .message_editor_min_lines
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .agent
-                                .get_or_insert_default()
-                                .message_editor_min_lines = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Context Servers"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Context Server Timeout",
-                    description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
-                    field: Box::new(SettingField {
-                        json_path: Some("context_server_timeout"),
-                        pick: |settings_content| {
-                            settings_content.project.context_server_timeout.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.project.context_server_timeout = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER | PROJECT,
-                }),
-            ];
-            items.extend(edit_prediction_language_settings_section());
-            items.extend(
-                    [
-                        SettingsPageItem::SettingItem(SettingItem {
-                            title: "Display Mode",
-                            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
-                            field: Box::new(SettingField {
-                                json_path: Some("edit_prediction.display_mode"),
-                                pick: |settings_content| {
-                                    settings_content.project.all_languages.edit_predictions.as_ref()?.mode.as_ref()
-                                },
-                                write: |settings_content, value| {
-                                    settings_content.project.all_languages.edit_predictions.get_or_insert_default().mode = value;
-                                },
-                            }),
-                            metadata: None,
-                            files: USER,
-                        }),
-                        SettingsPageItem::SettingItem(SettingItem {
-                            title: "Display In Text Threads",
-                            description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
-                            field: Box::new(SettingField {
-                                json_path: Some("edit_prediction.in_text_threads"),
-                                pick: |settings_content| {
-                                    settings_content.project.all_languages.edit_predictions.as_ref()?.enabled_in_text_threads.as_ref()
-                                },
-                                write: |settings_content, value| {
-                                    settings_content.project.all_languages.edit_predictions.get_or_insert_default().enabled_in_text_threads = value;
-                                },
-                            }),
-                            metadata: None,
-                            files: USER,
-                        }),
-                    ]
-                );
-            items.into_boxed_slice()
-        },
+        items: concat_sections![
+            general_section(),
+            agent_configuration_section(),
+            context_servers_section(),
+            edit_prediction_language_settings_section(),
+            edit_prediction_display_sub_section()
+        ],
     }
 }
 
 fn network_page() -> SettingsPage {
-    SettingsPage {
-        title: "Network",
-        items: Box::new([
+    fn network_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("Network"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Proxy",
@@ -6375,7 +6902,12 @@ fn network_page() -> SettingsPage {
                 })),
                 files: USER,
             }),
-        ]),
+        ]
+    }
+
+    SettingsPage {
+        title: "Network",
+        items: concat_sections![network_section()],
     }
 }
 
@@ -6422,875 +6954,764 @@ fn language_settings_field_mut<T>(
     write(language_content, value);
 }
 
-fn language_settings_data() -> impl Iterator<Item = SettingsPageItem> {
-    let indentation_section = [
-        SettingsPageItem::SectionHeader("Indentation"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Tab Size",
-            description: "How many columns a tab should occupy.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).tab_size"), // TODO(cameron): not JQ syntax because not URL-safe
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| language.tab_size.as_ref())
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.tab_size = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Hard Tabs",
-            description: "Whether to indent lines using tab characters, as opposed to multiple spaces.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).hard_tabs"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.hard_tabs.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.hard_tabs = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Auto Indent",
-            description: "Whether indentation should be adjusted based on the context whilst typing.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).auto_indent"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.auto_indent.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.auto_indent = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Auto Indent On Paste",
-            description: "Whether indentation of pasted content should be adjusted based on the context.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).auto_indent_on_paste"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.auto_indent_on_paste.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.auto_indent_on_paste = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
-
-    let wrapping_section = [
-        SettingsPageItem::SectionHeader("Wrapping"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Soft Wrap",
-            description: "How to soft-wrap long lines of text.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).soft_wrap"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.soft_wrap.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.soft_wrap = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Wrap Guides",
-            description: "Show wrap guides in the editor.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).show_wrap_guides"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.show_wrap_guides.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.show_wrap_guides = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Preferred Line Length",
-            description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).preferred_line_length"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.preferred_line_length.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.preferred_line_length = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Wrap Guides",
-            description: "Character counts at which to show wrap guides in the editor.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).wrap_guides"),
+fn language_settings_data() -> Box<[SettingsPageItem]> {
+    fn indentation_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("Indentation"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tab Size",
+                description: "How many columns a tab should occupy.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).tab_size"), // TODO(cameron): not JQ syntax because not URL-safe
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.wrap_guides.as_ref()
+                            language.tab_size.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.wrap_guides = value;
+                            language.tab_size = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Allow Rewrap",
-            description: "Controls where the `editor::rewrap` action is allowed for this language.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).allow_rewrap"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.allow_rewrap.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.allow_rewrap = value;
-                    })
-                },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
-
-    let indent_guides_section = [
-        SettingsPageItem::SectionHeader("Indent Guides"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enabled",
-            description: "Display indent guides in the editor.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).indent_guides.enabled"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language
-                            .indent_guides
-                            .as_ref()
-                            .and_then(|indent_guides| indent_guides.enabled.as_ref())
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.indent_guides.get_or_insert_default().enabled = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Line Width",
-            description: "The width of the indent guides in pixels, between 1 and 10.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).indent_guides.line_width"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language
-                            .indent_guides
-                            .as_ref()
-                            .and_then(|indent_guides| indent_guides.line_width.as_ref())
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.indent_guides.get_or_insert_default().line_width = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Active Line Width",
-            description: "The width of the active indent guide in pixels, between 1 and 10.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).indent_guides.active_line_width"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language
-                            .indent_guides
-                            .as_ref()
-                            .and_then(|indent_guides| indent_guides.active_line_width.as_ref())
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .indent_guides
-                            .get_or_insert_default()
-                            .active_line_width = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Coloring",
-            description: "Determines how indent guides are colored.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).indent_guides.coloring"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language
-                            .indent_guides
-                            .as_ref()
-                            .and_then(|indent_guides| indent_guides.coloring.as_ref())
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.indent_guides.get_or_insert_default().coloring = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Background Coloring",
-            description: "Determines how indent guide backgrounds are colored.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).indent_guides.background_coloring"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language
-                            .indent_guides
-                            .as_ref()
-                            .and_then(|indent_guides| indent_guides.background_coloring.as_ref())
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .indent_guides
-                            .get_or_insert_default()
-                            .background_coloring = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
-
-    let formatting_section = [
-        SettingsPageItem::SectionHeader("Formatting"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Format On Save",
-            description: "Whether or not to perform a buffer format before saving.",
-            field: Box::new(
-                // TODO(settings_ui): this setting should just be a bool
-                SettingField {
-                    json_path: Some("languages.$(language).format_on_save"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hard Tabs",
+                description: "Whether to indent lines using tab characters, as opposed to multiple spaces.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).hard_tabs"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.format_on_save.as_ref()
+                            language.hard_tabs.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.format_on_save = value;
+                            language.hard_tabs = value;
                         })
                     },
-                },
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Remove Trailing Whitespace On Save",
-            description: "Whether or not to remove any trailing whitespace from lines of a buffer before saving it.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).remove_trailing_whitespace_on_save"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.remove_trailing_whitespace_on_save.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.remove_trailing_whitespace_on_save = value;
-                    })
-                },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Ensure Final Newline On Save",
-            description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).ensure_final_newline_on_save"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.ensure_final_newline_on_save.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.ensure_final_newline_on_save = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Formatter",
-            description: "How to perform a buffer format.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).formatter"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Indent",
+                description: "Whether indentation should be adjusted based on the context whilst typing.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).auto_indent"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.formatter.as_ref()
+                            language.auto_indent.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.formatter = value;
+                            language.auto_indent = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Use On Type Format",
-            description: "Whether to use additional LSP queries to format (and amend) the code after every \"trigger\" symbol input, defined by LSP server capabilities",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).use_on_type_format"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.use_on_type_format.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.use_on_type_format = value;
-                    })
-                },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Code Actions On Format",
-            description: "Additional code actions to run when formatting.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).code_actions_on_format"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Indent On Paste",
+                description: "Whether indentation of pasted content should be adjusted based on the context.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).auto_indent_on_paste"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.code_actions_on_format.as_ref()
+                            language.auto_indent_on_paste.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.code_actions_on_format = value;
+                            language.auto_indent_on_paste = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
 
-    let autoclose_section = [
-        SettingsPageItem::SectionHeader("Autoclose"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Use Autoclose",
-            description: "Whether to automatically type closing characters for you. For example, when you type '(', Zed will automatically add a closing ')' at the correct position.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).use_autoclose"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.use_autoclose.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.use_autoclose = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Use Auto Surround",
-            description: "Whether to automatically surround text with characters for you. For example, when you select text and type '(', Zed will automatically surround text with ().",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).use_auto_surround"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.use_auto_surround.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.use_auto_surround = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Always Treat Brackets As Autoclosed",
-            description: "Controls whether the closing characters are always skipped over and auto-removed no matter how they were inserted.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).always_treat_brackets_as_autoclosed"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.always_treat_brackets_as_autoclosed.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.always_treat_brackets_as_autoclosed = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "JSX Tag Auto Close",
-            description: "Whether to automatically close JSX tags.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).jsx_tag_auto_close"),
-                // TODO(settings_ui): this setting should just be a bool
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.jsx_tag_auto_close.as_ref()?.enabled.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.jsx_tag_auto_close.get_or_insert_default().enabled = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
-
-    let whitespace_section = [
-        SettingsPageItem::SectionHeader("Whitespace"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Whitespaces",
-            description: "Whether to show tabs and spaces in the editor.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).show_whitespaces"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.show_whitespaces.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.show_whitespaces = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Space Whitespace Indicator",
-            description: "Visible character used to render space characters when show_whitespaces is enabled (default: \"•\")",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).whitespace_map.space"),
+    fn wrapping_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Wrapping"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Soft Wrap",
+                description: "How to soft-wrap long lines of text.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).soft_wrap"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.whitespace_map.as_ref()?.space.as_ref()
+                            language.soft_wrap.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.whitespace_map.get_or_insert_default().space = value;
+                            language.soft_wrap = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Tab Whitespace Indicator",
-            description: "Visible character used to render tab characters when show_whitespaces is enabled (default: \"→\")",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).whitespace_map.tab"),
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Wrap Guides",
+                description: "Show wrap guides in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).show_wrap_guides"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.whitespace_map.as_ref()?.tab.as_ref()
+                            language.show_wrap_guides.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.whitespace_map.get_or_insert_default().tab = value;
+                            language.show_wrap_guides = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Preferred Line Length",
+                description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).preferred_line_length"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.preferred_line_length.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.preferred_line_length = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Wrap Guides",
+                description: "Character counts at which to show wrap guides in the editor.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).wrap_guides"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.wrap_guides.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.wrap_guides = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Allow Rewrap",
+                description: "Controls where the `editor::rewrap` action is allowed for this language.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).allow_rewrap"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.allow_rewrap.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.allow_rewrap = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
 
-    let completions_section = [
-        SettingsPageItem::SectionHeader("Completions"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Completions On Input",
-            description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).show_completions_on_input"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.show_completions_on_input.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.show_completions_on_input = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Completion Documentation",
-            description: "Whether to display inline and alongside documentation for items in the completions menu.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).show_completion_documentation"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.show_completion_documentation.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.show_completion_documentation = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Words",
-            description: "Controls how words are completed.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).completions.words"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.completions.as_ref()?.words.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.completions.get_or_insert_default().words = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Words Min Length",
-            description: "How many characters has to be in the completions query to automatically show the words-based completions.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).completions.words_min_length"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.completions.as_ref()?.words_min_length.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .completions
-                            .get_or_insert_default()
-                            .words_min_length = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Completion Menu Scrollbar",
-            description: "When to show the scrollbar in the completion menu.",
-            field: Box::new(SettingField {
-                json_path: Some("editor.completion_menu_scrollbar"),
-                pick: |settings_content| settings_content.editor.completion_menu_scrollbar.as_ref(),
-                write: |settings_content, value| {
-                    settings_content.editor.completion_menu_scrollbar = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Completion Detail Alignment",
-            description: "Whether to align detail text in code completions context menus left or right.",
-            field: Box::new(SettingField {
-                json_path: Some("editor.completion_detail_alignment"),
-                pick: |settings_content| {
-                    settings_content.editor.completion_detail_alignment.as_ref()
-                },
-                write: |settings_content, value| {
-                    settings_content.editor.completion_detail_alignment = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-    ];
-
-    let inlay_hints_section = [
-        SettingsPageItem::SectionHeader("Inlay Hints"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enabled",
-            description: "Global switch to toggle hints on and off.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.enabled"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.enabled.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.inlay_hints.get_or_insert_default().enabled = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Value Hints",
-            description: "Global switch to toggle inline values on and off when debugging.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.show_value_hints"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.show_value_hints.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .inlay_hints
-                            .get_or_insert_default()
-                            .show_value_hints = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Type Hints",
-            description: "Whether type hints should be shown.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.show_type_hints"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.show_type_hints.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.inlay_hints.get_or_insert_default().show_type_hints = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Parameter Hints",
-            description: "Whether parameter hints should be shown.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.show_parameter_hints"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.show_parameter_hints.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .inlay_hints
-                            .get_or_insert_default()
-                            .show_parameter_hints = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Other Hints",
-            description: "Whether other hints should be shown.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.show_other_hints"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.show_other_hints.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .inlay_hints
-                            .get_or_insert_default()
-                            .show_other_hints = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Background",
-            description: "Show a background for inlay hints.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.show_background"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.show_background.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.inlay_hints.get_or_insert_default().show_background = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Edit Debounce Ms",
-            description: "Whether or not to debounce inlay hints updates after buffer edits (set to 0 to disable debouncing).",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.edit_debounce_ms"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.edit_debounce_ms.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .inlay_hints
-                            .get_or_insert_default()
-                            .edit_debounce_ms = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Scroll Debounce Ms",
-            description: "Whether or not to debounce inlay hints updates after buffer scrolls (set to 0 to disable debouncing).",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).inlay_hints.scroll_debounce_ms"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.inlay_hints.as_ref()?.scroll_debounce_ms.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .inlay_hints
-                            .get_or_insert_default()
-                            .scroll_debounce_ms = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Toggle On Modifiers Press",
-            description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).inlay_hints.toggle_on_modifiers_press"),
+    fn indent_guides_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Indent Guides"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Display indent guides in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).indent_guides.enabled"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             language
-                                .inlay_hints
-                                .as_ref()?
-                                .toggle_on_modifiers_press
+                                .indent_guides
                                 .as_ref()
+                                .and_then(|indent_guides| indent_guides.enabled.as_ref())
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.indent_guides.get_or_insert_default().enabled = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Width",
+                description: "The width of the indent guides in pixels, between 1 and 10.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).indent_guides.line_width"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language
+                                .indent_guides
+                                .as_ref()
+                                .and_then(|indent_guides| indent_guides.line_width.as_ref())
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.indent_guides.get_or_insert_default().line_width = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Active Line Width",
+                description: "The width of the active indent guide in pixels, between 1 and 10.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).indent_guides.active_line_width"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language
+                                .indent_guides
+                                .as_ref()
+                                .and_then(|indent_guides| indent_guides.active_line_width.as_ref())
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .indent_guides
+                                .get_or_insert_default()
+                                .active_line_width = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Coloring",
+                description: "Determines how indent guides are colored.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).indent_guides.coloring"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language
+                                .indent_guides
+                                .as_ref()
+                                .and_then(|indent_guides| indent_guides.coloring.as_ref())
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.indent_guides.get_or_insert_default().coloring = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Background Coloring",
+                description: "Determines how indent guide backgrounds are colored.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).indent_guides.background_coloring"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.indent_guides.as_ref().and_then(|indent_guides| {
+                                indent_guides.background_coloring.as_ref()
+                            })
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .indent_guides
+                                .get_or_insert_default()
+                                .background_coloring = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn formatting_section() -> [SettingsPageItem; 7] {
+        [
+            SettingsPageItem::SectionHeader("Formatting"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Format On Save",
+                description: "Whether or not to perform a buffer format before saving.",
+                field: Box::new(
+                    // TODO(settings_ui): this setting should just be a bool
+                    SettingField {
+                        json_path: Some("languages.$(language).format_on_save"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.format_on_save.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.format_on_save = value;
+                                },
+                            )
+                        },
+                    },
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Remove Trailing Whitespace On Save",
+                description: "Whether or not to remove any trailing whitespace from lines of a buffer before saving it.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).remove_trailing_whitespace_on_save"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.remove_trailing_whitespace_on_save.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.remove_trailing_whitespace_on_save = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Ensure Final Newline On Save",
+                description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).ensure_final_newline_on_save"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.ensure_final_newline_on_save.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.ensure_final_newline_on_save = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Formatter",
+                description: "How to perform a buffer format.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).formatter"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.formatter.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.formatter = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Use On Type Format",
+                description: "Whether to use additional LSP queries to format (and amend) the code after every \"trigger\" symbol input, defined by LSP server capabilities",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).use_on_type_format"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.use_on_type_format.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.use_on_type_format = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Actions On Format",
+                description: "Additional code actions to run when formatting.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).code_actions_on_format"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.code_actions_on_format.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.code_actions_on_format = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn autoclose_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("Autoclose"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Use Autoclose",
+                description: "Whether to automatically type closing characters for you. For example, when you type '(', Zed will automatically add a closing ')' at the correct position.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).use_autoclose"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.use_autoclose.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.use_autoclose = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Use Auto Surround",
+                description: "Whether to automatically surround text with characters for you. For example, when you select text and type '(', Zed will automatically surround text with ().",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).use_auto_surround"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.use_auto_surround.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.use_auto_surround = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Always Treat Brackets As Autoclosed",
+                description: "Controls whether the closing characters are always skipped over and auto-removed no matter how they were inserted.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).always_treat_brackets_as_autoclosed"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.always_treat_brackets_as_autoclosed.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.always_treat_brackets_as_autoclosed = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "JSX Tag Auto Close",
+                description: "Whether to automatically close JSX tags.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).jsx_tag_auto_close"),
+                    // TODO(settings_ui): this setting should just be a bool
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.jsx_tag_auto_close.as_ref()?.enabled.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.jsx_tag_auto_close.get_or_insert_default().enabled = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn whitespace_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Whitespace"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Whitespaces",
+                description: "Whether to show tabs and spaces in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).show_whitespaces"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.show_whitespaces.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.show_whitespaces = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Space Whitespace Indicator",
+                description: "Visible character used to render space characters when show_whitespaces is enabled (default: \"•\")",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).whitespace_map.space"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.whitespace_map.as_ref()?.space.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.whitespace_map.get_or_insert_default().space = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tab Whitespace Indicator",
+                description: "Visible character used to render tab characters when show_whitespaces is enabled (default: \"→\")",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).whitespace_map.tab"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.whitespace_map.as_ref()?.tab.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.whitespace_map.get_or_insert_default().tab = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn completions_section() -> [SettingsPageItem; 7] {
+        [
+            SettingsPageItem::SectionHeader("Completions"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Completions On Input",
+                description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).show_completions_on_input"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.show_completions_on_input.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.show_completions_on_input = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Completion Documentation",
+                description: "Whether to display inline and alongside documentation for items in the completions menu.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).show_completion_documentation"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.show_completion_documentation.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.show_completion_documentation = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Words",
+                description: "Controls how words are completed.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).completions.words"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.completions.as_ref()?.words.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.completions.get_or_insert_default().words = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Words Min Length",
+                description: "How many characters has to be in the completions query to automatically show the words-based completions.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).completions.words_min_length"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.completions.as_ref()?.words_min_length.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .completions
+                                .get_or_insert_default()
+                                .words_min_length = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Completion Menu Scrollbar",
+                description: "When to show the scrollbar in the completion menu.",
+                field: Box::new(SettingField {
+                    json_path: Some("editor.completion_menu_scrollbar"),
+                    pick: |settings_content| {
+                        settings_content.editor.completion_menu_scrollbar.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.completion_menu_scrollbar = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Completion Detail Alignment",
+                description: "Whether to align detail text in code completions context menus left or right.",
+                field: Box::new(SettingField {
+                    json_path: Some("editor.completion_detail_alignment"),
+                    pick: |settings_content| {
+                        settings_content.editor.completion_detail_alignment.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.completion_detail_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn inlay_hints_section() -> [SettingsPageItem; 10] {
+        [
+            SettingsPageItem::SectionHeader("Inlay Hints"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Global switch to toggle hints on and off.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.enabled"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.enabled.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.inlay_hints.get_or_insert_default().enabled = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Value Hints",
+                description: "Global switch to toggle inline values on and off when debugging.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.show_value_hints"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.show_value_hints.as_ref()
                         })
                     },
                     write: |settings_content, value| {
@@ -7298,18 +7719,411 @@ fn language_settings_data() -> impl Iterator<Item = SettingsPageItem> {
                             language
                                 .inlay_hints
                                 .get_or_insert_default()
-                                .toggle_on_modifiers_press = value;
+                                .show_value_hints = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Type Hints",
+                description: "Whether type hints should be shown.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.show_type_hints"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.show_type_hints.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.inlay_hints.get_or_insert_default().show_type_hints = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Parameter Hints",
+                description: "Whether parameter hints should be shown.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.show_parameter_hints"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.show_parameter_hints.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .inlay_hints
+                                .get_or_insert_default()
+                                .show_parameter_hints = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Other Hints",
+                description: "Whether other hints should be shown.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.show_other_hints"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.show_other_hints.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .inlay_hints
+                                .get_or_insert_default()
+                                .show_other_hints = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Background",
+                description: "Show a background for inlay hints.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.show_background"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.show_background.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.inlay_hints.get_or_insert_default().show_background = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Edit Debounce Ms",
+                description: "Whether or not to debounce inlay hints updates after buffer edits (set to 0 to disable debouncing).",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.edit_debounce_ms"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.edit_debounce_ms.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .inlay_hints
+                                .get_or_insert_default()
+                                .edit_debounce_ms = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Scroll Debounce Ms",
+                description: "Whether or not to debounce inlay hints updates after buffer scrolls (set to 0 to disable debouncing).",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.scroll_debounce_ms"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.scroll_debounce_ms.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language
+                                .inlay_hints
+                                .get_or_insert_default()
+                                .scroll_debounce_ms = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Toggle On Modifiers Press",
+                description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some(
+                            "languages.$(language).inlay_hints.toggle_on_modifiers_press",
+                        ),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language
+                                    .inlay_hints
+                                    .as_ref()?
+                                    .toggle_on_modifiers_press
+                                    .as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language
+                                        .inlay_hints
+                                        .get_or_insert_default()
+                                        .toggle_on_modifiers_press = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
 
-    let lsp_document_colors_item = SettingsPageItem::SettingItem(SettingItem {
+    fn tasks_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Tasks"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Whether tasks are enabled for this language.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).tasks.enabled"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.tasks.as_ref()?.enabled.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.tasks.get_or_insert_default().enabled = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Variables",
+                description: "Extra task variables to set for a particular language.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).tasks.variables"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.tasks.as_ref()?.variables.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.tasks.get_or_insert_default().variables = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prefer LSP",
+                description: "Use LSP tasks over Zed language extension tasks.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).tasks.prefer_lsp"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.tasks.as_ref()?.prefer_lsp.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.tasks.get_or_insert_default().prefer_lsp = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn miscellaneous_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Miscellaneous"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Word Diff Enabled",
+                description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).word_diff_enabled"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.word_diff_enabled.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.word_diff_enabled = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Debuggers",
+                description: "Preferred debuggers for this language.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).debuggers"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.debuggers.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.debuggers = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Middle Click Paste",
+                description: "Enable middle-click paste on Linux.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).editor.middle_click_paste"),
+                    pick: |settings_content| settings_content.editor.middle_click_paste.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.middle_click_paste = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Extend Comment On Newline",
+                description: "Whether to start a new line with a comment when a previous line is a comment as well.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).extend_comment_on_newline"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.extend_comment_on_newline.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.extend_comment_on_newline = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Colorize Brackets",
+                description: "Whether to colorize brackets in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).colorize_brackets"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.colorize_brackets.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.colorize_brackets = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Image Viewer",
+                description: "The unit for image file sizes.",
+                field: Box::new(SettingField {
+                    json_path: Some("image_viewer.unit"),
+                    pick: |settings_content| {
+                        settings_content
+                            .image_viewer
+                            .as_ref()
+                            .and_then(|image_viewer| image_viewer.unit.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content.image_viewer.get_or_insert_default().unit = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Replace Emoji Shortcode",
+                description: "Whether to automatically replace emoji shortcodes with emoji characters.",
+                field: Box::new(SettingField {
+                    json_path: Some("message_editor.auto_replace_emoji_shortcode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .message_editor
+                            .as_ref()
+                            .and_then(|message_editor| {
+                                message_editor.auto_replace_emoji_shortcode.as_ref()
+                            })
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .message_editor
+                            .get_or_insert_default()
+                            .auto_replace_emoji_shortcode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Drop Size Target",
+                description: "Relative size of the drop target in the editor that will open dropped file as a split pane.",
+                field: Box::new(SettingField {
+                    json_path: Some("drop_target_size"),
+                    pick: |settings_content| settings_content.workspace.drop_target_size.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.workspace.drop_target_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    let is_global = current_language().is_none();
+
+    let lsp_document_colors_item = [SettingsPageItem::SettingItem(SettingItem {
         title: "LSP Document Colors",
         description: "How to render LSP color previews in the editor.",
         field: Box::new(SettingField {
@@ -7321,492 +8135,330 @@ fn language_settings_data() -> impl Iterator<Item = SettingsPageItem> {
         }),
         metadata: None,
         files: USER,
-    });
+    })];
 
-    let tasks_section = [
-        SettingsPageItem::SectionHeader("Tasks"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enabled",
-            description: "Whether tasks are enabled for this language.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).tasks.enabled"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.tasks.as_ref()?.enabled.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.tasks.get_or_insert_default().enabled = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Variables",
-            description: "Extra task variables to set for a particular language.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).tasks.variables"),
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            language.tasks.as_ref()?.variables.as_ref()
-                        })
-                    },
-                    write: |settings_content, value| {
-                        language_settings_field_mut(settings_content, value, |language, value| {
-                            language.tasks.get_or_insert_default().variables = value;
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Prefer LSP",
-            description: "Use LSP tasks over Zed language extension tasks.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).tasks.prefer_lsp"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.tasks.as_ref()?.prefer_lsp.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.tasks.get_or_insert_default().prefer_lsp = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
-
-    let miscellaneous_section = [
-        SettingsPageItem::SectionHeader("Miscellaneous"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Word Diff Enabled",
-            description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).word_diff_enabled"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.word_diff_enabled.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.word_diff_enabled = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Debuggers",
-            description: "Preferred debuggers for this language.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).debuggers"),
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            language.debuggers.as_ref()
-                        })
-                    },
-                    write: |settings_content, value| {
-                        language_settings_field_mut(settings_content, value, |language, value| {
-                            language.debuggers = value;
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Middle Click Paste",
-            description: "Enable middle-click paste on Linux.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).editor.middle_click_paste"),
-                pick: |settings_content| settings_content.editor.middle_click_paste.as_ref(),
-                write: |settings_content, value| {
-                    settings_content.editor.middle_click_paste = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Extend Comment On Newline",
-            description: "Whether to start a new line with a comment when a previous line is a comment as well.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).extend_comment_on_newline"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.extend_comment_on_newline.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.extend_comment_on_newline = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Colorize Brackets",
-            description: "Whether to colorize brackets in the editor.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).colorize_brackets"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.colorize_brackets.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.colorize_brackets = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ];
-
-    let global_only_items = [
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Image Viewer",
-            description: "The unit for image file sizes.",
-            field: Box::new(SettingField {
-                json_path: Some("image_viewer.unit"),
-                pick: |settings_content| {
-                    settings_content
-                        .image_viewer
-                        .as_ref()
-                        .and_then(|image_viewer| image_viewer.unit.as_ref())
-                },
-                write: |settings_content, value| {
-                    settings_content.image_viewer.get_or_insert_default().unit = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Auto Replace Emoji Shortcode",
-            description: "Whether to automatically replace emoji shortcodes with emoji characters.",
-            field: Box::new(SettingField {
-                json_path: Some("message_editor.auto_replace_emoji_shortcode"),
-                pick: |settings_content| {
-                    settings_content
-                        .message_editor
-                        .as_ref()
-                        .and_then(|message_editor| {
-                            message_editor.auto_replace_emoji_shortcode.as_ref()
-                        })
-                },
-                write: |settings_content, value| {
-                    settings_content
-                        .message_editor
-                        .get_or_insert_default()
-                        .auto_replace_emoji_shortcode = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Drop Size Target",
-            description: "Relative size of the drop target in the editor that will open dropped file as a split pane.",
-            field: Box::new(SettingField {
-                json_path: Some("drop_target_size"),
-                pick: |settings_content| settings_content.workspace.drop_target_size.as_ref(),
-                write: |settings_content, value| {
-                    settings_content.workspace.drop_target_size = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-    ];
-
-    let is_global = current_language().is_none();
-
-    indentation_section
-        .into_iter()
-        .chain(wrapping_section)
-        .chain(indent_guides_section)
-        .chain(formatting_section)
-        .chain(autoclose_section)
-        .chain(whitespace_section)
-        .chain(completions_section)
-        .chain(inlay_hints_section)
-        .chain(is_global.then_some(lsp_document_colors_item))
-        .chain(tasks_section)
-        .chain(miscellaneous_section)
-        .chain(is_global.then(|| global_only_items).into_iter().flatten())
+    if is_global {
+        concat_sections!(
+            indentation_section(),
+            wrapping_section(),
+            indent_guides_section(),
+            formatting_section(),
+            autoclose_section(),
+            whitespace_section(),
+            completions_section(),
+            inlay_hints_section(),
+            lsp_document_colors_item,
+            tasks_section(),
+            miscellaneous_section(),
+            global_only_miscellaneous_sub_section(),
+        )
+    } else {
+        concat_sections!(
+            indentation_section(),
+            wrapping_section(),
+            indent_guides_section(),
+            formatting_section(),
+            autoclose_section(),
+            whitespace_section(),
+            completions_section(),
+            inlay_hints_section(),
+            tasks_section(),
+            miscellaneous_section(),
+        )
+    }
 }
 
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
-fn non_editor_language_settings_data() -> impl Iterator<Item = SettingsPageItem> {
-    [
-        SettingsPageItem::SectionHeader("LSP"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enable Language Server",
-            description: "Whether to use language servers to provide code intelligence.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).enable_language_server"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.enable_language_server.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.enable_language_server = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Language Servers",
-            description: "The list of language servers to use (or disable) for this language.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).language_servers"),
+fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
+    fn lsp_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("LSP"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enable Language Server",
+                description: "Whether to use language servers to provide code intelligence.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).enable_language_server"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.language_servers.as_ref()
+                            language.enable_language_server.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.language_servers = value;
+                            language.enable_language_server = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Linked Edits",
-            description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).linked_edits"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.linked_edits.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.linked_edits = value;
-                    })
-                },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Go To Definition Fallback",
-            description: "Whether to follow-up empty Go to definition responses from the language server.",
-            field: Box::new(SettingField {
-                json_path: Some("go_to_definition_fallback"),
-                pick: |settings_content| settings_content.editor.go_to_definition_fallback.as_ref(),
-                write: |settings_content, value| {
-                    settings_content.editor.go_to_definition_fallback = value;
-                },
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Language Servers",
+                description: "The list of language servers to use (or disable) for this language.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).language_servers"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.language_servers.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.language_servers = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SectionHeader("LSP Completions"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enabled",
-            description: "Whether to fetch LSP completions or not.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).completions.lsp"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.completions.as_ref()?.lsp.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.completions.get_or_insert_default().lsp = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Fetch Timeout (milliseconds)",
-            description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely).",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).completions.lsp_fetch_timeout_ms"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.completions.as_ref()?.lsp_fetch_timeout_ms.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language
-                            .completions
-                            .get_or_insert_default()
-                            .lsp_fetch_timeout_ms = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Insert Mode",
-            description: "Controls how LSP completions are inserted.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).completions.lsp_insert_mode"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.completions.as_ref()?.lsp_insert_mode.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.completions.get_or_insert_default().lsp_insert_mode = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SectionHeader("Debuggers"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Debuggers",
-            description: "Preferred debuggers for this language.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).debuggers"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Linked Edits",
+                description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).linked_edits"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.debuggers.as_ref()
+                            language.linked_edits.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.debuggers = value;
+                            language.linked_edits = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SectionHeader("Prettier"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Allowed",
-            description: "Enables or disables formatting with Prettier for a given language.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).prettier.allowed"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.prettier.as_ref()?.allowed.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.prettier.get_or_insert_default().allowed = value;
-                    })
-                },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Parser",
-            description: "Forces Prettier integration to use a specific parser name when formatting files with the language.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).prettier.parser"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.prettier.as_ref()?.parser.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.prettier.get_or_insert_default().parser = value;
-                    })
-                },
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Go To Definition Fallback",
+                description: "Whether to follow-up empty Go to definition responses from the language server.",
+                field: Box::new(SettingField {
+                    json_path: Some("go_to_definition_fallback"),
+                    pick: |settings_content| {
+                        settings_content.editor.go_to_definition_fallback.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.go_to_definition_fallback = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Plugins",
-            description: "Forces Prettier integration to use specific plugins when formatting files with the language.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).prettier.plugins"),
+        ]
+    }
+
+    fn lsp_completions_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("LSP Completions"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Whether to fetch LSP completions or not.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).completions.lsp"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.prettier.as_ref()?.plugins.as_ref()
+                            language.completions.as_ref()?.lsp.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.prettier.get_or_insert_default().plugins = value;
+                            language.completions.get_or_insert_default().lsp = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Options",
-            description: "Default Prettier options, in the format as in package.json section for Prettier.",
-            field: Box::new(
-                SettingField {
-                    json_path: Some("languages.$(language).prettier.options"),
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Fetch Timeout (milliseconds)",
+                description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely).",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).completions.lsp_fetch_timeout_ms"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            language.prettier.as_ref()?.options.as_ref()
+                            language.completions.as_ref()?.lsp_fetch_timeout_ms.as_ref()
                         })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                            language.prettier.get_or_insert_default().options = value;
+                            language
+                                .completions
+                                .get_or_insert_default()
+                                .lsp_fetch_timeout_ms = value;
                         })
                     },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-    ]
-    .into_iter()
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Insert Mode",
+                description: "Controls how LSP completions are inserted.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).completions.lsp_insert_mode"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.completions.as_ref()?.lsp_insert_mode.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.completions.get_or_insert_default().lsp_insert_mode = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn debugger_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Debuggers"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Debuggers",
+                description: "Preferred debuggers for this language.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).debuggers"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.debuggers.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.debuggers = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    fn prettier_section() -> [SettingsPageItem; 5] {
+        [
+            SettingsPageItem::SectionHeader("Prettier"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Allowed",
+                description: "Enables or disables formatting with Prettier for a given language.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).prettier.allowed"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.prettier.as_ref()?.allowed.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.prettier.get_or_insert_default().allowed = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Parser",
+                description: "Forces Prettier integration to use a specific parser name when formatting files with the language.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).prettier.parser"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.prettier.as_ref()?.parser.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.prettier.get_or_insert_default().parser = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Plugins",
+                description: "Forces Prettier integration to use specific plugins when formatting files with the language.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).prettier.plugins"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.prettier.as_ref()?.plugins.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.prettier.get_or_insert_default().plugins = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Options",
+                description: "Default Prettier options, in the format as in package.json section for Prettier.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("languages.$(language).prettier.options"),
+                        pick: |settings_content| {
+                            language_settings_field(settings_content, |language| {
+                                language.prettier.as_ref()?.options.as_ref()
+                            })
+                        },
+                        write: |settings_content, value| {
+                            language_settings_field_mut(
+                                settings_content,
+                                value,
+                                |language, value| {
+                                    language.prettier.get_or_insert_default().options = value;
+                                },
+                            )
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
+    concat_sections!(
+        lsp_section(),
+        lsp_completions_section(),
+        debugger_section(),
+        prettier_section(),
+    )
 }
 
-fn edit_prediction_language_settings_section() -> impl Iterator<Item = SettingsPageItem> {
+fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
     [
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SubPageLink(SubPageLink {
@@ -7865,7 +8517,6 @@ fn edit_prediction_language_settings_section() -> impl Iterator<Item = SettingsP
             files: USER | PROJECT,
         }),
     ]
-    .into_iter()
 }
 
 fn show_scrollbar_or_editor(
