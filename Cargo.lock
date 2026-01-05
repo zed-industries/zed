@@ -3242,6 +3242,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "code_actions_picker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "picker",
+ "task",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20682,6 +20700,7 @@ dependencies = [
  "clap",
  "cli",
  "client",
+ "code_actions_picker",
  "codestral",
  "collab_ui",
  "collections",

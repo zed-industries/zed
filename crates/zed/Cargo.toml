@@ -36,6 +36,7 @@ channel.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
+code_actions_picker.workspace = true
 codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true

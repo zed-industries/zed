@@ -575,7 +575,8 @@
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-shift-space": "editor::ShowWordCompletions",
-      "cmd-.": "editor::ToggleCodeActions",
+      "cmd-.": "editor::ToggleCodeActionsPicker",
+      "cmd-shift-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
       "cmd-\\": "pane::SplitRight",

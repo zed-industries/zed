@@ -189,7 +189,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
+use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
     AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
@@ -6476,6 +6476,158 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    pub fn gather_code_actions(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<(Entity<Buffer>, CodeActionContents)>> {
+        let snapshot = self.snapshot(window, cx);
+        let multibuffer_point = self
+            .selections
+            .newest::<Point>(&snapshot.display_snapshot)
+            .head();
+
+        let Some((buffer, buffer_row)) = snapshot
+            .buffer_snapshot()
+            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+            .and_then(|(buffer_snapshot, range)| {
+                self.buffer()
+                    .read(cx)
+                    .buffer(buffer_snapshot.remote_id())
+                    .map(|buffer| (buffer, range.start.row))
+            })
+        else {
+            return Task::ready(None);
+        };
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let tasks = self
+            .tasks
+            .get(&(buffer_id, buffer_row))
+            .map(|t| Arc::new(t.to_owned()));
+
+        let project = self.project.clone();
+        let code_actions_task = self.code_actions(buffer_row, window, cx);
+
+        let runnable_task = {
+            let mut task_context_task = Task::ready(None);
+            if let Some(tasks) = &tasks
+                && let Some(project) = project
+            {
+                task_context_task =
+                    Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx);
+            }
+
+            cx.spawn_in(window, {
+                let buffer = buffer.clone();
+                async move |editor, cx| {
+                    let task_context = task_context_task.await;
+
+                    let resolved_tasks =
+                        tasks
+                            .zip(task_context.clone())
+                            .map(|(tasks, task_context)| ResolvedTasks {
+                                templates: tasks.resolve(&task_context).collect(),
+                                position: snapshot
+                                    .buffer_snapshot()
+                                    .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
+                            });
+                    let debug_scenarios = editor
+                        .update(cx, |editor, cx| {
+                            editor.debug_scenarios(&resolved_tasks, &buffer, cx)
+                        })?
+                        .await;
+                    anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
+                }
+            })
+        };
+
+        cx.spawn_in(window, {
+            let buffer = buffer.clone();
+            async move |_editor, _cx| {
+                let (resolved_tasks, debug_scenarios, task_context) =
+                    runnable_task.await.log_err()?;
+                let code_actions = code_actions_task.await;
+
+                let actions = CodeActionContents::new(
+                    resolved_tasks,
+                    code_actions,
+                    debug_scenarios,
+                    task_context.unwrap_or_default(),
+                );
+
+                if actions.is_empty() {
+                    return None;
+                }
+
+                Some((buffer, actions))
+            }
+        })
+    }
+
+    pub fn apply_code_action_item(
+        &mut self,
+        action: CodeActionsItem,
+        buffer: Entity<Buffer>,
+        context: TaskContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let title = action.label();
+        let workspace = self.workspace()?;
+
+        match action {
+            CodeActionsItem::Task(task_source_kind, resolved_task) => {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.schedule_resolved_task(
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        window,
+                        cx,
+                    );
+                    Some(Task::ready(Ok(())))
+                })
+            }
+            CodeActionsItem::CodeAction {
+                excerpt_id,
+                action,
+                provider,
+            } => {
+                let apply_code_action =
+                    provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
+                let workspace = workspace.downgrade();
+                Some(cx.spawn_in(window, async move |editor, cx| {
+                    let project_transaction = apply_code_action.await?;
+                    Self::open_project_transaction(
+                        &editor,
+                        workspace,
+                        project_transaction,
+                        title,
+                        cx,
+                    )
+                    .await
+                }))
+            }
+            CodeActionsItem::DebugScenario(scenario) => {
+                workspace.update(cx, |workspace, cx| {
+                    dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
+                    workspace.start_debug_session(
+                        scenario,
+                        context,
+                        Some(buffer),
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+                Some(Task::ready(Ok(())))
+            }
+        }
+    }
+
     fn debug_scenarios(
         &mut self,
         resolved_tasks: &Option<ResolvedTasks>,
@@ -6560,8 +6712,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-
         let actions_menu =
             if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
                 menu
@@ -6570,62 +6720,12 @@ impl Editor {
             };
 
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?;
-        let title = action.label();
         let buffer = actions_menu.buffer;
-        let workspace = self.workspace()?;
+        let actions = actions_menu.actions;
+        let item = actions.get(action_ix)?;
+        let context = actions.context;
 
-        match action {
-            CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.schedule_resolved_task(
-                        task_source_kind,
-                        resolved_task,
-                        false,
-                        window,
-                        cx,
-                    );
-
-                    Some(Task::ready(Ok(())))
-                })
-            }
-            CodeActionsItem::CodeAction {
-                excerpt_id,
-                action,
-                provider,
-            } => {
-                let apply_code_action =
-                    provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
-                let workspace = workspace.downgrade();
-                Some(cx.spawn_in(window, async move |editor, cx| {
-                    let project_transaction = apply_code_action.await?;
-                    Self::open_project_transaction(
-                        &editor,
-                        workspace,
-                        project_transaction,
-                        title,
-                        cx,
-                    )
-                    .await
-                }))
-            }
-            CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context;
-
-                workspace.update(cx, |workspace, cx| {
-                    dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
-                    workspace.start_debug_session(
-                        scenario,
-                        context,
-                        Some(buffer),
-                        None,
-                        window,
-                        cx,
-                    );
-                });
-                Some(Task::ready(Ok(())))
-            }
-        }
+        self.apply_code_action_item(item, buffer, context, window, cx)
     }
 
     fn open_transaction_for_hidden_buffers(

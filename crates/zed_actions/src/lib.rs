@@ -601,3 +601,11 @@ pub mod wsl_actions {
         pub create_new_window: bool,
     }
 }
+
+actions!(
+    editor,
+    [
+        /// Toggles the code actions picker with fuzzy search.
+        ToggleCodeActionsPicker
+    ]
+);
