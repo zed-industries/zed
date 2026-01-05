@@ -4019,8 +4019,9 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         })
         .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx);
-    });
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
+    })
+    .await;
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4056,8 +4057,9 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         })
         .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx);
-    });
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
+    })
+    .await;
     cx.run_until_parked();
 
     assert_new_snapshot(
