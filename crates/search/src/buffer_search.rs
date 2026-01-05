@@ -6,8 +6,8 @@ use crate::{
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{
-        ActionButtonState, alignment_element, input_base_styles, render_action_button,
-        render_text_input,
+        ActionButtonState, alignment_element, filter_search_results_input, input_base_styles,
+        render_action_button, render_text_input,
     },
 };
 use any_vec::AnyVec;
@@ -258,7 +258,13 @@ impl Render for BufferSearchBar {
         let input_base_styles =
             |border_color| input_base_styles(border_color, |div| div.w(input_width));
 
-        let query_column = input_base_styles(query_border)
+        let input_style = if find_in_results {
+            filter_search_results_input(query_border, |div| div.w(input_width), cx)
+        } else {
+            input_base_styles(query_border)
+        };
+
+        let query_column = input_style
             .id("editor-scroll")
             .track_scroll(&self.editor_scroll_handle)
             .child(render_text_input(&self.query_editor, color_override, cx))
@@ -396,9 +402,7 @@ impl Render for BufferSearchBar {
         let search_line = h_flex()
             .w_full()
             .gap_2()
-            .when(find_in_results, |el| {
-                el.child(Label::new("Find in Results").color(Color::Muted))
-            })
+            .when(find_in_results, |el| el.child(alignment_element()))
             .when(!find_in_results && has_collapse_button, |el| {
                 el.pl_0p5().child(collapse_expand_button.expect("button"))
             })
