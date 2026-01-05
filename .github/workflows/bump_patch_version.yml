@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: branch
+        description: Branch name to run on
         required: true
         type: string
 jobs:
