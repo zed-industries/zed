@@ -50,6 +50,7 @@ Before diving into the implementation, here's a brief overview of the existing a
 **All UI changes MUST be behind the `subagents` feature flag.** This ensures that merging PRs into the Zed codebase does not affect users who don't have the feature flag enabled.
 
 **Implement ONE PR at a time.** After completing a PR:
+
 1. Run `./script/clippy` and fix any issues
 2. Run the relevant tests and fix any failures
 3. Babysit CI until the PR passes all checks
@@ -66,11 +67,13 @@ Each PR should be:
 - **Self-contained**: Tests pass, feature flag protects incomplete work, no regressions
 
 **What to avoid:**
+
 - ❌ Behemoth PRs with 5000+ lines touching 50+ files
 - ❌ Microscopic PRs that just "scoot a few pixels around"
 - ❌ PRs that leave the codebase in a broken state even behind the flag
 
 **What to aim for:**
+
 - ✅ Each PR delivers a "checkpoint" of visible functionality
 - ✅ Reviewer can understand the PR's purpose in <5 minutes
 - ✅ You can demo something new after each PR lands
@@ -79,13 +82,13 @@ Each PR should be:
 
 The implementation is broken into **5 PRs** (see [Staged PR Breakdown](#staged-pr-breakdown) for details):
 
-| PR | Focus | Visual Result |
-|----|-------|---------------|
-| 1 | Feature flag + basic tool skeleton | Tool appears in list (does nothing) |
-| 2 | Thread spawning + basic execution | Subagent runs, returns text result |
-| 3 | UI card rendering (collapsed state) | Collapsible card shows in chat |
-| 4 | UI expansion + embedded thread view | Can expand to see subagent's work |
-| 5 | Polish: token display, error states, persistence | Production-ready experience |
+| PR  | Focus                                            | Visual Result                       |
+| --- | ------------------------------------------------ | ----------------------------------- |
+| 1   | Feature flag + basic tool skeleton               | Tool appears in list (does nothing) |
+| 2   | Thread spawning + basic execution                | Subagent runs, returns text result  |
+| 3   | UI card rendering (collapsed state)              | Collapsible card shows in chat      |
+| 4   | UI expansion + embedded thread view              | Can expand to see subagent's work   |
+| 5   | Polish: token display, error states, persistence | Production-ready experience         |
 
 ---
 
@@ -257,6 +260,7 @@ fn integration_subagent_with_haiku() {
 ```
 
 **Cost-conscious guidelines:**
+
 - Use Claude 3 Haiku (`claude-3-haiku-20240307`) - it's the cheapest
 - Run integration tests manually, not in CI
 - Keep prompts minimal to reduce token usage
@@ -267,18 +271,21 @@ fn integration_subagent_with_haiku() {
 When reviewing `target/visual_tests/` screenshots, check:
 
 1. **Collapsed state:**
+
    - Is the label visible and properly truncated if too long?
    - Is the expand chevron visible?
    - Does the loading indicator appear during execution?
    - Is token usage visible (e.g., "120k/200k")?
 
 2. **Expanded state:**
+
    - Does the embedded thread render correctly?
    - Is there appropriate max-height with scrolling?
    - Are tool calls within the subagent visible?
    - Does the visual hierarchy feel right?
 
 3. **Error states:**
+
    - Does a failed subagent show as a failed tool call?
    - Is the error message visible but not overwhelming?
 
@@ -809,6 +816,7 @@ pub fn add_default_tools(
 ### New Thread Constructor for Subagents
 
 Each subagent gets its own `Thread` entity with:
+
 - Its own `AcpThread` for UI rendering (allows reusing existing thread view code)
 - Its own `AcpThreadEnvironment` (so terminals appear inside the subagent's expandable card)
 - No title generation (the parent provides a `label` in the tool input)
@@ -1159,6 +1167,7 @@ pub fn list_threads(&self, cx: &App) -> Vec<ThreadListEntry> {
 Each subagent has its own `AcpThread` entity, which allows the expanded view to reuse the existing thread rendering code. The parent thread's tool call card embeds a reference to the subagent's `AcpThread` for rendering.
 
 The subagent card displays:
+
 - A `label` provided by the parent (similar to terminal tool calls)
 - Live token usage (e.g., "120k/200k")
 - A chevron to expand/collapse
@@ -1645,6 +1654,7 @@ impl LanguageModel for MockLanguageModel {
 ## Staged PR Breakdown
 
 This section breaks down the implementation into 5 reviewable PRs. Each PR is designed to be:
+
 - **Landable independently** (no broken states)
 - **Visually verifiable** (you can see something new in Zed)
 - **Quick to review** (<500 meaningful lines)
@@ -1659,25 +1669,28 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 
 **Files to create/modify:**
 
-| File | Changes |
-|------|---------|
-| `crates/feature_flags/src/flags.rs` | Add `SubagentsFeatureFlag` |
+| File                                      | Changes                                                                                                          |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `crates/feature_flags/src/flags.rs`       | Add `SubagentsFeatureFlag`                                                                                       |
 | `crates/agent/src/tools/subagent_tool.rs` | New file: `SubagentToolInput` struct, `SubagentTool` struct with stub `run()` that returns "Not implemented yet" |
-| `crates/agent/src/tools.rs` | Add `mod subagent_tool`, `pub use subagent_tool::*` |
-| `crates/agent/src/thread.rs` | In `add_default_tools()`, conditionally add `SubagentTool` behind feature flag |
+| `crates/agent/src/tools.rs`               | Add `mod subagent_tool`, `pub use subagent_tool::*`                                                              |
+| `crates/agent/src/thread.rs`              | In `add_default_tools()`, conditionally add `SubagentTool` behind feature flag                                   |
 
 **Visual verification:**
+
 1. Enable `subagents` feature flag
 2. Open Agent panel
 3. Check tool list and also try asking "What tools do you have?"
 4. Verify `subagent` appears in the list
 
 **Tests to include:**
+
 - Unit test: `SubagentTool` is included when flag enabled
 - Unit test: `SubagentTool` is NOT included when flag disabled
 - Unit test: `SubagentToolInput` JSON schema is valid
 
 **Definition of Done:**
+
 - [x] Feature flag works
 - [x] Tool appears in tool list when flag enabled
 - [x] Tool schema is correctly generated
@@ -1696,18 +1709,20 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 
 **Files to create/modify:**
 
-| File | Changes |
-|------|---------|
-| `crates/agent/src/thread.rs` | Add `SubagentContext`, `SubagentStatusUpdate`, `subagent_context` field, `new_subagent()` constructor, `is_subagent()`, `depth()` methods |
-| `crates/agent/src/tools/subagent_tool.rs` | Implement real `run()`: spawn thread, send task prompt, wait for completion, send summary prompt, return result |
-| `crates/agent/src/thread.rs` | Add `interrupt_for_summary()`, `request_final_summary()`, `wait_for_turn_completion()` |
+| File                                      | Changes                                                                                                                                   |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/agent/src/thread.rs`              | Add `SubagentContext`, `SubagentStatusUpdate`, `subagent_context` field, `new_subagent()` constructor, `is_subagent()`, `depth()` methods |
+| `crates/agent/src/tools/subagent_tool.rs` | Implement real `run()`: spawn thread, send task prompt, wait for completion, send summary prompt, return result                           |
+| `crates/agent/src/thread.rs`              | Add `interrupt_for_summary()`, `request_final_summary()`, `wait_for_turn_completion()`                                                    |
 
 **Visual verification:**
+
 1. Enable feature flag
 2. Prompt: "Use a subagent to find all TODO comments in this project and summarize them"
 3. Observe: Agent spawns subagent, subagent runs, result appears as tool result text
 
 **Tests to include:**
+
 - `test_subagent_receives_task_prompt`
 - `test_subagent_returns_summary_on_completion`
 - `test_subagent_inherits_parent_model`
@@ -1715,6 +1730,7 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 - `test_allowed_tools_validated`
 
 **Definition of Done:**
+
 - [x] Subagent spawns with correct model
 - [x] Task prompt is sent to subagent
 - [x] Subagent can use tools
@@ -1734,14 +1750,15 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 
 **Files to create/modify:**
 
-| File | Changes |
-|------|---------|
-| `crates/acp_thread/src/acp_thread.rs` | Add handling for subagent tool calls, token usage custom field |
+| File                                     | Changes                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `crates/acp_thread/src/acp_thread.rs`    | Add handling for subagent tool calls, token usage custom field                                          |
 | `crates/agent_ui/src/acp/thread_view.rs` | Add `expanded_subagents` state, `render_subagent_tool_call()` for collapsed card with label and chevron |
-| `crates/zed/src/zed/visual_tests.rs` | Add `test_subagent_tool_card_collapsed` visual test |
-| `crates/zed/test_fixtures/visual_tests/` | Add baseline image |
+| `crates/zed/src/zed/visual_tests.rs`     | Add `test_subagent_tool_card_collapsed` visual test                                                     |
+| `crates/zed/test_fixtures/visual_tests/` | Add baseline image                                                                                      |
 
 **Visual testing workflow:**
+
 ```bash
 # 1. Implement the collapsed card rendering
 # 2. Generate screenshot
@@ -1754,16 +1771,19 @@ UPDATE_BASELINES=1 cargo test -p zed visual_tests::subagent_collapsed -- --ignor
 ```
 
 **Visual verification:**
+
 1. Run subagent
 2. Card appears with label (e.g., "Researching alternatives")
 3. Chevron indicates it can be expanded
 4. Card styling matches terminal tool call cards
 
 **Tests to include:**
+
 - Visual test: `test_subagent_tool_card_collapsed`
 - Unit test: `expanded_subagents` state toggles correctly
 
 **Definition of Done:**
+
 - [ ] Collapsed card renders with label
 - [ ] Chevron/disclosure icon visible
 - [ ] Card styling consistent with other tool cards
@@ -1780,14 +1800,15 @@ UPDATE_BASELINES=1 cargo test -p zed visual_tests::subagent_collapsed -- --ignor
 
 **Files to create/modify:**
 
-| File | Changes |
-|------|---------|
-| `crates/agent_ui/src/acp/thread_view.rs` | Add `render_subagent_thread()`, implement expand/collapse click handler, add max-height and scroll for embedded thread |
-| `crates/acp_thread/src/acp_thread.rs` | Store weak reference to subagent thread for rendering |
-| `crates/agent/src/tools/subagent_tool.rs` | Pass thread reference through to UI layer |
-| `crates/zed/src/zed/visual_tests.rs` | Add `test_subagent_tool_card_expanded`, `test_multiple_subagents_parallel` |
+| File                                      | Changes                                                                                                                |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `crates/agent_ui/src/acp/thread_view.rs`  | Add `render_subagent_thread()`, implement expand/collapse click handler, add max-height and scroll for embedded thread |
+| `crates/acp_thread/src/acp_thread.rs`     | Store weak reference to subagent thread for rendering                                                                  |
+| `crates/agent/src/tools/subagent_tool.rs` | Pass thread reference through to UI layer                                                                              |
+| `crates/zed/src/zed/visual_tests.rs`      | Add `test_subagent_tool_card_expanded`, `test_multiple_subagents_parallel`                                             |
 
 **Visual testing workflow:**
+
 ```bash
 # Test expanded state
 cargo test -p zed visual_tests::subagent_expanded -- --ignored --test-threads=1
@@ -1797,6 +1818,7 @@ open target/visual_tests/subagent_expanded.png
 ```
 
 **Visual verification:**
+
 1. Run subagent
 2. Click collapsed card
 3. Card expands, shows subagent's messages and tool calls
@@ -1804,12 +1826,14 @@ open target/visual_tests/subagent_expanded.png
 5. Click again to collapse
 
 **Tests to include:**
+
 - Visual test: `test_subagent_tool_card_expanded`
 - Visual test: `test_multiple_subagents_parallel`
 - Unit test: Click toggles expand state
 - Unit test: Subagent thread renders all message types
 
 **Definition of Done:**
+
 - [ ] Expand/collapse works
 - [ ] Subagent thread renders inside card
 - [ ] Scrolling works for long content
@@ -1827,16 +1851,17 @@ open target/visual_tests/subagent_expanded.png
 
 **Files to create/modify:**
 
-| File | Changes |
-|------|---------|
-| `crates/agent/src/thread.rs` | Modify `cancel()` to propagate to subagents, add `running_subagents` tracking |
-| `crates/agent/src/thread.rs` | Modify `update_token_usage()` to send updates to parent |
-| `crates/agent_ui/src/acp/thread_view.rs` | Render live token usage (e.g., "120k/200k"), error states |
-| `crates/agent/src/db.rs` | Add `is_subagent`, `parent_thread_id` fields |
-| `crates/agent/src/history_store.rs` | Filter subagent threads from history list |
-| `crates/zed/src/zed/visual_tests.rs` | Add `test_subagent_token_usage_display`, `test_subagent_error_state` |
+| File                                     | Changes                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------- |
+| `crates/agent/src/thread.rs`             | Modify `cancel()` to propagate to subagents, add `running_subagents` tracking |
+| `crates/agent/src/thread.rs`             | Modify `update_token_usage()` to send updates to parent                       |
+| `crates/agent_ui/src/acp/thread_view.rs` | Render live token usage (e.g., "120k/200k"), error states                     |
+| `crates/agent/src/db.rs`                 | Add `is_subagent`, `parent_thread_id` fields                                  |
+| `crates/agent/src/history_store.rs`      | Filter subagent threads from history list                                     |
+| `crates/zed/src/zed/visual_tests.rs`     | Add `test_subagent_token_usage_display`, `test_subagent_error_state`          |
 
 **Visual testing workflow:**
+
 ```bash
 # Test token display
 cargo test -p zed visual_tests::subagent_tokens -- --ignored --test-threads=1
@@ -1845,12 +1870,14 @@ cargo test -p zed visual_tests::subagent_error -- --ignored --test-threads=1
 ```
 
 **Visual verification:**
+
 1. Run subagent, observe token counter updating
 2. Trigger an error (e.g., invalid tool), verify failed state display
 3. Cancel parent during subagent execution, verify subagent stops
 4. Check history: subagent threads should NOT appear
 
 **Tests to include:**
+
 - Visual test: `test_subagent_token_usage_display`
 - Visual test: `test_subagent_error_state`
 - Unit test: `test_parent_cancel_propagates_to_subagent`
@@ -1859,6 +1886,7 @@ cargo test -p zed visual_tests::subagent_error -- --ignored --test-threads=1
 - Unit test: `test_context_low_prompt_sent_at_25_percent`
 
 **Definition of Done:**
+
 - [ ] Token usage displays and updates
 - [ ] Errors display as failed tool calls
 - [ ] Cancellation propagates to subagents
@@ -1896,6 +1924,7 @@ Before submitting each PR, verify:
 **Commit frequently as you go.** Don't batch up a day's worth of work into one commit.
 
 Each commit message should:
+
 - Be clear and descriptive
 - Include this co-author trailer (exactly as shown):
 
@@ -1904,6 +1933,7 @@ Co-Authored-By: Claude Opus 4.5
 ```
 
 **Do NOT include:**
+
 - ❌ "Generated by [tool name]"
 - ❌ "Created with AI assistance"
 - ❌ Any mention of specific AI tools or services
@@ -1926,6 +1956,7 @@ Instead, use a simple single-line comment:
 ```
 
 Example commit:
+
 ```
 Add SubagentTool skeleton with feature flag
 
@@ -2015,6 +2046,7 @@ gh pr checks --watch
 ```
 
 **Common CI issues to watch for:**
+
 - Clippy warnings treated as errors
 - Tests that pass locally but fail in CI (timing, env differences)
 - Visual test baseline mismatches (different rendering on CI machines)
@@ -2023,6 +2055,7 @@ gh pr checks --watch
 ### After CI is Green
 
 Once all checks pass:
+
 1. Review the PR diff one more time
 2. Ensure the PR description is accurate
 3. Mark ready for review (or leave as draft if waiting for feedback)
