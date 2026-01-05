@@ -1541,7 +1541,7 @@ impl ExtensionStore {
         if let Ok(mut language_paths) = fs.read_dir(&language_dir).await {
             while let Some(language_path) = language_paths.next().await {
                 let language_path =
-                    language_path.with_context(|| format!("language {language_dir:?}"))?;
+                    language_path.with_context(|| format!("reading entries in language dir {language_dir:?}"))?;
                 let Ok(relative_path) = language_path.strip_prefix(&extension_dir) else {
                     continue;
                 };
