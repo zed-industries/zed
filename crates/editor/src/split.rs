@@ -305,12 +305,17 @@ impl SplittableEditor {
             .update(cx, |primary_multibuffer, cx| {
                 let (anchors, added_a_new_excerpt) = primary_multibuffer.set_excerpts_for_path(
                     path.clone(),
-                    buffer,
+                    buffer.clone(),
                     ranges,
                     context_line_count,
                     cx,
                 );
-                primary_multibuffer.add_diff(diff.clone(), cx);
+                if primary_multibuffer
+                    .diff_for(buffer.read(cx).remote_id())
+                    .is_none()
+                {
+                    primary_multibuffer.add_diff(diff.clone(), cx);
+                }
                 if let Some(secondary) = &mut self.secondary {
                     secondary.sync_path_excerpts(path, primary_multibuffer, diff, cx);
                 }
@@ -680,12 +685,17 @@ impl SecondaryEditor {
             editor.buffer().update(cx, |buffer, cx| {
                 buffer.update_path_excerpts(
                     path_key.clone(),
-                    base_text_buffer,
+                    base_text_buffer.clone(),
                     &base_text_buffer_snapshot,
                     new,
                     cx,
                 );
-                buffer.add_inverted_diff(diff, main_buffer, cx);
+                if buffer
+                    .diff_for(base_text_buffer.read(cx).remote_id())
+                    .is_none()
+                {
+                    buffer.add_inverted_diff(diff, main_buffer, cx);
+                }
             })
         });
 
