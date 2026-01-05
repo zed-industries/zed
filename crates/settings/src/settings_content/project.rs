@@ -41,10 +41,10 @@ pub struct ProjectSettingsContent {
     #[serde(default)]
     pub context_servers: HashMap<Arc<str>, ContextServerSettingsContent>,
 
-    /// Default timeout in milliseconds for context server tool calls.
+    /// Default timeout in seconds for context server tool calls.
     /// Can be overridden per-server in context_servers configuration.
     ///
-    /// Default: 60000 (60 seconds)
+    /// Default: 60
     pub context_server_timeout: Option<u64>,
 
     /// Configuration for how direnv configuration should be loaded
@@ -221,7 +221,7 @@ pub enum ContextServerSettingsContent {
         /// Optional headers to send.
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
-        /// Timeout for tool calls in milliseconds. Defaults to global context_server_timeout if not specified.
+        /// Timeout for tool calls in seconds. Defaults to global context_server_timeout if not specified.
         timeout: Option<u64>,
     },
     Extension {
@@ -264,7 +264,7 @@ pub struct ContextServerCommand {
     pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
-    /// Timeout for tool calls in milliseconds. Defaults to 60000 (60 seconds) if not specified.
+    /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
     pub timeout: Option<u64>,
 }
 

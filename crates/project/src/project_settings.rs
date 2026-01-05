@@ -59,7 +59,7 @@ pub struct ProjectSettings {
     /// Settings for context servers used for AI-related features.
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
-    /// Default timeout for context server requests in milliseconds.
+    /// Default timeout for context server requests in seconds.
     pub context_server_timeout: u64,
 
     /// Configuration for Diagnostics-related features.
@@ -569,7 +569,7 @@ impl Settings for ProjectSettings {
                 .into_iter()
                 .map(|(key, value)| (key, value.into()))
                 .collect(),
-            context_server_timeout: project.context_server_timeout.unwrap_or(60000),
+            context_server_timeout: project.context_server_timeout.unwrap_or(60),
             lsp: project
                 .lsp
                 .clone()

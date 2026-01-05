@@ -21,7 +21,7 @@ use crate::{
 
 /// Maximum timeout for context server requests (10 minutes).
 /// Prevents extremely large timeout values from tying up resources indefinitely.
-const MAX_TIMEOUT_MS: u64 = 600_000;
+const MAX_TIMEOUT_SECS: u64 = 600;
 
 pub fn init(cx: &mut App) {
     extension::init(cx);
@@ -504,18 +504,16 @@ impl ContextServerStore {
                 url,
                 headers,
                 timeout,
-            } => {
-                let resolved_timeout = timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_MS);
-
-                Ok(Arc::new(ContextServer::http(
-                    id,
-                    url,
-                    headers.clone(),
-                    cx.http_client(),
-                    cx.background_executor().clone(),
-                    Some(Duration::from_millis(resolved_timeout)),
-                )?))
-            }
+            } => Ok(Arc::new(ContextServer::http(
+                id,
+                url,
+                headers.clone(),
+                cx.http_client(),
+                cx.background_executor().clone(),
+                Some(Duration::from_secs(
+                    timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                )),
+            )?)),
             _ => {
                 let root_path = self
                     .project
@@ -534,22 +532,18 @@ impl ContextServerStore {
                         })
                     });
 
-                let mut command_with_timeout = configuration
+                let mut command = configuration
                     .command()
                     .context("Missing command configuration for stdio context server")?
                     .clone();
-                if command_with_timeout.timeout.is_none() {
-                    command_with_timeout.timeout = Some(global_timeout.min(MAX_TIMEOUT_MS));
-                } else {
-                    command_with_timeout.timeout =
-                        command_with_timeout.timeout.map(|t| t.min(MAX_TIMEOUT_MS));
-                }
+                command.timeout = Some(
+                    command
+                        .timeout
+                        .unwrap_or(global_timeout)
+                        .min(MAX_TIMEOUT_SECS),
+                );
 
-                Ok(Arc::new(ContextServer::stdio(
-                    id,
-                    command_with_timeout,
-                    root_path,
-                )))
+                Ok(Arc::new(ContextServer::stdio(id, command, root_path)))
             }
         }
     }
@@ -1369,7 +1363,7 @@ mod tests {
             cx.set_global(settings_store);
             SettingsStore::update_global(cx, |store, cx| {
                 store
-                    .set_user_settings(r#"{"context_server_timeout": 90000}"#, cx)
+                    .set_user_settings(r#"{"context_server_timeout": 90}"#, cx)
                     .expect("Failed to set test user settings");
             });
         });
@@ -1414,7 +1408,7 @@ mod tests {
             cx.set_global(settings_store);
             SettingsStore::update_global(cx, |store, cx| {
                 store
-                    .set_user_settings(r#"{"context_server_timeout": 60000}"#, cx)
+                    .set_user_settings(r#"{"context_server_timeout": 60}"#, cx)
                     .expect("Failed to set test user settings");
             });
         });
@@ -1428,7 +1422,7 @@ mod tests {
                     enabled: true,
                     url: "http://localhost:8080".to_string(),
                     headers: Default::default(),
-                    timeout: Some(120000),
+                    timeout: Some(120),
                 },
             )],
         )
@@ -1451,7 +1445,7 @@ mod tests {
                     url: url::Url::parse("http://localhost:8080")
                         .expect("Failed to parse test URL"),
                     headers: Default::default(),
-                    timeout: Some(120000),
+                    timeout: Some(120),
                 }),
                 cx,
             )
