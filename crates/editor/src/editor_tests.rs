@@ -3028,6 +3028,52 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_delete_to_previous_subword_start_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("one\n2\nthree\n4", cx);
+        build_editor(buffer, window, cx)
+    });
+    let del_to_prev_sub_word_start = DeleteToPreviousSubwordStart {
+        ignore_newlines: false,
+        ignore_brackets: false,
+    };
+    let del_to_prev_sub_word_start_ignore_newlines = DeleteToPreviousSubwordStart {
+        ignore_newlines: true,
+        ignore_brackets: false,
+    };
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1)
+            ])
+        });
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\nthree\n");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\nthree");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\n");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2");
+        editor.delete_to_previous_subword_start(
+            &del_to_prev_sub_word_start_ignore_newlines,
+            window,
+            cx,
+        );
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n");
+        editor.delete_to_previous_subword_start(
+            &del_to_prev_sub_word_start_ignore_newlines,
+            window,
+            cx,
+        );
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
 fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3072,6 +3118,55 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
+fn test_delete_to_next_subword_end_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("\none\n   two\nthree\n   four", cx);
+        build_editor(buffer, window, cx)
+    });
+    let del_to_next_subword_end = DeleteToNextSubwordEnd {
+        ignore_newlines: false,
+        ignore_brackets: false,
+    };
+    let del_to_next_subword_end_ignore_newlines = DeleteToNextSubwordEnd {
+        ignore_newlines: true,
+        ignore_brackets: false,
+    };
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ])
+        });
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(
+            editor.buffer.read(cx).read(cx).text(),
+            "one\n   two\nthree\n   four"
+        );
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(
+            editor.buffer.read(cx).read(cx).text(),
+            "\n   two\nthree\n   four"
+        );
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(
+            editor.buffer.read(cx).read(cx).text(),
+            "two\nthree\n   four"
+        );
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\nthree\n   four");
+        editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   four");
+        editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
+        editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
     });
 }
