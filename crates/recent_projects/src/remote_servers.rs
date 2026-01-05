@@ -664,6 +664,20 @@ impl RemoteServerProjects {
         )
     }
 
+    pub fn popover(
+        fs: Arc<dyn Fs>,
+        workspace: WeakEntity<Workspace>,
+        create_new_window: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let server = Self::new(create_new_window, fs, window, workspace, cx);
+            server.focus_handle(cx).focus(window, cx);
+            server
+        })
+    }
+
     fn new_inner(
         mode: Mode,
         create_new_window: bool,

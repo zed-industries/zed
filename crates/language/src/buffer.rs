@@ -520,11 +520,10 @@ struct AutoindentRequest {
 struct AutoindentRequestEntry {
     /// A range of the buffer whose indentation should be adjusted.
     range: Range<Anchor>,
-    /// Whether or not these lines should be considered brand new, for the
-    /// purpose of auto-indent. When text is not new, its indentation will
-    /// only be adjusted if the suggested indentation level has *changed*
-    /// since the edit was made.
-    first_line_is_new: bool,
+    /// The row of the edit start in the buffer before the edit was applied.
+    /// This is stored here because the anchor in range is created after
+    /// the edit, so it cannot be used with the before_edit snapshot.
+    old_row: Option<u32>,
     indent_size: IndentSize,
     original_indent_column: Option<u32>,
 }
@@ -1953,8 +1952,7 @@ impl Buffer {
                     let new_end_row = entry.range.end.to_point(&snapshot).row + 1;
                     language_indent_sizes_by_new_row.push((new_row, entry.indent_size));
 
-                    if !entry.first_line_is_new {
-                        let old_row = position.to_point(&request.before_edit).row;
+                    if let Some(old_row) = entry.old_row {
                         old_to_new_rows.insert(old_row, new_row);
                     }
                     row_ranges.push((new_row..new_end_row, entry.original_indent_column));
@@ -2569,7 +2567,7 @@ impl Buffer {
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
-    /// delete, and a string of text to insert at that location.
+    /// delete, and a string of text to insert at that location. Adjacent edits are coalesced.
     ///
     /// If an [`AutoindentMode`] is provided, then the buffer will enqueue an auto-indent
     /// request for the edited ranges, which will be processed when the buffer finishes
@@ -2588,6 +2586,36 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        self.edit_internal(edits_iter, autoindent_mode, true, cx)
+    }
+
+    /// Like [`edit`](Self::edit), but does not coalesce adjacent edits.
+    pub fn edit_non_coalesce<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(edits_iter, autoindent_mode, false, cx)
+    }
+
+    fn edit_internal<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        coalesce_adjacent: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
 
@@ -2599,8 +2627,17 @@ impl Buffer {
             }
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
-                if let Some((prev_range, prev_text)) = edits.last_mut()
-                    && prev_range.end >= range.start
+                let prev_edit = edits.last_mut();
+                let should_coalesce = prev_edit.as_ref().is_some_and(|(prev_range, _)| {
+                    if coalesce_adjacent {
+                        prev_range.end >= range.start
+                    } else {
+                        prev_range.end > range.start
+                    }
+                });
+
+                if let Some((prev_range, prev_text)) = prev_edit
+                    && should_coalesce
                 {
                     prev_range.end = cmp::max(prev_range.end, range.end);
                     *prev_text = format!("{prev_text}{new_text}").into();
@@ -2708,8 +2745,12 @@ impl Buffer {
                     }
 
                     AutoindentRequestEntry {
-                        first_line_is_new,
                         original_indent_column,
+                        old_row: if first_line_is_new {
+                            None
+                        } else {
+                            Some(old_start.row)
+                        },
                         indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
@@ -2757,7 +2798,7 @@ impl Buffer {
             .into_iter()
             .map(|range| AutoindentRequestEntry {
                 range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
-                first_line_is_new: true,
+                old_row: None,
                 indent_size: before_edit.language_indent_size_at(range.start, cx),
                 original_indent_column: None,
             })

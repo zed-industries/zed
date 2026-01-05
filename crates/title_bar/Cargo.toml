@@ -35,9 +35,11 @@ chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 db.workspace = true
+git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 notifications.workspace = true
 project.workspace = true
+recent_projects.workspace = true
 remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true

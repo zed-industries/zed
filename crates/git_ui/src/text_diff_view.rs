@@ -275,8 +275,9 @@ async fn update_diff_buffer(
         .await;
 
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &source_buffer_snapshot.text, cx);
-    })?;
+        diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
+    })?
+    .await;
     Ok(())
 }
 

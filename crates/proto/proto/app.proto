@@ -1,11 +1,6 @@
 syntax = "proto3";
 package zed.messages;
 
-message UpdateInviteInfo {
-    string url = 1;
-    uint32 count = 2;
-}
-
 message ShutdownRemoteServer {}
 
 message Toast {
@@ -67,10 +62,4 @@ message AskPassRequest {
 
 message AskPassResponse {
     string response = 1;
-}
-
-message GetSupermavenApiKey {}
-
-message GetSupermavenApiKeyResponse {
-    string api_key = 1;
 }

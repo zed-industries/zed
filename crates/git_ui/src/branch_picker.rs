@@ -70,27 +70,34 @@ pub fn open(
 ) {
     let workspace_handle = workspace.weak_handle();
     let repository = workspace.project().read(cx).active_repository(cx);
-    let style = BranchListStyle::Modal;
+
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(workspace_handle, repository, style, rems(34.), window, cx)
+        BranchList::new(
+            workspace_handle,
+            repository,
+            BranchListStyle::Modal,
+            rems(34.),
+            window,
+            cx,
+        )
     })
 }
 
 pub fn popover(
     workspace: WeakEntity<Workspace>,
+    modal_style: bool,
     repository: Option<Entity<Repository>>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<BranchList> {
+    let (style, width) = if modal_style {
+        (BranchListStyle::Modal, rems(34.))
+    } else {
+        (BranchListStyle::Popover, rems(20.))
+    };
+
     cx.new(|cx| {
-        let list = BranchList::new(
-            workspace,
-            repository,
-            BranchListStyle::Popover,
-            rems(20.),
-            window,
-            cx,
-        );
+        let list = BranchList::new(workspace, repository, style, width, window, cx);
         list.focus_handle(cx).focus(window, cx);
         list
     })

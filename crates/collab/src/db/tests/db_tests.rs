@@ -12,7 +12,6 @@ test_both_dbs!(
 
 async fn test_get_users(db: &Arc<Database>) {
     let mut user_ids = Vec::new();
-    let mut user_metric_ids = Vec::new();
     for i in 1..=4 {
         let user = db
             .create_user(
@@ -27,7 +26,6 @@ async fn test_get_users(db: &Arc<Database>) {
             .await
             .unwrap();
         user_ids.push(user.user_id);
-        user_metric_ids.push(user.metrics_id);
     }
 
     assert_eq!(

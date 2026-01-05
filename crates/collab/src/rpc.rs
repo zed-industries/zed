@@ -32,9 +32,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
-use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
-use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
 use util::paths::PathStyle;
 
@@ -195,7 +193,6 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    supermaven_client: Option<Arc<SupermavenAdminApi>>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
@@ -224,6 +221,7 @@ impl Session {
         }
     }
 
+    #[expect(dead_code)]
     fn is_staff(&self) -> bool {
         match &self.principal {
             Principal::User(user) => user.admin,
@@ -235,13 +233,6 @@ impl Session {
         match &self.principal {
             Principal::User(user) => user.id,
             Principal::Impersonated { user, .. } => user.id,
-        }
-    }
-
-    pub fn email(&self) -> Option<String> {
-        match &self.principal {
-            Principal::User(user) => user.email_address.clone(),
-            Principal::Impersonated { user, .. } => user.email_address.clone(),
         }
     }
 }
@@ -443,7 +434,6 @@ impl Server {
             .add_message_handler(update_followers)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
-            .add_request_handler(get_supermaven_api_key)
             .add_request_handler(forward_mutating_project_request::<proto::OpenContext>)
             .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
@@ -815,24 +805,6 @@ impl Server {
 
             tracing::info!("connection opened");
 
-            let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-            let http_client = match ReqwestClient::user_agent(&user_agent) {
-                Ok(http_client) => Arc::new(http_client),
-                Err(error) => {
-                    tracing::error!(?error, "failed to create HTTP client");
-                    return;
-                }
-            };
-
-            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(
-                |supermaven_admin_api_key| {
-                    Arc::new(SupermavenAdminApi::new(
-                        supermaven_admin_api_key.to_string(),
-                        http_client.clone(),
-                    ))
-                },
-            );
-
             let session = Session {
                 principal: principal.clone(),
                 connection_id,
@@ -843,7 +815,6 @@ impl Server {
                 geoip_country_code,
                 system_id,
                 _executor: executor.clone(),
-                supermaven_client,
             };
 
             if let Err(error) = this
@@ -1008,57 +979,6 @@ impl Server {
             }
         }
 
-        Ok(())
-    }
-
-    pub async fn invite_code_redeemed(
-        self: &Arc<Self>,
-        inviter_id: UserId,
-        invitee_id: UserId,
-    ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
-            && let Some(code) = &user.invite_code
-        {
-            let pool = self.connection_pool.lock();
-            let invitee_contact = contact_for_user(invitee_id, false, &pool);
-            for connection_id in pool.user_connection_ids(inviter_id) {
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateContacts {
-                        contacts: vec![invitee_contact.clone()],
-                        ..Default::default()
-                    },
-                )?;
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateInviteInfo {
-                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                        count: user.invite_count as u32,
-                    },
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
-            && let Some(invite_code) = &user.invite_code
-        {
-            let pool = self.connection_pool.lock();
-            for connection_id in pool.user_connection_ids(user_id) {
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateInviteInfo {
-                        url: format!(
-                            "{}{}",
-                            self.app_state.config.invite_link_prefix, invite_code
-                        ),
-                        count: user.invite_count as u32,
-                    },
-                )?;
-            }
-        }
         Ok(())
     }
 
@@ -3651,35 +3571,6 @@ async fn acknowledge_buffer_version(
             &request.version,
         )
         .await?;
-    Ok(())
-}
-
-/// Get a Supermaven API key for the user
-async fn get_supermaven_api_key(
-    _request: proto::GetSupermavenApiKey,
-    response: Response<proto::GetSupermavenApiKey>,
-    session: MessageContext,
-) -> Result<()> {
-    let user_id: String = session.user_id().to_string();
-    if !session.is_staff() {
-        return Err(anyhow!("supermaven not enabled for this account"))?;
-    }
-
-    let email = session.email().context("user must have an email")?;
-
-    let supermaven_admin_api = session
-        .supermaven_client
-        .as_ref()
-        .context("supermaven not configured")?;
-
-    let result = supermaven_admin_api
-        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
-        .await?;
-
-    response.send(proto::GetSupermavenApiKeyResponse {
-        api_key: result.api_key,
-    })?;
-
     Ok(())
 }
 

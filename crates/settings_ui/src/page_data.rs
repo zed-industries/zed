@@ -6974,6 +6974,21 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Completion Detail Alignment",
+            description: "Whether to align detail text in code completions context menus left or right.",
+            field: Box::new(SettingField {
+                json_path: Some("editor.completion_detail_alignment"),
+                pick: |settings_content| {
+                    settings_content.editor.completion_detail_alignment.as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content.editor.completion_detail_alignment = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",

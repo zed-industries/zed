@@ -3159,12 +3159,13 @@ impl BufferGitState {
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
-                unstaged_diff.update(cx, |diff, cx| {
+                let task = unstaged_diff.update(cx, |diff, cx| {
                     if language_changed {
                         diff.language_changed(language.clone(), language_registry.clone(), cx);
                     }
                     diff.set_snapshot(new_unstaged_diff, &buffer, cx)
-                })?
+                })?;
+                Some(task.await)
             } else {
                 None
             };
@@ -3174,18 +3175,20 @@ impl BufferGitState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(cx, |diff, cx| {
-                    if language_changed {
-                        diff.language_changed(language, language_registry, cx);
-                    }
-                    diff.set_snapshot_with_secondary(
-                        new_uncommitted_diff,
-                        &buffer,
-                        unstaged_changed_range,
-                        true,
-                        cx,
-                    );
-                })?;
+                uncommitted_diff
+                    .update(cx, |diff, cx| {
+                        if language_changed {
+                            diff.language_changed(language, language_registry, cx);
+                        }
+                        diff.set_snapshot_with_secondary(
+                            new_uncommitted_diff,
+                            &buffer,
+                            unstaged_changed_range.flatten(),
+                            true,
+                            cx,
+                        )
+                    })?
+                    .await;
             }
 
             log::debug!(

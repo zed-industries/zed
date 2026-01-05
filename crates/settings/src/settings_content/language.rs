@@ -169,6 +169,8 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+    /// The number of edit prediction examples captured per ten thousand predictions.
+    pub example_capture_rate: Option<u16>,
 }
 
 #[with_fallible_options]

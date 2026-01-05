@@ -215,6 +215,11 @@ pub struct EditorSettingsContent {
     /// 4. Never show the scrollbar:
     ///    "never" (default)
     pub completion_menu_scrollbar: Option<ShowScrollbar>,
+
+    /// Whether to align detail text in code completions context menus left or right.
+    ///
+    /// Default: left
+    pub completion_detail_alignment: Option<CompletionDetailAlignment>,
 }
 
 #[derive(
@@ -235,6 +240,27 @@ pub enum RelativeLineNumbers {
     Disabled,
     Enabled,
     Wrapped,
+}
+
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionDetailAlignment {
+    #[default]
+    Left,
+    Right,
 }
 
 impl RelativeLineNumbers {
