@@ -23,14 +23,11 @@ pub fn bump_patch_version() -> Workflow {
 
 fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
     fn checkout_branch(branch: &WorkflowInput, token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token)
-            .name("Checkout code")
-            .add_with(("ref", branch.to_string()))
+        steps::checkout_repo_with_token(token).add_with(("ref", branch.to_string()))
     }
 
     fn bump_patch_version(token: &StepOutput) -> Step<Run> {
-        Step::new("Bump Patch Version")
-            .run(indoc::indoc! {r#"
+        named::bash(indoc::indoc! {r#"
             channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
             tag_suffix=""

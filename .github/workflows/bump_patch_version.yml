@@ -19,13 +19,13 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: Checkout code
+    - name: steps::checkout_repo_with_token
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
         token: ${{ steps.get-app-token.outputs.token }}
         ref: ${{ inputs.branch }}
-    - name: Bump Patch Version
+    - name: bump_patch_version::run_bump_patch_version::bump_patch_version
       run: |
         channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
