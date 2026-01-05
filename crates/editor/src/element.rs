@@ -4043,75 +4043,88 @@ impl EditorElement {
                             .id("path_header_block")
                             .min_w_0()
                             .size_full()
+                            .gap_1()
                             .justify_between()
                             .overflow_hidden()
-                            .child(h_flex().min_w_0().flex_1().gap_0p5().map(|path_header| {
-                                let filename = filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                            .child(h_flex().min_w_0().flex_1().gap_0p5().overflow_hidden().map(
+                                |path_header| {
+                                    let filename = filename
+                                        .map(SharedString::from)
+                                        .unwrap_or_else(|| "untitled".into());
 
-                                path_header
-                                    .when(ItemSettings::get_global(cx).file_icons, |el| {
-                                        let path = path::Path::new(filename.as_str());
-                                        let icon =
-                                            FileIcons::get_icon(path, cx).unwrap_or_default();
+                                    path_header
+                                        .child(
+                                            ButtonLike::new("filename-button")
+                                                .when(
+                                                    ItemSettings::get_global(cx).file_icons,
+                                                    |this| {
+                                                        let path =
+                                                            path::Path::new(filename.as_str());
+                                                        let icon = FileIcons::get_icon(path, cx)
+                                                            .unwrap_or_default();
 
-                                        el.child(Icon::from_path(icon).color(Color::Muted))
-                                    })
-                                    .child(
-                                        ButtonLike::new("filename-button")
-                                            .child(
-                                                Label::new(filename)
-                                                    .single_line()
-                                                    .color(file_status_label_color(file_status))
+                                                        this.child(
+                                                            Icon::from_path(icon)
+                                                                .color(Color::Muted),
+                                                        )
+                                                    },
+                                                )
+                                                .child(
+                                                    Label::new(filename)
+                                                        .single_line()
+                                                        .color(file_status_label_color(file_status))
+                                                        .buffer_font(cx)
+                                                        .when(
+                                                            file_status
+                                                                .is_some_and(|s| s.is_deleted()),
+                                                            |label| label.strikethrough(),
+                                                        ),
+                                                )
+                                                .on_click(window.listener_for(&self.editor, {
+                                                    let jump_data = jump_data.clone();
+                                                    move |editor, e: &ClickEvent, window, cx| {
+                                                        editor.open_excerpts_common(
+                                                            Some(jump_data.clone()),
+                                                            e.modifiers().secondary(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                })),
+                                        )
+                                        .when_some(parent_path, |then, path| {
+                                            then.child(
+                                                Label::new(path)
                                                     .buffer_font(cx)
-                                                    .when(
-                                                        file_status.is_some_and(|s| s.is_deleted()),
-                                                        |label| label.strikethrough(),
+                                                    .truncate_start()
+                                                    .color(
+                                                        if file_status
+                                                            .is_some_and(FileStatus::is_deleted)
+                                                        {
+                                                            Color::Custom(colors.text_disabled)
+                                                        } else {
+                                                            Color::Custom(colors.text_muted)
+                                                        },
                                                     ),
                                             )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    )
-                                    .when(!for_excerpt.buffer.capability.editable(), |el| {
-                                        el.child(Icon::new(IconName::FileLock).color(Color::Muted))
-                                    })
-                                    .when_some(parent_path, |then, path| {
-                                        then.child(
-                                            Label::new(path)
-                                                .buffer_font(cx)
-                                                .truncate_start()
-                                                .color(
-                                                    if file_status
-                                                        .is_some_and(FileStatus::is_deleted)
-                                                    {
-                                                        Color::Custom(colors.text_disabled)
-                                                    } else {
-                                                        Color::Custom(colors.text_muted)
-                                                    },
-                                                ),
-                                        )
-                                    })
-                                    .when_some(breadcrumbs, |then, breadcrumbs| {
-                                        then.child(render_breadcrumb_text(
-                                            breadcrumbs,
-                                            None,
-                                            editor_handle,
-                                            true,
-                                            window,
-                                            cx,
-                                        ))
-                                    })
-                            }))
+                                        })
+                                        .when(!for_excerpt.buffer.capability.editable(), |el| {
+                                            el.child(
+                                                Icon::new(IconName::FileLock).color(Color::Muted),
+                                            )
+                                        })
+                                        .when_some(breadcrumbs, |then, breadcrumbs| {
+                                            then.child(render_breadcrumb_text(
+                                                breadcrumbs,
+                                                None,
+                                                editor_handle,
+                                                true,
+                                                window,
+                                                cx,
+                                            ))
+                                        })
+                                },
+                            ))
                             .when(
                                 can_open_excerpts && is_selected && relative_path.is_some(),
                                 |el| {
