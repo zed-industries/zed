@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
+use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -763,8 +763,8 @@ impl Item for BufferDiagnosticsEditor {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
-    fn is_read_only(&self, cx: &App) -> bool {
-        self.multibuffer.read(cx).read_only()
+    fn capability(&self, cx: &App) -> Capability {
+        self.multibuffer.read(cx).capability()
     }
 
     fn navigate(

@@ -1,0 +1,80 @@
+{"Put":{"state":"ˇone two three four"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree four","mode":"Normal"}}
+{"Put":{"state":"ˇone two three four"}}
+{"Key":"d"}
+{"Key":"2"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree four","mode":"Normal"}}
+{"Put":{"state":"ˇone-two three-four five"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"shift-w"}
+{"Get":{"state":"ˇfive","mode":"Normal"}}
+{"Put":{"state":"ˇone two three four five"}}
+{"Key":"3"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇfour five","mode":"Normal"}}
+{"Put":{"state":"ˇone two three four five six"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"2"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇfive six","mode":"Normal"}}
+{"Put":{"state":"ˇone two three four"}}
+{"Key":"2"}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree four","mode":"Insert"}}
+{"Put":{"state":"ˇone two three four"}}
+{"Key":"2"}
+{"Key":"y"}
+{"Key":"a"}
+{"Key":"w"}
+{"Key":"p"}
+{"Get":{"state":"oone twoˇ ne two three four","mode":"Normal"}}
+{"Put":{"state":"  ˇfoo-bar baz"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"  ˇbar baz","mode":"Normal"}}
+{"Put":{"state":"ˇfoo   "}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"ˇ","mode":"Normal"}}
+{"Put":{"state":"ˇone\ntwo\nthree"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree","mode":"Normal"}}
+{"Put":{"state":"ˇone\ntwo\nthree\nfour"}}
+{"Key":"3"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇfour","mode":"Normal"}}
+{"Put":{"state":"ˇone\ntwo\nthree"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree","mode":"Normal"}}
+{"Put":{"state":"one ˇtwo\nthree four"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"one ˇfour","mode":"Normal"}}

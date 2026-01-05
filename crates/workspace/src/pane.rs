@@ -26,7 +26,7 @@ use gpui::{
     actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
-use language::DiagnosticSeverity;
+use language::{Capability, DiagnosticSeverity};
 use parking_lot::Mutex;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
@@ -2678,12 +2678,13 @@ impl Pane {
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
-        let read_only_toggle = || {
+        let read_only_toggle = |toggleable: bool| {
             IconButton::new("toggle_read_only", IconName::FileLock)
                 .size(ButtonSize::None)
                 .shape(IconButtonShape::Square)
                 .icon_color(Color::Muted)
                 .icon_size(IconSize::Small)
+                .disabled(!toggleable)
                 .tooltip(move |_, cx| {
                     Tooltip::with_meta("Unlock File", None, "This will make this file editable", cx)
                 })
@@ -2696,6 +2697,7 @@ impl Pane {
 
         let has_file_icon = icon.is_some() | decorated_icon.is_some();
 
+        let capability = item.capability(cx);
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -2836,21 +2838,21 @@ impl Pane {
                         Some(decorated_icon.into_any_element())
                     } else if let Some(icon) = icon {
                         Some(icon.into_any_element())
-                    } else if item.is_read_only(cx) {
-                        Some(read_only_toggle().into_any_element())
+                    } else if !capability.editable() {
+                        Some(read_only_toggle(capability == Capability::Read).into_any_element())
                     } else {
                         None
                     })
                     .child(label)
                     .map(|this| match tab_tooltip_content {
                         Some(TabTooltipContent::Text(text)) => {
-                            if item.is_read_only(cx) {
+                            if capability.editable() {
+                                this.tooltip(Tooltip::text(text))
+                            } else {
                                 this.tooltip(move |_, cx| {
                                     let text = text.clone();
                                     Tooltip::with_meta(text, None, "Read-Only File", cx)
                                 })
-                            } else {
-                                this.tooltip(Tooltip::text(text))
                             }
                         }
                         Some(TabTooltipContent::Custom(element_fn)) => {
@@ -2858,8 +2860,8 @@ impl Pane {
                         }
                         None => this,
                     })
-                    .when(item.is_read_only(cx) && has_file_icon, |this| {
-                        this.child(read_only_toggle())
+                    .when(capability == Capability::Read && has_file_icon, |this| {
+                        this.child(read_only_toggle(true))
                     }),
             );
 
@@ -2876,7 +2878,6 @@ impl Pane {
         let has_items_to_right = ix < total_items - 1;
         let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
         let is_pinned = self.is_tab_pinned(ix);
-        let is_read_only = item.is_read_only(cx);
 
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
@@ -3028,20 +3029,22 @@ impl Pane {
                             })
                         };
 
-                        let read_only_label = if is_read_only {
-                            "Make File Editable"
-                        } else {
-                            "Make File Read-Only"
-                        };
-                        menu = menu.separator().entry(
-                            read_only_label,
-                            None,
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                if let Some(item) = pane.item_for_index(ix) {
-                                    item.toggle_read_only(window, cx);
-                                }
-                            }),
-                        );
+                        if capability != Capability::ReadOnly {
+                            let read_only_label = if capability.editable() {
+                                "Make File Read-Only"
+                            } else {
+                                "Make File Editable"
+                            };
+                            menu = menu.separator().entry(
+                                read_only_label,
+                                None,
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    if let Some(item) = pane.item_for_index(ix) {
+                                        item.toggle_read_only(window, cx);
+                                    }
+                                }),
+                            );
+                        }
 
                         if let Some(entry) = single_entry_to_resolve {
                             let project_path = pane

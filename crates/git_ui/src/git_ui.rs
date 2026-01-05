@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use anyhow::anyhow;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
@@ -81,6 +82,15 @@ pub fn init(cx: &mut App) {
             return;
         }
         if !project.is_via_collab() {
+            workspace.register_action(
+                |workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
+                    if let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.create_pull_request(window, cx);
+                        });
+                    }
+                },
+            );
             workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
                 let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                     return;
@@ -349,7 +359,7 @@ impl RenameBranchModal {
             {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(error)) => Err(error),
-                Err(_) => Err(anyhow::anyhow!("Operation was canceled")),
+                Err(_) => Err(anyhow!("Operation was canceled")),
             }
         })
         .detach_and_prompt_err("Failed to rename branch", window, cx, |_, _, _| None);

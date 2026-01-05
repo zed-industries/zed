@@ -953,8 +953,10 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
 
     proxy_str
-        .as_ref()
-        .and_then(|input: &String| {
+        .as_deref()
+        .map(str::trim)
+        .filter(|input| !input.is_empty())
+        .and_then(|input| {
             input
                 .parse::<Url>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))

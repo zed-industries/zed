@@ -81,7 +81,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
+    pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) parent_hwnd: Option<HWND>,
 }
@@ -364,7 +364,7 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_receiver: flume::Receiver<RunnableVariant>,
+    main_receiver: PriorityQueueReceiver<RunnableVariant>,
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
@@ -920,8 +920,15 @@ impl PlatformWindow for WindowsWindow {
         self.state.renderer.borrow().gpu_specs().log_err()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
-        // There is no such thing on Windows.
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let scale_factor = self.state.scale_factor.get();
+        let caret_position = POINT {
+            x: (bounds.origin.x.0 * scale_factor) as i32,
+            y: (bounds.origin.y.0 * scale_factor) as i32
+                + ((bounds.size.height.0 * scale_factor) as i32 / 2),
+        };
+
+        self.0.update_ime_position(self.0.hwnd, caret_position);
     }
 }
 

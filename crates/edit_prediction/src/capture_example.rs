@@ -1,5 +1,5 @@
 use crate::{
-    EditPredictionExampleCaptureFeatureFlag, EditPredictionStore, StoredEvent,
+    EditPredictionExampleCaptureFeatureFlag, StoredEvent,
     cursor_excerpt::editable_and_context_ranges_for_cursor_position, example_spec::ExampleSpec,
 };
 use anyhow::Result;
@@ -18,9 +18,9 @@ pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
+    mut events: Vec<StoredEvent>,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
-    let ep_store = EditPredictionStore::try_global(cx)?;
     let snapshot = buffer.read(cx).snapshot();
     let file = snapshot.file()?;
     let worktree_id = file.worktree_id(cx);
@@ -37,10 +37,6 @@ pub fn capture_example(
         .clone()
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
-
-    let mut events = ep_store.update(cx, |store, cx| {
-        store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-    });
 
     let git_store = project.read(cx).git_store().clone();
 
@@ -204,6 +200,7 @@ pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EditPredictionStore;
     use client::{Client, UserStore};
     use clock::FakeSystemClock;
     use gpui::{AppContext as _, TestAppContext, http_client::FakeHttpClient};
@@ -315,8 +312,13 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let events = ep_store.update(cx, |store, cx| {
+            store.edit_history_for_project_with_pause_split_last_event(&project, cx)
+        });
         let mut example = cx
-            .update(|cx| capture_example(project.clone(), buffer.clone(), Anchor::MIN, cx).unwrap())
+            .update(|cx| {
+                capture_example(project.clone(), buffer.clone(), Anchor::MIN, events, cx).unwrap()
+            })
             .await
             .unwrap();
         example.name = "test".to_string();

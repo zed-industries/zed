@@ -172,6 +172,7 @@ impl ConfigurationSource {
                                 enabled: true,
                                 url,
                                 headers: auth,
+                                timeout: None,
                             },
                         )
                     })
@@ -411,6 +412,7 @@ impl ConfigureContextServerModal {
                     enabled: _,
                     url,
                     headers,
+                    timeout: _,
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,

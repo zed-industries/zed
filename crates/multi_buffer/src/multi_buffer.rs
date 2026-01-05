@@ -1200,6 +1200,10 @@ impl MultiBuffer {
         !self.capability.editable()
     }
 
+    pub fn capability(&self) -> Capability {
+        self.capability
+    }
+
     /// Returns an up-to-date snapshot of the MultiBuffer.
     #[ztracing::instrument(skip_all)]
     pub fn snapshot(&self, cx: &App) -> MultiBufferSnapshot {

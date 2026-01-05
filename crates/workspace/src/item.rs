@@ -15,6 +15,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
     SharedString, Task, WeakEntity, Window,
 };
+use language::Capability;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -255,8 +256,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
-    fn is_read_only(&self, _: &App) -> bool {
-        false
+    fn capability(&self, _: &App) -> Capability {
+        Capability::ReadWrite
     }
 
     fn toggle_read_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -482,7 +483,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
-    fn is_read_only(&self, cx: &App) -> bool;
+    fn capability(&self, cx: &App) -> Capability;
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
@@ -957,8 +958,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).is_dirty(cx)
     }
 
-    fn is_read_only(&self, cx: &App) -> bool {
-        self.read(cx).is_read_only(cx)
+    fn capability(&self, cx: &App) -> Capability {
+        self.read(cx).capability(cx)
     }
 
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App) {

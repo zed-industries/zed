@@ -7,6 +7,7 @@ use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -209,6 +210,25 @@ impl GitHostingProvider for Gitlab {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let mut url = self
+            .base_url()
+            .join(&format!(
+                "{}/{}/-/merge_requests/new",
+                remote.owner, remote.repo
+            ))
+            .ok()?;
+
+        let query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
+
+        url.set_query(Some(&query));
+        Some(url)
+    }
+
     async fn commit_author_avatar_url(
         &self,
         repo_owner: &str,
@@ -377,6 +397,25 @@ mod tests {
     }
 
     #[test]
+    fn test_build_gitlab_create_pr_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        let url = provider
+            .build_create_pull_request_url(&remote, "feature/cool stuff")
+            .expect("create PR url should be constructed");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff"
+        );
+    }
+
+    #[test]
     fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
         let gitlab =
             Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
@@ -416,5 +455,34 @@ mod tests {
 
         let expected_url = "https://gitlab-instance.big-co.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let github = Gitlab::public_instance();
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew-feature"
+        );
+
+        let base_url = Url::parse("https://gitlab.zed.com").unwrap();
+        let github = Gitlab::new("GitLab Self-Hosted", base_url);
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.zed.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew-feature"
+        );
     }
 }

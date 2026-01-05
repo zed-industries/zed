@@ -22,6 +22,7 @@ mod styles;
 use std::path::Path;
 use std::sync::Arc;
 
+use ::settings::DEFAULT_DARK_THEME;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use anyhow::Result;

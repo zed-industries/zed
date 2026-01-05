@@ -4945,8 +4945,6 @@ impl Workspace {
 
         cx.notify();
         proto::FollowResponse {
-            // TODO: Remove after version 0.145.x stabilizes.
-            active_view_id: active_view.as_ref().and_then(|view| view.id.clone()),
             views: active_view.iter().cloned().collect(),
             active_view,
         }
@@ -5220,19 +5218,14 @@ impl Workspace {
                         && let Some(variant) = item.to_state_proto(window, cx)
                     {
                         let view = Some(proto::View {
-                            id: id.clone(),
+                            id,
                             leader_id: leader_peer_id,
                             variant: Some(variant),
                             panel_id: panel_id.map(|id| id as i32),
                         });
 
                         is_project_item = item.is_project_item(window, cx);
-                        update = proto::UpdateActiveView {
-                            view,
-                            // TODO: Remove after version 0.145.x stabilizes.
-                            id,
-                            leader_id: leader_peer_id,
-                        };
+                        update = proto::UpdateActiveView { view };
                     };
                 }
             }

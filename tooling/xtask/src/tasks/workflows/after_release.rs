@@ -115,6 +115,26 @@ echo "URL=$URL" >> "$GITHUB_OUTPUT"
 }
 
 fn publish_winget() -> NamedJob {
+    fn sync_winget_pkgs_fork() -> Step<Run> {
+        named::pwsh(indoc::indoc! {r#"
+            $headers = @{
+                "Authorization" = "Bearer $env:WINGET_TOKEN"
+                "Accept" = "application/vnd.github+json"
+                "X-GitHub-Api-Version" = "2022-11-28"
+            }
+            $body = @{ branch = "master" } | ConvertTo-Json
+            $uri = "https://api.github.com/repos/${{ github.repository_owner }}/winget-pkgs/merge-upstream"
+            try {
+                Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
+                Write-Host "Successfully synced winget-pkgs fork"
+            } catch {
+                Write-Host "Fork sync response: $_"
+                Write-Host "Continuing anyway - fork may already be up to date"
+            }
+        "#})
+        .add_env(("WINGET_TOKEN", vars::WINGET_TOKEN))
+    }
+
     fn set_package_name() -> (Step<Run>, StepOutput) {
         let script = format!(
             r#"if ("{IS_PRERELEASE}" -eq "true") {{
@@ -149,6 +169,7 @@ echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
     named::job(
         Job::default()
             .runs_on(runners::WINDOWS_DEFAULT)
+            .add_step(sync_winget_pkgs_fork())
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
     )
