@@ -57,6 +57,28 @@ use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
+/// Maximum tool description length for OpenAI-compatible providers.
+/// See https://github.com/zed-industries/zed/issues/46012
+pub const MAX_TOOL_DESCRIPTION_LENGTH: usize = 1024;
+
+pub(crate) fn truncate_tool_description(description: &str) -> String {
+    if description.len() <= MAX_TOOL_DESCRIPTION_LENGTH {
+        return description.to_string();
+    }
+
+    const ELLIPSIS: &str = "...";
+    let truncate_at = MAX_TOOL_DESCRIPTION_LENGTH - ELLIPSIS.len();
+
+    let mut result = String::with_capacity(MAX_TOOL_DESCRIPTION_LENGTH);
+    for (idx, char) in description.char_indices() {
+        if idx >= truncate_at {
+            break;
+        }
+        result.push(char);
+    }
+    result.push_str(ELLIPSIS);
+    result
+}
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -1933,7 +1955,7 @@ impl Thread {
                     log::trace!("Including tool: {}", tool_name);
                     Some(LanguageModelRequestTool {
                         name: tool_name.to_string(),
-                        description: tool.description().to_string(),
+                        description: truncate_tool_description(&tool.description()),
                         input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
                     })
                 })
