@@ -3277,7 +3277,7 @@ mod tests {
             search_bar.set_active_pane_item(Some(&editor), window, cx)
         });
 
-        assert_eq!(initial_location, ToolbarItemLocation::Secondary);
+        assert_eq!(initial_location, ToolbarItemLocation::Hidden);
 
         let mut events = cx.events(&search_bar);
 
