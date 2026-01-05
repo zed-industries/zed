@@ -91,10 +91,10 @@ impl Vim {
                 let start = range.start.to_offset(display_map, Bias::Right);
                 let end = range.end.to_offset(display_map, Bias::Left);
 
-                let start_anchor = display_map.buffer_snapshot().anchor_before(start);
+                let end_anchor = display_map.buffer_snapshot().anchor_before(end);
                 edits.push((end..end, pair.end.clone()));
                 edits.push((start..start, pair.start.clone()));
-                anchors.push(start_anchor..start_anchor);
+                anchors.push(end_anchor..end_anchor);
             }
 
             (edits, anchors)
@@ -145,7 +145,8 @@ impl Vim {
                     edits.push((close_start..close_end, new_pair.end.clone()));
                     edits.push((open_start..open_end, new_pair.start.clone()));
 
-                    let anchor = display_map.buffer_snapshot().anchor_before(open_start);
+                    let cursor_offset = cursor.to_offset(display_map, Bias::Left);
+                    let anchor = display_map.buffer_snapshot().anchor_before(cursor_offset);
                     anchors.push(anchor..anchor);
                 } else {
                     let offset = selection.head().to_offset(display_map, Bias::Left);
@@ -198,7 +199,8 @@ impl Vim {
                     edits.push((close_start..close_end, String::new()));
                     edits.push((open_start..open_end, String::new()));
 
-                    let anchor = display_map.buffer_snapshot().anchor_before(open_start);
+                    let cursor_offset = cursor.to_offset(display_map, Bias::Left);
+                    let anchor = display_map.buffer_snapshot().anchor_before(cursor_offset);
                     anchors.push(anchor..anchor);
                 } else {
                     let offset = selection.head().to_offset(display_map, Bias::Left);
@@ -225,19 +227,19 @@ mod test {
 
         cx.set_state("hello ˇworld", Mode::HelixNormal);
         cx.simulate_keystrokes("m s (");
-        cx.assert_state("hello ˇ(w)orld", Mode::HelixNormal);
+        cx.assert_state("hello (wˇ)orld", Mode::HelixNormal);
 
         cx.set_state("hello ˇworld", Mode::HelixNormal);
         cx.simulate_keystrokes("m s )");
-        cx.assert_state("hello ˇ(w)orld", Mode::HelixNormal);
+        cx.assert_state("hello (wˇ)orld", Mode::HelixNormal);
 
         cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
         cx.simulate_keystrokes("m s [");
-        cx.assert_state("hello ˇ[worl]d", Mode::HelixNormal);
+        cx.assert_state("hello [worlˇ]d", Mode::HelixNormal);
 
         cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
         cx.simulate_keystrokes("m s \"");
-        cx.assert_state("hello ˇ\"worl\"d", Mode::HelixNormal);
+        cx.assert_state("hello \"worlˇ\"d", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -247,11 +249,11 @@ mod test {
 
         cx.set_state("hello (woˇrld) test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d (");
-        cx.assert_state("hello ˇworld test", Mode::HelixNormal);
+        cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
         cx.set_state("hello \"woˇrld\" test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d \"");
-        cx.assert_state("hello ˇworld test", Mode::HelixNormal);
+        cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
         cx.set_state("hello woˇrld test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d (");
@@ -259,7 +261,7 @@ mod test {
 
         cx.set_state("((woˇrld))", Mode::HelixNormal);
         cx.simulate_keystrokes("m d (");
-        cx.assert_state("(ˇworld)", Mode::HelixNormal);
+        cx.assert_state("(woˇrld)", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -269,19 +271,19 @@ mod test {
 
         cx.set_state("hello (woˇrld) test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r ( [");
-        cx.assert_state("hello ˇ[world] test", Mode::HelixNormal);
+        cx.assert_state("hello [woˇrld] test", Mode::HelixNormal);
 
         cx.set_state("hello (woˇrld) test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r ( ]");
-        cx.assert_state("hello ˇ[world] test", Mode::HelixNormal);
+        cx.assert_state("hello [woˇrld] test", Mode::HelixNormal);
 
         cx.set_state("hello \"woˇrld\" test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r \" {");
-        cx.assert_state("hello ˇ{world} test", Mode::HelixNormal);
+        cx.assert_state("hello {woˇrld} test", Mode::HelixNormal);
 
         cx.set_state("((woˇrld))", Mode::HelixNormal);
         cx.simulate_keystrokes("m r ( [");
-        cx.assert_state("(ˇ[world])", Mode::HelixNormal);
+        cx.assert_state("([woˇrld])", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -299,8 +301,8 @@ mod test {
         cx.simulate_keystrokes("m d {");
         cx.assert_state(
             indoc! {"
-            function test() ˇ
-                return value;
+            function test() 
+                return ˇvalue;
             "},
             Mode::HelixNormal,
         );
@@ -313,7 +315,7 @@ mod test {
 
         cx.set_state("hello «worldˇ» test", Mode::HelixSelect);
         cx.simulate_keystrokes("m s {");
-        cx.assert_state("hello ˇ{world} test", Mode::HelixNormal);
+        cx.assert_state("hello {worldˇ} test", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -330,8 +332,8 @@ mod test {
         cx.simulate_keystrokes("m d (");
         cx.assert_state(
             indoc! {"
-            ˇhello
-            ˇworld"},
+            heˇllo
+            woˇrld"},
             Mode::HelixNormal,
         );
     }
@@ -381,17 +383,17 @@ mod test {
         // Arbitrary chars work as symmetric pairs (Helix feature)
         cx.set_state("hello *woˇrld* test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d *");
-        cx.assert_state("hello ˇworld test", Mode::HelixNormal);
+        cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
         // ms (add) also doesn't use aliases - 'msb' adds literal 'b' surrounds
         cx.set_state("hello ˇworld", Mode::HelixNormal);
         cx.simulate_keystrokes("m s b");
-        cx.assert_state("hello ˇbwborld", Mode::HelixNormal);
+        cx.assert_state("hello bwˇborld", Mode::HelixNormal);
 
         // mr (replace) also doesn't use aliases
         cx.set_state("hello (woˇrld) test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r ( b");
-        cx.assert_state("hello ˇbworldb test", Mode::HelixNormal);
+        cx.assert_state("hello bwoˇrldb test", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -402,33 +404,33 @@ mod test {
         // mdm - delete nearest surrounding pair
         cx.set_state("hello (woˇrld) test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d m");
-        cx.assert_state("hello ˇworld test", Mode::HelixNormal);
+        cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
         cx.set_state("hello [woˇrld] test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d m");
-        cx.assert_state("hello ˇworld test", Mode::HelixNormal);
+        cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
         cx.set_state("hello {woˇrld} test", Mode::HelixNormal);
         cx.simulate_keystrokes("m d m");
-        cx.assert_state("hello ˇworld test", Mode::HelixNormal);
+        cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
         // Nested - deletes innermost
         cx.set_state("([woˇrld])", Mode::HelixNormal);
         cx.simulate_keystrokes("m d m");
-        cx.assert_state("(ˇworld)", Mode::HelixNormal);
+        cx.assert_state("(woˇrld)", Mode::HelixNormal);
 
         // mrm - replace nearest surrounding pair
         cx.set_state("hello (woˇrld) test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r m [");
-        cx.assert_state("hello ˇ[world] test", Mode::HelixNormal);
+        cx.assert_state("hello [woˇrld] test", Mode::HelixNormal);
 
         cx.set_state("hello {woˇrld} test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r m (");
-        cx.assert_state("hello ˇ(world) test", Mode::HelixNormal);
+        cx.assert_state("hello (woˇrld) test", Mode::HelixNormal);
 
         // Nested - replaces innermost
         cx.set_state("([woˇrld])", Mode::HelixNormal);
         cx.simulate_keystrokes("m r m {");
-        cx.assert_state("(ˇ{world})", Mode::HelixNormal);
+        cx.assert_state("({woˇrld})", Mode::HelixNormal);
     }
 }
