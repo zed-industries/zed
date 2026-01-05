@@ -169,18 +169,23 @@ pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()
         }
         let mut json_path = child_path.clone();
         json_path.set_extension("json");
-        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
-            && upload_minidump(
-                client.clone(),
-                minidump_endpoint,
-                smol::fs::read(&child_path)
-                    .await
-                    .context("Failed to read minidump")?,
-                &metadata,
-            )
-            .await
-            .log_err()
-            .is_some()
+        let Ok(metadata) = smol::fs::read(&json_path)
+            .await.map_err(|e| anyhow::anyhow!(e))
+            .and_then(|data| serde_json::from_slice(&data).map_err(|e| anyhow::anyhow!(e)))
+        else {
+            continue;
+        };
+        if upload_minidump(
+            client.clone(),
+            minidump_endpoint,
+            smol::fs::read(&child_path)
+                .await
+                .context("Failed to read minidump")?,
+            &metadata,
+        )
+        .await
+        .log_err()
+        .is_some()
         {
             fs::remove_file(child_path).ok();
             fs::remove_file(json_path).ok();
