@@ -401,10 +401,11 @@ impl ActionLog {
         if let Ok(update) = update {
             let update = update.await;
 
-            let diff_snapshot = diff.update(cx, |diff, cx| {
-                diff.set_snapshot(update.clone(), &buffer_snapshot, cx);
-                diff.snapshot(cx)
-            })?;
+            diff.update(cx, |diff, cx| {
+                diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
+            })?
+            .await;
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx))?;
 
             unreviewed_edits = cx
                 .background_spawn({

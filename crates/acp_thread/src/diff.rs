@@ -212,12 +212,16 @@ impl PendingDiff {
                     )
                 })?
                 .await;
-            buffer_diff.update(cx, |diff, cx| {
-                diff.set_snapshot(update.clone(), &text_snapshot, cx);
-                diff.secondary_diff().unwrap().update(cx, |diff, cx| {
-                    diff.set_snapshot(update, &text_snapshot, cx);
-                });
+            let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
+                let task1 = diff.set_snapshot(update.clone(), &text_snapshot, cx);
+                let task2 = diff
+                    .secondary_diff()
+                    .unwrap()
+                    .update(cx, |diff, cx| diff.set_snapshot(update, &text_snapshot, cx));
+                (task1, task2)
             })?;
+            task1.await;
+            task2.await;
             diff.update(cx, |diff, cx| {
                 if let Diff::Pending(diff) = diff {
                     diff.update_visible_ranges(cx);
@@ -380,17 +384,20 @@ async fn build_buffer_diff(
         })?
         .await;
 
-    secondary_diff.update(cx, |secondary_diff, cx| {
-        secondary_diff.language_changed(language.clone(), language_registry.clone(), cx);
-        secondary_diff.set_snapshot(update.clone(), &buffer, cx);
-    })?;
+    secondary_diff
+        .update(cx, |secondary_diff, cx| {
+            secondary_diff.language_changed(language.clone(), language_registry.clone(), cx);
+            secondary_diff.set_snapshot(update.clone(), &buffer, cx)
+        })?
+        .await;
 
     let diff = cx.new(|cx| BufferDiff::new(&buffer, cx))?;
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update.clone(), &buffer, cx);
         diff.set_secondary_diff(secondary_diff);
-    })?;
+        diff.set_snapshot(update.clone(), &buffer, cx)
+    })?
+    .await;
     Ok(diff)
 }
 

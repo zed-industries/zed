@@ -803,11 +803,15 @@ async fn build_buffer_diff(
         })?
         .await;
 
-    diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
-    })
-    .ok();
+    if let Some(task) = diff
+        .update(cx, |diff, cx| {
+            diff.language_changed(language, Some(language_registry.clone()), cx);
+            diff.set_snapshot(update, &buffer.text, cx)
+        })
+        .ok()
+    {
+        task.await;
+    }
 
     Ok(diff)
 }
