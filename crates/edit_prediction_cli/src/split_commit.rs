@@ -45,6 +45,10 @@ pub struct SplitCommitArgs {
     /// Pretty-print JSON output
     #[arg(long, short = 'p')]
     pub pretty: bool,
+
+    /// Number of samples to generate per commit (samples random split points)
+    #[arg(long, short = 'n')]
+    pub num_samples: Option<usize>,
 }
 
 /// Input format for annotated commits (JSON Lines).
@@ -126,6 +130,7 @@ pub fn run_split_commit(
     inputs: &[PathBuf],
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
+    use std::collections::HashSet;
     use std::io::BufRead;
 
     let stdin_path = PathBuf::from("-");
@@ -158,29 +163,67 @@ pub fn run_split_commit(
             let annotated: AnnotatedCommit = serde_json::from_str(&line)
                 .with_context(|| format!("failed to parse JSON at line {}", line_num + 1))?;
 
-            let case = generate_evaluation_example_from_ordered_commit(
-                &annotated.reordered_commit,
-                &annotated.repo_url,
-                &annotated.commit_sha,
-                split_point.clone(),
-                args.seed,
-            )
-            .with_context(|| {
-                format!(
-                    "failed to generate evaluation example for commit {} at line {}",
-                    annotated.commit_sha,
-                    line_num + 1
-                )
-            })?;
+            // Generate multiple samples if num_samples is set
+            if let Some(num_samples) = args.num_samples {
+                let mut seen_samples: HashSet<String> = HashSet::new();
+                let base_seed = args.seed.unwrap_or_else(|| rand::random());
 
-            let json = if args.pretty {
-                serde_json::to_string_pretty(&case)
+                for sample_idx in 0..num_samples {
+                    let sample_seed = base_seed.wrapping_add(sample_idx as u64);
+
+                    let case = generate_evaluation_example_from_ordered_commit(
+                        &annotated.reordered_commit,
+                        &annotated.repo_url,
+                        &annotated.commit_sha,
+                        None, // Use random split point for multi-sample mode
+                        Some(sample_seed),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "failed to generate evaluation example for commit {} at line {} (sample {})",
+                            annotated.commit_sha,
+                            line_num + 1,
+                            sample_idx
+                        )
+                    })?;
+
+                    let json = if args.pretty {
+                        serde_json::to_string_pretty(&case)
+                    } else {
+                        serde_json::to_string(&case)
+                    }
+                    .context("failed to serialize evaluation case as JSON")?;
+
+                    // Only add unique samples (different split points may produce same result)
+                    if seen_samples.insert(json.clone()) {
+                        output_lines.push(json);
+                    }
+                }
             } else {
-                serde_json::to_string(&case)
-            }
-            .context("failed to serialize evaluation case as JSON")?;
+                let case = generate_evaluation_example_from_ordered_commit(
+                    &annotated.reordered_commit,
+                    &annotated.repo_url,
+                    &annotated.commit_sha,
+                    split_point.clone(),
+                    args.seed,
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to generate evaluation example for commit {} at line {}",
+                        annotated.commit_sha,
+                        line_num + 1
+                    )
+                })?;
 
-            output_lines.push(json);
+                let json = if args.pretty {
+                    serde_json::to_string_pretty(&case)
+                } else {
+                    serde_json::to_string(&case)
+                }
+                .context("failed to serialize evaluation case as JSON")?;
+
+                output_lines.push(json);
+            }
         }
     }
 
