@@ -8,6 +8,8 @@ use crate::{
     WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
     dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
 };
+#[cfg(any(test, feature = "test-support"))]
+use anyhow::Result;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -25,6 +27,8 @@ use cocoa::{
         NSUserDefaults,
     },
 };
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
@@ -1597,6 +1601,12 @@ impl PlatformWindow for MacWindow {
             let mut event: id = msg_send![app, currentEvent];
             let _: () = msg_send![window, performWindowDragWithEvent: event];
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, scene: &crate::Scene) -> Result<RgbaImage> {
+        let mut this = self.0.lock();
+        this.renderer.render_to_image(scene)
     }
 }
 

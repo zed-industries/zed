@@ -7,9 +7,13 @@ use crate::{
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
     get_gamma_correction_ratios,
 };
+#[cfg(any(test, feature = "test-support"))]
+use anyhow::Result;
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 use std::sync::Arc;
@@ -916,6 +920,14 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
+    }
+
+    /// Renders the scene to a texture and returns the pixel data as an RGBA image.
+    /// This is not yet implemented for BladeRenderer.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
+    pub fn render_to_image(&mut self, _scene: &Scene) -> Result<RgbaImage> {
+        anyhow::bail!("render_to_image is not yet implemented for BladeRenderer")
     }
 }
 
