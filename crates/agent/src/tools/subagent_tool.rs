@@ -14,6 +14,8 @@ use crate::{
     ThreadEvent, ToolCallEventStream,
 };
 
+/// When a subagent's remaining context window falls below this fraction (25%),
+/// the "context running out" prompt is sent to encourage the subagent to wrap up.
 const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 
 /// Spawns a subagent with its own context window to perform a delegated task.
