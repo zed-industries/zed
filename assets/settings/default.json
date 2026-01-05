@@ -983,7 +983,7 @@
             // Windows destructive commands
             { "pattern": "del /f /s /q c:\\\\" },
             { "pattern": "format c:" },
-            { "pattern": "rd /s /q" }
+            { "pattern": "rd /s /q" },
           ],
           "always_confirm": [
             // File deletion
@@ -995,7 +995,7 @@
             { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
             { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
             // Privileged commands
-            { "pattern": "sudo\\s" }
+            { "pattern": "sudo\\s" },
           ],
           "always_allow": [
             // Build and test commands
@@ -1011,8 +1011,8 @@
             { "pattern": "^grep\\s" },
             { "pattern": "^find\\s" },
             // Safe git commands
-            { "pattern": "^git\\s+(status|log|diff|branch|show)" }
-          ]
+            { "pattern": "^git\\s+(status|log|diff|branch|show)" },
+          ],
         },
         "edit_file": {
           "default_mode": "confirm",
@@ -1021,8 +1021,8 @@
             { "pattern": "\\.env($|\\.)" },
             { "pattern": "secrets?/" },
             { "pattern": "\\.pem$" },
-            { "pattern": "\\.key$" }
-          ]
+            { "pattern": "\\.key$" },
+          ],
         },
         "delete_path": {
           "default_mode": "confirm",
@@ -1043,8 +1043,8 @@
             { "pattern": "\\.git/?$" },
             // Windows system directories
             { "pattern": "^C:\\\\Windows" },
-            { "pattern": "^C:\\\\Program Files" }
-          ]
+            { "pattern": "^C:\\\\Program Files" },
+          ],
         },
         "fetch": {
           "default_mode": "confirm",
@@ -1052,10 +1052,10 @@
             // Common documentation sites
             { "pattern": "^https://(docs\\.|api\\.)?github\\.com" },
             { "pattern": "^https://docs\\.rs" },
-            { "pattern": "^https://crates\\.io" }
-          ]
-        }
-      }
+            { "pattern": "^https://crates\\.io" },
+          ],
+        },
+      },
     },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
