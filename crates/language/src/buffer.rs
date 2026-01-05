@@ -85,7 +85,7 @@ pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new)
 pub enum Capability {
     /// The buffer is a mutable replica.
     ReadWrite,
-    /// The buffer is a mutable replica, but toggled to read-only.
+    /// The buffer is a mutable replica, but toggled to be only readable.
     Read,
     /// The buffer is a read-only replica.
     ReadOnly,

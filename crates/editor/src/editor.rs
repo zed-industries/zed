@@ -3162,6 +3162,14 @@ impl Editor {
         }
     }
 
+    pub fn capability(&self, cx: &App) -> Capability {
+        if self.read_only {
+            Capability::ReadOnly
+        } else {
+            self.buffer.read(cx).capability()
+        }
+    }
+
     pub fn read_only(&self, cx: &App) -> bool {
         self.read_only || self.buffer.read(cx).read_only()
     }
