@@ -463,7 +463,7 @@ impl Render for BufferSearchBar {
                             .absolute()
                             .right_0()
                             .when(has_collapse_button, |this| {
-                                this.pr_1()
+                                this.pr_2()
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
                             })
