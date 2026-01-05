@@ -9,6 +9,7 @@ use crate::{
     example::Example,
     progress::{InfoStyle, Progress, Step},
 };
+use edit_prediction::example_spec::ExampleSpec;
 
 const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
 const EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT: &str = "Edit Prediction Example Captured";
@@ -151,9 +152,12 @@ fn examples_from_response(
             return None;
         }
 
-        match serde_json::from_value::<edit_prediction::example_spec::ExampleSpec>(
-            example_value.clone(),
-        ) {
+        let parse_result = match example_value {
+            JsonValue::String(encoded_json) => serde_json::from_str::<ExampleSpec>(encoded_json),
+            _ => serde_json::from_value::<ExampleSpec>(example_value.clone()),
+        };
+
+        match parse_result {
             Ok(spec) => Some(Example {
                 spec,
                 buffer: None,
