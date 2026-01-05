@@ -1359,9 +1359,7 @@ impl LocalWorktree {
                     anyhow::bail!("File is too large to load");
                 }
             }
-
-            let content = fs.load_bytes(&abs_path).await?;
-            let (text, encoding, has_bom) = decode_byte(content)?;
+            let (text, encoding, has_bom) = decode_file_text(fs.as_ref(), &abs_path).await?;
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -5872,14 +5870,76 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-fn decode_byte(bytes: Vec<u8>) -> anyhow::Result<(String, &'static Encoding, bool)> {
-    // check BOM
-    if let Some((encoding, _bom_len)) = Encoding::for_bom(&bytes) {
+const FILE_ANALYSIS_BYTES: usize = 1024;
+
+async fn decode_file_text(
+    fs: &dyn Fs,
+    abs_path: &Path,
+) -> Result<(String, &'static Encoding, bool)> {
+    let mut file = fs
+        .open_sync(&abs_path)
+        .await
+        .with_context(|| format!("opening file {abs_path:?}"))?;
+
+    // First, read the beginning of the file to determine its kind and encoding.
+    // We do not want to load an entire large blob into memory only to discard it.
+    let mut file_first_bytes = Vec::with_capacity(FILE_ANALYSIS_BYTES);
+    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
+    let mut reached_eof = false;
+    loop {
+        if file_first_bytes.len() >= FILE_ANALYSIS_BYTES {
+            break;
+        }
+        let n = file
+            .read(&mut buf)
+            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
+        if n == 0 {
+            reached_eof = true;
+            break;
+        }
+        file_first_bytes.extend_from_slice(&buf[..n]);
+    }
+    let (bom_encoding, byte_content) = decode_byte_header(&file_first_bytes);
+    anyhow::ensure!(
+        byte_content != ByteContent::Binary,
+        "Binary files are not supported"
+    );
+
+    // If the file is eligible for opening, read the rest of the file.
+    let mut content = file_first_bytes;
+    if !reached_eof {
+        let mut buf = [0u8; 8 * 1024];
+        loop {
+            let n = file
+                .read(&mut buf)
+                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
+            if n == 0 {
+                break;
+            }
+            content.extend_from_slice(&buf[..n]);
+        }
+    }
+    decode_byte_full(content, bom_encoding, byte_content)
+}
+
+fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
+    if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
+        return (Some(encoding), ByteContent::Unknown);
+    }
+    (None, analyze_byte_content(prefix))
+}
+
+fn decode_byte_full(
+    bytes: Vec<u8>,
+    bom_encoding: Option<&'static Encoding>,
+    byte_content: ByteContent,
+) -> Result<(String, &'static Encoding, bool)> {
+    if let Some(encoding) = bom_encoding {
         let (cow, _) = encoding.decode_with_bom_removal(&bytes);
         return Ok((cow.into_owned(), encoding, true));
     }
 
-    match analyze_byte_content(&bytes) {
+    match byte_content {
         ByteContent::Utf16Le => {
             let encoding = encoding_rs::UTF_16LE;
             let (cow, _, _) = encoding.decode(&bytes);
@@ -5942,7 +6002,7 @@ fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         return ByteContent::Unknown;
     }
 
-    let check_len = bytes.len().min(1024);
+    let check_len = bytes.len().min(FILE_ANALYSIS_BYTES);
     let sample = &bytes[..check_len];
 
     if !sample.contains(&0) {
