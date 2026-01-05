@@ -23,7 +23,6 @@ In particular we love PRs that are:
 
 If you're looking for concrete ideas:
 
-- [Curated board of issues](https://github.com/orgs/zed-industries/projects/69) suitable for everyone from first-time contributors to seasoned community champions.
 - [Triaged bugs with confirmed steps to reproduce](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible).
 - [Area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) to browse bugs in a specific part of the product you care about (after clicking on an area label, add type:Bug to the search).
 

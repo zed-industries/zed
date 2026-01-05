@@ -31,7 +31,7 @@ use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
 };
-use ui_input::{NumberField, NumberFieldType};
+use ui_input::{NumberField, NumberFieldMode, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
@@ -469,6 +469,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
+        .add_basic_renderer::<settings::CompletionDetailAlignment>(render_dropdown)
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
@@ -513,6 +514,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
+        .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         // please semicolon stay on next line
         ;
 }
@@ -3667,7 +3669,44 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or_else(T::min_value);
-    NumberField::new("numeric_stepper", value, window, cx)
+
+    let id = field
+        .json_path
+        .map(|p| format!("numeric_stepper_{}", p))
+        .unwrap_or_else(|| "numeric_stepper".to_string());
+
+    NumberField::new(id, value, window, cx)
+        .tab_index(0_isize)
+        .on_change({
+            move |value, _window, cx| {
+                let value = *value;
+                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
+                    (field.write)(settings, Some(value));
+                })
+                .log_err(); // todo(settings_ui) don't log err
+            }
+        })
+        .into_any_element()
+}
+
+fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
+    field: SettingField<T>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let value = value.copied().unwrap_or_else(T::min_value);
+
+    let id = field
+        .json_path
+        .map(|p| format!("numeric_stepper_{}", p))
+        .unwrap_or_else(|| "numeric_stepper".to_string());
+
+    NumberField::new(id, value, window, cx)
+        .mode(NumberFieldMode::Edit, cx)
+        .tab_index(0_isize)
         .on_change({
             move |value, _window, cx| {
                 let value = *value;

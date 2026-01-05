@@ -55,6 +55,13 @@
     },
   },
   {
+    "context": "menu",
+    "bindings": {
+      "right": "menu::SelectChild",
+      "left": "menu::SelectParent",
+    },
+  },
+  {
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -355,6 +362,9 @@
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll",
       "cmd-enter": "agent::ChatWithFollow",
+      "cmd-shift-enter": "agent::QueueMessage",
+      "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
+      "cmd-shift-backspace": "agent::ClearMessageQueue",
       "cmd-shift-v": "agent::PasteRaw",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
@@ -1296,9 +1306,11 @@
       "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
       "alt-enter": "keymap_editor::CreateBinding",
+      "cmd-k": "keymap_editor::OpenCreateKeybindingModal",
       "cmd-c": "keymap_editor::CopyAction",
       "cmd-shift-c": "keymap_editor::CopyContext",
       "cmd-t": "keymap_editor::ShowMatchingKeybinds",
+      "cmd-e": "zed::OpenKeymapFile",
     },
   },
   {

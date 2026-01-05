@@ -129,8 +129,8 @@ struct BufferGitState {
     hunk_staging_operation_count: usize,
     hunk_staging_operation_count_as_of_write: usize,
 
-    head_text: Option<Arc<String>>,
-    index_text: Option<Arc<String>>,
+    head_text: Option<Arc<str>>,
+    index_text: Option<Arc<str>>,
     head_changed: bool,
     index_changed: bool,
     language_changed: bool,
@@ -693,7 +693,6 @@ impl GitStore {
         oid: Option<git::Oid>,
         buffer: Entity<Buffer>,
         repo: Entity<Repository>,
-        languages: Arc<LanguageRegistry>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         cx.spawn(async move |this, cx| {
@@ -710,9 +709,8 @@ impl GitStore {
             buffer_diff
                 .update(cx, |buffer_diff, cx| {
                     buffer_diff.set_base_text(
-                        content.map(Arc::new),
+                        content.map(|s| s.as_str().into()),
                         buffer_snapshot.language().cloned(),
-                        Some(languages.clone()),
                         buffer_snapshot.text,
                         cx,
                     )
@@ -823,6 +821,7 @@ impl GitStore {
 
             cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
             diff_state.update(cx, |diff_state, cx| {
+                diff_state.language_changed = true;
                 diff_state.language = language;
                 diff_state.language_registry = language_registry;
 
@@ -2652,7 +2651,7 @@ impl GitStore {
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().unstaged = Some(diff.clone());
         })?;
-        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string())?;
+        let staged_text = diff.read_with(&cx, |diff, cx| diff.base_text_string(cx))?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2682,14 +2681,14 @@ impl GitStore {
             let unstaged_diff = diff.secondary_diff();
             let index_snapshot = unstaged_diff.and_then(|diff| {
                 let diff = diff.read(cx);
-                diff.base_text_exists().then(|| diff.base_text())
+                diff.base_text_exists().then(|| diff.base_text(cx))
             });
 
             let mode;
             let staged_text;
             let committed_text;
             if diff.base_text_exists() {
-                let committed_snapshot = diff.base_text();
+                let committed_snapshot = diff.base_text(cx);
                 committed_text = Some(committed_snapshot.text());
                 if let Some(index_text) = index_snapshot {
                     if index_text.remote_id() == committed_snapshot.remote_id() {
@@ -3025,21 +3024,21 @@ impl BufferGitState {
             Some(DiffBasesChange::SetIndex(index)) => {
                 self.index_text = index.map(|mut index| {
                     text::LineEnding::normalize(&mut index);
-                    Arc::new(index)
+                    Arc::from(index.as_str())
                 });
                 self.index_changed = true;
             }
             Some(DiffBasesChange::SetHead(head)) => {
                 self.head_text = head.map(|mut head| {
                     text::LineEnding::normalize(&mut head);
-                    Arc::new(head)
+                    Arc::from(head.as_str())
                 });
                 self.head_changed = true;
             }
             Some(DiffBasesChange::SetBoth(text)) => {
                 let text = text.map(|mut text| {
                     text::LineEnding::normalize(&mut text);
-                    Arc::new(text)
+                    Arc::from(text.as_str())
                 });
                 self.head_text = text.clone();
                 self.index_text = text;
@@ -3049,12 +3048,12 @@ impl BufferGitState {
             Some(DiffBasesChange::SetEach { index, head }) => {
                 self.index_text = index.map(|mut index| {
                     text::LineEnding::normalize(&mut index);
-                    Arc::new(index)
+                    Arc::from(index.as_str())
                 });
                 self.index_changed = true;
                 self.head_text = head.map(|mut head| {
                     text::LineEnding::normalize(&mut head);
-                    Arc::new(head)
+                    Arc::from(head.as_str())
                 });
                 self.head_changed = true;
             }
@@ -3091,17 +3090,16 @@ impl BufferGitState {
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
                 new_unstaged_diff = Some(
-                    BufferDiff::update_diff(
-                        unstaged_diff.clone(),
-                        buffer.clone(),
-                        index,
-                        index_changed,
-                        language_changed,
-                        language.clone(),
-                        language_registry.clone(),
-                        cx,
-                    )
-                    .await?,
+                    cx.update(|cx| {
+                        unstaged_diff.read(cx).update_diff(
+                            buffer.clone(),
+                            index,
+                            index_changed,
+                            language.clone(),
+                            cx,
+                        )
+                    })?
+                    .await,
                 );
             }
 
@@ -3115,17 +3113,16 @@ impl BufferGitState {
                     new_unstaged_diff.clone()
                 } else {
                     Some(
-                        BufferDiff::update_diff(
-                            uncommitted_diff.clone(),
-                            buffer.clone(),
-                            head,
-                            head_changed,
-                            language_changed,
-                            language.clone(),
-                            language_registry.clone(),
-                            cx,
-                        )
-                        .await?,
+                        cx.update(|cx| {
+                            uncommitted_diff.read(cx).update_diff(
+                                buffer.clone(),
+                                head,
+                                head_changed,
+                                language.clone(),
+                                cx,
+                            )
+                        })?
+                        .await,
                     )
                 }
             }
@@ -3162,12 +3159,13 @@ impl BufferGitState {
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
-                unstaged_diff.update(cx, |diff, cx| {
+                let task = unstaged_diff.update(cx, |diff, cx| {
                     if language_changed {
-                        diff.language_changed(cx);
+                        diff.language_changed(language.clone(), language_registry.clone(), cx);
                     }
                     diff.set_snapshot(new_unstaged_diff, &buffer, cx)
-                })?
+                })?;
+                Some(task.await)
             } else {
                 None
             };
@@ -3177,18 +3175,20 @@ impl BufferGitState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(cx, |diff, cx| {
-                    if language_changed {
-                        diff.language_changed(cx);
-                    }
-                    diff.set_snapshot_with_secondary(
-                        new_uncommitted_diff,
-                        &buffer,
-                        unstaged_changed_range,
-                        true,
-                        cx,
-                    );
-                })?;
+                uncommitted_diff
+                    .update(cx, |diff, cx| {
+                        if language_changed {
+                            diff.language_changed(language, language_registry, cx);
+                        }
+                        diff.set_snapshot_with_secondary(
+                            new_uncommitted_diff,
+                            &buffer,
+                            unstaged_changed_range.flatten(),
+                            true,
+                            cx,
+                        )
+                    })?
+                    .await;
             }
 
             log::debug!(
@@ -3689,9 +3689,9 @@ impl Repository {
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
                                     (Some(current_index), Some(current_head)) => {
                                         let index_changed =
-                                            index_text.as_ref() != current_index.as_deref();
+                                            index_text.as_deref() != current_index.as_deref();
                                         let head_changed =
-                                            head_text.as_ref() != current_head.as_deref();
+                                            head_text.as_deref() != current_head.as_deref();
                                         if index_changed && head_changed {
                                             if index_text == head_text {
                                                 Some(DiffBasesChange::SetBoth(head_text))
@@ -3711,13 +3711,13 @@ impl Repository {
                                     }
                                     (Some(current_index), None) => {
                                         let index_changed =
-                                            index_text.as_ref() != current_index.as_deref();
+                                            index_text.as_deref() != current_index.as_deref();
                                         index_changed
                                             .then_some(DiffBasesChange::SetIndex(index_text))
                                     }
                                     (None, Some(current_head)) => {
                                         let head_changed =
-                                            head_text.as_ref() != current_head.as_deref();
+                                            head_text.as_deref() != current_head.as_deref();
                                         head_changed.then_some(DiffBasesChange::SetHead(head_text))
                                     }
                                     (None, None) => None,

@@ -268,6 +268,7 @@ dependencies = [
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -2380,7 +2381,6 @@ dependencies = [
 name = "buffer_diff"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clock",
  "ctor",
  "futures 0.3.31",
@@ -3354,7 +3354,6 @@ dependencies = [
  "remote",
  "remote_server",
  "reqwest 0.11.27",
- "reqwest_client",
  "rpc",
  "scrypt",
  "sea-orm",
@@ -3369,7 +3368,6 @@ dependencies = [
  "sqlx",
  "strum 0.27.2",
  "subtle",
- "supermaven_api",
  "task",
  "telemetry_events",
  "text",
@@ -5253,6 +5251,7 @@ dependencies = [
  "text",
  "thiserror 2.0.17",
  "time",
+ "toml 0.8.23",
  "ui",
  "util",
  "uuid",
@@ -5296,12 +5295,14 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "rand 0.9.2",
  "release_channel",
  "reqwest_client",
  "serde",
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
+ "similar",
  "smol",
  "sqlez",
  "sqlez_macros",
@@ -8653,7 +8654,6 @@ dependencies = [
  "extension",
  "gpui",
  "language",
- "lsp",
  "paths",
  "project",
  "schemars",
@@ -15080,6 +15080,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "simple_asn1"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16881,11 +16887,13 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "db",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
  "pretty_assertions",
  "project",
+ "recent_projects",
  "remote",
  "rpc",
  "schemars",
@@ -20964,7 +20972,7 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

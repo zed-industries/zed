@@ -56,6 +56,13 @@
     },
   },
   {
+    "context": "menu",
+    "bindings": {
+      "right": "menu::SelectChild",
+      "left": "menu::SelectParent",
+    },
+  },
+  {
     "context": "Editor",
     "bindings": {
       "escape": "editor::Cancel",
@@ -303,12 +310,15 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-enter": "agent::ChatWithFollow",
-      "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-enter": "agent::ChatWithFollow",
+      "ctrl-shift-enter": "agent::QueueMessage",
+      "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
+      "ctrl-shift-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
+      "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
     },
@@ -1195,9 +1205,11 @@
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
       "alt-enter": "keymap_editor::CreateBinding",
+      "ctrl-k": "keymap_editor::OpenCreateKeybindingModal",
       "ctrl-c": "keymap_editor::CopyAction",
       "ctrl-shift-c": "keymap_editor::CopyContext",
       "ctrl-t": "keymap_editor::ShowMatchingKeybinds",
+      "ctrl-e": "zed::OpenKeymapFile",
     },
   },
   {

@@ -1,4 +1,4 @@
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use feature_flags::FeatureFlag;
@@ -323,22 +323,28 @@ impl RatePredictionsModal {
                 let start = Point::new(range.start.row.saturating_sub(5), 0);
                 let end = Point::new(range.end.row + 5, 0).min(new_buffer_snapshot.max_point());
 
-                let diff = cx.new::<BufferDiff>(|cx| {
-                    let diff_snapshot = BufferDiffSnapshot::new_with_base_buffer(
+                let language = new_buffer_snapshot.language().cloned();
+                let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
+                diff.update(cx, |diff, cx| {
+                    let update = diff.update_diff(
                         new_buffer_snapshot.text.clone(),
                         Some(old_buffer_snapshot.text().into()),
-                        old_buffer_snapshot.clone(),
+                        true,
+                        language,
                         cx,
                     );
-                    let diff = BufferDiff::new(&new_buffer_snapshot, cx);
                     cx.spawn(async move |diff, cx| {
-                        let diff_snapshot = diff_snapshot.await;
-                        diff.update(cx, |diff, cx| {
-                            diff.set_snapshot(diff_snapshot, &new_buffer_snapshot.text, cx);
-                        })
+                        let update = update.await;
+                        if let Some(task) = diff
+                            .update(cx, |diff, cx| {
+                                diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
+                            })
+                            .ok()
+                        {
+                            task.await;
+                        }
                     })
                     .detach();
-                    diff
                 });
 
                 editor.disable_header_for_buffer(new_buffer_id, cx);

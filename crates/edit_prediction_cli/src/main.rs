@@ -2,14 +2,18 @@ mod anthropic_client;
 mod distill;
 mod example;
 mod format_prompt;
+mod git;
 mod headless;
 mod load_project;
 mod metrics;
 mod paths;
 mod predict;
 mod progress;
+mod reorder_patch;
 mod retrieve_context;
 mod score;
+mod split_commit;
+mod synthesize;
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use edit_prediction::EditPredictionStore;
@@ -28,6 +32,8 @@ use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
+use crate::split_commit::SplitCommitArgs;
+use crate::synthesize::{SynthesizeConfig, run_synthesize};
 
 #[derive(Parser, Debug)]
 #[command(name = "ep")]
@@ -67,8 +73,12 @@ enum Command {
     Distill,
     /// Print aggregated scores
     Eval(PredictArgs),
+    /// Generate eval examples by analyzing git commits from a repository
+    Synthesize(SynthesizeArgs),
     /// Remove git repositories and worktrees
     Clean,
+    /// Generate an evaluation example by splitting a chronologically-ordered commit
+    SplitCommit(SplitCommitArgs),
 }
 
 impl Display for Command {
@@ -118,7 +128,11 @@ impl Display for Command {
                     .unwrap()
                     .get_name()
             ),
+            Command::Synthesize(args) => {
+                write!(f, "synthesize --repo={}", args.repo)
+            }
             Command::Clean => write!(f, "clean"),
+            Command::SplitCommit(_) => write!(f, "split-commit"),
         }
     }
 }
@@ -143,7 +157,7 @@ struct PredictArgs {
     repetitions: usize,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum, Serialize, Deserialize)]
 enum PredictionProvider {
     Sweep,
     Mercury,
@@ -151,6 +165,25 @@ enum PredictionProvider {
     Zeta2,
     Teacher,
     TeacherNonBatching,
+}
+
+#[derive(Debug, Args)]
+struct SynthesizeArgs {
+    /// Repository URL (git@github.com:owner/repo or https://...)
+    #[clap(long)]
+    repo: String,
+
+    /// Number of examples to generate
+    #[clap(long, default_value_t = 5)]
+    count: usize,
+
+    /// Maximum commits to scan before giving up
+    #[clap(long, default_value_t = 100)]
+    max_commits: usize,
+
+    /// Ignore state file and reprocess all commits
+    #[clap(long)]
+    fresh: bool,
 }
 
 impl EpArgs {
@@ -187,6 +220,32 @@ fn main() {
     match &command {
         Command::Clean => {
             std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
+            return;
+        }
+        Command::Synthesize(synth_args) => {
+            let Some(output_dir) = args.output else {
+                panic!("output dir is required");
+            };
+            let config = SynthesizeConfig {
+                repo_url: synth_args.repo.clone(),
+                count: synth_args.count,
+                max_commits: synth_args.max_commits,
+                output_dir,
+                fresh: synth_args.fresh,
+            };
+            smol::block_on(async {
+                if let Err(e) = run_synthesize(config).await {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
+        Command::SplitCommit(split_commit_args) => {
+            if let Err(error) = split_commit::run_split_commit(split_commit_args) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
             return;
         }
         _ => {}
@@ -256,7 +315,9 @@ fn main() {
                                         run_scoring(example, &args, app_state.clone(), cx.clone())
                                             .await?;
                                     }
-                                    Command::Clean => {
+                                    Command::Clean
+                                    | Command::Synthesize(_)
+                                    | Command::SplitCommit(_) => {
                                         unreachable!()
                                     }
                                 }

@@ -44,7 +44,6 @@ prometheus = "0.14"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
-reqwest_client.workspace = true
 rpc.workspace = true
 scrypt = "0.11"
 # sea-orm and sea-orm-macros versions must match exactly.
@@ -57,7 +56,6 @@ sha2.workspace = true
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 strum.workspace = true
 subtle.workspace = true
-supermaven_api.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true
