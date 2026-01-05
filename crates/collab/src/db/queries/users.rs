@@ -33,11 +33,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            Ok(NewUserResult {
-                user_id: user.id,
-                signup_device_id: None,
-                inviting_user_id: None,
-            })
+            Ok(NewUserResult { user_id: user.id })
         })
         .await
     }
