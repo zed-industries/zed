@@ -1,4 +1,4 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -18,7 +18,7 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt;
+use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -29,7 +29,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, Visibility,
+        ConnectionExt as _, EventMask, ModMask, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -222,7 +222,7 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
-    fn get_client(&self) -> Option<X11Client> {
+    pub fn get_client(&self) -> Option<X11Client> {
         self.0.upgrade().map(X11Client)
     }
 
@@ -246,10 +246,6 @@ impl X11ClientStatePtr {
             state.keyboard_focused_window = None;
         }
         state.cursor_styles.remove(&x_window);
-
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -317,7 +313,37 @@ impl X11Client {
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let mut timing = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                            };
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
                         });
                     }
                 }
@@ -411,7 +437,7 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let gpu_context = BladeContext::new().notify_err("Unable to init GPU context");
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
@@ -726,7 +752,7 @@ impl X11Client {
         }
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
+    pub(crate) fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
         let state = self.0.borrow();
         state
             .windows
@@ -763,12 +789,12 @@ impl X11Client {
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
-                if atom == state.atoms.WM_DELETE_WINDOW {
+                if atom == state.atoms.WM_DELETE_WINDOW && window.should_close() {
                     // window "x" button clicked by user
-                    if window.should_close() {
-                        // Rest of the close logic is handled in drop_window()
-                        window.close();
-                    }
+                    // Rest of the close logic is handled in drop_window()
+                    drop(state);
+                    window.close();
+                    state = self.0.borrow_mut();
                 } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
                         Some(x11rb::protocol::sync::Int64 {
@@ -918,6 +944,8 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 window.set_active(false);
                 let mut state = self.0.borrow_mut();
+                // Set last scroll values to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
                 state.keyboard_focused_window = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
@@ -992,6 +1020,12 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
+
                 let keystroke = {
                     let code = event.detail.into();
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -1056,6 +1090,11 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
 
                 let keystroke = {
                     let code = event.detail.into();
@@ -1179,6 +1218,33 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
+                if window.is_blocked() {
+                    // We want to set the cursor to the default arrow
+                    // when the window is blocked
+                    let style = CursorStyle::Arrow;
+
+                    let current_style = state
+                        .cursor_styles
+                        .get(&window.x_window)
+                        .unwrap_or(&CursorStyle::Arrow);
+                    if *current_style != style
+                        && let Some(cursor) = state.get_cursor_icon(style)
+                    {
+                        state.cursor_styles.insert(window.x_window, style);
+                        check_reply(
+                            || "Failed to set cursor style",
+                            state.xcb_connection.change_window_attributes(
+                                window.x_window,
+                                &ChangeWindowAttributesAux {
+                                    cursor: Some(cursor),
+                                    ..Default::default()
+                                },
+                            ),
+                        )
+                        .log_err();
+                        state.xcb_connection.flush().log_err();
+                    };
+                }
                 let pressed_button = pressed_button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
@@ -1452,7 +1518,7 @@ impl LinuxClient for X11Client {
         let parent_window = state
             .keyboard_focused_window
             .and_then(|focused_window| state.windows.get(&focused_window))
-            .map(|window| window.window.x_window);
+            .map(|w| w.window.clone());
         let x_window = state
             .xcb_connection
             .generate_id()
@@ -1507,7 +1573,15 @@ impl LinuxClient for X11Client {
             .cursor_styles
             .get(&focused_window)
             .unwrap_or(&CursorStyle::Arrow);
-        if *current_style == style {
+
+        let window = state
+            .mouse_focused_window
+            .and_then(|w| state.windows.get(&w));
+
+        let should_change = *current_style != style
+            && (window.is_none() || window.is_some_and(|w| !w.is_blocked()));
+
+        if !should_change {
             return;
         }
 
@@ -2489,4 +2563,20 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[inline]
+fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::KeyButMask) {
+    let depressed_mods = event_state.remove((ModMask::LOCK | ModMask::M2).bits());
+    let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+    let locked_mods = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+    let locked_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+    xkb.update_mask(
+        depressed_mods.into(),
+        latched_mods,
+        locked_mods,
+        0,
+        0,
+        locked_layout,
+    );
 }

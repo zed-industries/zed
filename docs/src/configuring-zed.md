@@ -213,7 +213,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
+- Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
 **Options**
@@ -584,10 +584,11 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 **Options**
 
-There are two options to choose from:
+There are three options to choose from:
 
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
+3. `disabled`: No shell environment will be loaded automatically; direnv must be invoked manually (e.g. with `direnv exec`) to be used.
 
 ## Double Click In Multibuffer
 
@@ -1450,6 +1451,47 @@ or
 
 `boolean` values
 
+### Session
+
+- Description: Controls Zed lifecycle-related behavior.
+- Setting: `session`
+- Default:
+
+```json
+{
+  "session": {
+    "restore_unsaved_buffers": true,
+    "trust_all_worktrees": false
+  }
+}
+```
+
+**Options**
+
+1.  Whether or not to restore unsaved buffers on restart:
+
+```json [settings]
+{
+  "session": {
+    "restore_unsaved_buffers": true
+  }
+}
+```
+
+If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
+
+2. Whether or not to skip worktree and workspace trust checks:
+
+```json [settings]
+{
+  "session": {
+    "trust_all_worktrees": false
+  }
+}
+```
+
+When trusted, project settings are synchronized automatically, language and MCP servers are downloaded and started automatically.
+
 ### Drag And Drop Selection
 
 - Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
@@ -1537,6 +1579,26 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 - Description: Whether to start a new line with a comment when a previous line is a comment as well.
 - Setting: `extend_comment_on_newline`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Extend List On Newline
+
+- Description: Whether to continue lists when pressing Enter at the end of a list item. Supports unordered, ordered, and task lists. Pressing Enter on an empty list item removes the marker and exits the list.
+- Setting: `extend_list_on_newline`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Indent List On Tab
+
+- Description: Whether to indent list items when pressing Tab on a line containing only a list marker. This enables quick creation of nested lists.
+- Setting: `indent_list_on_tab`
 - Default: `true`
 
 **Options**
@@ -2519,11 +2581,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
   "path": "~",
   "hour_format": "hour12"
 }
+
 ```
 
 ### Path
 
-- Description: The path of the directory where journal entries are stored.
+- Description: The path of the directory where journal entries are stored. If an invalid path is specified, the journal will fall back to using `~` (the home directory).
 - Setting: `path`
 - Default: `~`
 
@@ -2859,10 +2922,24 @@ Configuration object for defining settings profiles. Example:
 ```json [settings]
 "preview_tabs": {
   "enabled": true,
+  "enable_preview_from_project_panel": true,
   "enable_preview_from_file_finder": false,
-  "enable_preview_from_code_navigation": false,
+  "enable_preview_from_multibuffer": true,
+  "enable_preview_multibuffer_from_code_navigation": false,
+  "enable_preview_file_from_code_navigation": true,
+  "enable_keep_preview_on_code_navigation": false,
 }
 ```
+
+### Enable preview from project panel
+
+- Description: Determines whether to open files in preview mode when opened from the project panel with a single click.
+- Setting: `enable_preview_from_project_panel`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ### Enable preview from file finder
 
@@ -2874,10 +2951,40 @@ Configuration object for defining settings profiles. Example:
 
 `boolean` values
 
-### Enable preview from code navigation
+### Enable preview from multibuffer
 
-- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-- Setting: `enable_preview_from_code_navigation`
+- Description: Determines whether to open files in preview mode when opened from a multibuffer.
+- Setting: `enable_preview_from_multibuffer`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable preview multibuffer from code navigation
+
+- Description: Determines whether to open tabs in preview mode when code navigation is used to open a multibuffer.
+- Setting: `enable_preview_multibuffer_from_code_navigation`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Enable preview file from code navigation
+
+- Description: Determines whether to open tabs in preview mode when code navigation is used to open a single file.
+- Setting: `enable_preview_file_from_code_navigation`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable keep preview on code navigation
+
+- Description: Determines whether to keep tabs in preview mode when code navigation is used to navigate away from them. If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
+- Setting: `enable_keep_preview_on_code_navigation`
 - Default: `false`
 
 **Options**
@@ -3096,7 +3203,15 @@ List of strings containing any combination of:
 
 ```json [settings]
 {
-  "restore_on_startup": "none"
+  "restore_on_startup": "empty_tab"
+}
+```
+
+4. Always start with the welcome launchpad:
+
+```json [settings]
+{
+  "restore_on_startup": "launchpad"
 }
 ```
 
@@ -3184,12 +3299,52 @@ Non-negative `integer` values
 
 ```json [settings]
 "search": {
+  "button": true,
   "whole_word": false,
   "case_sensitive": false,
   "include_ignored": false,
-  "regex": false
+  "regex": false,
+  "center_on_match": false
 },
 ```
+
+### Button
+
+- Description: Whether to show the project search button in the status bar.
+- Setting: `button`
+- Default: `true`
+
+### Whole Word
+
+- Description: Whether to only match on whole words.
+- Setting: `whole_word`
+- Default: `false`
+
+### Case Sensitive
+
+- Description: Whether to match case sensitively. This setting affects both
+  searches and editor actions like "Select Next Occurrence", "Select Previous
+  Occurrence", and "Select All Occurrences".
+- Setting: `case_sensitive`
+- Default: `false`
+
+### Include Ignore
+
+- Description: Whether to include gitignored files in search results.
+- Setting: `include_ignored`
+- Default: `false`
+
+### Regex
+
+- Description: Whether to interpret the search query as a regular expression.
+- Setting: `regex`
+- Default: `false`
+
+### Center On Match
+
+- Description: Whether to center the cursor on each search match when navigating.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Search Wrap
 
@@ -3357,6 +3512,7 @@ Positive integer values
 2. `selection`
 3. `none`
 4. `boundary`
+5. `trailing`
 
 ## Whitespace Map
 
@@ -3545,6 +3701,7 @@ List of `integer` column numbers
     "option_as_meta": false,
     "button": true,
     "shell": "system",
+    "scroll_multiplier": 3.0,
     "toolbar": {
       "breadcrumbs": false
     },
@@ -3957,6 +4114,26 @@ Disable with:
 }
 ```
 
+### Terminal: Scroll Multiplier
+
+- Description: The multiplier for scrolling speed in the terminal when using mouse wheel or trackpad.
+- Setting: `scroll_multiplier`
+- Default: `1.0`
+
+**Options**
+
+Positive floating point values. Values less than or equal to 0 will be clamped to a minimum of 0.01.
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "scroll_multiplier": 5.0
+  }
+}
+```
+
 ## Terminal: Toolbar
 
 - Description: Whether or not to show various elements in the terminal toolbar.
@@ -4009,7 +4186,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Will Fallback to the first project directory strategy if unsuccessful
+1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4019,7 +4196,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Will fallback to using this platform's home directory.
+2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4029,7 +4206,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory (if we can find it)
+3. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4052,6 +4229,53 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
   }
 }
 ```
+
+### Terminal: Path Hyperlink Regexes
+
+- Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string).
+- Setting: `path_hyperlink_regexes`
+- Default:
+
+```json [settings]
+{
+  "terminal": {
+    "path_hyperlink_regexes": [
+      // Python-style diagnostics
+      "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+      // Common path syntax with optional line, column, description, trailing punctuation, or
+      // surrounding symbols or quotes
+      [
+        "(?x)",
+        "# optionally starts with 0-2 opening prefix symbols",
+        "[({\\[<]{0,2}",
+        "# which may be followed by an opening quote",
+        "(?<quote>[\"'`])?",
+        "# `path` is the shortest sequence of any non-space character",
+        "(?<link>(?<path>[^ ]+?",
+        "    # which may end with a line and optionally a column,",
+        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+        "))",
+        "# which must be followed by a matching quote",
+        "(?(<quote>)\\k<quote>)",
+        "# and optionally a single closing symbol",
+        "[)}\\]>]?",
+        "# if line/column matched, may be followed by a description",
+        "(?(<line_column>):[^ 0-9][^ ]*)?",
+        "# which may be followed by trailing punctuation",
+        "[.,:)}\\]>]*",
+        "# and always includes trailing whitespace or end of line",
+        "([ ]+|$)"
+      ]
+    ]
+  }
+}
+```
+
+### Terminal: Path Hyperlink Timeout (ms)
+
+- Description: Maximum time to search for a path hyperlink. When set to 0, path hyperlinks are disabled.
+- Setting: `path_hyperlink_timeout_ms`
+- Default: `1`
 
 ## REPL
 
@@ -4155,6 +4379,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "show_project_items": true,
   "show_onboarding_banner": true,
   "show_user_picture": true,
+  "show_user_menu": true,
   "show_sign_in": true,
   "show_menus": false
 }
@@ -4167,6 +4392,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
+- `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 
@@ -4236,10 +4462,15 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "indent_guides": {
       "show": "always"
     },
+    "sort_mode": "directories_first",
     "hide_root": false,
     "hide_hidden": false,
     "starts_open": true,
-    "open_file_on_paste": true
+    "auto_open": {
+      "on_create": true,
+      "on_paste": true,
+      "on_drop": true
+    }
   }
 }
 ```
@@ -4448,6 +4679,58 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
+### Sort Mode
+
+- Description: Sort order for entries in the project panel
+- Setting: `sort_mode`
+- Default: `directories_first`
+
+**Options**
+
+1. Show directories first, then files
+
+```json [settings]
+{
+  "sort_mode": "directories_first"
+}
+```
+
+2. Mix directories and files together
+
+```json [settings]
+{
+  "sort_mode": "mixed"
+}
+```
+
+3. Show files first, then directories
+
+```json [settings]
+{
+  "sort_mode": "files_first"
+}
+```
+
+### Auto Open
+
+- Description: Control whether files are opened automatically after different creation flows in the project panel.
+- Setting: `auto_open`
+- Default:
+
+```json [settings]
+"auto_open": {
+  "on_create": true,
+  "on_paste": true,
+  "on_drop": true
+}
+```
+
+**Options**
+
+- `on_create`: Whether to automatically open newly created files in the editor.
+- `on_paste`: Whether to automatically open files after pasting or duplicating them.
+- `on_drop`: Whether to automatically open files dropped from external sources.
+
 ## Agent
 
 Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
@@ -4527,6 +4810,34 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 
+## Git Hosting Providers
+
+- Description: Register self-hosted GitHub, GitLab, or Bitbucket instances so commit hashes, issue references, and permalinks resolve to the right host.
+- Setting: `git_hosting_providers`
+- Default: `[]`
+
+**Options**
+
+Each entry accepts:
+
+- `provider`: One of `github`, `gitlab`, or `bitbucket`
+- `name`: Display name for the instance
+- `base_url`: Base URL, e.g. `https://git.example.corp`
+
+You can define these in user or project settings; project settings are merged on top of user settings.
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "github",
+      "name": "BigCorp GitHub",
+      "base_url": "https://git.example.corp"
+    }
+  ]
+}
+```
+
 ## Outline Panel
 
 - Description: Customize outline Panel
@@ -4567,6 +4878,18 @@ See the [debugger page](./debugger.md) for more information about debugging supp
   "share_on_join": false
 },
 ```
+
+## Colorize Brackets
+
+- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
+- Setting: `colorize_brackets`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ## Unnecessary Code Fade
 

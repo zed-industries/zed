@@ -1,4 +1,4 @@
-# Configuring supported languages
+# Configuring Supported Languages
 
 Zed offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
 
@@ -58,6 +58,7 @@ You can customize a wide range of settings for each language, including:
 - [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
 - [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
 - [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`colorize_brackets`](./configuring-zed.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -122,7 +123,7 @@ You can specify your preference using the `language_servers` setting:
 ```json [settings]
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
     }
   }
 ```
@@ -453,7 +454,7 @@ Use the `editor: Hover` command to display information about the symbol under th
 
 ### Workspace Symbol Search
 
-The `workspace: Open Symbol` command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
+The {#action project_symbols::Toggle} command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
 
 ### Code Completion
 
@@ -461,4 +462,4 @@ Zed provides intelligent code completion suggestions as you type. You can manual
 
 ### Diagnostics
 
-Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the `diagnostics: Toggle` command.
+Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the {#action diagnostics::Deploy} command.

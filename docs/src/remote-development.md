@@ -174,13 +174,37 @@ When opening a remote project there are three relevant settings locations:
 
 Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main `settings.json`.
 
-Depending on the kind of setting you want to make, which settings file you should use:
+Which settings file you should use depends on the kind of setting you want to make:
 
 - Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use, etc.
-- Server settings should be used for things that affect the server: paths to language servers, etc.
+- Server settings should be used for things that affect the server: paths to language servers, proxy settings, etc.
 - Local settings should be used for things that affect the UI: font size, etc.
 
 In addition any extensions you have installed locally will be propagated to the remote server. This means that language servers, etc. will run correctly.
+
+## Proxy Configuration
+
+The remote server will not use your local machine's proxy configuration because they may be under different network policies. If your remote server requires a proxy to access the internet, you must configure it on the remote server itself.
+
+In most cases, your remote server will already have proxy environment variables configured. Zed will automatically use them when downloading language servers, communicating with LLM models, etc.
+
+If needed, you can set these environment variables in the server's shell configuration (e.g., `~/.bashrc`):
+
+```bash
+export http_proxy="http://proxy.example.com:8080"
+export https_proxy="http://proxy.example.com:8080"
+export no_proxy="localhost,127.0.0.1"
+```
+
+Alternatively, you can configure the proxy in the remote machine's `~/.config/zed/settings.json` (Linux) or `~/.zed/settings.json` (macOS):
+
+```json
+{
+  "proxy": "http://proxy.example.com:8080"
+}
+```
+
+See the [proxy documentation](./configuring-zed.md#network-proxy) for supported proxy types and additional configuration options.
 
 ## Initializing the remote server
 
@@ -192,7 +216,7 @@ Once the master connection is established, Zed will check to see if the remote s
 
 If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://zed.dev` directly, but if you set: `{"upload_binary_over_ssh":true}` in your settings for that server, it will download the binary to your local machine and then upload it to the remote server.
 
-If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [GitHub](https://github.com/zed-industries/zed/releases), or [build your own](https://zed.dev/docs/development) with `cargo build -p remote_server --release`. If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{VERSION}` on the server, for example `~/.zed_server/zed-remote-server-stable-0.181.6`. The version must exactly match the version of Zed itself you are using.
+If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [GitHub](https://github.com/zed-industries/zed/releases), or [build your own](https://zed.dev/docs/development) with `cargo build -p remote_server --release`. If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{VERSION}` on the server, for example `~/.zed_server/zed-remote-server-stable-0.217.3+stable.105.80433cb239e868271457ac376673a5f75bc4adb1`. The version must exactly match the version of Zed itself you are using.
 
 ## Maintaining the SSH connection
 
@@ -206,7 +230,7 @@ If you are struggling with connection issues, you should be able to see more inf
 
 ## Supported SSH Options
 
-Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and use then use that to multiplex SSH connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your SSH config file, but if you want to specify additional options to the SSH control master you can configure Zed to set them.
+Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and then use that to multiplex SSH connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your SSH config file, but if you want to specify additional options to the SSH control master you can configure Zed to set them.
 
 When typing in the "Connect New Server" dialog, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
 

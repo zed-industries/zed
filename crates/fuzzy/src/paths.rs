@@ -107,7 +107,7 @@ pub fn match_fixed_path_set(
                 .display(path_style)
                 .chars()
                 .collect::<Vec<_>>();
-            path_prefix_chars.extend(path_style.separator().chars());
+            path_prefix_chars.extend(path_style.primary_separator().chars());
             let lowercase_pfx = path_prefix_chars
                 .iter()
                 .map(|c| c.to_ascii_lowercase())

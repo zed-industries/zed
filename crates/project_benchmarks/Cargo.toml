@@ -1,0 +1,21 @@
+[package]
+name = "project_benchmarks"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+client.workspace = true
+futures.workspace = true
+gpui = { workspace = true, features = ["windows-manifest"] }
+http_client = { workspace = true, features = ["test-support"]}
+language.workspace = true
+node_runtime.workspace = true
+project.workspace = true
+settings.workspace = true
+watch.workspace = true
+
+[lints]
+workspace = true

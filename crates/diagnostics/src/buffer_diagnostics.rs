@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
+use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -23,7 +23,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp::Ordering,
+    cmp::{self, Ordering},
     sync::Arc,
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
@@ -175,7 +175,7 @@ impl BufferDiagnosticsEditor {
                     // `BufferDiagnosticsEditor` instance.
                     EditorEvent::Focused => {
                         if buffer_diagnostics_editor.multibuffer.read(cx).is_empty() {
-                            window.focus(&buffer_diagnostics_editor.focus_handle);
+                            window.focus(&buffer_diagnostics_editor.focus_handle, cx);
                         }
                     }
                     EditorEvent::Blurred => {
@@ -370,11 +370,16 @@ impl BufferDiagnosticsEditor {
                     continue;
                 }
 
+                let languages = buffer_diagnostics_editor
+                    .read_with(cx, |b, cx| b.project.read(cx).languages().clone())
+                    .ok();
+
                 let diagnostic_blocks = cx.update(|_window, cx| {
                     DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(Arc::new(buffer_diagnostics_editor.clone())),
+                        languages,
                         cx,
                     )
                 })?;
@@ -410,7 +415,7 @@ impl BufferDiagnosticsEditor {
             // in the editor.
             // This is done by iterating over the list of diagnostic blocks and
             // determine what range does the diagnostic block span.
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let mut excerpt_ranges: Vec<ExcerptRange<_>> = Vec::new();
 
             for diagnostic_block in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
@@ -420,30 +425,43 @@ impl BufferDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+                let initial_range = buffer_snapshot
+                    .anchor_after(diagnostic_block.initial_range.start)
+                    ..buffer_snapshot.anchor_before(diagnostic_block.initial_range.end);
 
-                let index = excerpt_ranges
-                    .binary_search_by(|probe| {
+                let bin_search = |probe: &ExcerptRange<text::Anchor>| {
+                    let context_start = || {
                         probe
                             .context
                             .start
-                            .cmp(&excerpt_range.start)
-                            .then(probe.context.end.cmp(&excerpt_range.end))
-                            .then(
-                                probe
-                                    .primary
-                                    .start
-                                    .cmp(&diagnostic_block.initial_range.start),
-                            )
-                            .then(probe.primary.end.cmp(&diagnostic_block.initial_range.end))
-                            .then(Ordering::Greater)
-                    })
-                    .unwrap_or_else(|index| index);
+                            .cmp(&excerpt_range.start, &buffer_snapshot)
+                    };
+                    let context_end =
+                        || probe.context.end.cmp(&excerpt_range.end, &buffer_snapshot);
+                    let primary_start = || {
+                        probe
+                            .primary
+                            .start
+                            .cmp(&initial_range.start, &buffer_snapshot)
+                    };
+                    let primary_end =
+                        || probe.primary.end.cmp(&initial_range.end, &buffer_snapshot);
+                    context_start()
+                        .then_with(context_end)
+                        .then_with(primary_start)
+                        .then_with(primary_end)
+                        .then(cmp::Ordering::Greater)
+                };
+
+                let index = excerpt_ranges
+                    .binary_search_by(bin_search)
+                    .unwrap_or_else(|i| i);
 
                 excerpt_ranges.insert(
                     index,
                     ExcerptRange {
                         context: excerpt_range,
-                        primary: diagnostic_block.initial_range.clone(),
+                        primary: initial_range,
                     },
                 )
             }
@@ -466,6 +484,13 @@ impl BufferDiagnosticsEditor {
                     buffer_diagnostics_editor
                         .multibuffer
                         .update(cx, |multibuffer, cx| {
+                            let excerpt_ranges = excerpt_ranges
+                                .into_iter()
+                                .map(|range| ExcerptRange {
+                                    context: range.context.to_point(&buffer_snapshot),
+                                    primary: range.primary.to_point(&buffer_snapshot),
+                                })
+                                .collect();
                             multibuffer.set_excerpt_ranges_for_path(
                                 PathKey::for_buffer(&buffer, cx),
                                 buffer.clone(),
@@ -492,7 +517,7 @@ impl BufferDiagnosticsEditor {
                                 .editor
                                 .read(cx)
                                 .focus_handle(cx)
-                                .focus(window);
+                                .focus(window, cx);
                         }
                     }
                 }
@@ -592,7 +617,7 @@ impl BufferDiagnosticsEditor {
         // not empty, focus on the editor instead, which will allow the user to
         // start interacting and editing the buffer's contents.
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window, cx)
         }
     }
 
@@ -655,11 +680,11 @@ impl Item for BufferDiagnosticsEditor {
         type_id: std::any::TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<gpui::AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -676,8 +701,12 @@ impl Item for BufferDiagnosticsEditor {
         });
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
@@ -732,6 +761,10 @@ impl Item for BufferDiagnosticsEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).is_dirty(cx)
+    }
+
+    fn capability(&self, cx: &App) -> Capability {
+        self.multibuffer.read(cx).capability()
     }
 
     fn navigate(

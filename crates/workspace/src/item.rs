@@ -11,10 +11,11 @@ use anyhow::Result;
 use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext, Context, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task,
-    WeakEntity, Window,
+    Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
+    SharedString, Task, WeakEntity, Window,
 };
+use language::Capability;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -64,15 +65,25 @@ pub struct ItemSettings {
 #[derive(RegisterSetting)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
+    pub enable_preview_from_project_panel: bool,
     pub enable_preview_from_file_finder: bool,
-    pub enable_preview_from_code_navigation: bool,
+    pub enable_preview_from_multibuffer: bool,
+    pub enable_preview_multibuffer_from_code_navigation: bool,
+    pub enable_preview_file_from_code_navigation: bool,
+    pub enable_keep_preview_on_code_navigation: bool,
 }
 
 impl Settings for ItemSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
-            git_status: tabs.git_status.unwrap(),
+            git_status: tabs.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             close_position: tabs.close_position.unwrap(),
             activate_on_close: tabs.activate_on_close.unwrap(),
             file_icons: tabs.file_icons.unwrap(),
@@ -87,9 +98,19 @@ impl Settings for PreviewTabsSettings {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
+            enable_preview_from_project_panel: preview_tabs
+                .enable_preview_from_project_panel
+                .unwrap(),
             enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
-            enable_preview_from_code_navigation: preview_tabs
-                .enable_preview_from_code_navigation
+            enable_preview_from_multibuffer: preview_tabs.enable_preview_from_multibuffer.unwrap(),
+            enable_preview_multibuffer_from_code_navigation: preview_tabs
+                .enable_preview_multibuffer_from_code_navigation
+                .unwrap(),
+            enable_preview_file_from_code_navigation: preview_tabs
+                .enable_preview_file_from_code_navigation
+                .unwrap(),
+            enable_keep_preview_on_code_navigation: preview_tabs
+                .enable_keep_preview_on_code_navigation
                 .unwrap(),
         }
     }
@@ -235,6 +256,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+    fn capability(&self, _: &App) -> Capability {
+        Capability::ReadWrite
+    }
+
+    fn toggle_read_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
     fn has_deleted_file(&self, _: &App) -> bool {
         false
     }
@@ -279,7 +306,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<AnyEntity> {
         if TypeId::of::<Self>() == type_id {
             Some(self_handle.clone().into())
         } else {
@@ -287,7 +314,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
@@ -454,8 +481,10 @@ pub trait ItemHandle: 'static + Send {
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
-    fn to_any(&self) -> AnyView;
+    fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn capability(&self, cx: &App) -> Capability;
+    fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
@@ -480,7 +509,7 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>>;
-    fn act_as_type(&self, type_id: TypeId, cx: &App) -> Option<AnyView>;
+    fn act_as_type(&self, type_id: TypeId, cx: &App) -> Option<AnyEntity>;
     fn to_followable_item_handle(&self, cx: &App) -> Option<Box<dyn FollowableItemHandle>>;
     fn to_serializable_item_handle(&self, cx: &App) -> Option<Box<dyn SerializableItemHandle>>;
     fn on_release(
@@ -513,7 +542,7 @@ pub trait WeakItemHandle: Send + Sync {
 
 impl dyn ItemHandle {
     pub fn downcast<V: 'static>(&self) -> Option<Entity<V>> {
-        self.to_any().downcast().ok()
+        self.to_any_view().downcast().ok()
     }
 
     pub fn act_as<V: 'static>(&self, cx: &App) -> Option<Entity<V>> {
@@ -869,8 +898,18 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
-                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                            .detach_and_log_err(cx);
+                        // Only trigger autosave if focus has truly left the item.
+                        // If focus is still within the item's hierarchy (e.g., moved to a context menu),
+                        // don't trigger autosave to avoid unwanted formatting and cursor jumps.
+                        // Also skip autosave if focus moved to a modal (e.g., command palette),
+                        // since the user is still interacting with the workspace.
+                        let focus_handle = item.item_focus_handle(cx);
+                        if !focus_handle.contains_focused(window, cx)
+                            && !workspace.has_active_modal(window, cx)
+                        {
+                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                                .detach_and_log_err(cx);
+                        }
                     }
                 },
             )
@@ -911,12 +950,22 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.entity_id()
     }
 
-    fn to_any(&self) -> AnyView {
+    fn to_any_view(&self) -> AnyView {
         self.clone().into()
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn capability(&self, cx: &App) -> Capability {
+        self.read(cx).capability(cx)
+    }
+
+    fn toggle_read_only(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.toggle_read_only(window, cx);
+        })
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
@@ -964,7 +1013,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |item, cx| item.reload(project, window, cx))
     }
 
-    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a App) -> Option<AnyView> {
+    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a App) -> Option<AnyEntity> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
 
@@ -981,7 +1030,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        self.read(cx).as_searchable(self)
+        self.read(cx).as_searchable(self, cx)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
@@ -1009,7 +1058,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn to_serializable_item_handle(&self, cx: &App) -> Option<Box<dyn SerializableItemHandle>> {
-        SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
+        SerializableItemRegistry::view_to_serializable_item_handle(self.to_any_view(), cx)
     }
 
     fn preserve_preview(&self, cx: &App) -> bool {
@@ -1022,7 +1071,7 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| {
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
             window.dispatch_action(action, cx);
         })
     }
@@ -1030,13 +1079,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
 impl From<Box<dyn ItemHandle>> for AnyView {
     fn from(val: Box<dyn ItemHandle>) -> Self {
-        val.to_any()
+        val.to_any_view()
     }
 }
 
 impl From<&Box<dyn ItemHandle>> for AnyView {
     fn from(val: &Box<dyn ItemHandle>) -> Self {
-        val.to_any()
+        val.to_any_view()
     }
 }
 
@@ -1247,7 +1296,7 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Dedup> {
-        let existing = existing.to_any().downcast::<T>().ok()?;
+        let existing = existing.to_any_view().downcast::<T>().ok()?;
         self.read(cx).dedup(existing.read(cx), window, cx)
     }
 

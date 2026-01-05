@@ -36,7 +36,7 @@
   "#ifndef"
   "#include"
   (preproc_directive)
-] @keyword
+] @keyword.directive
 
 [
   "="

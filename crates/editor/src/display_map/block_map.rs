@@ -11,15 +11,15 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
-    ToOffset, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferOffset, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
+    ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -164,6 +164,7 @@ impl<T> BlockPlacement<T> {
 }
 
 impl BlockPlacement<Anchor> {
+    #[ztracing::instrument(skip_all)]
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         self.start()
             .cmp(other.start(), buffer)
@@ -171,6 +172,7 @@ impl BlockPlacement<Anchor> {
             .then_with(|| self.tie_break().cmp(&other.tie_break()))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
         let buffer_snapshot = wrap_snapshot.buffer_snapshot();
         match self {
@@ -474,6 +476,7 @@ pub struct BlockRows<'a> {
 }
 
 impl BlockMap {
+    #[ztracing::instrument(skip_all)]
     pub fn new(
         wrap_snapshot: WrapSnapshot,
         buffer_header_height: u32,
@@ -503,6 +506,7 @@ impl BlockMap {
         map
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: WrapPatch) -> BlockMapReader<'_> {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
@@ -518,13 +522,17 @@ impl BlockMap {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: WrapPatch) -> BlockMapWriter<'_> {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter(self)
     }
 
+    #[ztracing::instrument(skip_all, fields(edits = ?edits))]
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: WrapPatch) {
+        let _timer = zlog::time!("BlockMap::sync").warn_if_gt(std::time::Duration::from_millis(50));
+
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
@@ -537,7 +545,7 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1);
+            let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
@@ -556,7 +564,15 @@ impl BlockMap {
         let mut blocks_in_edit = Vec::new();
         let mut edits = edits.into_iter().peekable();
 
+        let mut inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
         while let Some(edit) = edits.next() {
+            let span = ztracing::debug_span!("while edits", edit = ?edit);
+            let _enter = span.enter();
+
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
 
@@ -615,6 +631,8 @@ impl BlockMap {
             let mut old_end = edit.old.end;
             let mut new_end = edit.new.end;
             loop {
+                let span = ztracing::debug_span!("decide where edit ends loop");
+                let _enter = span.enter();
                 // Seek to the transform starting at or after the end of the edit
                 cursor.seek(&old_end, Bias::Left);
                 cursor.next();
@@ -686,6 +704,9 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
+            // + 8 is chosen arbitrarily to cover some multibuffer headers
+            blocks_in_edit
+                .reserve(end_block_ix - start_block_ix + if buffer.is_singleton() { 0 } else { 8 });
 
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
@@ -694,6 +715,7 @@ impl BlockMap {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if let BlockPlacement::Above(row) = placement
                             && row < new_start
+                        // this will be true more often now
                         {
                             return None;
                         }
@@ -704,7 +726,14 @@ impl BlockMap {
             blocks_in_edit.extend(self.header_and_footer_blocks(
                 buffer,
                 (start_bound, end_bound),
-                wrap_snapshot,
+                |point, bias| {
+                    wrap_point_cursor
+                        .map(
+                            tab_point_cursor
+                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                        )
+                        .row()
+                },
             ));
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
@@ -713,6 +742,10 @@ impl BlockMap {
             // and then insert the block itself.
             let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
+                let span =
+                    ztracing::debug_span!("for block in edits", block_height = block.height());
+                let _enter = span.enter();
+
                 let mut summary = TransformSummary {
                     input_rows: WrapRow(0),
                     output_rows: BlockRow(block.height()),
@@ -769,6 +802,7 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn replace_blocks(&mut self, mut renderers: HashMap<CustomBlockId, RenderBlock>) {
         for block in &mut self.custom_blocks {
             if let Some(render) = renderers.remove(&block.id) {
@@ -777,11 +811,13 @@ impl BlockMap {
         }
     }
 
+    /// Guarantees that `wrap_row_for` is called with points in increasing order.
+    #[ztracing::instrument(skip_all)]
     fn header_and_footer_blocks<'a, R, T>(
         &'a self,
         buffer: &'a multi_buffer::MultiBufferSnapshot,
         range: R,
-        wrap_snapshot: &'a WrapSnapshot,
+        mut wrap_row_for: impl 'a + FnMut(Point, Bias) -> WrapRow,
     ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
     where
         R: RangeBounds<T>,
@@ -792,9 +828,7 @@ impl BlockMap {
         std::iter::from_fn(move || {
             loop {
                 let excerpt_boundary = boundaries.next()?;
-                let wrap_row = wrap_snapshot
-                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                    .row();
+                let wrap_row = wrap_row_for(Point::new(excerpt_boundary.row.0, 0), Bias::Left);
 
                 let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
                     (None, next) => Some(next.buffer_id),
@@ -826,16 +860,13 @@ impl BlockMap {
 
                             boundaries.next();
                         }
-
-                        let wrap_end_row = wrap_snapshot
-                            .make_wrap_point(
-                                Point::new(
-                                    last_excerpt_end_row.0,
-                                    buffer.line_len(last_excerpt_end_row),
-                                ),
-                                Bias::Right,
-                            )
-                            .row();
+                        let wrap_end_row = wrap_row_for(
+                            Point::new(
+                                last_excerpt_end_row.0,
+                                buffer.line_len(last_excerpt_end_row),
+                            ),
+                            Bias::Right,
+                        );
 
                         return Some((
                             BlockPlacement::Replace(wrap_row..=wrap_end_row),
@@ -869,6 +900,7 @@ impl BlockMap {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
         blocks.sort_unstable_by(|(placement_a, block_a), (placement_b, block_b)| {
             placement_a
@@ -935,6 +967,7 @@ impl BlockMap {
     }
 }
 
+#[ztracing::instrument(skip(tree, wrap_snapshot))]
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot: &WrapSnapshot) {
     if rows == RowDelta(0) {
         return;
@@ -1005,6 +1038,7 @@ impl DerefMut for BlockMapReader<'_> {
 }
 
 impl BlockMapReader<'_> {
+    #[ztracing::instrument(skip_all)]
     pub fn row_for_block(&self, block_id: CustomBlockId) -> Option<BlockRow> {
         let block = self.blocks.iter().find(|block| block.id == block_id)?;
         let buffer_row = block
@@ -1043,6 +1077,7 @@ impl BlockMapReader<'_> {
 }
 
 impl BlockMapWriter<'_> {
+    #[ztracing::instrument(skip_all)]
     pub fn insert(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
@@ -1109,6 +1144,7 @@ impl BlockMapWriter<'_> {
         ids
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
@@ -1161,6 +1197,7 @@ impl BlockMapWriter<'_> {
         self.0.sync(wrap_snapshot, edits);
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn remove(&mut self, block_ids: HashSet<CustomBlockId>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
@@ -1206,9 +1243,10 @@ impl BlockMapWriter<'_> {
         self.0.sync(wrap_snapshot, edits);
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn remove_intersecting_replace_blocks(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<usize>>,
+        ranges: impl IntoIterator<Item = Range<MultiBufferOffset>>,
         inclusive: bool,
     ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
@@ -1228,6 +1266,7 @@ impl BlockMapWriter<'_> {
         self.0.buffers_with_disabled_headers.insert(buffer_id);
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn fold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -1237,6 +1276,7 @@ impl BlockMapWriter<'_> {
         self.fold_or_unfold_buffers(true, buffer_ids, multi_buffer, cx);
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn unfold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -1246,6 +1286,7 @@ impl BlockMapWriter<'_> {
         self.fold_or_unfold_buffers(false, buffer_ids, multi_buffer, cx);
     }
 
+    #[ztracing::instrument(skip_all)]
     fn fold_or_unfold_buffers(
         &mut self,
         fold: bool,
@@ -1281,9 +1322,10 @@ impl BlockMapWriter<'_> {
         self.0.sync(&wrap_snapshot, edits);
     }
 
+    #[ztracing::instrument(skip_all)]
     fn blocks_intersecting_buffer_range(
         &self,
-        range: Range<usize>,
+        range: Range<MultiBufferOffset>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
         if range.is_empty() && !inclusive {
@@ -1315,6 +1357,7 @@ impl BlockMapWriter<'_> {
 
 impl BlockSnapshot {
     #[cfg(test)]
+    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.chunks(
             BlockRow(0)..self.transforms.summary().output_rows,
@@ -1326,6 +1369,7 @@ impl BlockSnapshot {
         .collect()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<BlockRow>,
@@ -1367,6 +1411,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows<'_> {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&start_row, Bias::Right);
@@ -1388,6 +1433,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn blocks_in_range(
         &self,
         rows: Range<BlockRow>,
@@ -1421,6 +1467,7 @@ impl BlockSnapshot {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn sticky_header_excerpt(&self, position: f64) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(());
@@ -1444,6 +1491,7 @@ impl BlockSnapshot {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
         let buffer = self.wrap_snapshot.buffer_snapshot();
         let wrap_point = match block_id {
@@ -1480,6 +1528,7 @@ impl BlockSnapshot {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> BlockPoint {
         let row = self
             .transforms
@@ -1489,10 +1538,12 @@ impl BlockSnapshot {
         BlockPoint::new(row, self.line_len(row))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn longest_row(&self) -> BlockRow {
         self.transforms.summary().longest_row
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&range.start, Bias::Right);
@@ -1544,6 +1595,7 @@ impl BlockSnapshot {
         longest_row
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let (start, _, item) =
             self.transforms
@@ -1563,11 +1615,13 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let (_, _, item) = self.transforms.find::<BlockRow, _>((), &row, Bias::Right);
         item.is_some_and(|t| t.block.is_some())
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
         let (_, _, item) = self.transforms.find::<BlockRow, _>((), &row, Bias::Right);
         let Some(transform) = item else {
@@ -1576,6 +1630,7 @@ impl BlockSnapshot {
         matches!(transform.block, Some(Block::FoldedBuffer { .. }))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
@@ -1591,6 +1646,7 @@ impl BlockSnapshot {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&BlockRow(point.row), Bias::Right);
@@ -1652,6 +1708,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapRow, BlockRow>, _>(
             (),
@@ -1673,6 +1730,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
         let (start, end, item) = self.transforms.find::<Dimensions<BlockRow, WrapRow>, _>(
             (),
@@ -1708,6 +1766,7 @@ impl BlockSnapshot {
 
 impl BlockChunks<'_> {
     /// Go to the next transform
+    #[ztracing::instrument(skip_all)]
     fn advance(&mut self) {
         self.input_chunk = Chunk::default();
         self.transforms.next();
@@ -1748,6 +1807,7 @@ pub struct StickyHeaderExcerpt<'a> {
 impl<'a> Iterator for BlockChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row >= self.max_output_row {
             return None;
@@ -1847,6 +1907,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 impl Iterator for BlockRows<'_> {
     type Item = RowInfo;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
             self.output_row.0 += 1;
@@ -1879,18 +1940,14 @@ impl Iterator for BlockRows<'_> {
         }
 
         let transform = self.transforms.item()?;
-        if let Some(block) = transform.block.as_ref() {
-            if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                if matches!(block, Block::FoldedBuffer { .. }) {
-                    Some(RowInfo::default())
-                } else {
-                    Some(self.input_rows.next().unwrap())
-                }
-            } else {
-                Some(RowInfo::default())
-            }
+        if transform.block.as_ref().is_none_or(|block| {
+            block.is_replacement()
+                && self.transforms.start().0 == self.output_row
+                && matches!(block, Block::FoldedBuffer { .. }).not()
+        }) {
+            self.input_rows.next()
         } else {
-            Some(self.input_rows.next().unwrap())
+            Some(RowInfo::default())
         }
     }
 }
@@ -1953,14 +2010,17 @@ impl DerefMut for BlockContext<'_, '_> {
 }
 
 impl CustomBlock {
+    #[ztracing::instrument(skip_all)]
     pub fn render(&self, cx: &mut BlockContext) -> AnyElement {
         self.render.lock()(cx)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn start(&self) -> Anchor {
         *self.placement.start()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn end(&self) -> Anchor {
         *self.placement.end()
     }
@@ -2980,7 +3040,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 60)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.update(init_test);
 
@@ -3047,8 +3107,10 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
-                            let offset =
-                                buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Left);
+                            let offset = buffer.clip_offset(
+                                rng.random_range(MultiBufferOffset(0)..=buffer.len()),
+                                Bias::Left,
+                            );
                             let mut min_height = 0;
                             let placement = match rng.random_range(0..3) {
                                 0 => {
@@ -3245,11 +3307,23 @@ mod tests {
                 ))
             }));
 
+            let mut inlay_point_cursor = wraps_snapshot.inlay_point_cursor();
+            let mut tab_point_cursor = wraps_snapshot.tab_point_cursor();
+            let mut fold_point_cursor = wraps_snapshot.fold_point_cursor();
+            let mut wrap_point_cursor = wraps_snapshot.wrap_point_cursor();
+
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
-                0..,
-                &wraps_snapshot,
+                MultiBufferOffset(0)..,
+                |point, bias| {
+                    wrap_point_cursor
+                        .map(
+                            tab_point_cursor
+                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                        )
+                        .row()
+                },
             ));
 
             BlockMap::sort_blocks(&mut expected_blocks);

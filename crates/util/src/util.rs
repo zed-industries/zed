@@ -4,6 +4,7 @@ pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
+pub mod process;
 pub mod redact;
 pub mod rel_path;
 pub mod schemars;
@@ -49,6 +50,12 @@ macro_rules! debug_panic {
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
     };
+}
+
+#[inline]
+pub const fn is_utf8_char_boundary(u8: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (u8 as i8) >= -0x40
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
@@ -384,6 +391,8 @@ pub fn set_pre_exec_to_start_new_session(
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
             libc::setsid();
+            #[cfg(target_os = "macos")]
+            crate::command::reset_exception_ports();
             Ok(())
         });
     };

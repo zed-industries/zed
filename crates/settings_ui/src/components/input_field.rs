@@ -13,6 +13,7 @@ pub struct SettingsInputField {
     tab_index: Option<isize>,
 }
 
+// TODO: Update the `ui_input::InputField` to use `window.use_state` and `RenceOnce` and remove this component
 impl SettingsInputField {
     pub fn new() -> Self {
         Self {

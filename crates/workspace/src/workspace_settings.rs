@@ -31,6 +31,7 @@ pub struct WorkspaceSettings {
     pub close_on_file_delete: bool,
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
+    pub window_decorations: settings::WindowDecorations,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
@@ -105,6 +106,7 @@ impl Settings for WorkspaceSettings {
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
+            window_decorations: workspace.window_decorations.unwrap(),
         }
     }
 }

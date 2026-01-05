@@ -1,12 +1,12 @@
 //! TextDiffView currently provides a UI for displaying differences between the clipboard and selected text.
 
 use anyhow::Result;
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer, ToPoint, actions::DiffClipboardWithSelectionData};
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, Task, Window,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Task, Window,
 };
 use language::{self, Buffer, Point};
 use project::Project;
@@ -170,7 +170,7 @@ impl TextDiffView {
 
         cx.subscribe(&source_buffer, move |this, _, event, _| match event {
             language::BufferEvent::Edited
-            | language::BufferEvent::LanguageChanged
+            | language::BufferEvent::LanguageChanged(_)
             | language::BufferEvent::Reparsed => {
                 this.buffer_changes_tx.send(()).ok();
             }
@@ -257,24 +257,27 @@ async fn update_diff_buffer(
     cx: &mut AsyncApp,
 ) -> Result<()> {
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let language = source_buffer_snapshot.language().cloned();
 
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
     let base_text = base_buffer_snapshot.text();
 
-    let diff_snapshot = cx
-        .update(|cx| {
-            BufferDiffSnapshot::new_with_base_buffer(
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
                 source_buffer_snapshot.text.clone(),
-                Some(Arc::new(base_text)),
-                base_buffer_snapshot,
+                Some(Arc::from(base_text.as_str())),
+                true,
+                language,
                 cx,
             )
         })?
         .await;
 
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(diff_snapshot, &source_buffer_snapshot.text, cx);
-    })?;
+        diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
+    })?
+    .await;
     Ok(())
 }
 
@@ -329,17 +332,17 @@ impl Item for TextDiffView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.diff_editor.to_any())
+            Some(self.diff_editor.clone().into())
         } else {
             None
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.diff_editor.clone()))
     }
 
@@ -446,7 +449,7 @@ impl Render for TextDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::test::editor_test_context::assert_state_with_diff;
+    use editor::{MultiBufferOffset, test::editor_test_context::assert_state_with_diff};
     use gpui::{TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -691,7 +694,11 @@ mod tests {
             let (unmarked_text, selection_ranges) = marked_text_ranges(editor_text, false);
             editor.set_text(unmarked_text, window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(selection_ranges)
+                s.select_ranges(
+                    selection_ranges
+                        .into_iter()
+                        .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end)),
+                )
             });
 
             editor

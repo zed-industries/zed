@@ -20,12 +20,8 @@ When using upstream services through Zed's hosted models, we require assurances 
 | Provider  | No Training Guarantee                                   | Zero-Data Retention (ZDR)                                                                                                                     |
 | --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | Anthropic | [Yes](https://www.anthropic.com/legal/commercial-terms) | [Yes](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) |
-| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | **No**, in flight                                                                                                                             |
+| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | [Yes](https://cloud.google.com/terms/service-terms), see Service Terms sections 17 and 19h                                                    |
 | OpenAI    | [Yes](https://openai.com/enterprise-privacy/)           | [Yes](https://platform.openai.com/docs/guides/your-data)                                                                                      |
-
-> Zed's use of Gemini models is currently supported via [Google AI Studio](https://ai.google.dev/aistudio), which **_does not_** support ZDR. We're migrating to [Vertex AI](https://cloud.google.com/vertex-ai?hl=en), which **_does_**, and upon completion of that migration will offer ZDR to all users of Zed's hosted Google/Gemini models.
-
-> If ZDR from upstream model providers is important to you, _please do not use Gemini models at this time_. Your data will never be used for training purposes by any model providers hosted by Zed, however.
 
 When you use your own API keys or external agents, **Zed does not have control over how your data is used by that service provider.**
 You should reference your agreement with each service provider to understand what terms and conditions apply.
@@ -55,7 +51,7 @@ Users who are working on open source licensed projects may optionally opt-in to 
 
 When working on other projects where you haven't opted-in, Zed will not persistently store user content or use user content for training of its models.
 
-You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/zeta/src/license_detection.rs).
+You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs).
 
 ### Exclusions
 
@@ -97,6 +93,7 @@ For open source projects where you have opted-in, Zed may store copies of reques
 
 This data includes:
 
+- sampled edit prediction examples (cursor context + recent diffs/edits) for offline evaluation
 - the edit prediction
 - a portion of the buffer content around the cursor
 - a few recent edits

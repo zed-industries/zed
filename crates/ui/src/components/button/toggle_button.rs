@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{AnyView, ClickEvent, relative};
 
-use crate::{ButtonLike, ButtonLikeRounding, ElevationIndex, TintColor, Tooltip, prelude::*};
+use crate::{ButtonLike, ButtonLikeRounding, TintColor, Tooltip, prelude::*};
 
 /// The position of a [`ToggleButton`] within a group of buttons.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -40,290 +40,6 @@ impl ToggleButtonPosition {
             bottom_right: self.bottommost && self.rightmost,
             bottom_left: self.bottommost && self.leftmost,
         }
-    }
-}
-
-#[derive(IntoElement, RegisterComponent)]
-pub struct ToggleButton {
-    base: ButtonLike,
-    position_in_group: Option<ToggleButtonPosition>,
-    label: SharedString,
-    label_color: Option<Color>,
-}
-
-impl ToggleButton {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self {
-            base: ButtonLike::new(id),
-            position_in_group: None,
-            label: label.into(),
-            label_color: None,
-        }
-    }
-
-    pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
-        self.label_color = label_color.into();
-        self
-    }
-
-    pub fn position_in_group(mut self, position: ToggleButtonPosition) -> Self {
-        self.position_in_group = Some(position);
-        self
-    }
-
-    pub fn first(self) -> Self {
-        self.position_in_group(ToggleButtonPosition::HORIZONTAL_FIRST)
-    }
-
-    pub fn middle(self) -> Self {
-        self.position_in_group(ToggleButtonPosition::HORIZONTAL_MIDDLE)
-    }
-
-    pub fn last(self) -> Self {
-        self.position_in_group(ToggleButtonPosition::HORIZONTAL_LAST)
-    }
-}
-
-impl Toggleable for ToggleButton {
-    fn toggle_state(mut self, selected: bool) -> Self {
-        self.base = self.base.toggle_state(selected);
-        self
-    }
-}
-
-impl SelectableButton for ToggleButton {
-    fn selected_style(mut self, style: ButtonStyle) -> Self {
-        self.base.selected_style = Some(style);
-        self
-    }
-}
-
-impl FixedWidth for ToggleButton {
-    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
-        self.base.width = Some(width.into());
-        self
-    }
-
-    fn full_width(mut self) -> Self {
-        self.base.width = Some(relative(1.));
-        self
-    }
-}
-
-impl Disableable for ToggleButton {
-    fn disabled(mut self, disabled: bool) -> Self {
-        self.base = self.base.disabled(disabled);
-        self
-    }
-}
-
-impl Clickable for ToggleButton {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.base = self.base.on_click(handler);
-        self
-    }
-
-    fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
-        self.base = self.base.cursor_style(cursor_style);
-        self
-    }
-}
-
-impl ButtonCommon for ToggleButton {
-    fn id(&self) -> &ElementId {
-        self.base.id()
-    }
-
-    fn style(mut self, style: ButtonStyle) -> Self {
-        self.base = self.base.style(style);
-        self
-    }
-
-    fn size(mut self, size: ButtonSize) -> Self {
-        self.base = self.base.size(size);
-        self
-    }
-
-    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
-        self.base = self.base.tooltip(tooltip);
-        self
-    }
-
-    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
-        self.base = self.base.tab_index(tab_index);
-        self
-    }
-
-    fn layer(mut self, elevation: ElevationIndex) -> Self {
-        self.base = self.base.layer(elevation);
-        self
-    }
-
-    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
-        self.base = self.base.track_focus(focus_handle);
-        self
-    }
-}
-
-impl RenderOnce for ToggleButton {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let is_disabled = self.base.disabled;
-        let is_selected = self.base.selected;
-
-        let label_color = if is_disabled {
-            Color::Disabled
-        } else if is_selected {
-            Color::Selected
-        } else {
-            self.label_color.unwrap_or_default()
-        };
-
-        self.base
-            .when_some(self.position_in_group, |this, position| {
-                this.rounding(position.to_rounding())
-            })
-            .child(
-                Label::new(self.label)
-                    .color(label_color)
-                    .line_height_style(LineHeightStyle::UiLabel),
-            )
-    }
-}
-
-impl Component for ToggleButton {
-    fn scope() -> ComponentScope {
-        ComponentScope::Input
-    }
-
-    fn sort_name() -> &'static str {
-        "ButtonC"
-    }
-
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Button Styles",
-                        vec![
-                            single_example(
-                                "Off",
-                                ToggleButton::new("off", "Off")
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "On",
-                                ToggleButton::new("on", "On")
-                                    .layer(ElevationIndex::Background)
-                                    .toggle_state(true)
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Off – Disabled",
-                                ToggleButton::new("disabled_off", "Disabled Off")
-                                    .layer(ElevationIndex::Background)
-                                    .disabled(true)
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "On – Disabled",
-                                ToggleButton::new("disabled_on", "Disabled On")
-                                    .layer(ElevationIndex::Background)
-                                    .disabled(true)
-                                    .toggle_state(true)
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Button Group",
-                        vec![
-                            single_example(
-                                "Three Buttons",
-                                h_flex()
-                                    .child(
-                                        ToggleButton::new("three_btn_first", "First")
-                                            .layer(ElevationIndex::Background)
-                                            .style(ButtonStyle::Filled)
-                                            .first()
-                                            .into_any_element(),
-                                    )
-                                    .child(
-                                        ToggleButton::new("three_btn_middle", "Middle")
-                                            .layer(ElevationIndex::Background)
-                                            .style(ButtonStyle::Filled)
-                                            .middle()
-                                            .toggle_state(true)
-                                            .into_any_element(),
-                                    )
-                                    .child(
-                                        ToggleButton::new("three_btn_last", "Last")
-                                            .layer(ElevationIndex::Background)
-                                            .style(ButtonStyle::Filled)
-                                            .last()
-                                            .into_any_element(),
-                                    )
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Two Buttons",
-                                h_flex()
-                                    .child(
-                                        ToggleButton::new("two_btn_first", "First")
-                                            .layer(ElevationIndex::Background)
-                                            .style(ButtonStyle::Filled)
-                                            .first()
-                                            .into_any_element(),
-                                    )
-                                    .child(
-                                        ToggleButton::new("two_btn_last", "Last")
-                                            .layer(ElevationIndex::Background)
-                                            .style(ButtonStyle::Filled)
-                                            .last()
-                                            .into_any_element(),
-                                    )
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Alternate Sizes",
-                        vec![
-                            single_example(
-                                "None",
-                                ToggleButton::new("none", "None")
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::None)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Compact",
-                                ToggleButton::new("compact", "Compact")
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Compact)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Large",
-                                ToggleButton::new("large", "Large")
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
     }
 }
 
@@ -447,6 +163,8 @@ pub enum ToggleButtonGroupStyle {
 pub enum ToggleButtonGroupSize {
     Default,
     Medium,
+    Large,
+    Custom(Rems),
 }
 
 #[derive(IntoElement)]
@@ -458,7 +176,9 @@ where
     rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
     size: ToggleButtonGroupSize,
+    label_size: LabelSize,
     group_width: Option<DefiniteLength>,
+    auto_width: bool,
     selected_index: usize,
     tab_index: Option<isize>,
 }
@@ -470,7 +190,9 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
             rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
+            label_size: LabelSize::Small,
             group_width: None,
+            auto_width: false,
             selected_index: 0,
             tab_index: None,
         }
@@ -488,7 +210,9 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
             rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
+            label_size: LabelSize::Small,
             group_width: None,
+            auto_width: false,
             selected_index: 0,
             tab_index: None,
         }
@@ -508,6 +232,18 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
 
     pub fn selected_index(mut self, index: usize) -> Self {
         self.selected_index = index;
+        self
+    }
+
+    /// Makes the button group size itself to fit the content of the buttons,
+    /// rather than filling the full width of its parent.
+    pub fn auto_width(mut self) -> Self {
+        self.auto_width = true;
+        self
+    }
+
+    pub fn label_size(mut self, label_size: LabelSize) -> Self {
+        self.label_size = label_size;
         self
     }
 
@@ -543,6 +279,11 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     for ToggleButtonGroup<T, COLS, ROWS>
 {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let custom_height = match self.size {
+            ToggleButtonGroupSize::Custom(height) => Some(height),
+            _ => None,
+        };
+
         let entries =
             self.rows.into_iter().enumerate().map(|(row_index, row)| {
                 let group_name = self.group_name.clone();
@@ -558,7 +299,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                     let entry_index = row_index * COLS + col_index;
 
                     ButtonLike::new((group_name.clone(), entry_index))
-                        .full_width()
+                        .when(!self.auto_width, |this| this.full_width())
                         .rounding(Some(
                             ToggleButtonPosition {
                                 leftmost: col_index == 0,
@@ -581,13 +322,17 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                         .when(self.size == ToggleButtonGroupSize::Medium, |button| {
                             button.size(ButtonSize::Medium)
                         })
+                        .when(self.size == ToggleButtonGroupSize::Large, |button| {
+                            button.size(ButtonSize::Large)
+                        })
+                        .when_some(custom_height, |button, height| button.height(height.into()))
                         .child(
                             h_flex()
                                 .w_full()
+                                .px_2()
                                 .gap_1p5()
-                                .px_3()
-                                .py_1()
                                 .justify_center()
+                                .flex_none()
                                 .when_some(icon, |this, icon| {
                                     this.py_2()
                                         .child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
@@ -598,7 +343,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                                             }
                                         }))
                                 })
-                                .child(Label::new(label).size(LabelSize::Small).when(
+                                .child(Label::new(label).size(self.label_size).when(
                                     entry_index == self.selected_index || selected,
                                     |this| this.color(Color::Accent),
                                 )),
@@ -620,6 +365,8 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
             .map(|this| {
                 if let Some(width) = self.group_width {
                     this.w(width)
+                } else if self.auto_width {
+                    this
                 } else {
                     this.w_full()
                 }
@@ -646,7 +393,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                             .when(is_outlined_or_filled && !last_item, |this| {
                                 this.border_r_1().border_color(border_color)
                             })
-                            .w(Self::button_width())
+                            .when(!self.auto_width, |this| this.w(Self::button_width()))
                             .overflow_hidden()
                             .child(item)
                     }))

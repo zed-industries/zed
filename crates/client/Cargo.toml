@@ -53,7 +53,7 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http.workspace = true
-tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
+tokio-socks.workspace = true
 tokio.workspace = true
 url.workspace = true
 util.workspace = true
@@ -70,6 +70,7 @@ settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+semver.workspace = true
 windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

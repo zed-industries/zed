@@ -22,6 +22,7 @@ mod styles;
 use std::path::Path;
 use std::sync::Arc;
 
+use ::settings::DEFAULT_DARK_THEME;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use anyhow::Result;
@@ -80,6 +81,15 @@ impl From<WindowAppearance> for Appearance {
         match value {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
+        }
+    }
+}
+
+impl From<Appearance> for ThemeAppearanceMode {
+    fn from(value: Appearance) -> Self {
+        match value {
+            Appearance::Light => Self::Light,
+            Appearance::Dark => Self::Dark,
         }
     }
 }

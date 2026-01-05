@@ -1,9 +1,9 @@
-# yaml-language-server: $schema=https://json.schemastore.org/github-issue-config.json
+# yaml-language-server: $schema=https://www.schemastore.org/github-issue-config.json
 blank_issues_enabled: false
 contact_links:
-  - name: Feature Request
+  - name: Feature request
     url: https://github.com/zed-industries/zed/discussions/new/choose
-    about: To request a feature, open a new Discussion in one of the appropriate Discussion categories
-  - name: "Zed Discord"
-    url: https://zed.dev/community-links
-    about: Real-time discussion and user support
+    about: To request a feature, open a new discussion under one of the appropriate categories.
+  - name: Our Discord community
+    url: https://discord.com/invite/zedindustries
+    about: Join our Discord server for real-time discussion and user support.

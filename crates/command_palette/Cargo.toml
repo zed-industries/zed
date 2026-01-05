@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = ["db/test-support"]
+
 [lib]
 path = "src/command_palette.rs"
 doctest = false

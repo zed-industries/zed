@@ -1,13 +1,13 @@
 use crate::actions::ShowSignatureHelp;
 use crate::hover_popover::open_markdown_url;
-use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
+use crate::{BufferOffset, Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
     App, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
 use markdown::{Markdown, MarkdownElement};
-use multi_buffer::{Anchor, ToOffset};
+use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
 use text::Rope;
@@ -82,7 +82,9 @@ impl Editor {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
         }
-        let newest_selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
+        let newest_selection = self
+            .selections
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
         let head = newest_selection.head();
 
         if !newest_selection.is_empty() && head != newest_selection.tail() {
@@ -92,14 +94,14 @@ impl Editor {
         }
 
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let bracket_range = |position: usize| match (position, position + 1) {
-            (0, b) if b <= buffer_snapshot.len() => 0..b,
-            (0, b) => 0..b - 1,
+        let bracket_range = |position: MultiBufferOffset| match (position, position + 1usize) {
+            (MultiBufferOffset(0), b) if b <= buffer_snapshot.len() => MultiBufferOffset(0)..b,
+            (MultiBufferOffset(0), b) => MultiBufferOffset(0)..b - 1,
             (a, b) if b <= buffer_snapshot.len() => a - 1..b,
             (a, b) => a - 1..b - 1,
         };
         let not_quote_like_brackets =
-            |buffer: &BufferSnapshot, start: Range<usize>, end: Range<usize>| {
+            |buffer: &BufferSnapshot, start: Range<BufferOffset>, end: Range<BufferOffset>| {
                 let text_start = buffer.text_for_range(start).collect::<String>();
                 let text_end = buffer.text_for_range(end).collect::<String>();
                 QUOTE_PAIRS
@@ -389,7 +391,7 @@ impl SignatureHelpPopover {
                             )
                     }),
             )
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx);
 
         let controls = if self.signatures.len() > 1 {
             let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)

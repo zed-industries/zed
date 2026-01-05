@@ -1,18 +1,18 @@
 use std::{
     cmp, fmt, iter, mem,
-    ops::{Deref, DerefMut, Range, Sub},
+    ops::{AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 
 use collections::HashMap;
 use gpui::Pixels;
 use itertools::Itertools as _;
-use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
+use language::{Bias, Point, Selection, SelectionGoal};
+use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
 
 use crate::{
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBufferSnapshot, SelectMode, ToOffset,
-    ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
 };
@@ -97,7 +97,7 @@ impl SelectionsCollection {
         if self.pending.is_none() {
             self.disjoint_anchors_arc()
         } else {
-            let all_offset_selections = self.all::<usize>(snapshot);
+            let all_offset_selections = self.all::<MultiBufferOffset>(snapshot);
             all_offset_selections
                 .into_iter()
                 .map(|selection| selection_to_anchor_selection(selection, snapshot))
@@ -113,10 +113,10 @@ impl SelectionsCollection {
         self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
-    pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Option<Selection<D>> {
+    pub fn pending<D>(&self, snapshot: &DisplaySnapshot) -> Option<Selection<D>>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         resolve_selections_wrapping_blocks(self.pending_anchor(), &snapshot).next()
     }
 
@@ -124,9 +124,9 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
+    pub fn all<D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
         let disjoint_anchors = &self.disjoint;
         let mut disjoint =
@@ -136,7 +136,13 @@ impl SelectionsCollection {
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                    if should_merge(
+                        pending.start,
+                        pending.end,
+                        next_selection.start,
+                        next_selection.end,
+                        false,
+                    ) {
                         let next_selection = disjoint.next().unwrap();
                         if next_selection.start < pending.start {
                             pending.start = next_selection.start;
@@ -204,13 +210,13 @@ impl SelectionsCollection {
         }
     }
 
-    pub fn disjoint_in_range<'a, D>(
+    pub fn disjoint_in_range<D>(
         &self,
         range: Range<Anchor>,
         snapshot: &DisplaySnapshot,
     ) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord + std::fmt::Debug,
     {
         let start_ix = match self
             .disjoint
@@ -236,7 +242,13 @@ impl SelectionsCollection {
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                    if should_merge(
+                        pending.start,
+                        pending.end,
+                        next_selection.start,
+                        next_selection.end,
+                        false,
+                    ) {
                         let next_selection = disjoint.next().unwrap();
                         if next_selection.start < pending.start {
                             pending.start = next_selection.start;
@@ -267,10 +279,10 @@ impl SelectionsCollection {
             .unwrap()
     }
 
-    pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Selection<D> {
+    pub fn newest<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         resolve_selections_wrapping_blocks([self.newest_anchor()], &snapshot)
             .next()
             .unwrap()
@@ -290,10 +302,10 @@ impl SelectionsCollection {
             .unwrap()
     }
 
-    pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Selection<D> {
+    pub fn oldest<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         resolve_selections_wrapping_blocks([self.oldest_anchor()], &snapshot)
             .next()
             .unwrap()
@@ -306,27 +318,27 @@ impl SelectionsCollection {
             .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
-    pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Selection<D> {
+    pub fn first<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         self.all(snapshot).first().unwrap().clone()
     }
 
-    pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Selection<D> {
+    pub fn last<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         self.all(snapshot).last().unwrap().clone()
     }
 
     /// Returns a list of (potentially backwards!) ranges representing the selections.
     /// Useful for test assertions, but prefer `.all()` instead.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Vec<Range<D>> {
+    pub fn ranges<D>(&self, snapshot: &DisplaySnapshot) -> Vec<Range<D>>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         self.all::<D>(snapshot)
             .iter()
             .map(|s| {
@@ -372,7 +384,7 @@ impl SelectionsCollection {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
         let line = display_map.layout_row(row, text_layout_details);
-        let start_col = line.index_for_x(positions.start) as u32;
+        let start_col = line.closest_index_for_x(positions.start) as u32;
 
         let (start, end) = if is_empty {
             let point = DisplayPoint::new(row, std::cmp::min(start_col, line_len));
@@ -382,7 +394,7 @@ impl SelectionsCollection {
                 return None;
             }
             let start = DisplayPoint::new(row, start_col);
-            let end_col = line.index_for_x(positions.end) as u32;
+            let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
             (start, end)
         };
@@ -395,6 +407,56 @@ impl SelectionsCollection {
             goal: SelectionGoal::HorizontalRange {
                 start: positions.start.into(),
                 end: positions.end.into(),
+            },
+        })
+    }
+
+    /// Attempts to build a selection in the provided buffer row using the
+    /// same buffer column range as specified.
+    /// Returns `None` if the range is not empty but it starts past the line's
+    /// length, meaning that the line isn't long enough to be contained within
+    /// part of the provided range.
+    pub fn build_columnar_selection_from_buffer_columns(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        buffer_row: u32,
+        positions: &Range<u32>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let is_empty = positions.start == positions.end;
+        let line_len = display_map
+            .buffer_snapshot()
+            .line_len(multi_buffer::MultiBufferRow(buffer_row));
+
+        let (start, end) = if is_empty {
+            let column = std::cmp::min(positions.start, line_len);
+            let point = Point::new(buffer_row, column);
+            (point, point)
+        } else {
+            if positions.start >= line_len {
+                return None;
+            }
+
+            let start = Point::new(buffer_row, positions.start);
+            let end_column = std::cmp::min(positions.end, line_len);
+            let end = Point::new(buffer_row, end_column);
+            (start, end)
+        };
+
+        let start_display_point = start.to_display_point(display_map);
+        let end_display_point = end.to_display_point(display_map);
+        let start_x = display_map.x_for_display_point(start_display_point, text_layout_details);
+        let end_x = display_map.x_for_display_point(end_display_point, text_layout_details);
+
+        Some(Selection {
+            id: post_inc(&mut self.next_selection_id),
+            start,
+            end,
+            reversed,
+            goal: SelectionGoal::HorizontalRange {
+                start: start_x.min(end_x).into(),
+                end: start_x.max(end_x).into(),
             },
         })
     }
@@ -415,6 +477,37 @@ impl SelectionsCollection {
             !mutable_collection.disjoint.is_empty() || mutable_collection.pending.is_some(),
             "There must be at least one selection"
         );
+        if cfg!(debug_assertions) {
+            mutable_collection.disjoint.iter().for_each(|selection| {
+                assert!(
+                    snapshot.can_resolve(&selection.start),
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
+                );
+                assert!(
+                    snapshot.can_resolve(&selection.end),
+                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
+                );
+            });
+            if let Some(pending) = &mutable_collection.pending {
+                let selection = &pending.selection;
+                assert!(
+                    snapshot.can_resolve(&selection.start),
+                    "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.start.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
+                );
+                assert!(
+                    snapshot.can_resolve(&selection.end),
+                    "pending selection end is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.end.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
+                );
+            }
+        }
         (mutable_collection.selections_changed, result)
     }
 
@@ -487,6 +580,50 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         self.selections_changed |= changed;
     }
 
+    pub fn remove_selections_from_buffer(&mut self, buffer_id: language::BufferId) {
+        let mut changed = false;
+
+        let filtered_selections: Arc<[Selection<Anchor>]> = {
+            self.disjoint
+                .iter()
+                .filter(|selection| {
+                    if let Some(selection_buffer_id) =
+                        self.snapshot.buffer_id_for_anchor(selection.start)
+                    {
+                        let should_remove = selection_buffer_id == buffer_id;
+                        changed |= should_remove;
+                        !should_remove
+                    } else {
+                        true
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+
+        if filtered_selections.is_empty() {
+            let buffer_snapshot = self.snapshot.buffer_snapshot();
+            let anchor = buffer_snapshot
+                .excerpts()
+                .find(|(_, buffer, _)| buffer.remote_id() == buffer_id)
+                .and_then(|(excerpt_id, _, range)| {
+                    buffer_snapshot.anchor_in_excerpt(excerpt_id, range.context.start)
+                })
+                .unwrap_or_else(|| self.snapshot.anchor_before(MultiBufferOffset(0)));
+            self.collection.disjoint = Arc::from([Selection {
+                id: post_inc(&mut self.collection.next_selection_id),
+                start: anchor,
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            }]);
+        } else {
+            self.collection.disjoint = filtered_selections;
+        }
+
+        self.selections_changed |= changed;
+    }
+
     pub fn clear_pending(&mut self) {
         if self.collection.pending.is_some() {
             self.collection.pending = None;
@@ -553,7 +690,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn insert_range<T>(&mut self, range: Range<T>)
     where
-        T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
+        T: ToOffset,
     {
         let display_map = self.display_snapshot();
         let mut selections = self.collection.all(&display_map);
@@ -591,10 +728,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             })
             .collect::<Vec<_>>();
         selections.sort_unstable_by_key(|s| s.start);
-        // Merge overlapping selections.
+
         let mut i = 1;
         while i < selections.len() {
-            if selections[i].start <= selections[i - 1].end {
+            let prev = &selections[i - 1];
+            let current = &selections[i];
+
+            if should_merge(prev.start, prev.end, current.start, current.end, true) {
                 let removed = selections.remove(i);
                 if removed.start < selections[i - 1].start {
                     selections[i - 1].start = removed.start;
@@ -619,7 +759,8 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
         let map = self.display_snapshot();
         let resolved_selections =
-            resolve_selections_wrapping_blocks::<usize, _>(&selections, &map).collect::<Vec<_>>();
+            resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(&selections, &map)
+                .collect::<Vec<_>>();
         self.select(resolved_selections);
     }
 
@@ -636,7 +777,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     fn select_offset_ranges<I>(&mut self, ranges: I)
     where
-        I: IntoIterator<Item = Range<usize>>,
+        I: IntoIterator<Item = Range<MultiBufferOffset>>,
     {
         let selections = ranges
             .into_iter()
@@ -771,13 +912,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_offsets_with(
         &mut self,
-        mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<usize>),
+        mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<MultiBufferOffset>),
     ) {
         let mut changed = false;
         let display_map = self.display_snapshot();
         let selections = self
             .collection
-            .all::<usize>(&display_map)
+            .all::<MultiBufferOffset>(&display_map)
             .into_iter()
             .map(|selection| {
                 let mut moved_selection = selection.clone();
@@ -901,7 +1042,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             let map = self.display_snapshot();
             let resolved_selections =
                 resolve_selections_wrapping_blocks(adjusted_disjoint.iter(), &map).collect();
-            self.select::<usize>(resolved_selections);
+            self.select::<MultiBufferOffset>(resolved_selections);
         }
 
         if let Some(pending) = pending.as_mut() {
@@ -944,7 +1085,7 @@ impl DerefMut for MutableSelectionsCollection<'_, '_> {
 }
 
 fn selection_to_anchor_selection(
-    selection: Selection<usize>,
+    selection: Selection<MultiBufferOffset>,
     buffer: &MultiBufferSnapshot,
 ) -> Selection<Anchor> {
     let end_bias = if selection.start == selection.end {
@@ -1017,7 +1158,7 @@ fn resolve_selections_display<'a>(
     coalesce_selections(selections)
 }
 
-/// Resolves the passed in anchors to [`TextDimension`]s `D`
+/// Resolves the passed in anchors to [`MultiBufferDimension`]s `D`
 /// wrapping around blocks inbetween.
 ///
 /// # Panics
@@ -1028,7 +1169,7 @@ pub(crate) fn resolve_selections_wrapping_blocks<'a, D, I>(
     map: &'a DisplaySnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Ord + Sub<D, Output = D>,
+    D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
@@ -1063,7 +1204,13 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
     iter::from_fn(move || {
         let mut selection = selections.next()?;
         while let Some(next_selection) = selections.peek() {
-            if selection.end >= next_selection.start {
+            if should_merge(
+                selection.start,
+                selection.end,
+                next_selection.start,
+                next_selection.end,
+                true,
+            ) {
                 if selection.reversed == next_selection.reversed {
                     selection.end = cmp::max(selection.end, next_selection.end);
                     selections.next();
@@ -1084,4 +1231,36 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
         );
         Some(selection)
     })
+}
+
+/// Determines whether two selections should be merged into one.
+///
+/// Two selections should be merged when:
+/// 1. They overlap: the selections share at least one position
+/// 2. They have the same start position: one contains or equals the other
+/// 3. A cursor touches a selection boundary: a zero-width selection (cursor) at the
+///    start or end of another selection should be absorbed into it
+///
+/// Note: two selections that merely touch (one ends exactly where the other begins)
+/// but don't share any positions remain separate, see: https://github.com/zed-industries/zed/issues/24748
+fn should_merge<T: Ord + Copy>(a_start: T, a_end: T, b_start: T, b_end: T, sorted: bool) -> bool {
+    let is_overlapping = if sorted {
+        // When sorted, `a` starts before or at `b`, so overlap means `b` starts before `a` ends
+        b_start < a_end
+    } else {
+        a_start < b_end && b_start < a_end
+    };
+
+    // Selections starting at the same position should always merge (one contains the other)
+    let same_start = a_start == b_start;
+
+    // A cursor (zero-width selection) touching another selection's boundary should merge.
+    // This handles cases like a cursor at position X merging with a selection that
+    // starts or ends at X.
+    let is_cursor_a = a_start == a_end;
+    let is_cursor_b = b_start == b_end;
+    let cursor_at_boundary = (is_cursor_a && (a_start == b_start || a_end == b_end))
+        || (is_cursor_b && (b_start == a_start || b_end == a_end));
+
+    is_overlapping || same_start || cursor_at_boundary
 }

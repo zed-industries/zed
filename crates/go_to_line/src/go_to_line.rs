@@ -268,7 +268,7 @@ impl GoToLine {
                 cx,
                 |s| s.select_anchor_ranges([start..start]),
             );
-            editor.focus_handle(cx).focus(window);
+            editor.focus_handle(cx).focus(window, cx);
             cx.notify()
         });
         self.prev_scroll_position.take();

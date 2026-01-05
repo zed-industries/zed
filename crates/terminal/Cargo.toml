@@ -25,8 +25,10 @@ anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 libc.workspace = true
 log.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -36,10 +38,9 @@ smol.workspace = true
 task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
+url.workspace = true
 util.workspace = true
-regex.workspace = true
 urlencoding.workspace = true
-itertools.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
@@ -47,4 +48,6 @@ windows.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
-url.workspace = true
+serde_json.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+util_macros.workspace = true

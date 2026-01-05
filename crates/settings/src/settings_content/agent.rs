@@ -2,13 +2,12 @@ use collections::{HashMap, IndexMap};
 use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
-use crate::DockPosition;
+use crate::{DockPosition, DockSide};
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
@@ -23,6 +22,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Where to dock the utility pane (the thread view pane).
+    ///
+    /// Default: left
+    pub agents_panel_dock: Option<DockSide>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -35,9 +38,18 @@ pub struct AgentSettingsContent {
     pub default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// Favorite models to show at the top of the model selector.
+    #[serde(default)]
+    pub favorite_models: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
-    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    /// Model to use for the inline assistant when streaming tools are enabled.
+    ///
+    /// Default: true
+    pub inline_assistant_use_streaming_tools: Option<bool>,
+    /// Model to use for generating git commit messages.
+    ///
+    /// Default: true
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -130,6 +142,9 @@ impl AgentSettingsContent {
             model,
         });
     }
+    pub fn set_inline_assistant_use_streaming_tools(&mut self, use_tools: bool) {
+        self.inline_assistant_use_streaming_tools = Some(use_tools);
+    }
 
     pub fn set_commit_message_model(&mut self, provider: String, model: String) {
         self.commit_message_model = Some(LanguageModelSelection {
@@ -164,9 +179,19 @@ impl AgentSettingsContent {
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
     }
+
+    pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
+        if !self.favorite_models.contains(&model) {
+            self.favorite_models.push(model);
+        }
+    }
+
+    pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
+        self.favorite_models.retain(|m| m != model);
+    }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
@@ -176,9 +201,11 @@ pub struct AgentProfileContent {
     pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+    /// The default language model selected when using this profile.
+    pub default_model: Option<LanguageModelSelection>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
@@ -213,7 +240,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
@@ -229,7 +256,7 @@ pub enum CompletionMode {
     Burn,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
@@ -288,7 +315,7 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
@@ -300,7 +327,7 @@ pub struct AllAgentServersSettings {
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     /// Absolute path to a binary to be used when launching this agent.
@@ -330,20 +357,112 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
-}
-
-#[skip_serializing_none]
-#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct CustomAgentServerSettings {
-    #[serde(rename = "command")]
-    pub path: PathBuf,
-    #[serde(default)]
-    pub args: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
-    /// The default mode to use for this agent.
+    /// The default model to use for this agent.
     ///
-    /// Note: Not only all agents support modes.
+    /// This should be the model ID as reported by the agent.
     ///
     /// Default: None
-    pub default_mode: Option<String>,
+    pub default_model: Option<String>,
+    /// The favorite models for this agent.
+    ///
+    /// These are the model IDs as reported by the agent.
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub favorite_models: Vec<String>,
+    /// Default values for session config options.
+    ///
+    /// This is a map from config option ID to value ID.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub default_config_options: HashMap<String, String>,
+    /// Favorited values for session config options.
+    ///
+    /// This is a map from config option ID to a list of favorited value IDs.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub favorite_config_option_values: HashMap<String, Vec<String>>,
+}
+
+#[with_fallible_options]
+#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomAgentServerSettings {
+    Custom {
+        #[serde(rename = "command")]
+        path: PathBuf,
+        #[serde(default)]
+        args: Vec<String>,
+        env: Option<HashMap<String, String>>,
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
+    },
+    Extension {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
+    },
 }

@@ -92,9 +92,20 @@ else
         echo "Uploading zed debug symbols to sentry..."
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
-        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "${target_dir}/${target_triple}"/release/zed \
-            "${target_dir}/${remote_server_triple}"/release/remote_server
+        for attempt in 1 2 3; do
+            echo "Attempting sentry upload (attempt $attempt/3)..."
+            if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+                "${target_dir}/${target_triple}"/release/zed \
+                "${target_dir}/${remote_server_triple}"/release/remote_server; then
+                echo "Sentry upload successful on attempt $attempt"
+                break
+            else
+                echo "Sentry upload failed on attempt $attempt"
+                if [ $attempt -eq 3 ]; then
+                    echo "All sentry upload attempts failed"
+                fi
+            fi
+        done
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi

@@ -87,7 +87,7 @@ impl DivInspector {
                 // Rust Analyzer doesn't get started for it.
                 let rust_language_result = languages.language_for_name("Rust").await;
                 let rust_style_buffer = rust_language_result.and_then(|rust_language| {
-                    cx.new(|cx| Buffer::local("", cx).with_language(rust_language, cx))
+                    cx.new(|cx| Buffer::local("", cx).with_language_async(rust_language, cx))
                 });
 
                 match json_style_buffer.and_then(|json_style_buffer| {
@@ -664,6 +664,8 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     replace_range: replace_range.clone(),
                     new_text: format!(".{}()", method.name),
                     label: CodeLabel::plain(method.name.to_string(), None),
+                    match_start: None,
+                    snippet_deduplication_key: None,
                     icon_path: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())
@@ -684,7 +686,6 @@ impl CompletionProvider for RustStyleCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()

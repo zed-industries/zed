@@ -51,7 +51,15 @@ For example, add the following to your `settings.json` if you wish to override t
         "comment.doc": {
           "font_style": "italic"
         }
-      }
+      },
+      "accents": [
+        "#ff0000",
+        "#ff7f00",
+        "#ffff00",
+        "#00ff00",
+        "#0000ff",
+        "#8b00ff"
+      ]
     }
   }
 }

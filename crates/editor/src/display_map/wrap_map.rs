@@ -86,6 +86,7 @@ pub struct WrapRows<'a> {
 }
 
 impl WrapRows<'_> {
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, start_row: WrapRow) {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left);
@@ -101,6 +102,7 @@ impl WrapRows<'_> {
 }
 
 impl WrapMap {
+    #[ztracing::instrument(skip_all)]
     pub fn new(
         tab_snapshot: TabSnapshot,
         font: Font,
@@ -131,6 +133,7 @@ impl WrapMap {
         self.background_task.is_some()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn sync(
         &mut self,
         tab_snapshot: TabSnapshot,
@@ -150,6 +153,7 @@ impl WrapMap {
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn set_font_with_size(
         &mut self,
         font: Font,
@@ -167,6 +171,7 @@ impl WrapMap {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
         if wrap_width == self.wrap_width {
             return false;
@@ -177,6 +182,7 @@ impl WrapMap {
         true
     }
 
+    #[ztracing::instrument(skip_all)]
     fn rewrap(&mut self, cx: &mut Context<Self>) {
         self.background_task.take();
         self.interpolated_edits.clear();
@@ -248,6 +254,7 @@ impl WrapMap {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn flush_edits(&mut self, cx: &mut Context<Self>) {
         if !self.snapshot.interpolated {
             let mut to_remove_len = 0;
@@ -330,6 +337,7 @@ impl WrapMap {
 }
 
 impl WrapSnapshot {
+    #[ztracing::instrument(skip_all)]
     fn new(tab_snapshot: TabSnapshot) -> Self {
         let mut transforms = SumTree::default();
         let extent = tab_snapshot.text_summary();
@@ -343,10 +351,12 @@ impl WrapSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         self.tab_snapshot.buffer_snapshot()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> WrapPatch {
         let mut new_transforms;
         if tab_edits.is_empty() {
@@ -411,6 +421,7 @@ impl WrapSnapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
+    #[ztracing::instrument(skip_all)]
     async fn update(
         &mut self,
         new_tab_snapshot: TabSnapshot,
@@ -570,6 +581,7 @@ impl WrapSnapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &WrapSnapshot) -> WrapPatch {
         let mut wrap_edits = Vec::with_capacity(tab_edits.len());
         let mut old_cursor = self.transforms.cursor::<TransformSummary>(());
@@ -606,6 +618,7 @@ impl WrapSnapshot {
         Patch::new(wrap_edits)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<WrapRow>,
@@ -622,9 +635,10 @@ impl WrapSnapshot {
         if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
-        let input_end = self
-            .to_tab_point(output_end)
-            .min(self.tab_snapshot.max_point());
+        let input_end = self.to_tab_point(output_end);
+        let max_point = self.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         WrapChunks {
             input_chunks: self.tab_snapshot.chunks(
                 input_start..input_end,
@@ -639,10 +653,12 @@ impl WrapSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> WrapPoint {
         WrapPoint(self.transforms.summary().output.lines)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn line_len(&self, row: WrapRow) -> u32 {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapPoint, TabPoint>, _>(
             (),
@@ -663,6 +679,7 @@ impl WrapSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all, fields(rows))]
     pub fn text_summary_for_range(&self, rows: Range<WrapRow>) -> TextSummary {
         let mut summary = TextSummary::default();
 
@@ -724,6 +741,7 @@ impl WrapSnapshot {
         summary
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn soft_wrap_indent(&self, row: WrapRow) -> Option<u32> {
         let (.., item) = self.transforms.find::<WrapPoint, _>(
             (),
@@ -739,10 +757,12 @@ impl WrapSnapshot {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn row_infos(&self, start_row: WrapRow) -> WrapRows<'_> {
         let mut transforms = self
             .transforms
@@ -765,6 +785,7 @@ impl WrapSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn to_tab_point(&self, point: WrapPoint) -> TabPoint {
         let (start, _, item) =
             self.transforms
@@ -776,14 +797,18 @@ impl WrapSnapshot {
         TabPoint(tab_point)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn to_point(&self, point: WrapPoint, bias: Bias) -> Point {
-        self.tab_snapshot.to_point(self.to_tab_point(point), bias)
+        self.tab_snapshot
+            .tab_point_to_point(self.to_tab_point(point), bias)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
-        self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias))
+        self.tab_point_to_wrap_point(self.tab_snapshot.point_to_tab_point(point, bias))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
         let (start, ..) =
             self.transforms
@@ -791,6 +816,16 @@ impl WrapSnapshot {
         WrapPoint(start.1.0 + (point.0 - start.0.0))
     }
 
+    #[ztracing::instrument(skip_all)]
+    pub fn wrap_point_cursor(&self) -> WrapPointCursor<'_> {
+        WrapPointCursor {
+            cursor: self
+                .transforms
+                .cursor::<Dimensions<TabPoint, WrapPoint>>(()),
+        }
+    }
+
+    #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
             let (start, _, item) = self
@@ -805,32 +840,65 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
+    /// Try to find a TabRow start that is also a WrapRow start
+    /// Every TabRow start is a WrapRow start
+    #[ztracing::instrument(skip_all, fields(point=?point))]
+    pub fn prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
             return WrapRow(0);
         }
 
-        *point.column_mut() = 0;
+        let point = WrapPoint::new(point.row(), 0);
 
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
+
         cursor.seek(&point, Bias::Right);
         if cursor.item().is_none() {
             cursor.prev();
         }
 
+        //                          real newline     fake          fake
+        // text:      helloworldasldlfjasd\njdlasfalsk\naskdjfasdkfj\n
+        // dimensions v       v           v            v            v
+        // transforms |-------|-----NW----|-----W------|-----W------|
+        // cursor    ^        ^^^^^^^^^^^^^                          ^
+        //                               (^)           ^^^^^^^^^^^^^^
+        // point:                                            ^
+        // point(col_zero):                           (^)
+
         while let Some(transform) = cursor.item() {
-            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
-                return cmp::min(cursor.end().0.row(), point.row());
-            } else {
-                cursor.prev();
+            if transform.is_isomorphic() {
+                // this transform only has real linefeeds
+                let tab_summary = &transform.summary.input;
+                // is the wrap just before the end of the transform a tab row?
+                // thats only if this transform has at least one newline
+                //
+                // "this wrap row is a tab row" <=> self.to_tab_point(WrapPoint::new(wrap_row, 0)).column() == 0
+
+                // Note on comparison:
+                // We have code that relies on this to be row > 1
+                // It should work with row >= 1 but it does not :(
+                //
+                // That means that if every line is wrapped we walk back all the
+                // way to the start. Which invalidates the entire state triggering
+                // a full re-render.
+                if tab_summary.lines.row > 1 {
+                    let wrap_point_at_end = cursor.end().0.row();
+                    return cmp::min(wrap_point_at_end - RowDelta(1), point.row());
+                } else if cursor.start().1.column() == 0 {
+                    return cmp::min(cursor.end().0.row(), point.row());
+                }
             }
+
+            cursor.prev();
         }
 
-        unreachable!()
+        WrapRow(0)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn next_row_boundary(&self, mut point: WrapPoint) -> Option<WrapRow> {
         point.0 += Point::new(1, 0);
 
@@ -864,6 +932,7 @@ impl WrapSnapshot {
         .map(|h| h.text)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn check_invariants(&self) {
         #[cfg(test)]
         {
@@ -912,7 +981,25 @@ impl WrapSnapshot {
     }
 }
 
+pub struct WrapPointCursor<'transforms> {
+    cursor: Cursor<'transforms, 'static, Transform, Dimensions<TabPoint, WrapPoint>>,
+}
+
+impl WrapPointCursor<'_> {
+    #[ztracing::instrument(skip_all)]
+    pub fn map(&mut self, point: TabPoint) -> WrapPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&point, Bias::Right);
+        } else {
+            cursor.seek(&point, Bias::Right);
+        }
+        WrapPoint(cursor.start().1.0 + (point.0 - cursor.start().0.0))
+    }
+}
+
 impl WrapChunks<'_> {
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, rows: Range<WrapRow>) {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -921,10 +1008,10 @@ impl WrapChunks<'_> {
         if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
-        let input_end = self
-            .snapshot
-            .to_tab_point(output_end)
-            .min(self.snapshot.tab_snapshot.max_point());
+        let input_end = self.snapshot.to_tab_point(output_end);
+        let max_point = self.snapshot.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         self.input_chunks.seek(input_start..input_end);
         self.input_chunk = Chunk::default();
         self.output_position = output_start;
@@ -935,6 +1022,7 @@ impl WrapChunks<'_> {
 impl<'a> Iterator for WrapChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_position.row() >= self.max_output_row {
             return None;
@@ -965,7 +1053,7 @@ impl<'a> Iterator for WrapChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            self.input_chunk = self.input_chunks.next().unwrap();
+            self.input_chunk = self.input_chunks.next()?;
         }
 
         let mut input_len = 0;
@@ -1007,6 +1095,7 @@ impl<'a> Iterator for WrapChunks<'a> {
 impl Iterator for WrapRows<'_> {
     type Item = RowInfo;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
             return None;
@@ -1042,6 +1131,7 @@ impl Iterator for WrapRows<'_> {
 }
 
 impl Transform {
+    #[ztracing::instrument(skip_all)]
     fn isomorphic(summary: TextSummary) -> Self {
         #[cfg(test)]
         assert!(!summary.lines.is_zero());
@@ -1055,6 +1145,7 @@ impl Transform {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn wrap(indent: u32) -> Self {
         static WRAP_TEXT: LazyLock<String> = LazyLock::new(|| {
             let mut wrap_text = String::new();
@@ -1107,6 +1198,7 @@ trait SumTreeExt {
 }
 
 impl SumTreeExt for SumTree<Transform> {
+    #[ztracing::instrument(skip_all)]
     fn push_or_extend(&mut self, transform: Transform) {
         let mut transform = Some(transform);
         self.update_last(
@@ -1170,6 +1262,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
 }
 
 impl sum_tree::SeekTarget<'_, TransformSummary, TransformSummary> for TabPoint {
+    #[ztracing::instrument(skip_all)]
     fn cmp(&self, cursor_location: &TransformSummary, _: ()) -> std::cmp::Ordering {
         Ord::cmp(&self.0, &cursor_location.input.lines)
     }
@@ -1228,6 +1321,71 @@ mod tests {
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
     use theme::LoadThemes;
+
+    #[gpui::test]
+    async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        fn test_wrap_snapshot(
+            text: &str,
+            soft_wrap_every: usize, // font size multiple
+            cx: &mut gpui::TestAppContext,
+        ) -> WrapSnapshot {
+            let text_system = cx.read(|cx| cx.text_system().clone());
+            let tab_size = 4.try_into().unwrap();
+            let font = test_font();
+            let _font_id = text_system.resolve_font(&font);
+            let font_size = px(14.0);
+            // this is very much an estimate to try and get the wrapping to
+            // occur at `soft_wrap_every` we check that it pans out for every test case
+            let soft_wrapping = Some(font_size * soft_wrap_every * 0.6);
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+            let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+            let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+            let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+            let tabs_snapshot = tab_map.set_max_expansion_column(32);
+            let (_wrap_map, wrap_snapshot) =
+                cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, soft_wrapping, cx));
+
+            wrap_snapshot
+        }
+
+        // These two should pass but dont, see the comparison note in
+        // prev_row_boundary about why.
+        //
+        // //                                      0123  4567  wrap_rows
+        // let wrap_snapshot = test_wrap_snapshot("1234\n5678", 1, cx);
+        // assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8");
+        // let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        // assert_eq!(row.0, 3);
+
+        // //                                      012  345  678  wrap_rows
+        // let wrap_snapshot = test_wrap_snapshot("123\n456\n789", 1, cx);
+        // assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8\n9");
+        // let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        // assert_eq!(row.0, 5);
+
+        //                                      012345678  wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("123456789", 1, cx);
+        assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8\n9");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 0);
+
+        //                                      111  2222    44  wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("123\n4567\n\n89", 4, cx);
+        assert_eq!(wrap_snapshot.text(), "123\n4567\n\n89");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 2);
+
+        //                                      11  2223   wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("12\n3456\n\n", 3, cx);
+        assert_eq!(wrap_snapshot.text(), "12\n345\n6\n\n");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 3);
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {

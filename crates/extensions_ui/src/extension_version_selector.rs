@@ -8,7 +8,7 @@ use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, prelude::*};
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use settings::update_settings_file;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
@@ -60,8 +60,8 @@ impl ExtensionVersionSelectorDelegate {
         mut extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
         extension_versions.sort_unstable_by(|a, b| {
-            let a_version = SemanticVersion::from_str(&a.manifest.version);
-            let b_version = SemanticVersion::from_str(&b.manifest.version);
+            let a_version = Version::from_str(&a.manifest.version);
+            let b_version = Version::from_str(&b.manifest.version);
 
             match (a_version, b_version) {
                 (Ok(a_version), Ok(b_version)) => b_version.cmp(&a_version),

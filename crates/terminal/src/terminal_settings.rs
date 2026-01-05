@@ -7,9 +7,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use settings::AlternateScroll;
+
 use settings::{
-    RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition, TerminalLineHeight,
-    VenvSettings, WorkingDirectory, merge_from::MergeFrom,
+    PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition,
+    TerminalLineHeight, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
@@ -42,9 +43,12 @@ pub struct TerminalSettings {
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
+    pub scroll_multiplier: f32,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
+    pub path_hyperlink_regexes: Vec<String>,
+    pub path_hyperlink_timeout_ms: u64,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -80,7 +84,7 @@ impl settings::Settings for TerminalSettings {
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
-            font_size: user_content.font_size.map(px),
+            font_size: user_content.font_size.map(Into::into),
             font_family: user_content.font_family,
             font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
@@ -91,7 +95,7 @@ impl settings::Settings for TerminalSettings {
                 )
             }),
             font_features: user_content.font_features,
-            font_weight: user_content.font_weight.map(FontWeight),
+            font_weight: user_content.font_weight,
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),
@@ -105,6 +109,7 @@ impl settings::Settings for TerminalSettings {
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
             detect_venv: project_content.detect_venv.unwrap(),
+            scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
             toolbar: Toolbar {
                 breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),
@@ -113,6 +118,16 @@ impl settings::Settings for TerminalSettings {
                 show: user_content.scrollbar.unwrap().show,
             },
             minimum_contrast: user_content.minimum_contrast.unwrap(),
+            path_hyperlink_regexes: project_content
+                .path_hyperlink_regexes
+                .unwrap()
+                .into_iter()
+                .map(|regex| match regex {
+                    PathHyperlinkRegex::SingleLine(regex) => regex,
+                    PathHyperlinkRegex::MultiLine(regex) => regex.join("\n"),
+                })
+                .collect(),
+            path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
         }
     }
 }

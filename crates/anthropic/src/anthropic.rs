@@ -12,6 +12,8 @@ pub use settings::{AnthropicAvailableModel as AvailableModel, ModelMode};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
+pub mod batches;
+
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -67,6 +69,13 @@ pub enum Model {
         alias = "claude-opus-4-1-thinking-latest"
     )]
     ClaudeOpus4_1Thinking,
+    #[serde(rename = "claude-opus-4-5", alias = "claude-opus-4-5-latest")]
+    ClaudeOpus4_5,
+    #[serde(
+        rename = "claude-opus-4-5-thinking",
+        alias = "claude-opus-4-5-thinking-latest"
+    )]
+    ClaudeOpus4_5Thinking,
     #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
     ClaudeSonnet4,
     #[serde(
@@ -131,6 +140,14 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
+        if id.starts_with("claude-opus-4-5-thinking") {
+            return Ok(Self::ClaudeOpus4_5Thinking);
+        }
+
+        if id.starts_with("claude-opus-4-5") {
+            return Ok(Self::ClaudeOpus4_5);
+        }
+
         if id.starts_with("claude-opus-4-1-thinking") {
             return Ok(Self::ClaudeOpus4_1Thinking);
         }
@@ -208,6 +225,8 @@ impl Model {
             Self::ClaudeOpus4_1 => "claude-opus-4-1-latest",
             Self::ClaudeOpus4Thinking => "claude-opus-4-thinking-latest",
             Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking-latest",
+            Self::ClaudeOpus4_5 => "claude-opus-4-5-latest",
+            Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
@@ -230,6 +249,7 @@ impl Model {
         match self {
             Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
             Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-20250805",
+            Self::ClaudeOpus4_5 | Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-20251101",
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
             Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-20250929",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
@@ -249,6 +269,8 @@ impl Model {
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
             Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
+            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
+            Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
@@ -274,6 +296,8 @@ impl Model {
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -303,6 +327,8 @@ impl Model {
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -326,6 +352,8 @@ impl Model {
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -348,6 +376,8 @@ impl Model {
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -372,6 +402,7 @@ impl Model {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
             | Self::Claude3_5Sonnet
@@ -383,6 +414,7 @@ impl Model {
             | Self::Claude3Haiku => AnthropicModelMode::Default,
             Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeHaiku4_5Thinking
@@ -393,19 +425,28 @@ impl Model {
         }
     }
 
-    pub const DEFAULT_BETA_HEADERS: &[&str] = &["prompt-caching-2024-07-31"];
-
-    pub fn beta_headers(&self) -> String {
-        let mut headers = Self::DEFAULT_BETA_HEADERS
-            .iter()
-            .map(|header| header.to_string())
-            .collect::<Vec<_>>();
+    pub fn beta_headers(&self) -> Option<String> {
+        let mut headers = vec![];
 
         match self {
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5Thinking => {
+                // Fine-grained tool streaming for newer models
+                headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
+            }
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {
                 // Try beta token-efficient tool use (supported in Claude 3.7 Sonnet only)
                 // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
                 headers.push("token-efficient-tools-2025-02-19".to_string());
+                headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
             }
             Self::Custom {
                 extra_beta_headers, ..
@@ -420,7 +461,11 @@ impl Model {
             _ => {}
         }
 
-        headers.join(",")
+        if headers.is_empty() {
+            None
+        } else {
+            Some(headers.join(","))
+        }
     }
 
     pub fn tool_model_id(&self) -> &str {
@@ -436,21 +481,63 @@ impl Model {
     }
 }
 
-pub async fn complete(
+/// Generate completion with streaming.
+pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
-    beta_headers: String,
+    beta_headers: Option<String>,
+) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
+    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
+        .await
+        .map(|output| output.0)
+}
+
+/// Generate completion without streaming.
+pub async fn non_streaming_completion(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    beta_headers: Option<String>,
 ) -> Result<Response, AnthropicError> {
+    let (mut response, rate_limits) =
+        send_request(client, api_url, api_key, &request, beta_headers).await?;
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(AnthropicError::ReadResponse)?;
+
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
+    } else {
+        Err(handle_error_response(response, rate_limits).await)
+    }
+}
+
+async fn send_request(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: impl Serialize,
+    beta_headers: Option<String>,
+) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
-    let request_builder = HttpRequest::builder()
+
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
+
+    if let Some(beta_headers) = beta_headers {
+        request_builder = request_builder.header("Anthropic-Beta", beta_headers);
+    }
 
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
@@ -458,38 +545,48 @@ pub async fn complete(
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
-    let mut response = client
+    let response = client
         .send(request)
         .await
         .map_err(AnthropicError::HttpSend)?;
-    let status_code = response.status();
+
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
+
+    Ok((response, rate_limits))
+}
+
+async fn handle_error_response(
+    mut response: http::Response<AsyncBody>,
+    rate_limits: RateLimitInfo,
+) -> AnthropicError {
+    if response.status().as_u16() == 529 {
+        return AnthropicError::ServerOverloaded {
+            retry_after: rate_limits.retry_after,
+        };
+    }
+
+    if let Some(retry_after) = rate_limits.retry_after {
+        return AnthropicError::RateLimit { retry_after };
+    }
+
     let mut body = String::new();
-    response
+    let read_result = response
         .body_mut()
         .read_to_string(&mut body)
         .await
-        .map_err(AnthropicError::ReadResponse)?;
+        .map_err(AnthropicError::ReadResponse);
 
-    if status_code.is_success() {
-        Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
-    } else {
-        Err(AnthropicError::HttpResponseError {
-            status_code,
-            message: body,
-        })
+    if let Err(err) = read_result {
+        return err;
     }
-}
 
-pub async fn stream_completion(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: Request,
-    beta_headers: String,
-) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
-        .await
-        .map(|output| output.0)
+    match serde_json::from_str::<Event>(&body) {
+        Ok(Event::Error { error }) => AnthropicError::ApiError(error),
+        Ok(_) | Err(_) => AnthropicError::HttpResponseError {
+            status_code: response.status(),
+            message: body,
+        },
+    }
 }
 
 /// An individual rate limit.
@@ -583,7 +680,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_url: &str,
     api_key: &str,
     request: Request,
-    beta_headers: String,
+    beta_headers: Option<String>,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -595,26 +692,10 @@ pub async fn stream_completion_with_rate_limit_info(
         base: request,
         stream: true,
     };
-    let uri = format!("{api_url}/v1/messages");
 
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key.trim())
-        .header("Content-Type", "application/json");
-    let serialized_request =
-        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
-    let request = request_builder
-        .body(AsyncBody::from(serialized_request))
-        .map_err(AnthropicError::BuildRequestBody)?;
+    let (response, rate_limits) =
+        send_request(client, api_url, api_key, &request, beta_headers).await?;
 
-    let mut response = client
-        .send(request)
-        .await
-        .map_err(AnthropicError::HttpSend)?;
-    let rate_limits = RateLimitInfo::from_headers(response.headers());
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         let stream = reader
@@ -633,27 +714,8 @@ pub async fn stream_completion_with_rate_limit_info(
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
-    } else if response.status().as_u16() == 529 {
-        Err(AnthropicError::ServerOverloaded {
-            retry_after: rate_limits.retry_after,
-        })
-    } else if let Some(retry_after) = rate_limits.retry_after {
-        Err(AnthropicError::RateLimit { retry_after })
     } else {
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(AnthropicError::ReadResponse)?;
-
-        match serde_json::from_str::<Event>(&body) {
-            Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) | Err(_) => Err(AnthropicError::HttpResponseError {
-                status_code: response.status(),
-                message: body,
-            }),
-        }
+        Err(handle_error_response(response, rate_limits).await)
     }
 }
 
@@ -988,6 +1050,71 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
         .0
         .parse()
         .ok()
+}
+
+/// Request body for the token counting API.
+/// Similar to `Request` but without `max_tokens` since it's not needed for counting.
+#[derive(Debug, Serialize)]
+pub struct CountTokensRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<StringOrContents>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+/// Response from the token counting API.
+#[derive(Debug, Deserialize)]
+pub struct CountTokensResponse {
+    pub input_tokens: u64,
+}
+
+/// Count the number of tokens in a message without creating it.
+pub async fn count_tokens(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+) -> Result<CountTokensResponse, AnthropicError> {
+    let uri = format!("{api_url}/v1/messages/count_tokens");
+
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Anthropic-Version", "2023-06-01")
+        .header("X-Api-Key", api_key.trim())
+        .header("Content-Type", "application/json");
+
+    let serialized_request =
+        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
+    let http_request = request_builder
+        .body(AsyncBody::from(serialized_request))
+        .map_err(AnthropicError::BuildRequestBody)?;
+
+    let mut response = client
+        .send(http_request)
+        .await
+        .map_err(AnthropicError::HttpSend)?;
+
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(AnthropicError::ReadResponse)?;
+
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
+    } else {
+        Err(handle_error_response(response, rate_limits).await)
+    }
 }
 
 #[test]

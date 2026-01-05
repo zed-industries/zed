@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 
 use git::repository::Worktree as GitWorktree;
@@ -9,7 +10,11 @@ use gpui::{
     actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::{DirectoryLister, git_store::Repository};
+use project::{
+    DirectoryLister,
+    git_store::Repository,
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
+};
 use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use std::{path::PathBuf, sync::Arc};
@@ -219,7 +224,6 @@ impl WorktreeListDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        let workspace = self.workspace.clone();
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -247,6 +251,7 @@ impl WorktreeListDelegate {
 
         let branch = worktree_branch.to_string();
         let window_handle = window.window_handle();
+        let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
             let Some(paths) = worktree_path.await? else {
                 return anyhow::Ok(());
@@ -257,8 +262,34 @@ impl WorktreeListDelegate {
                 repo.create_worktree(branch.clone(), path.clone(), commit)
             })?
             .await??;
+            let new_worktree_path = path.join(branch);
 
-            let final_path = path.join(branch);
+            workspace.update(cx, |workspace, cx| {
+                if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                    let repo_path = &repo.read(cx).snapshot().work_directory_abs_path;
+                    let project = workspace.project();
+                    if let Some((parent_worktree, _)) =
+                        project.read(cx).find_worktree(repo_path, cx)
+                    {
+                        let worktree_store = project.read(cx).worktree_store();
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            if trusted_worktrees.can_trust(
+                                &worktree_store,
+                                parent_worktree.read(cx).id(),
+                                cx,
+                            ) {
+                                trusted_worktrees.trust(
+                                    &worktree_store,
+                                    HashSet::from_iter([PathTrust::AbsPath(
+                                        new_worktree_path.clone(),
+                                    )]),
+                                    cx,
+                                );
+                            }
+                        });
+                    }
+                }
+            })?;
 
             let (connection_options, app_state, is_local) =
                 workspace.update(cx, |workspace, cx| {
@@ -274,7 +305,7 @@ impl WorktreeListDelegate {
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_workspace_for_paths(
                             replace_current_window,
-                            vec![final_path],
+                            vec![new_worktree_path],
                             window,
                             cx,
                         )
@@ -283,7 +314,7 @@ impl WorktreeListDelegate {
             } else if let Some(connection_options) = connection_options {
                 open_remote_worktree(
                     connection_options,
-                    vec![final_path],
+                    vec![new_worktree_path],
                     app_state,
                     window_handle,
                     replace_current_window,
@@ -421,6 +452,7 @@ async fn open_remote_worktree(
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            true,
             cx,
         )
     })?;
@@ -665,7 +697,7 @@ impl PickerDelegate for WorktreeListDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("worktree-menu-{ix}")))
+            ListItem::new(format!("worktree-menu-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

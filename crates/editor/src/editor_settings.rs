@@ -4,9 +4,10 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
-    GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
-    ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode,
+    DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode, MinimapThumb,
+    MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics,
+    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
@@ -33,6 +34,7 @@ pub struct EditorSettings {
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub fast_scroll_sensitivity: f32,
+    pub sticky_scroll: StickyScroll,
     pub relative_line_numbers: RelativeLineNumbers,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
@@ -56,12 +58,18 @@ pub struct EditorSettings {
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
+    pub completion_detail_alignment: CompletionDetailAlignment,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
     /// Whether the Jupyter feature is enabled.
     ///
     /// Default: true
+    pub enabled: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct StickyScroll {
     pub enabled: bool,
 }
 
@@ -156,10 +164,15 @@ pub struct DragAndDropSelection {
 pub struct SearchSettings {
     /// Whether to show the project search button in the status bar.
     pub button: bool,
+    /// Whether to only match on whole words.
     pub whole_word: bool,
+    /// Whether to match case sensitively.
     pub case_sensitive: bool,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: bool,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: bool,
+    /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
 }
 
@@ -185,6 +198,7 @@ impl Settings for EditorSettings {
         let toolbar = editor.toolbar.unwrap();
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
+        let sticky_scroll = editor.sticky_scroll.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -203,7 +217,8 @@ impl Settings for EditorSettings {
             },
             scrollbar: Scrollbar {
                 show: scrollbar.show.map(Into::into).unwrap(),
-                git_diff: scrollbar.git_diff.unwrap(),
+                git_diff: scrollbar.git_diff.unwrap()
+                    && content.git.unwrap().enabled.unwrap().is_git_diff_enabled(),
                 selected_text: scrollbar.selected_text.unwrap(),
                 selected_symbol: scrollbar.selected_symbol.unwrap(),
                 search_results: scrollbar.search_results.unwrap(),
@@ -235,6 +250,9 @@ impl Settings for EditorSettings {
             horizontal_scroll_margin: editor.horizontal_scroll_margin.unwrap(),
             scroll_sensitivity: editor.scroll_sensitivity.unwrap(),
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
+            sticky_scroll: StickyScroll {
+                enabled: sticky_scroll.enabled.unwrap(),
+            },
             relative_line_numbers: editor.relative_line_numbers.unwrap(),
             seed_search_query_from_cursor: editor.seed_search_query_from_cursor.unwrap(),
             use_smartcase_search: editor.use_smartcase_search.unwrap(),
@@ -270,6 +288,7 @@ impl Settings for EditorSettings {
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
+            completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
         }
     }
 }

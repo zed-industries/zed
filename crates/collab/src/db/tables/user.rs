@@ -15,14 +15,8 @@ pub struct Model {
     pub email_address: Option<String>,
     pub name: Option<String>,
     pub admin: bool,
-    pub invite_code: Option<String>,
-    pub invite_count: i32,
-    pub inviter_id: Option<UserId>,
     pub connected_once: bool,
-    pub metrics_id: Uuid,
     pub created_at: NaiveDateTime,
-    pub accepted_tos_at: Option<NaiveDateTime>,
-    pub custom_llm_monthly_allowance_in_cents: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -37,25 +31,6 @@ pub enum Relation {
     ChannelMemberships,
     #[sea_orm(has_one = "super::contributor::Entity")]
     Contributor,
-}
-
-impl Model {
-    /// Returns the timestamp of when the user's account was created.
-    ///
-    /// This will be the earlier of the `created_at` and `github_user_created_at` timestamps.
-    pub fn account_created_at(&self) -> NaiveDateTime {
-        let mut account_created_at = self.created_at;
-        if let Some(github_created_at) = self.github_user_created_at {
-            account_created_at = account_created_at.min(github_created_at);
-        }
-
-        account_created_at
-    }
-
-    /// Returns the age of the user's account.
-    pub fn account_age(&self) -> chrono::Duration {
-        chrono::Utc::now().naive_utc() - self.account_created_at()
-    }
 }
 
 impl Related<super::access_token::Entity> for Entity {

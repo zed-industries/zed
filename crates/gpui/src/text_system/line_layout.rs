@@ -54,9 +54,25 @@ pub struct ShapedGlyph {
 }
 
 impl LineLayout {
+    /// The index for the character at the given x coordinate
+    pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+        if x >= self.width {
+            None
+        } else {
+            for run in self.runs.iter().rev() {
+                for glyph in run.glyphs.iter().rev() {
+                    if glyph.position.x <= x {
+                        return Some(glyph.index);
+                    }
+                }
+            }
+            Some(0)
+        }
+    }
+
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
-    pub fn index_for_x(&self, x: Pixels) -> usize {
+    pub fn closest_index_for_x(&self, x: Pixels) -> usize {
         let mut prev_index = 0;
         let mut prev_x = px(0.);
 
@@ -262,10 +278,34 @@ impl WrappedLineLayout {
     }
 
     /// The index corresponding to a given position in this layout for the given line height.
+    ///
+    /// See also [`Self::closest_index_for_position`].
     pub fn index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Result<usize, usize> {
+        self._index_for_position(position, line_height, false)
+    }
+
+    /// The closest index to a given position in this layout for the given line height.
+    ///
+    /// Closest means the character boundary closest to the given position.
+    ///
+    /// See also [`LineLayout::closest_index_for_x`].
+    pub fn closest_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Result<usize, usize> {
+        self._index_for_position(position, line_height, true)
+    }
+
+    fn _index_for_position(
         &self,
         mut position: Point<Pixels>,
         line_height: Pixels,
+        closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
 
@@ -305,9 +345,16 @@ impl WrappedLineLayout {
         } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
             Err(wrapped_line_end_index)
         } else {
-            Ok(self
-                .unwrapped_layout
-                .index_for_x(position_in_unwrapped_line.x))
+            if closest {
+                Ok(self
+                    .unwrapped_layout
+                    .closest_index_for_x(position_in_unwrapped_line.x))
+            } else {
+                Ok(self
+                    .unwrapped_layout
+                    .index_for_x(position_in_unwrapped_line.x)
+                    .unwrap())
+            }
         }
     }
 

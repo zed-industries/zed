@@ -1,4 +1,4 @@
-mod completion_provider;
+mod config_options;
 mod entry_view_state;
 mod message_editor;
 mod mode_selector;

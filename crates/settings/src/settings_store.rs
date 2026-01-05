@@ -25,14 +25,15 @@ use std::{
 use util::{
     ResultExt as _,
     rel_path::RelPath,
-    schemars::{DefaultDenyUnknownFields, replace_subschema},
+    schemars::{AllowTrailingCommas, DefaultDenyUnknownFields, replace_subschema},
 };
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
+    fallible_options,
     merge_from::MergeFrom,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
@@ -40,6 +41,8 @@ use crate::{
 };
 
 use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
+
+pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -247,6 +250,7 @@ pub trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
+    fn clear_local_values(&mut self, root_id: WorktreeId);
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
@@ -255,6 +259,7 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
     pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
+    pub lsp_adapter_names: &'a [String],
 }
 
 impl SettingsStore {
@@ -666,44 +671,31 @@ impl SettingsStore {
         file: SettingsFile,
     ) -> (Option<SettingsContentType>, SettingsParseResult) {
         let mut migration_status = MigrationStatus::NotNeeded;
-        let settings: SettingsContentType = if user_settings_content.is_empty() {
-            parse_json_with_comments("{}").expect("Empty settings should always be valid")
+        let (settings, parse_status) = if user_settings_content.is_empty() {
+            fallible_options::parse_json("{}")
         } else {
             let migration_res = migrator::migrate_settings(user_settings_content);
-            let content = match &migration_res {
-                Ok(Some(content)) => content,
-                Ok(None) => user_settings_content,
-                Err(_) => user_settings_content,
-            };
-            let parse_result = parse_json_with_comments(content);
-            migration_status = match migration_res {
+            migration_status = match &migration_res {
                 Ok(Some(_)) => MigrationStatus::Succeeded,
                 Ok(None) => MigrationStatus::NotNeeded,
                 Err(err) => MigrationStatus::Failed {
                     error: err.to_string(),
                 },
             };
-            match parse_result {
-                Ok(settings) => settings,
-                Err(err) => {
-                    let result = SettingsParseResult {
-                        parse_status: ParseStatus::Failed {
-                            error: err.to_string(),
-                        },
-                        migration_status,
-                    };
-                    self.file_errors.insert(file, result.clone());
-                    return (None, result);
-                }
-            }
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => user_settings_content,
+                Err(_) => user_settings_content,
+            };
+            fallible_options::parse_json(content)
         };
 
         let result = SettingsParseResult {
-            parse_status: ParseStatus::Success,
+            parse_status,
             migration_status,
         };
         self.file_errors.insert(file, result.clone());
-        return (Some(settings), result);
+        return (settings, result);
     }
 
     pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {
@@ -984,6 +976,11 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
+        self.raw_editorconfig_settings
+            .retain(|(worktree_id, _), _| worktree_id != &root_id);
+        for setting_value in self.setting_values.values_mut() {
+            setting_value.clear_local_values(root_id);
+        }
         self.recompute_values(Some((root_id, RelPath::empty())), cx);
         Ok(())
     }
@@ -1023,6 +1020,7 @@ impl SettingsStore {
     pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
             .into_generator();
 
         UserSettingsContent::json_schema(&mut generator);
@@ -1030,6 +1028,14 @@ impl SettingsStore {
         let language_settings_content_ref = generator
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
+
+        generator.subschema_for::<LspSettings>();
+
+        let lsp_settings_def = generator
+            .definitions()
+            .get("LspSettings")
+            .expect("LspSettings should be defined")
+            .clone();
 
         replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
             json_schema!({
@@ -1066,6 +1072,38 @@ impl SettingsStore {
             json_schema!({
                 "type": "string",
                 "enum": params.icon_theme_names,
+            })
+        });
+
+        replace_subschema::<LspSettingsMap>(&mut generator, || {
+            let mut lsp_properties = serde_json::Map::new();
+
+            for adapter_name in params.lsp_adapter_names {
+                let mut base_lsp_settings = lsp_settings_def
+                    .as_object()
+                    .expect("LspSettings should be an object")
+                    .clone();
+
+                if let Some(properties) = base_lsp_settings.get_mut("properties") {
+                    if let Some(props_obj) = properties.as_object_mut() {
+                        props_obj.insert(
+                            "initialization_options".to_string(),
+                            serde_json::json!({
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}")
+                            }),
+                        );
+                    }
+                }
+
+                lsp_properties.insert(
+                    adapter_name.clone(),
+                    serde_json::Value::Object(base_lsp_settings),
+                );
+            }
+
+            json_schema!({
+                "type": "object",
+                "properties": lsp_properties,
             })
         });
 
@@ -1349,6 +1387,11 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             Ok(ix) => self.local_values[ix].2 = value,
             Err(ix) => self.local_values.insert(ix, (root_id, path, value)),
         }
+    }
+
+    fn clear_local_values(&mut self, root_id: WorktreeId) {
+        self.local_values
+            .retain(|(worktree_id, _, _)| *worktree_id != root_id);
     }
 }
 
@@ -2304,5 +2347,40 @@ mod tests {
                 &SettingsFile::Default,
             ]
         )
+    }
+
+    #[gpui::test]
+    fn test_lsp_settings_schema_generation(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+
+        let schema = store.json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[
+                "rust-analyzer".to_string(),
+                "typescript-language-server".to_string(),
+            ],
+        });
+
+        let properties = schema
+            .pointer("/$defs/LspSettingsMap/properties")
+            .expect("LspSettingsMap should have properties")
+            .as_object()
+            .unwrap();
+
+        assert!(properties.contains_key("rust-analyzer"));
+        assert!(properties.contains_key("typescript-language-server"));
+
+        let init_options_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/initialization_options/$ref")
+            .expect("initialization_options should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
     }
 }

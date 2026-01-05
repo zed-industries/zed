@@ -46,7 +46,7 @@ Having a series of rules files specifically tailored to prompt engineering can a
 
 Here are a couple of helpful resources for writing better rules:
 
-- [Anthropic: Prompt Engineering](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview)
+- [Anthropic: Prompt Engineering](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview)
 - [OpenAI: Prompt Engineering](https://platform.openai.com/docs/guides/prompt-engineering)
 
 ### Editing the Default Rules {#default-rules}

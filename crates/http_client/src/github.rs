@@ -1,9 +1,12 @@
-use crate::HttpClient;
+use crate::{HttpClient, HttpRequestExt};
 use anyhow::{Context as _, Result, anyhow, bail};
 use futures::AsyncReadExt;
+use http::Request;
 use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
+
+const GITHUB_API_URL: &str = "https://api.github.com";
 
 pub struct GitHubLspBinaryVersion {
     pub name: String,
@@ -34,12 +37,17 @@ pub async fn latest_github_release(
     pre_release: bool,
     http: Arc<dyn HttpClient>,
 ) -> anyhow::Result<GithubRelease> {
+    let url = format!("{GITHUB_API_URL}/repos/{repo_name_with_owner}/releases");
+
+    let request = Request::get(&url)
+        .follow_redirects(crate::RedirectPolicy::FollowAll)
+        .when_some(std::env::var("GITHUB_TOKEN").ok(), |builder, token| {
+            builder.header("Authorization", format!("Bearer {}", token))
+        })
+        .body(Default::default())?;
+
     let mut response = http
-        .get(
-            format!("https://api.github.com/repos/{repo_name_with_owner}/releases").as_str(),
-            Default::default(),
-            true,
-        )
+        .send(request)
         .await
         .context("error fetching latest release")?;
 
@@ -91,12 +99,17 @@ pub async fn get_release_by_tag_name(
     tag: &str,
     http: Arc<dyn HttpClient>,
 ) -> anyhow::Result<GithubRelease> {
+    let url = format!("{GITHUB_API_URL}/repos/{repo_name_with_owner}/releases/tags/{tag}");
+
+    let request = Request::get(&url)
+        .follow_redirects(crate::RedirectPolicy::FollowAll)
+        .when_some(std::env::var("GITHUB_TOKEN").ok(), |builder, token| {
+            builder.header("Authorization", format!("Bearer {}", token))
+        })
+        .body(Default::default())?;
+
     let mut response = http
-        .get(
-            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
-            Default::default(),
-            true,
-        )
+        .send(request)
         .await
         .context("error fetching latest release")?;
 

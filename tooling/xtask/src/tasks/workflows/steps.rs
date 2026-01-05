@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::{runners::Platform, vars};
+use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
 pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
@@ -15,6 +15,16 @@ pub fn checkout_repo() -> Step<Use> {
     // prevent checkout action from running `git clean -ffdx` which
     // would delete the target directory
     .add_with(("clean", false))
+}
+
+pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
+    named::uses(
+        "actions",
+        "checkout",
+        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
+    )
+    .add_with(("clean", false))
+    .add_with(("token", token.to_string()))
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -44,19 +54,20 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier")
+}
+
 pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
-pub fn cargo_install_nextest(platform: Platform) -> Step<Run> {
-    named::run(platform, "cargo install cargo-nextest --locked")
+pub fn cargo_install_nextest() -> Step<Use> {
+    named::uses("taiki-e", "install-action", "nextest")
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
-    named::run(
-        platform,
-        "cargo nextest run --workspace --no-fail-fast --failure-output immediate-final",
-    )
+    named::run(platform, "cargo nextest run --workspace --no-fail-fast")
 }
 
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
@@ -94,18 +105,18 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
-pub(crate) fn clippy(platform: Platform) -> Step<Run> {
+pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
         _ => named::bash("./script/clippy"),
     }
 }
 
-pub(crate) fn cache_rust_dependencies_namespace() -> Step<Use> {
+pub fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }
 
-fn setup_linux() -> Step<Run> {
+pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
 
@@ -113,8 +124,14 @@ fn install_mold() -> Step<Run> {
     named::bash("./script/install-mold")
 }
 
+fn download_wasi_sdk() -> Step<Run> {
+    named::bash("./script/download-wasi-sdk")
+}
+
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux()).add_step(install_mold())
+    job.add_step(setup_linux())
+        .add_step(install_mold())
+        .add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -125,9 +142,9 @@ pub fn script(name: &str) -> Step<Run> {
     }
 }
 
-pub(crate) struct NamedJob {
+pub struct NamedJob<J: JobType = RunJob> {
     pub name: String,
-    pub job: Job,
+    pub job: Job<J>,
 }
 
 // impl NamedJob {
@@ -139,11 +156,30 @@ pub(crate) struct NamedJob {
 //     }
 // }
 
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
+    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+
+pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
+    Expression::new(format!(
+        "{}{}",
+        DEFAULT_REPOSITORY_OWNER_GUARD,
+        trigger_always.then_some(" && always()").unwrap_or_default()
+    ))
+}
+
+pub trait CommonJobConditions: Sized {
+    fn with_repository_owner_guard(self) -> Self;
+}
+
+impl CommonJobConditions for Job {
+    fn with_repository_owner_guard(self) -> Self {
+        self.cond(repository_owner_guard_expression(false))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .timeout_minutes(60u32)
 }
 
@@ -158,12 +194,13 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
+impl FluentBuilder for Input {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
 /// todo(ci) just put this in gh-workflow
 #[allow(unused)]
-pub(crate) trait FluentBuilder {
+pub trait FluentBuilder {
     /// Imperatively modify self with the given closure.
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where
@@ -217,34 +254,36 @@ pub(crate) trait FluentBuilder {
 
 // (janky) helper to generate steps with a name that corresponds
 // to the name of the calling function.
-pub(crate) mod named {
+pub mod named {
     use super::*;
 
     /// Returns a uses step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
+    pub fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
         Step::new(function_name(1)).uses(owner, repo, ref_)
     }
 
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn bash(script: &str) -> Step<Run> {
-        Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+    pub fn bash(script: impl AsRef<str>) -> Step<Run> {
+        Step::new(function_name(1))
+            .run(script.as_ref())
+            .shell(BASH_SHELL)
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn pwsh(script: &str) -> Step<Run> {
+    pub fn pwsh(script: &str) -> Step<Run> {
         Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
     }
 
     /// Runs the command in either powershell or bash, depending on platform.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub(crate) fn run(platform: Platform, script: &str) -> Step<Run> {
+    pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
             Platform::Linux | Platform::Mac => {
@@ -254,19 +293,23 @@ pub(crate) mod named {
     }
 
     /// Returns a Workflow with the same name as the enclosing module.
-    pub(crate) fn workflow() -> Workflow {
+    pub fn workflow() -> Workflow {
         Workflow::default().name(
             named::function_name(1)
                 .split("::")
-                .next()
-                .unwrap()
-                .to_owned(),
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .skip(1)
+                .rev()
+                .collect::<Vec<_>>()
+                .join("::"),
         )
     }
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub(crate) fn job(job: Job) -> NamedJob {
+    pub fn job<J: JobType>(job: Job<J>) -> NamedJob<J> {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,
@@ -276,7 +319,7 @@ pub(crate) mod named {
     /// Returns the function name N callers above in the stack
     /// (typically 1).
     /// This only works because xtask always runs debug builds.
-    pub(crate) fn function_name(i: usize) -> String {
+    pub fn function_name(i: usize) -> String {
         let mut name = "<unknown>".to_string();
         let mut count = 0;
         backtrace::trace(|frame| {
@@ -291,6 +334,7 @@ pub(crate) mod named {
             });
             false
         });
+
         name.split("::")
             .skip_while(|s| s != &"workflows")
             .skip(1)
@@ -303,4 +347,17 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(&format!(
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))
+}
+
+pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    )
+    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
 }

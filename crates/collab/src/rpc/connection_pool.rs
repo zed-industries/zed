@@ -2,7 +2,7 @@ use crate::db::{ChannelId, ChannelRole, UserId};
 use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::Serialize;
 use std::fmt;
 use tracing::instrument;
@@ -19,8 +19,8 @@ struct ConnectedPrincipal {
     connection_ids: HashSet<ConnectionId>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
-pub struct ZedVersion(pub SemanticVersion);
+#[derive(Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
+pub struct ZedVersion(pub Version);
 
 impl fmt::Display for ZedVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -32,13 +32,13 @@ impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
         // v0.204.1 was the first version after the auto-update bug.
         // We reject any clients older than that to hope we can persuade them to upgrade.
-        if self.0 < SemanticVersion::new(0, 204, 1) {
+        if self.0 < Version::new(0, 204, 1) {
             return false;
         }
 
         // Since we hotfixed the changes to no longer connect to Collab automatically to Preview, we also need to reject
         // versions in the range [v0.199.0, v0.199.1].
-        if self.0 >= SemanticVersion::new(0, 199, 0) && self.0 < SemanticVersion::new(0, 199, 2) {
+        if self.0 >= Version::new(0, 199, 0) && self.0 < Version::new(0, 199, 2) {
             return false;
         }
 

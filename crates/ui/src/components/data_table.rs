@@ -485,6 +485,7 @@ pub struct Table<const COLS: usize = 3> {
     interaction_state: Option<WeakEntity<TableInteractionState>>,
     col_widths: Option<TableWidths<COLS>>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
 }
 
@@ -498,6 +499,7 @@ impl<const COLS: usize> Table<COLS> {
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
             map_row: None,
+            use_ui_font: true,
             empty_table_callback: None,
             col_widths: None,
         }
@@ -590,6 +592,11 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
+    pub fn no_ui_font(mut self) -> Self {
+        self.use_ui_font = false;
+        self
+    }
+
     pub fn map_row(
         mut self,
         callback: impl Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement + 'static,
@@ -618,8 +625,8 @@ fn base_cell_style(width: Option<Length>) -> Div {
         .overflow_hidden()
 }
 
-fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
-    base_cell_style(width).text_ui(cx)
+fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> Div {
+    base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
 pub fn render_table_row<const COLS: usize>(
@@ -641,11 +648,10 @@ pub fn render_table_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(Some));
 
     let mut row = h_flex()
-        .h_full()
         .id(("table_row", row_index))
-        .w_full()
-        .justify_between()
+        .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
+        .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
         .when(!is_striped, |row| {
             row.border_b_1()
                 .border_color(transparent_black())
@@ -657,7 +663,12 @@ pub fn render_table_row<const COLS: usize>(
             .map(IntoElement::into_any_element)
             .into_iter()
             .zip(column_widths)
-            .map(|(cell, width)| base_cell_style_text(width, cx).px_1().py_0p5().child(cell)),
+            .map(|(cell, width)| {
+                base_cell_style_text(width, table_context.use_ui_font, cx)
+                    .px_1()
+                    .py_0p5()
+                    .child(cell)
+            }),
     );
 
     let row = if let Some(map_row) = table_context.map_row {
@@ -701,7 +712,7 @@ pub fn render_table_header<const COLS: usize>(
         .border_color(cx.theme().colors().border)
         .children(headers.into_iter().enumerate().zip(column_widths).map(
             |((header_idx, h), width)| {
-                base_cell_style_text(width, cx)
+                base_cell_style_text(width, table_context.use_ui_font, cx)
                     .child(h)
                     .id(ElementId::NamedInteger(
                         shared_element_id.clone(),
@@ -740,6 +751,7 @@ pub struct TableRenderContext<const COLS: usize> {
     pub total_row_count: usize,
     pub column_widths: Option<[Length; COLS]>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    pub use_ui_font: bool,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -749,6 +761,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             total_row_count: table.rows.len(),
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
+            use_ui_font: table.use_ui_font,
         }
     }
 }
@@ -873,7 +886,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 interaction_state.as_ref(),
                                 |this, state| {
                                     this.track_scroll(
-                                        state.read_with(cx, |s, _| s.scroll_handle.clone()),
+                                        &state.read_with(cx, |s, _| s.scroll_handle.clone()),
                                     )
                                 },
                             ),
@@ -907,7 +920,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
                     content
                         .custom_scrollbars(
-                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            scrollbars.tracked_scroll_handle(&state.read(cx).scroll_handle),
                             window,
                             cx,
                         )

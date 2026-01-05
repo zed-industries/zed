@@ -202,6 +202,7 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
+            false,
             cx,
         );
 
@@ -303,13 +304,12 @@ impl ExampleInstance {
                 let context_server_registry = cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
                 let thread = if let Some(json) = &meta.existing_thread_json {
-                    let session_id = acp::SessionId(
+                    let session_id = acp::SessionId::new(
                         rand::rng()
                             .sample_iter(&distr::Alphanumeric)
                             .take(7)
                             .map(char::from)
-                            .collect::<String>()
-                            .into(),
+                            .collect::<String>(),
                     );
 
                     let db_thread = agent::DbThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
@@ -322,7 +322,7 @@ impl ExampleInstance {
                     thread.add_default_tools(Rc::new(EvalThreadEnvironment {
                         project: project.clone(),
                     }), cx);
-                    thread.set_profile(meta.profile_id.clone());
+                    thread.set_profile(meta.profile_id.clone(), cx);
                     thread.set_model(
                         LanguageModelInterceptor::new(
                             LanguageModelRegistry::read_global(cx).default_model().expect("Missing model").model.clone(),
@@ -553,6 +553,7 @@ impl ExampleInstance {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
                     cache: false,
+                    reasoning_details: None,
                 }],
                 temperature: None,
                 tools: Vec::new(),
@@ -625,6 +626,15 @@ impl agent::TerminalHandle for EvalTerminalHandle {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
     }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
+    }
 }
 
 impl agent::ThreadEnvironment for EvalThreadEnvironment {
@@ -639,7 +649,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         cx.spawn(async move |cx| {
             let language_registry =
                 project.read_with(cx, |project, _cx| project.languages().clone())?;
-            let id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+            let id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
             let terminal =
                 acp_thread::create_terminal_entity(command, &[], vec![], cwd.clone(), &project, cx)
                     .await?;
@@ -892,7 +902,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(buffer, cx)
+                    .running_language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })
@@ -1251,8 +1261,12 @@ pub fn response_events_to_markdown(
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
+                | LanguageModelCompletionEvent::ToolUseLimitReached
                 | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::StatusUpdate { .. },
+                | LanguageModelCompletionEvent::UsageUpdated { .. }
+                | LanguageModelCompletionEvent::Queued { .. }
+                | LanguageModelCompletionEvent::Started
+                | LanguageModelCompletionEvent::ReasoningDetails(_),
             ) => {}
             Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                 json_parse_error, ..
@@ -1337,9 +1351,13 @@ impl ThreadDialog {
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
                 | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
-                | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
-                | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
+                | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
+                | Ok(LanguageModelCompletionEvent::Stop(_))
+                | Ok(LanguageModelCompletionEvent::Queued { .. })
+                | Ok(LanguageModelCompletionEvent::Started)
+                | Ok(LanguageModelCompletionEvent::UsageUpdated { .. })
+                | Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => {}
 
                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                     json_parse_error,
@@ -1366,6 +1384,7 @@ impl ThreadDialog {
                 role: Role::Assistant,
                 content,
                 cache: false,
+                reasoning_details: None,
             })
         } else {
             None

@@ -46,10 +46,8 @@ use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{
-    ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, DynamicSpacing, FluentBuilder,
-    HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, IndentGuideColors,
-    IndentGuideLayout, Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt,
-    StyledTypography, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+    ContextMenu, FluentBuilder, HighlightedLabel, IconButton, IconButtonShape, IndentGuideColors,
+    IndentGuideLayout, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
@@ -77,6 +75,16 @@ actions!(
         OpenSelectedEntry,
         /// Reveals the selected item in the system file manager.
         RevealInFileManager,
+        /// Scroll half a page upwards
+        ScrollUp,
+        /// Scroll half a page downwards
+        ScrollDown,
+        /// Scroll until the cursor displays at the center
+        ScrollCursorCenter,
+        /// Scroll until the cursor displays at the top
+        ScrollCursorTop,
+        /// Scroll until the cursor displays at the bottom
+        ScrollCursorBottom,
         /// Selects the parent of the current entry.
         SelectParent,
         /// Toggles the pin status of the active editor.
@@ -102,6 +110,7 @@ pub struct OutlinePanel {
     active: bool,
     pinned: bool,
     scroll_handle: UniformListScrollHandle,
+    rendered_entries_len: usize,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
@@ -113,8 +122,6 @@ pub struct OutlinePanel {
     selected_entry: SelectedEntry,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
-    updating_fs_entries: bool,
-    updating_cached_entries: bool,
     new_entries_for_fs_update: HashSet<ExcerptId>,
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
@@ -714,7 +721,7 @@ impl OutlinePanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", window, cx);
+                editor.set_placeholder_text("Search buffer symbols…", window, cx);
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(
@@ -843,6 +850,7 @@ impl OutlinePanel {
                 fs: workspace.app_state().fs.clone(),
                 max_width_item_index: None,
                 scroll_handle,
+                rendered_entries_len: 0,
                 focus_handle,
                 filter_editor,
                 fs_entries: Vec::new(),
@@ -855,8 +863,6 @@ impl OutlinePanel {
                 width: None,
                 active_item: None,
                 pending_serialization: Task::ready(None),
-                updating_fs_entries: false,
-                updating_cached_entries: false,
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
                 pending_default_expansion_depth: None,
@@ -986,16 +992,15 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.toggle_expanded(&selected_entry, window, cx);
             self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
         }
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else {
-            self.filter_editor.focus_handle(cx).focus(window);
+            self.filter_editor.focus_handle(cx).focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1148,10 +1153,74 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.focus_handle(cx).focus(window);
+                    active_editor.focus_handle(cx).focus(window, cx);
                 } else {
-                    self.focus_handle.focus(window);
+                    self.focus_handle.focus(window, cx);
                 }
+            }
+        }
+    }
+
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
+        for _ in 0..self.rendered_entries_len / 2 {
+            window.dispatch_action(SelectPrevious.boxed_clone(), cx);
+        }
+    }
+
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
+        for _ in 0..self.rendered_entries_len / 2 {
+            window.dispatch_action(SelectNext.boxed_clone(), cx);
+        }
+    }
+
+    fn scroll_cursor_center(
+        &mut self,
+        _: &ScrollCursorCenter,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Center);
+                cx.notify();
+            }
+        }
+    }
+
+    fn scroll_cursor_top(&mut self, _: &ScrollCursorTop, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Top);
+                cx.notify();
+            }
+        }
+    }
+
+    fn scroll_cursor_bottom(
+        &mut self,
+        _: &ScrollCursorBottom,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Bottom);
+                cx.notify();
             }
         }
     }
@@ -1389,7 +1458,7 @@ impl OutlinePanel {
                     Box::new(zed_actions::workspace::CopyRelativePath),
                 )
         });
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
             outline_panel.context_menu.take();
             cx.notify();
@@ -2047,8 +2116,9 @@ impl OutlinePanel {
                 PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
                 PanelEntry::Search(SearchEntry { match_range, .. }) => match_range
                     .start
+                    .text_anchor
                     .buffer_id
-                    .or(match_range.end.buffer_id)
+                    .or(match_range.end.text_anchor.buffer_id)
                     .map(|buffer_id| {
                         outline_panel.update(cx, |outline_panel, cx| {
                             outline_panel
@@ -2616,7 +2686,7 @@ impl OutlinePanel {
             })
             .when(
                 is_active && self.focus_handle.contains_focused(window, cx),
-                |div| div.border_color(Color::Selected.color(cx)),
+                |div| div.border_color(cx.theme().colors().panel_focused_border),
             )
     }
 
@@ -2660,7 +2730,6 @@ impl OutlinePanel {
         let repo_snapshots = self.project.update(cx, |project, cx| {
             project.git_store().read(cx).repo_snapshots(cx)
         });
-        self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3018,7 +3087,6 @@ impl OutlinePanel {
 
             outline_panel
                 .update_in(cx, |outline_panel, window, cx| {
-                    outline_panel.updating_fs_entries = false;
                     outline_panel.new_entries_for_fs_update.clear();
                     outline_panel.excerpts = new_excerpts;
                     outline_panel.collapsed_entries = new_collapsed_entries;
@@ -3581,7 +3649,6 @@ impl OutlinePanel {
 
         let is_singleton = self.is_singleton_active(cx);
         let query = self.query(cx);
-        self.updating_cached_entries = true;
         self.cached_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3614,7 +3681,6 @@ impl OutlinePanel {
                     }
 
                     outline_panel.autoscroll(cx);
-                    outline_panel.updating_cached_entries = false;
                     cx.notify();
                 })
                 .ok();
@@ -4473,7 +4539,7 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if focus {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
         let ix = self
             .cached_entries
@@ -4544,43 +4610,40 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let contents = if self.cached_entries.is_empty() {
-            let header = if self.updating_fs_entries || self.updating_cached_entries {
-                None
-            } else if query.is_some() {
-                Some("No matches for query")
+            let header = if query.is_some() {
+                "No matches for query"
             } else {
-                Some("No outlines available")
+                "No outlines available"
             };
 
             v_flex()
                 .id("empty-outline-state")
+                .gap_0p5()
                 .flex_1()
                 .justify_center()
                 .size_full()
-                .when_some(header, |panel, header| {
-                    panel
-                        .child(h_flex().justify_center().child(Label::new(header)))
-                        .when_some(query.clone(), |panel, query| {
-                            panel.child(h_flex().justify_center().child(Label::new(query)))
-                        })
-                        .child(
-                            h_flex()
-                                .pt(DynamicSpacing::Base04.rems(cx))
-                                .justify_center()
-                                .child({
-                                    let keystroke =
-                                        match self.position(window, cx) {
-                                            DockPosition::Left => window
-                                                .keystroke_text_for(&workspace::ToggleLeftDock),
-                                            DockPosition::Bottom => window
-                                                .keystroke_text_for(&workspace::ToggleBottomDock),
-                                            DockPosition::Right => window
-                                                .keystroke_text_for(&workspace::ToggleRightDock),
-                                        };
-                                    Label::new(format!("Toggle this panel with {keystroke}"))
-                                }),
-                        )
+                .child(h_flex().justify_center().child(Label::new(header)))
+                .when_some(query, |panel, query| {
+                    panel.child(
+                        h_flex()
+                            .px_0p5()
+                            .justify_center()
+                            .bg(cx.theme().colors().element_selected.opacity(0.2))
+                            .child(Label::new(query)),
+                    )
                 })
+                .child(h_flex().justify_center().child({
+                    let keystroke = match self.position(window, cx) {
+                        DockPosition::Left => window.keystroke_text_for(&workspace::ToggleLeftDock),
+                        DockPosition::Bottom => {
+                            window.keystroke_text_for(&workspace::ToggleBottomDock)
+                        }
+                        DockPosition::Right => {
+                            window.keystroke_text_for(&workspace::ToggleRightDock)
+                        }
+                    };
+                    Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
+                }))
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
@@ -4591,6 +4654,7 @@ impl OutlinePanel {
                     "entries",
                     items_len,
                     cx.processor(move |outline_panel, range: Range<usize>, window, cx| {
+                        outline_panel.rendered_entries_len = range.end - range.start;
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4652,7 +4716,7 @@ impl OutlinePanel {
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(self.max_width_item_index)
-                .track_scroll(self.scroll_handle.clone())
+                .track_scroll(&self.scroll_handle)
                 .when(show_indent_guides, |list| {
                     list.with_decoration(
                         ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
@@ -4705,7 +4769,7 @@ impl OutlinePanel {
                 .child(list_contents.size_full().flex_shrink())
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettings>()
-                        .tracked_scroll_handle(self.scroll_handle.clone())
+                        .tracked_scroll_handle(&self.scroll_handle.clone())
                         .with_track_along(
                             ScrollAxes::Horizontal,
                             cx.theme().colors().panel_background,
@@ -4729,39 +4793,37 @@ impl OutlinePanel {
     }
 
     fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
-        v_flex().flex_none().child(horizontal_separator(cx)).child(
-            h_flex()
-                .p_2()
-                .w_full()
-                .child(self.filter_editor.clone())
-                .child(
-                    div().child(
-                        IconButton::new(
-                            "outline-panel-menu",
-                            if pinned {
-                                IconName::Unpin
-                            } else {
-                                IconName::Pin
-                            },
-                        )
-                        .tooltip(Tooltip::text(if pinned {
-                            "Unpin Outline"
-                        } else {
-                            "Pin Active Outline"
-                        }))
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(
-                            |outline_panel, _, window, cx| {
-                                outline_panel.toggle_active_editor_pin(
-                                    &ToggleActiveEditorPin,
-                                    window,
-                                    cx,
-                                );
-                            },
-                        )),
-                    ),
-                ),
-        )
+        let (icon, icon_tooltip) = if pinned {
+            (IconName::Unpin, "Unpin Outline")
+        } else {
+            (IconName::Pin, "Pin Active Outline")
+        };
+
+        h_flex()
+            .p_2()
+            .h(Tab::container_height(cx))
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.filter_editor.clone()),
+            )
+            .child(
+                IconButton::new("pin_button", icon)
+                    .tooltip(Tooltip::text(icon_tooltip))
+                    .shape(IconButtonShape::Square)
+                    .on_click(cx.listener(|outline_panel, _, window, cx| {
+                        outline_panel.toggle_active_editor_pin(&ToggleActiveEditorPin, window, cx);
+                    })),
+            )
     }
 
     fn buffers_inside_directory(
@@ -4975,6 +5037,8 @@ impl Render for OutlinePanel {
             _ => None,
         };
 
+        let search_query_text = search_query.map(|sq| sq.query.to_string());
+
         v_flex()
             .id("outline-panel")
             .size_full()
@@ -4983,7 +5047,12 @@ impl Render for OutlinePanel {
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::scroll_up))
+            .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::scroll_cursor_center))
+            .on_action(cx.listener(Self::scroll_cursor_top))
+            .on_action(cx.listener(Self::scroll_cursor_bottom))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -5021,22 +5090,21 @@ impl Render for OutlinePanel {
                 }),
             )
             .track_focus(&self.focus_handle)
-            .when_some(search_query, |outline_panel, search_state| {
+            .child(self.render_filter_footer(pinned, cx))
+            .when_some(search_query_text, |outline_panel, query_text| {
                 outline_panel.child(
                     h_flex()
                         .py_1p5()
                         .px_2()
-                        .h(DynamicSpacing::Base32.px(cx))
-                        .flex_shrink_0()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
+                        .h(Tab::container_height(cx))
                         .gap_0p5()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(search_state.query.to_string())),
+                        .child(Label::new(query_text)),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
-            .child(self.render_filter_footer(pinned, cx))
     }
 }
 
@@ -5215,10 +5283,6 @@ fn empty_icon() -> AnyElement {
         .into_any_element()
 }
 
-fn horizontal_separator(cx: &mut App) -> Div {
-    div().mx_2().border_primary(cx).border_t_1()
-}
-
 #[derive(Debug, Default)]
 struct GenerationState {
     entries: Vec<CachedEntry>,
@@ -5238,7 +5302,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::rust_lang;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::{
@@ -5261,9 +5325,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5496,9 +5558,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5635,9 +5695,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5834,7 +5892,8 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                "fn_lifetime_fn.rs  <==== selected"
+                "outline: pub(super) fn hints
+outline: fn hints_lifetimes_named  <==== selected"
             );
             assert_eq!(
                 selected_row_text(&new_active_editor, cx),
@@ -5845,7 +5904,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multiple_workrees(cx: &mut TestAppContext) {
+    async fn test_multiple_worktrees(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -5951,7 +6010,7 @@ two/
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5977,7 +6036,7 @@ two/
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -6000,7 +6059,7 @@ two/  <==== selected"#,
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -6047,24 +6106,7 @@ struct OutlineEntryExcerpt {
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                (struct_item
-                    (visibility_modifier)? @context
-                    "struct" @context
-                    name: (_) @name) @item
-
-                (field_declaration
-                    (visibility_modifier)? @context
-                    name: (_) @name) @item
-"#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7012,35 +7054,6 @@ outline: struct OutlineEntryExcerpt
         .await;
     }
 
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(
-            r#"
-                (field_identifier) @field
-                (struct_expression) @struct
-            "#,
-        )
-        .unwrap()
-        .with_injection_query(
-            r#"
-                (macro_invocation
-                    (token_tree) @injection.content
-                    (#set! injection.language "rust"))
-            "#,
-        )
-        .unwrap()
-    }
-
     fn snapshot(outline_panel: &OutlinePanel, cx: &App) -> MultiBufferSnapshot {
         outline_panel
             .active_editor()
@@ -7106,44 +7119,7 @@ outline: struct OutlineEntryExcerpt
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7194,15 +7170,15 @@ outline: struct OutlineEntryExcerpt
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7252,7 +7228,7 @@ outline: fn main()"
                 indoc!(
                     "
 outline: mod outer  <==== selected
-outline: fn main()"
+outline: fn main"
                 )
             );
         });
@@ -7277,15 +7253,15 @@ outline: fn main()"
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7341,7 +7317,7 @@ outline: fn main()"
                 indoc!(
                     "
 outline: mod outer
-outline: fn main()"
+outline: fn main"
                 )
             );
         });
@@ -7398,44 +7374,7 @@ outline: fn main()"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -7482,14 +7421,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7520,21 +7461,23 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config  <==== selected
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+                outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
             });
         });
 
@@ -7555,18 +7498,20 @@ outline: fn main()"
                     "
 outline: struct Config  <==== selected
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
 
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+                outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
             });
         });
 
@@ -7586,14 +7531,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config  <==== selected
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7642,44 +7589,7 @@ outline: fn main()"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7730,15 +7640,15 @@ outline: fn main()"
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7779,7 +7689,7 @@ outline: fn main()"
         let expected_collapsed_output = indoc!(
             "
         outline: mod outer  <==== selected
-        outline: fn main()"
+        outline: fn main"
         );
 
         outline_panel.update(cx, |panel, cx| {
@@ -7807,15 +7717,15 @@ outline: fn main()"
             "
         outline: mod outer  <==== selected
           outline: pub struct OuterStruct
-            outline: field: String
+            outline: field
           outline: impl OuterStruct
-            outline: pub fn new()
-            outline: pub fn method(&self)
+            outline: pub fn new
+            outline: pub fn method
           outline: mod inner
-            outline: pub fn inner_function()
+            outline: pub fn inner_function
             outline: pub struct InnerStruct
-              outline: value: i32
-        outline: fn main()"
+              outline: value
+        outline: fn main"
         );
 
         outline_panel.update(cx, |panel, cx| {

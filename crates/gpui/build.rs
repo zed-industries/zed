@@ -84,6 +84,8 @@ mod macos {
             .allowlist_var("_dispatch_main_q")
             .allowlist_var("_dispatch_source_type_data_add")
             .allowlist_var("DISPATCH_QUEUE_PRIORITY_HIGH")
+            .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
+            .allowlist_var("DISPATCH_QUEUE_PRIORITY_LOW")
             .allowlist_var("DISPATCH_TIME_NOW")
             .allowlist_function("dispatch_get_global_queue")
             .allowlist_function("dispatch_async_f")

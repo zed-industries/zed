@@ -673,6 +673,13 @@ impl Render for Session {
                 Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                     ExecutionState::Idle => Color::Success,
                     ExecutionState::Busy => Color::Modified,
+                    ExecutionState::Unknown => Color::Modified,
+                    ExecutionState::Starting => Color::Modified,
+                    ExecutionState::Restarting => Color::Modified,
+                    ExecutionState::Terminating => Color::Disabled,
+                    ExecutionState::AutoRestarting => Color::Modified,
+                    ExecutionState::Dead => Color::Disabled,
+                    ExecutionState::Other(_) => Color::Modified,
                 },
                 Kernel::StartingKernel(_) => Color::Modified,
                 Kernel::ErroredLaunch(_) => Color::Error,

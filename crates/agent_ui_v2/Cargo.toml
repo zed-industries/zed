@@ -1,0 +1,47 @@
+[package]
+name = "agent_ui_v2"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/agent_ui_v2.rs"
+doctest = false
+
+[features]
+test-support = ["agent/test-support"]
+
+
+[dependencies]
+agent.workspace = true
+agent_servers.workspace = true
+agent_settings.workspace = true
+agent_ui.workspace = true
+anyhow.workspace = true
+assistant_text_thread.workspace = true
+chrono.workspace = true
+db.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+menu.workspace = true
+project.workspace = true
+prompt_store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+text.workspace = true
+time.workspace = true
+time_format.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+agent = { workspace = true, features = ["test-support"] }
