@@ -7,6 +7,9 @@ on:
     - v**
 jobs:
   call_release_version:
+    permissions:
+      contents: write
+      pull-requests: write
     uses: zed-industries/zed/.github/workflows/extension_release.yml@main
     secrets:
       app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}

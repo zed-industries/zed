@@ -55,6 +55,13 @@
     },
   },
   {
+    "context": "menu",
+    "bindings": {
+      "right": "menu::SelectChild",
+      "left": "menu::SelectParent",
+    },
+  },
+  {
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -282,6 +289,7 @@
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
@@ -294,7 +302,6 @@
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-y": "agent::AllowAlways",
       "cmd-alt-z": "agent::RejectOnce",
-      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -327,41 +334,6 @@
     },
   },
   {
-    "context": "MessageEditor && !Picker > Editor && !use_modifier_to_send",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "agent::Chat",
-      "cmd-enter": "agent::ChatWithFollow",
-      "cmd-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
-      "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll",
-      "cmd-shift-v": "agent::PasteRaw",
-    },
-  },
-  {
-    "context": "MessageEditor && !Picker > Editor && use_modifier_to_send",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-enter": "agent::Chat",
-      "enter": "editor::Newline",
-      "cmd-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
-      "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll",
-      "cmd-shift-v": "agent::PasteRaw",
-    },
-  },
-  {
-    "context": "EditMessageEditor > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "escape": "menu::Cancel",
-      "enter": "menu::Confirm",
-      "alt-enter": "editor::Newline",
-    },
-  },
-  {
     "context": "AgentFeedbackMessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -383,15 +355,27 @@
     },
   },
   {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll",
+      "cmd-enter": "agent::ChatWithFollow",
+      "cmd-shift-enter": "agent::QueueMessage",
+      "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
+      "cmd-shift-backspace": "agent::ClearMessageQueue",
+      "cmd-shift-v": "agent::PasteRaw",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
+    },
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
-      "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll",
-      "shift-tab": "agent::CycleModeSelector",
-      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -399,11 +383,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "agent::Chat",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
-      "cmd-shift-y": "agent::KeepAll",
-      "cmd-shift-n": "agent::RejectAll",
-      "shift-tab": "agent::CycleModeSelector",
-      "alt-tab": "agent::CycleFavoriteModels",
+      "enter": "editor::Newline",
     },
   },
   {
@@ -883,7 +863,7 @@
     },
   },
   {
-    "context": "PromptEditor",
+    "context": "InlineAssistant > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",
@@ -1326,9 +1306,11 @@
       "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
       "alt-enter": "keymap_editor::CreateBinding",
+      "cmd-k": "keymap_editor::OpenCreateKeybindingModal",
       "cmd-c": "keymap_editor::CopyAction",
       "cmd-shift-c": "keymap_editor::CopyContext",
       "cmd-t": "keymap_editor::ShowMatchingKeybinds",
+      "cmd-e": "zed::OpenKeymapFile",
     },
   },
   {

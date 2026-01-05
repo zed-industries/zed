@@ -613,6 +613,7 @@ impl EditorElement {
         register_action(editor, window, Editor::edit_log_breakpoint);
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
+        register_action(editor, window, Editor::toggle_read_only);
         if editor.read(cx).enable_wrap_selections_in_tag(cx) {
             register_action(editor, window, Editor::wrap_selections_in_tag);
         }
@@ -3264,17 +3265,15 @@ impl EditorElement {
             line_number.clear();
             let non_relative_number = if relative.wrapped() {
                 row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
-            } else if self.editor.read(cx).use_base_text_line_numbers {
-                row_info.base_text_row?.0 + 1
             } else {
                 row_info.buffer_row? + 1
             };
             let relative_number = relative_rows.get(&display_row);
             if !(relative_line_numbers_enabled && relative_number.is_some())
+                && !snapshot.number_deleted_lines
                 && row_info
                     .diff_status
                     .is_some_and(|status| status.is_deleted())
-                && !self.editor.read(cx).use_base_text_line_numbers
             {
                 return None;
             }
@@ -4074,6 +4073,9 @@ impl EditorElement {
                                                 }
                                             })),
                                     )
+                                    .when(!for_excerpt.buffer.capability.editable(), |el| {
+                                        el.child(Icon::new(IconName::FileLock).color(Color::Muted))
+                                    })
                                     .when_some(parent_path, |then, path| {
                                         then.child(Label::new(path).truncate().color(
                                             if file_status.is_some_and(FileStatus::is_deleted) {
@@ -4611,15 +4613,15 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
-                let relative_number = relative_to.and_then(|base| match relative_line_numbers {
-                    RelativeLineNumbers::Disabled => None,
-                    RelativeLineNumbers::Enabled => {
-                        Some(snapshot.relative_line_delta_to_point(base, start_point))
-                    }
-                    RelativeLineNumbers::Wrapped => {
-                        Some(snapshot.relative_wrapped_line_delta_to_point(base, start_point))
-                    }
-                });
+                let relative_number = relative_to
+                    .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
+                    .map(|base| {
+                        snapshot.relative_line_delta_to_point(
+                            base,
+                            start_point,
+                            relative_line_numbers == RelativeLineNumbers::Wrapped,
+                        )
+                    });
                 let number = relative_number
                     .filter(|&delta| delta != 0)
                     .map(|delta| delta.unsigned_abs() as u32)
@@ -9055,14 +9057,8 @@ impl Element for EditorElement {
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let glyph_grid_cell = size(em_advance, line_height);
 
-                    let gutter_dimensions = snapshot
-                        .gutter_dimensions(
-                            font_id,
-                            font_size,
-                            style,
-                            window,
-                            cx,
-                        );
+                    let gutter_dimensions =
+                        snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -9276,10 +9272,10 @@ impl Element for EditorElement {
                         };
 
                         let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added =>
-                                cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted =>
-                                cx.theme().colors().version_control_deleted,
+                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
+                            DiffHunkStatusKind::Deleted => {
+                                cx.theme().colors().version_control_deleted
+                            }
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
@@ -9423,25 +9419,26 @@ impl Element for EditorElement {
                         );
 
                     // relative rows are based on newest selection, even outside the visible area
-                    let relative_row_base =  self.editor.update(cx, |editor, cx| {
-                        if editor.selections.count()==0 {
-                            return None;
-                        }
+                    let relative_row_base = self.editor.update(cx, |editor, cx| {
+                        (editor.selections.count() != 0).then(|| {
                             let newest = editor
                                 .selections
                                 .newest::<Point>(&editor.display_snapshot(cx));
-                            Some(SelectionLayout::new(
+
+                            SelectionLayout::new(
                                 newest,
                                 editor.selections.line_mode(),
                                 editor.cursor_offset_on_selection,
                                 editor.cursor_shape,
-                                &snapshot.display_snapshot,
+                                &snapshot,
                                 true,
                                 true,
                                 None,
                             )
-                            .head.row())
-                        });
+                            .head
+                            .row()
+                        })
+                    });
 
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
@@ -9601,9 +9598,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            debug_panic!(
-                                "skipping recursive prepaint at max depth. renderer widths may be stale."
-                            );
+                            debug_panic!(concat!(
+                                "skipping recursive prepaint at max depth. ",
+                                "renderer widths may be stale."
+                            ));
                         }
                     }
 
@@ -9715,9 +9713,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            debug_panic!(
-                                "skipping recursive prepaint at max depth. block layout may be stale."
-                            );
+                            debug_panic!(concat!(
+                                "skipping recursive prepaint at max depth. ",
+                                "block layout may be stale."
+                            ));
                         }
                     }
 
@@ -11723,6 +11722,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
 
@@ -11869,6 +11869,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
 
@@ -11924,6 +11925,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line, even if deleted, has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }

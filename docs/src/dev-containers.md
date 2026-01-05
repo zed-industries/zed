@@ -6,6 +6,7 @@ If your repository includes a `.devcontainer/devcontainer.json` file, Zed can op
 
 ## Requirements
 
+- [(Preview Only)](https://zed.dev/releases/preview): Download and install the latest Zed.
 - Docker must be installed and available in your `PATH`. Zed requires the `docker` command to be present. If you use Podman, you can alias it to `docker` (e.g., `alias docker=podman`).
 - Your project must contain a `.devcontainer/devcontainer.json` directory/file.
 

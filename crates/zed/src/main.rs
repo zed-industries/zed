@@ -413,14 +413,14 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees(None, None, cx) {
+        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
             Err(e) => {
                 log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
                 HashMap::default()
             }
         };
-        trusted_worktrees::init(trusted_paths, None, None, cx);
+        trusted_worktrees::init(db_trusted_paths, None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -833,12 +833,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     cx.spawn_in(window, async move |workspace, cx| {
                         let res = async move {
                             let json = app_state.languages.language_for_name("JSONC").await.ok();
+                            let lsp_store = workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .update(cx, |project, _| project.lsp_store())
+                            })?;
                             let json_schema_content =
                                 json_schema_store::resolve_schema_request_inner(
                                     &app_state.languages,
+                                    lsp_store,
                                     &schema_path,
                                     cx,
-                                )?;
+                                )
+                                .await?;
                             let json_schema_content =
                                 serde_json::to_string_pretty(&json_schema_content)
                                     .context("Failed to serialize JSON Schema as JSON")?;

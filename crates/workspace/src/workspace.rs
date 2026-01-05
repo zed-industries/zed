@@ -80,7 +80,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -281,6 +281,8 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Toggles read-only mode for the active item (if supported by that item).
+        ToggleReadOnlyFile,
         /// Zooms in on the active pane.
         ZoomIn,
         /// Zooms out of the active pane.
@@ -1188,7 +1190,6 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
-    _schedule_serialize_worktree_trust: Task<()>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1204,7 +1205,6 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     utility_panes: UtilityPaneState,
-    next_modal_placement: Option<ModalPlacement>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1236,23 +1236,26 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-            cx.subscribe(&trusted_worktrees, |workspace, worktrees_store, e, cx| {
+            cx.subscribe(&trusted_worktrees, |_, worktrees_store, e, cx| {
                 if let TrustedWorktreesEvent::Trusted(..) = e {
                     // Do not persist auto trusted worktrees
                     if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                        let new_trusted_worktrees =
-                            worktrees_store.update(cx, |worktrees_store, cx| {
-                                worktrees_store.trusted_paths_for_serialization(cx)
-                            });
-                        let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
-                        workspace._schedule_serialize_worktree_trust =
-                            cx.background_spawn(async move {
-                                timeout.await;
-                                persistence::DB
-                                    .save_trusted_worktrees(new_trusted_worktrees)
-                                    .await
-                                    .log_err();
-                            });
+                        worktrees_store.update(cx, |worktrees_store, cx| {
+                            worktrees_store.schedule_serialization(
+                                cx,
+                                |new_trusted_worktrees, cx| {
+                                    let timeout =
+                                        cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
+                                    cx.background_spawn(async move {
+                                        timeout.await;
+                                        persistence::DB
+                                            .save_trusted_worktrees(new_trusted_worktrees)
+                                            .await
+                                            .log_err();
+                                    })
+                                },
+                            )
+                        });
                     }
                 }
             })
@@ -1283,7 +1286,11 @@ impl Workspace {
                 project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(*worktree_id, cx);
+                            trusted_worktrees.can_trust(
+                                &this.project().read(cx).worktree_store(),
+                                *worktree_id,
+                                cx,
+                            );
                         });
                     }
                 }
@@ -1295,7 +1302,11 @@ impl Workspace {
                 project::Event::WorktreeAdded(worktree_id) => {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(*worktree_id, cx);
+                            trusted_worktrees.can_trust(
+                                &this.project().read(cx).worktree_store(),
+                                *worktree_id,
+                                cx,
+                            );
                         });
                     }
                     this.update_worktree_data(window, cx);
@@ -1600,7 +1611,6 @@ impl Workspace {
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
             _schedule_serialize_ssh_paths: None,
-            _schedule_serialize_worktree_trust: Task::ready(()),
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -1621,7 +1631,6 @@ impl Workspace {
             last_open_dock_positions: Vec::new(),
             removing: false,
             utility_panes: UtilityPaneState::default(),
-            next_modal_placement: None,
         }
     }
 
@@ -4262,16 +4271,19 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split {
-                direction,
-                clone_active_item,
-            } => {
-                if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx)
-                        .detach();
-                } else {
-                    self.split_and_move(pane.clone(), *direction, window, cx);
-                }
+            pane::Event::Split { direction, mode } => {
+                match mode {
+                    SplitMode::ClonePane => {
+                        self.split_and_clone(pane.clone(), *direction, window, cx)
+                            .detach();
+                    }
+                    SplitMode::EmptyPane => {
+                        self.split_pane(pane.clone(), *direction, window, cx);
+                    }
+                    SplitMode::MovePane => {
+                        self.split_and_move(pane.clone(), *direction, window, cx);
+                    }
+                };
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -4933,8 +4945,6 @@ impl Workspace {
 
         cx.notify();
         proto::FollowResponse {
-            // TODO: Remove after version 0.145.x stabilizes.
-            active_view_id: active_view.as_ref().and_then(|view| view.id.clone()),
             views: active_view.iter().cloned().collect(),
             active_view,
         }
@@ -5208,19 +5218,14 @@ impl Workspace {
                         && let Some(variant) = item.to_state_proto(window, cx)
                     {
                         let view = Some(proto::View {
-                            id: id.clone(),
+                            id,
                             leader_id: leader_peer_id,
                             variant: Some(variant),
                             panel_id: panel_id.map(|id| id as i32),
                         });
 
                         is_project_item = item.is_project_item(window, cx);
-                        update = proto::UpdateActiveView {
-                            view,
-                            // TODO: Remove after version 0.145.x stabilizes.
-                            id,
-                            leader_id: leader_peer_id,
-                        };
+                        update = proto::UpdateActiveView { view };
                     };
                 }
             }
@@ -6251,6 +6256,14 @@ impl Workspace {
                     cx.propagate();
                 },
             ))
+            .on_action(
+                cx.listener(|workspace, _: &ToggleReadOnlyFile, window, cx| {
+                    let pane = workspace.active_pane().clone();
+                    if let Some(item) = pane.read(cx).active_item() {
+                        item.toggle_read_only(window, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(Workspace::cancel))
     }
 
@@ -6328,25 +6341,12 @@ impl Workspace {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn is_modal_open<V: 'static>(&self, cx: &App) -> bool {
-        self.modal_layer.read(cx).active_modal::<V>().is_some()
-    }
-
-    pub fn set_next_modal_placement(&mut self, placement: ModalPlacement) {
-        self.next_modal_placement = Some(placement);
-    }
-
-    fn take_next_modal_placement(&mut self) -> ModalPlacement {
-        self.next_modal_placement.take().unwrap_or_default()
-    }
-
     pub fn toggle_modal<V: ModalView, B>(&mut self, window: &mut Window, cx: &mut App, build: B)
     where
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
-        let placement = self.take_next_modal_placement();
         self.modal_layer.update(cx, |modal_layer, cx| {
-            modal_layer.toggle_modal_with_placement(window, cx, placement, build)
+            modal_layer.toggle_modal(window, cx, build)
         })
     }
 
@@ -6617,7 +6617,9 @@ impl Workspace {
                 .unwrap_or(false);
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
-                let remote_host = project.remote_connection_options(cx);
+                let remote_host = project
+                    .remote_connection_options(cx)
+                    .map(RemoteHostLocation::from);
                 let worktree_store = project.worktree_store().downgrade();
                 self.toggle_modal(window, cx, |_, cx| {
                     SecurityModal::new(worktree_store, remote_host, cx)

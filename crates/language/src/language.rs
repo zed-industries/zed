@@ -67,7 +67,7 @@ use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
-    word_diff_ranges,
+    unified_diff_with_offsets, word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -331,6 +331,21 @@ impl CachedLspAdapter {
             .unwrap_or_else(|| language_name.lsp_id())
     }
 
+    pub async fn initialization_options_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .initialization_options_schema(
+                delegate,
+                self.cached_binary.clone().lock_owned().await,
+                cx,
+            )
+            .await
+    }
+
     pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
         self.adapter.process_prompt_response(context, cx)
     }
@@ -461,6 +476,16 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         Ok(None)
     }
 
+    /// Returns the JSON schema of the initialization_options for the language server.
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
@@ -583,6 +608,7 @@ pub trait DynLspInstaller {
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary>;
+
     fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -678,17 +704,17 @@ where
                 return (Ok(binary), None);
             }
 
+            if let Some((pre_release, cached_binary)) = cached_binary_deref
+                && *pre_release == binary_options.pre_release
+            {
+                return (Ok(cached_binary.clone()), None);
+            }
+
             if !binary_options.allow_binary_download {
                 return (
                     Err(anyhow::anyhow!("downloading language servers disabled")),
                     None,
                 );
-            }
-
-            if let Some((pre_release, cached_binary)) = cached_binary_deref
-                && *pre_release == binary_options.pre_release
-            {
-                return (Ok(cached_binary.clone()), None);
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await

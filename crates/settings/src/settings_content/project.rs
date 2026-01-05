@@ -12,6 +12,19 @@ use crate::{
 };
 
 #[with_fallible_options]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LspSettingsMap(pub HashMap<Arc<str>, LspSettings>);
+
+impl IntoIterator for LspSettingsMap {
+    type Item = (Arc<str>, LspSettings);
+    type IntoIter = std::collections::hash_map::IntoIter<Arc<str>, LspSettings>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
@@ -29,7 +42,7 @@ pub struct ProjectSettingsContent {
     /// name to the lsp value.
     /// Default: null
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettings>,
+    pub lsp: LspSettingsMap,
 
     pub terminal: Option<ProjectTerminalSettingsContent>,
 
@@ -97,6 +110,12 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
     /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
+
+    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
+    /// but cannot be edited. This is useful for generated files, build outputs, or files from
+    /// external dependencies that should not be modified directly.
+    /// Default: []
+    pub read_only_files: Option<Vec<String>>,
 }
 
 #[with_fallible_options]
