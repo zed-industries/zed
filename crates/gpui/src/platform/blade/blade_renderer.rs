@@ -678,7 +678,7 @@ impl BladeRenderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &Scene, opaque_background: bool) {
+    pub fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -705,10 +705,10 @@ impl BladeRenderer {
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
                     view: frame.texture_view(),
-                    init_op: gpu::InitOp::Clear(if opaque_background {
-                        gpu::TextureColor::White
-                    } else {
+                    init_op: gpu::InitOp::Clear(if self.surface_config.transparent {
                         gpu::TextureColor::TransparentBlack
+                    } else {
+                        gpu::TextureColor::White
                     }),
                     finish_op: gpu::FinishOp::Store,
                 }],

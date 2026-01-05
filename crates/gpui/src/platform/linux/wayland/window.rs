@@ -1307,8 +1307,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        let opaque = state.background_appearance == WindowBackgroundAppearance::Opaque;
-        state.renderer.draw(scene, opaque);
+        state.renderer.draw(scene);
     }
 
     fn completed_frame(&self) {

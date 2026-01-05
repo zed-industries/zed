@@ -1569,8 +1569,7 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        let opaque = inner.background_appearance == WindowBackgroundAppearance::Opaque;
-        inner.renderer.draw(scene, opaque);
+        inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
