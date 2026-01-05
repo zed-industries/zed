@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, WorktreeSettings,
+    Project, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -176,14 +176,17 @@ impl AgentTool for GrepTool {
 
         let project = self.project.downgrade();
         cx.spawn(async move |cx|  {
-            futures::pin_mut!(results);
+            // Keep the search alive for the duration of result iteration. Dropping this task is the
+            // cancellation mechanism; we intentionally do not detach it.
+            let SearchResults {rx, _task_handle}  = results;
+            futures::pin_mut!(rx);
 
             let mut output = String::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = rx.next().await {
                 if ranges.is_empty() {
                     continue;
                 }

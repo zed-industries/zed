@@ -31,9 +31,9 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tab, Tooltip,
-    prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, CopyButton, Facepile,
+    HighlightedLabel, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
+    Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -2527,16 +2527,9 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link;
-                IconButton::new("channel-link", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
+                CopyButton::new(channel_link)
                     .visible_on_hover("section-header")
-                    .on_click(move |_, _, cx| {
-                        let item = ClipboardItem::new_string(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(Tooltip::text("Copy channel link"))
+                    .tooltip_label("Copy Channel Link")
                     .into_any_element()
             }),
             Section::Contacts => Some(

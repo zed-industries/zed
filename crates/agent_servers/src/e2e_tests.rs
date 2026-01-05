@@ -455,20 +455,12 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
             project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
                     path: Some("claude-code-acp".into()),
-                    args: None,
-                    env: None,
-                    ignore_system_version: None,
-                    default_mode: None,
-                    default_model: None,
+                    ..Default::default()
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 codex: Some(BuiltinAgentServerSettings {
                     path: Some("codex-acp".into()),
-                    args: None,
-                    env: None,
-                    ignore_system_version: None,
-                    default_mode: None,
-                    default_model: None,
+                    ..Default::default()
                 }),
                 custom: collections::HashMap::default(),
             },

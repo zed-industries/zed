@@ -268,6 +268,7 @@ dependencies = [
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -2377,7 +2378,6 @@ dependencies = [
 name = "buffer_diff"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clock",
  "ctor",
  "futures 0.3.31",
@@ -3351,7 +3351,6 @@ dependencies = [
  "remote",
  "remote_server",
  "reqwest 0.11.27",
- "reqwest_client",
  "rpc",
  "scrypt",
  "sea-orm",
@@ -3366,7 +3365,6 @@ dependencies = [
  "sqlx",
  "strum 0.27.2",
  "subtle",
- "supermaven_api",
  "task",
  "telemetry_events",
  "text",
@@ -5209,6 +5207,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "brotli",
+ "buffer_diff",
  "client",
  "clock",
  "cloud_api_types",
@@ -5246,7 +5245,10 @@ dependencies = [
  "strum 0.27.2",
  "telemetry",
  "telemetry_events",
+ "text",
  "thiserror 2.0.17",
+ "time",
+ "toml 0.8.23",
  "ui",
  "util",
  "uuid",
@@ -5351,8 +5353,10 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "client",
+ "clock",
  "cloud_llm_client",
  "codestral",
+ "collections",
  "command_palette_hooks",
  "copilot",
  "edit_prediction",
@@ -5361,18 +5365,20 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
- "git",
  "gpui",
  "indoc",
  "language",
- "log",
+ "language_model",
  "lsp",
  "markdown",
  "menu",
  "multi_buffer",
  "paths",
+ "pretty_assertions",
  "project",
  "regex",
+ "release_channel",
+ "semver",
  "serde_json",
  "settings",
  "supermaven",
@@ -5385,6 +5391,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta_prompt",
+ "zlog",
 ]
 
 [[package]]
@@ -16869,11 +16876,13 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "db",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
  "pretty_assertions",
  "project",
+ "recent_projects",
  "remote",
  "rpc",
  "schemars",
@@ -20952,7 +20961,7 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20966,7 +20975,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]

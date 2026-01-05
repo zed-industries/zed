@@ -113,7 +113,7 @@ impl CopilotSweAgentBot {
     const USER_ID: i32 = 198982749;
     /// The alias of the GitHub copilot user. Although https://api.github.com/users/copilot
     /// yields a 404, GitHub still refers to the copilot bot user as @Copilot in some cases.
-    const NAME_ALIAS: &'static str = "copilot";
+    const NAME_ALIAS: &'static str = "Copilot";
 
     /// Returns the `created_at` timestamp for the Dependabot bot user.
     fn created_at() -> &'static NaiveDateTime {
