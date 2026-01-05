@@ -465,7 +465,7 @@
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
       "alt-f": "project_search::ToggleFilters",
-      "shift-enter": "project_search::ToggleAllSearchResults",
+      "ctrl-shift-enter": "project_search::ToggleAllSearchResults",
       "alt-r": "search::ToggleRegex",
       // "ctrl-shift-alt-x": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab",
