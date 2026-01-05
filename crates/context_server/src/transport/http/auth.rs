@@ -27,7 +27,9 @@ pub struct OAuthClient {
     http_client: Arc<dyn HttpClient>,
 }
 
+#[derive(Default)]
 enum State {
+    #[default]
     Init,
     WaitingForCode {
         code_verifier: String,
@@ -38,12 +40,6 @@ enum State {
         expires_at: Option<Instant>,
         refresh_token: Option<String>,
     },
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State::Init
-    }
 }
 
 impl OAuthClient {
@@ -70,13 +66,19 @@ impl OAuthClient {
         let server = AuthorizationServer::fetch(auth_server_url, http_client).await?;
 
         // https://modelcontextprotocol.io/specification/draft/basic/authorization#client-registration-approaches
-        // TODO: Pre-registration from settings?
         let registration = if server.client_id_metadata_document_supported {
-            todo!("host client id meta doc somewhere");
+            ClientRegistration {
+                // todo! actually host this
+                client_id: "https://zed.dev/mcp/oauth-client.json".into(),
+                client_secret: None,
+                client_id_issued_at: None,
+                client_secret_expires_at: None,
+            }
         } else if let Some(registration_endpoint) = server.registration_endpoint.as_ref() {
             Self::register(registration_endpoint, http_client).await?
         } else {
-            todo!("allow user to specify custom client meta");
+            // TODO: Support custom registration
+            anyhow::bail!(InitError::UnsupportedRegistration);
         };
 
         // https://modelcontextprotocol.io/specification/draft/basic/authorization#scope-selection-strategy
@@ -282,6 +284,11 @@ impl OAuthClient {
 pub enum InitError {
     #[error("resource metadata specified 0 authorization servers")]
     NoAuthorizationServers,
+
+    #[error(
+        "authorization server does not support client ID metadata or dynamic client registration"
+    )]
+    UnsupportedRegistration,
 }
 
 #[derive(Debug, Error)]
@@ -415,11 +422,15 @@ fn generate_code_verifier() -> String {
     unsafe { String::from_utf8_unchecked(bytes) }
 }
 
+#[cfg_attr(test, derive(Default, Serialize))]
 #[derive(Deserialize)]
 struct ClientRegistration {
     client_id: String,
+    #[serde(default)]
     client_secret: Option<String>,
+    #[serde(default)]
     client_id_issued_at: Option<u64>,
+    #[serde(default)]
     client_secret_expires_at: Option<u64>,
 }
 
@@ -433,6 +444,7 @@ struct TokenResponse {
 
 // Resource Metadata
 
+#[cfg_attr(test, derive(Default, Serialize))]
 #[derive(Deserialize)]
 pub struct ProtectedResource {
     resource: String,
@@ -472,6 +484,7 @@ impl ProtectedResource {
 
 // Server Metadata
 
+#[cfg_attr(test, derive(Default, Serialize))]
 #[derive(Debug, Deserialize)]
 pub struct AuthorizationServer {
     issuer: String,
@@ -697,6 +710,16 @@ mod abs_uri {
         }
     }
 
+    #[cfg(test)]
+    impl serde::Serialize for AbsUri {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_str(&self.0.to_string())
+        }
+    }
+
     #[derive(Debug)]
     pub enum AbsUriError {
         MissingScheme,
@@ -726,6 +749,505 @@ mod tests {
     use futures::channel::{mpsc, oneshot};
     use gpui::{TestAppContext, prelude::*};
     use http_client::{FakeHttpClient, Request, Response};
+    use pretty_assertions::{assert_eq, assert_matches};
+
+    #[gpui::test]
+    async fn init_resource_metadata_url_and_url_client_id(cx: &mut TestAppContext) {
+        let (http_client, mut requests) = fake_client();
+
+        let www_authenticate = WwwAuthenticate {
+            realm: None,
+            scope: None,
+            error: None,
+            error_description: None,
+            error_uri: None,
+            resource_metadata: Some("https://resource.example.com/meta.json".into()),
+        };
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init(
+                "https://mcp.example.com",
+                Some(&www_authenticate),
+                &http_client,
+            )
+            .await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(request.uri, "https://resource.example.com/meta.json");
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                scopes_supported: vec!["mcp:read".to_string(), "mcp:write".to_string()],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                registration_endpoint: Some(
+                    "https://auth.example.com/register"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        let client = init_task.await.expect("init should succeed");
+        assert_eq!(
+            client.registration.client_id,
+            "https://zed.dev/mcp/oauth-client.json"
+        );
+        assert_eq!(client.scope.as_deref(), Some("mcp:read mcp:write"));
+
+        drop(client);
+
+        let unexpected_request = requests.next().await;
+        assert!(
+            unexpected_request.is_none(),
+            "did not expect dynamic registration request when client_id_metadata_document_supported is true"
+        );
+    }
+
+    #[gpui::test]
+    async fn init_well_known_resource_metadata(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com/rpc", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource/rpc"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com/rpc".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        let client = init_task.await.expect("init should succeed");
+        assert_eq!(
+            client.scope, None,
+            "no scopes_supported and no challenge scope"
+        );
+    }
+
+    #[gpui::test]
+    async fn init_errors_when_no_authorization_servers(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::NoAuthorizationServers)
+        );
+    }
+
+    #[gpui::test]
+    async fn init_uses_dynamic_registration_when_supported(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                registration_endpoint: Some(
+                    "https://auth.example.com/register"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: false,
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(request.uri, "https://auth.example.com/register");
+        respond_json(
+            request,
+            200,
+            &ClientRegistration {
+                client_id: "client-id-123".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let client = init_task.await.expect("init should succeed");
+        assert_eq!(client.registration.client_id, "client-id-123");
+    }
+
+    #[gpui::test]
+    async fn init_errors_when_no_registration_supported(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        // Resource metadata via well-known
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        // Server metadata: neither client_id_metadata_document_supported nor registration_endpoint
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: false,
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::UnsupportedRegistration)
+        );
+    }
+
+    #[gpui::test]
+    async fn init_prefers_challenge_scope_over_resource_scopes(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let www_authenticate = WwwAuthenticate {
+            realm: None,
+            scope: Some("from-challenge".into()),
+            error: None,
+            error_description: None,
+            error_uri: None,
+            resource_metadata: None,
+        };
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init(
+                "https://mcp.example.com",
+                Some(&www_authenticate),
+                &http_client,
+            )
+            .await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                scopes_supported: vec!["from-resource".to_string()],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        let client = init_task.await.expect("init should succeed");
+        assert_eq!(client.scope.as_deref(), Some("from-challenge"));
+    }
+
+    #[gpui::test]
+    async fn init_uses_resource_scopes_when_challenge_scope_missing(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let www_authenticate = WwwAuthenticate {
+            realm: None,
+            scope: None,
+            error: None,
+            error_description: None,
+            error_uri: None,
+            resource_metadata: None,
+        };
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init(
+                "https://mcp.example.com",
+                Some(&www_authenticate),
+                &http_client,
+            )
+            .await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                scopes_supported: vec![
+                    "from-resource".to_string(),
+                    "also-from-resource".to_string(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        let client = init_task.await.expect("init should succeed");
+        assert_eq!(
+            client.scope.as_deref(),
+            Some("from-resource also-from-resource")
+        );
+    }
 
     #[gpui::test]
     async fn fetch_server_metadata_chain(cx: &mut TestAppContext) {
@@ -855,6 +1377,95 @@ mod tests {
         assert_eq!(error.attempted_urls.len(), 3);
     }
 
+    #[gpui::test]
+    async fn authorize_url_includes_required_oauth_params(cx: &mut TestAppContext) {
+        let mut client = init_oauth_client_for_authorize_url(None, cx).await;
+
+        let url = client
+            .authorize_url()
+            .expect("authorize_url should succeed");
+        let url = url.url;
+
+        assert_eq!(
+            url.as_str().split('?').next().unwrap(),
+            "https://auth.example.com/authorize"
+        );
+
+        let query_pairs: std::collections::HashMap<String, String> = url
+            .query_pairs()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+
+        assert_eq!(
+            query_pairs.get("response_type").map(String::as_str),
+            Some("code")
+        );
+        assert_eq!(
+            query_pairs.get("client_id").map(String::as_str),
+            Some("https://zed.dev/mcp/oauth-client.json")
+        );
+        assert_eq!(
+            query_pairs.get("redirect_uri").map(String::as_str),
+            Some(OAuthCallback::URI)
+        );
+        assert_eq!(
+            query_pairs.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
+
+        let code_challenge = query_pairs
+            .get("code_challenge")
+            .map(String::as_str)
+            .expect("code_challenge should be present");
+        assert!(
+            !code_challenge.is_empty(),
+            "code_challenge should be non-empty"
+        );
+        assert!(
+            code_challenge
+                .chars()
+                .all(|ch| { ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '=' }),
+            "code_challenge should be base64url-ish"
+        );
+
+        assert!(
+            query_pairs.get("scope").is_none(),
+            "scope should be absent when no scope is configured"
+        );
+    }
+
+    #[gpui::test]
+    async fn authorize_url_includes_scope_when_present(cx: &mut TestAppContext) {
+        let mut client = init_oauth_client_for_authorize_url(Some("mcp:read mcp:write"), cx).await;
+
+        let url = client
+            .authorize_url()
+            .expect("authorize_url should succeed");
+        let url = url.url;
+
+        let scopes: Vec<String> = url
+            .query_pairs()
+            .filter_map(|(key, value)| (key == "scope").then_some(value.to_string()))
+            .collect();
+
+        assert_eq!(scopes.as_slice(), &["mcp:read mcp:write".to_string()]);
+    }
+
+    #[gpui::test]
+    async fn authorize_url_errors_when_missing_authorization_endpoint(cx: &mut TestAppContext) {
+        let mut client = init_oauth_client_for_authorize_url(None, cx).await;
+        client.server.authorization_endpoint = None;
+
+        assert_matches!(
+            client
+                .authorize_url()
+                .err()
+                .unwrap()
+                .downcast::<AuthorizeUrlError>(),
+            Ok(AuthorizeUrlError::MissingAuthorizationEndpoint)
+        );
+    }
+
     struct FakeRequest {
         uri: String,
         respond: oneshot::Sender<Response<AsyncBody>>,
@@ -886,6 +1497,83 @@ mod tests {
         (client, request_receiver)
     }
 
+    async fn init_oauth_client_for_authorize_url(
+        scope: Option<&'static str>,
+        cx: &mut TestAppContext,
+    ) -> OAuthClient {
+        let (http_client, mut requests) = fake_client();
+
+        let www_authenticate = WwwAuthenticate {
+            realm: None,
+            scope: scope.map(Into::into),
+            error: None,
+            error_description: None,
+            error_uri: None,
+            resource_metadata: None,
+        };
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init(
+                "https://mcp.example.com",
+                Some(&www_authenticate),
+                &http_client,
+            )
+            .await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        );
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                authorization_endpoint: Some(
+                    "https://auth.example.com/authorize"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                token_endpoint: Some(
+                    "https://auth.example.com/token"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        init_task.await.expect("init should succeed")
+    }
+
     fn not_found() -> Response<AsyncBody> {
         Response::builder()
             .status(404)
@@ -904,5 +1592,17 @@ mod tests {
 
     fn respond(request: FakeRequest, response: Response<AsyncBody>) {
         request.respond.send(response).ok();
+    }
+
+    fn respond_json<T: Serialize>(request: FakeRequest, status: u16, value: &T) {
+        let body = serde_json::to_string(value).expect("serialize test json");
+        respond(
+            request,
+            Response::builder()
+                .status(status)
+                .header("Content-Type", "application/json")
+                .body(AsyncBody::from(body))
+                .unwrap(),
+        );
     }
 }
