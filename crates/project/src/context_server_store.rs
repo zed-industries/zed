@@ -493,7 +493,6 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
     ) -> Result<Arc<ContextServer>> {
-        // Get global timeout from settings
         let global_timeout = ProjectSettings::get_global(cx).context_server_timeout;
 
         if let Some(factory) = self.context_server_factory.as_ref() {
@@ -506,8 +505,6 @@ impl ContextServerStore {
                 headers,
                 timeout,
             } => {
-                // Apply timeout precedence for HTTP servers: per-server > global
-                // Cap at MAX_TIMEOUT_MS to prevent extremely large timeout values
                 let resolved_timeout = timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_MS);
 
                 Ok(Arc::new(ContextServer::http(
@@ -537,8 +534,6 @@ impl ContextServerStore {
                         })
                     });
 
-                // Apply timeout precedence for stdio servers: per-server > global
-                // Cap at MAX_TIMEOUT_MS to prevent extremely large timeout values
                 let mut command_with_timeout = configuration
                     .command()
                     .context("Missing command configuration for stdio context server")?
@@ -1369,7 +1364,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
-        // Configure global timeout to 90 seconds
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1392,7 +1386,6 @@ mod tests {
             )
         });
 
-        // Test that create_context_server applies global timeout
         let result = store.update(cx, |store, cx| {
             store.create_context_server(
                 ContextServerId("test-server".into()),
@@ -1400,7 +1393,7 @@ mod tests {
                     url: url::Url::parse("http://localhost:8080")
                         .expect("Failed to parse test URL"),
                     headers: Default::default(),
-                    timeout: None, // Should use global timeout of 90 seconds
+                    timeout: None,
                 }),
                 cx,
             )
@@ -1416,7 +1409,6 @@ mod tests {
     async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext) {
         const SERVER_ID: &str = "test-server";
 
-        // Configure global timeout to 60 seconds
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1436,7 +1428,7 @@ mod tests {
                     enabled: true,
                     url: "http://localhost:8080".to_string(),
                     headers: Default::default(),
-                    timeout: Some(120000), // Override to 120 seconds
+                    timeout: Some(120000),
                 },
             )],
         )
@@ -1452,7 +1444,6 @@ mod tests {
             )
         });
 
-        // Test that create_context_server applies per-server timeout override
         let result = store.update(cx, |store, cx| {
             store.create_context_server(
                 ContextServerId("test-server".into()),
@@ -1460,7 +1451,7 @@ mod tests {
                     url: url::Url::parse("http://localhost:8080")
                         .expect("Failed to parse test URL"),
                     headers: Default::default(),
-                    timeout: Some(120000), // Override: should use 120 seconds, not global 60
+                    timeout: Some(120000),
                 }),
                 cx,
             )
@@ -1487,7 +1478,7 @@ mod tests {
                         path: "/usr/bin/node".into(),
                         args: vec!["server.js".into()],
                         env: None,
-                        timeout: Some(180000), // 3 minutes
+                        timeout: Some(180000),
                     },
                 },
             )],
@@ -1504,7 +1495,6 @@ mod tests {
             )
         });
 
-        // Test that create_context_server works with stdio timeout
         let result = store.update(cx, |store, cx| {
             store.create_context_server(
                 ContextServerId("stdio-server".into()),
@@ -1513,7 +1503,7 @@ mod tests {
                         path: "/usr/bin/node".into(),
                         args: vec!["server.js".into()],
                         env: None,
-                        timeout: Some(180000), // 3 minutes
+                        timeout: Some(180000),
                     },
                 }),
                 cx,
