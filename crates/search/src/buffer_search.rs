@@ -5,7 +5,10 @@ use crate::{
     SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
-    search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
+    search_bar::{
+        ActionButtonState, alignment_element, input_base_styles, render_action_button,
+        render_text_input,
+    },
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -30,10 +33,7 @@ use settings::Settings;
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
-use ui::{
-    BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
-    utils::SearchInputWidth,
-};
+use ui::{BASE_REM_SIZE_IN_PX, IconButtonShape, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -160,7 +160,6 @@ impl Render for BufferSearchBar {
                 let button = Button::new("multibuffer-collapse-expand-empty", label)
                     .icon_position(IconPosition::Start)
                     .icon(icon)
-                    .icon_size(IconSize::Small)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
@@ -174,17 +173,12 @@ impl Render for BufferSearchBar {
                     }))
                     .into_any_element();
 
-                return h_flex()
-                    .id("search_bar_button_only")
-                    .py_px()
-                    .justify_start()
-                    .child(button)
-                    .into_any_element();
+                return button;
             }
 
             Some(
                 IconButton::new("multibuffer-collapse-expand", icon)
-                    .icon_size(IconSize::Small)
+                    .shape(IconButtonShape::Square)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
@@ -397,14 +391,16 @@ impl Render for BufferSearchBar {
                 ))
             });
 
+        let has_collapse_button = collapse_expand_button.is_some();
+
         let search_line = h_flex()
             .w_full()
-            .gap_1()
+            .gap_2()
             .when(find_in_results, |el| {
-                el.child(Label::new("Find in results").color(Color::Hint))
+                el.child(Label::new("Find in Results").color(Color::Muted))
             })
-            .when(!find_in_results && collapse_expand_button.is_some(), |el| {
-                el.child(collapse_expand_button.expect("button"))
+            .when(!find_in_results && has_collapse_button, |el| {
+                el.pl_0p5().child(collapse_expand_button.expect("button"))
             })
             .child(query_column)
             .child(mode_column);
@@ -434,9 +430,11 @@ impl Render for BufferSearchBar {
                         &ReplaceAll,
                         focus_handle,
                     ));
+
                 h_flex()
                     .w_full()
                     .gap_2()
+                    .child(alignment_element())
                     .child(replace_column)
                     .child(replace_actions)
             });
@@ -459,22 +457,30 @@ impl Render for BufferSearchBar {
             h_flex()
                 .relative()
                 .child(search_line)
-                .when(!narrow_mode && !find_in_results, |div| {
-                    div.child(h_flex().absolute().right_0().child(render_action_button(
-                        "buffer-search",
-                        IconName::Close,
-                        Default::default(),
-                        "Close Search Bar",
-                        &Dismiss,
-                        focus_handle.clone(),
-                    )))
-                    .w_full()
+                .when(!narrow_mode && !find_in_results, |this| {
+                    this.child(
+                        h_flex()
+                            .absolute()
+                            .right_0()
+                            .when(has_collapse_button, |this| {
+                                this.pr_1()
+                                    .border_r_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                            })
+                            .child(render_action_button(
+                                "buffer-search",
+                                IconName::Close,
+                                Default::default(),
+                                "Close Search Bar",
+                                &Dismiss,
+                                focus_handle.clone(),
+                            )),
+                    )
                 });
 
         v_flex()
             .id("buffer_search")
-            .gap_0()
-            .py(px(0.0))
+            .gap_2()
             .w_full()
             .track_scroll(&self.scroll_handle)
             .key_context(key_context)

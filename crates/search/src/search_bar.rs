@@ -89,3 +89,8 @@ pub(crate) fn render_text_input(
 
     EditorElement::new(editor, editor_style)
 }
+
+/// This element makes all search inputs align as if they were in the same column
+pub(crate) fn alignment_element() -> Div {
+    div().size_5().flex_none().ml_0p5()
+}
