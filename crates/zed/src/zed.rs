@@ -2283,24 +2283,26 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
                 .with_content(
                     v_flex()
                         .gap_2()
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .when(show_launch_button, |this| {
-                                    this.child(
+                        .when(show_launch_button, |this| {
+                            this.child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_start()
+                                    .child(
                                         ui::Icon::new(ui::IconName::Warning)
                                             .size(ui::IconSize::Small)
                                             .color(ui::Color::Warning),
                                     )
-                                })
-                                .child(
-                                    Label::new(message)
-                                        .size(ui::LabelSize::Small)
-                                        .when(show_launch_button, |this| {
-                                            this.color(ui::Color::Warning)
-                                        }),
-                                ),
-                        )
+                                    .child(
+                                        Label::new(message.clone())
+                                            .size(ui::LabelSize::Small)
+                                            .color(ui::Color::Warning),
+                                    ),
+                            )
+                        })
+                        .when(!show_launch_button, |this| {
+                            this.child(Label::new(message.clone()).size(ui::LabelSize::Small))
+                        })
                         .when(show_launch_button, |this| {
                             this.child(
                                 ui::Button::new("launch_tracy_anyway", "Launch Tracy Anyway")
