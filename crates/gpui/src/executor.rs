@@ -506,7 +506,11 @@ impl BackgroundExecutor {
             return Err(future);
         }
 
-        // If there's no test dispatcher, fall back to production blocking behavior
+        // When using a real platform (e.g., MacPlatform for visual tests that need actual
+        // Metal rendering), there's no test dispatcher. In this case, we block the thread
+        // directly by polling the future and parking until woken. This is required for
+        // VisualTestAppContext which uses real platform rendering but still needs blocking
+        // behavior for code paths like editor initialization that call block_with_timeout.
         let Some(dispatcher) = self.dispatcher.as_test() else {
             let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
