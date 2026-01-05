@@ -138,14 +138,11 @@ pub struct ThemeSettings {
     pub unnecessary_code_fade: f32,
 }
 
-pub(crate) const DEFAULT_LIGHT_THEME: &'static str = "One Light";
-pub(crate) const DEFAULT_DARK_THEME: &'static str = "One Dark";
-
 /// Returns the name of the default theme for the given [`Appearance`].
 pub fn default_theme(appearance: Appearance) -> &'static str {
     match appearance {
-        Appearance::Light => DEFAULT_LIGHT_THEME,
-        Appearance::Dark => DEFAULT_DARK_THEME,
+        Appearance::Light => settings::DEFAULT_LIGHT_THEME,
+        Appearance::Dark => settings::DEFAULT_DARK_THEME,
     }
 }
 
@@ -400,8 +397,8 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     } else {
         theme.theme = Some(settings::ThemeSelection::Dynamic {
             mode,
-            light: ThemeName(DEFAULT_LIGHT_THEME.into()),
-            dark: ThemeName(DEFAULT_DARK_THEME.into()),
+            light: ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
+            dark: ThemeName(settings::DEFAULT_DARK_THEME.into()),
         });
     }
 

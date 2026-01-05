@@ -313,9 +313,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     settings_content.theme.theme = None;
                                     return;
                                 };
-                                let settings_value = settings_content.theme.theme.get_or_insert_with(|| {
-                                    settings::ThemeSelection::Static(theme::ThemeName(theme::default_theme(theme::SystemAppearance::default().0).into()))
-                                });
+                                let settings_value = settings_content.theme.theme.get_or_insert_default();
                                 *settings_value = match value {
                                     settings::ThemeSelectionDiscriminants::Static => {
                                         let name = match settings_value {
@@ -371,8 +369,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Static(theme_name) => *theme_name = value,
                                                     _ => return
                                                 }
                                         },
@@ -399,8 +397,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Dynamic{ mode, ..}) => *mode = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Dynamic{ mode, ..} => *mode = value,
                                                     _ => return
                                                 }
                                         },
@@ -425,8 +423,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Dynamic{ light, ..}) => *light = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Dynamic{ light, ..} => *light = value,
                                                     _ => return
                                                 }
                                         },
@@ -451,8 +449,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Dynamic{ dark, ..}) => *dark = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Dynamic{ dark, ..} => *dark = value,
                                                     _ => return
                                                 }
                                         },
