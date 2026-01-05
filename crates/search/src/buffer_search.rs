@@ -140,6 +140,8 @@ impl Render for BufferSearchBar {
         let focus_handle = self.focus_handle(cx);
 
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
+            let query_editor_focus = self.query_editor.focus_handle(cx);
+
             let (icon, label, tooltip_label) = if self.is_collapsed {
                 (
                     IconName::ChevronUpDown,
@@ -154,8 +156,6 @@ impl Render for BufferSearchBar {
                 )
             };
 
-            let tooltip_focus_handle = focus_handle.clone();
-
             if self.dismissed {
                 let button = Button::new("multibuffer-collapse-expand-empty", label)
                     .icon_position(IconPosition::Start)
@@ -164,13 +164,13 @@ impl Render for BufferSearchBar {
                         Tooltip::for_action_in(
                             tooltip_label,
                             &ToggleFoldAll,
-                            &tooltip_focus_handle,
+                            &query_editor_focus.clone(),
                             cx,
                         )
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_fold_all_in_item(window, cx);
-                    }))
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
+                    })
                     .into_any_element();
 
                 return button;
@@ -183,13 +183,13 @@ impl Render for BufferSearchBar {
                         Tooltip::for_action_in(
                             tooltip_label,
                             &ToggleFoldAll,
-                            &tooltip_focus_handle,
+                            &query_editor_focus,
                             cx,
                         )
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_fold_all_in_item(window, cx);
-                    }))
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
+                    })
                     .into_any_element(),
             )
         } else {
@@ -486,6 +486,7 @@ impl Render for BufferSearchBar {
             .key_context(key_context)
             .capture_action(cx.listener(Self::tab))
             .capture_action(cx.listener(Self::backtab))
+            .capture_action(cx.listener(Self::toggle_fold_all))
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
@@ -969,6 +970,10 @@ impl BufferSearchBar {
         } else {
             false
         }
+    }
+
+    fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_fold_all_in_item(window, cx);
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {

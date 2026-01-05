@@ -415,6 +415,7 @@
       "tab": "buffer_search::FocusEditor",
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPreviousMatch",
+      "cmd-shift-enter": "editor::ToggleFoldAll",
       "alt-enter": "search::SelectAllMatches",
       "cmd-f": "search::FocusSearch",
       "cmd-alt-f": "search::ToggleReplace",
