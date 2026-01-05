@@ -1822,14 +1822,6 @@ impl Window {
         self.platform_window.bounds()
     }
 
-    /// Returns the native window ID (CGWindowID on macOS) for window capture.
-    /// This is used by visual testing infrastructure to capture window screenshots.
-    /// Returns None on platforms that don't support this or in non-test builds.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn native_window_id(&self) -> Option<u32> {
-        self.platform_window.native_window_id()
-    }
-
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
