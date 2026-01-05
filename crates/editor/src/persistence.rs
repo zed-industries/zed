@@ -520,8 +520,18 @@ mod tests {
 
         // Save folds with fingerprints (32-byte content samples at fold boundaries)
         let folds = vec![
-            (100, 200, "fn main() {".to_string(), "} // end main".to_string()),
-            (300, 400, "struct Foo {".to_string(), "} // end Foo".to_string()),
+            (
+                100,
+                200,
+                "fn main() {".to_string(),
+                "} // end main".to_string(),
+            ),
+            (
+                300,
+                400,
+                "struct Foo {".to_string(),
+                "} // end Foo".to_string(),
+            ),
         ];
         DB.save_editor_folds(5678, workspace_id, folds.clone())
             .await
@@ -530,20 +540,47 @@ mod tests {
         // Retrieve and verify fingerprints are preserved
         let retrieved = DB.get_editor_folds(5678, workspace_id).unwrap();
         assert_eq!(retrieved.len(), 2);
-        assert_eq!(retrieved[0], (100, 200, Some("fn main() {".to_string()), Some("} // end main".to_string())));
-        assert_eq!(retrieved[1], (300, 400, Some("struct Foo {".to_string()), Some("} // end Foo".to_string())));
+        assert_eq!(
+            retrieved[0],
+            (
+                100,
+                200,
+                Some("fn main() {".to_string()),
+                Some("} // end main".to_string())
+            )
+        );
+        assert_eq!(
+            retrieved[1],
+            (
+                300,
+                400,
+                Some("struct Foo {".to_string()),
+                Some("} // end Foo".to_string())
+            )
+        );
 
         // Test overwrite: saving new folds replaces old ones
-        let new_folds = vec![
-            (500, 600, "impl Bar {".to_string(), "} // end impl".to_string()),
-        ];
+        let new_folds = vec![(
+            500,
+            600,
+            "impl Bar {".to_string(),
+            "} // end impl".to_string(),
+        )];
         DB.save_editor_folds(5678, workspace_id, new_folds)
             .await
             .unwrap();
 
         let retrieved = DB.get_editor_folds(5678, workspace_id).unwrap();
         assert_eq!(retrieved.len(), 1);
-        assert_eq!(retrieved[0], (500, 600, Some("impl Bar {".to_string()), Some("} // end impl".to_string())));
+        assert_eq!(
+            retrieved[0],
+            (
+                500,
+                600,
+                Some("impl Bar {".to_string()),
+                Some("} // end impl".to_string())
+            )
+        );
     }
 
     // NOTE: The fingerprint search logic (finding content at new offsets when file

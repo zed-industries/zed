@@ -3504,13 +3504,9 @@ impl Editor {
                 // end_fp: last min(32, fold_len) bytes of fold content
                 let fold_len = end - start;
                 let start_fp_end = start + std::cmp::min(FINGERPRINT_LEN, fold_len);
-                let start_fp: String = snapshot
-                    .text_for_range(start..start_fp_end)
-                    .collect();
+                let start_fp: String = snapshot.text_for_range(start..start_fp_end).collect();
                 let end_fp_start = end.saturating_sub(FINGERPRINT_LEN).max(start);
-                let end_fp: String = snapshot
-                    .text_for_range(end_fp_start..end)
-                    .collect();
+                let end_fp: String = snapshot.text_for_range(end_fp_start..end).collect();
 
                 (start, end, start_fp, end_fp)
             })
@@ -23183,7 +23179,7 @@ impl Editor {
 
                         Some(
                             snapshot.clip_offset(MultiBufferOffset(new_start), Bias::Left)
-                                ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right)
+                                ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right),
                         )
                     })
                     .collect();
@@ -23200,7 +23196,8 @@ impl Editor {
                             DB.migrate_editor_folds(item_id, new_editor_id, workspace_id)
                                 .await
                                 .log_err();
-                        }).detach();
+                        })
+                        .detach();
                     }
                 }
             }
