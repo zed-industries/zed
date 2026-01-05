@@ -77,24 +77,6 @@ pub struct SubagentContext {
 
     /// Prompt to send when context is running low (≤25% remaining)
     pub context_low_prompt: String,
-
-    /// Channel to send updates to parent (token usage, status)
-    pub status_tx: mpsc::UnboundedSender<SubagentStatusUpdate>,
-}
-
-#[derive(Debug, Clone)]
-pub enum SubagentStatusUpdate {
-    /// Token usage updated
-    TokenUsage { used: u64, max: u64 },
-    /// Subagent completed with summary
-    Completed { summary: String },
-    /// Subagent encountered an error
-    Error {
-        message: String,
-        partial_transcript: Option<String>,
-    },
-    /// Subagent was canceled
-    Canceled,
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -663,6 +645,8 @@ pub struct Thread {
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
+    /// Weak references to running subagent threads for cancellation propagation
+    running_subagents: Vec<WeakEntity<Thread>>,
 }
 
 impl Thread {
@@ -720,6 +704,7 @@ impl Thread {
             action_log,
             file_read_times: HashMap::default(),
             subagent_context: None,
+            running_subagents: Vec::new(),
         }
     }
 
@@ -766,6 +751,7 @@ impl Thread {
             action_log,
             file_read_times: HashMap::default(),
             subagent_context: Some(subagent_context),
+            running_subagents: Vec::new(),
         }
     }
 
@@ -955,6 +941,7 @@ impl Thread {
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
             subagent_context: None,
+            running_subagents: Vec::new(),
         }
     }
 
@@ -1104,6 +1091,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+            let tool_names = self.registered_tool_names();
             self.add_tool(SubagentTool::new(
                 cx.weak_entity(),
                 self.project.clone(),
@@ -1111,6 +1099,7 @@ impl Thread {
                 self.context_server_registry.clone(),
                 self.templates.clone(),
                 self.depth(),
+                tool_names,
             ));
         }
     }
@@ -1121,6 +1110,10 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
+    }
+
+    pub fn restrict_tools(&mut self, allowed: &collections::HashSet<SharedString>) {
+        self.tools.retain(|name, _| allowed.contains(name));
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -1144,6 +1137,13 @@ impl Thread {
         if let Some(running_turn) = self.running_turn.take() {
             running_turn.cancel();
         }
+
+        for subagent in self.running_subagents.drain(..) {
+            if let Some(subagent) = subagent.upgrade() {
+                subagent.update(cx, |thread, cx| thread.cancel(cx));
+            }
+        }
+
         self.flush_pending_message(cx);
     }
 
@@ -2153,6 +2153,19 @@ impl Thread {
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_registered_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
+    }
+
+    pub fn registered_tool_names(&self) -> Vec<SharedString> {
+        self.tools.keys().cloned().collect()
+    }
+
+    pub fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
+        self.running_subagents.push(subagent);
+    }
+
+    pub fn unregister_running_subagent(&mut self, subagent: &WeakEntity<Thread>) {
+        self.running_subagents
+            .retain(|s| s.entity_id() != subagent.entity_id());
     }
 
     pub fn is_subagent(&self) -> bool {

@@ -3088,14 +3088,12 @@ async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
 
-    let (status_tx, _status_rx) = futures::channel::mpsc::unbounded();
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
         tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
         summary_prompt: "Summarize".to_string(),
         context_low_prompt: "Context low".to_string(),
-        status_tx,
     };
 
     let subagent = cx.new(|cx| {
@@ -3134,14 +3132,12 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
 
-    let (status_tx, _status_rx) = futures::channel::mpsc::unbounded();
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
         tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: MAX_SUBAGENT_DEPTH,
         summary_prompt: "Summarize".to_string(),
         context_low_prompt: "Context low".to_string(),
-        status_tx,
     };
 
     let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
@@ -3166,6 +3162,287 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
         assert!(
             !thread.has_registered_tool("subagent"),
             "subagent tool should not be present at max depth"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize your work".to_string(),
+        context_low_prompt: "Context low, wrap up".to_string(),
+    };
+
+    let project = thread.read_with(cx, |t, _| t.project.clone());
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        )
+    });
+
+    let task_prompt = "Find all TODO comments in the codebase";
+    subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message(task_prompt, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert_eq!(pending.len(), 1, "should have one pending completion");
+
+    let messages = &pending[0].messages;
+    let user_messages: Vec<_> = messages
+        .iter()
+        .filter(|m| m.role == language_model::Role::User)
+        .collect();
+    assert_eq!(user_messages.len(), 1, "should have one user message");
+
+    let content = &user_messages[0].content[0];
+    assert!(
+        content.to_str().unwrap().contains("TODO"),
+        "task prompt should be in user message"
+    );
+}
+
+#[gpui::test]
+async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Please summarize what you found".to_string(),
+        context_low_prompt: "Context low, wrap up".to_string(),
+    };
+
+    let project = thread.read_with(cx, |t, _| t.project.clone());
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        )
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message("Do some work", cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("I did the work");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+        StopReason::EndTurn,
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    subagent
+        .update(cx, |thread, cx| thread.request_final_summary(cx))
+        .unwrap();
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert!(!pending.is_empty(), "should have pending completion for summary");
+
+    let messages = &pending.last().unwrap().messages;
+    let user_messages: Vec<_> = messages
+        .iter()
+        .filter(|m| m.role == language_model::Role::User)
+        .collect();
+
+    let last_user = user_messages.last().unwrap();
+    assert!(
+        last_user.content[0]
+            .to_str()
+            .unwrap()
+            .contains("summarize"),
+        "summary prompt should be sent"
+    );
+}
+
+#[gpui::test]
+async fn test_allowed_tools_restricts_subagent_capabilities(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let subagent = cx.new(|cx| {
+        let mut thread = Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        );
+        thread.add_tool(EchoTool);
+        thread.add_tool(DelayTool);
+        thread.add_tool(WordListTool);
+        thread
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(thread.has_registered_tool("echo"));
+        assert!(thread.has_registered_tool("delay"));
+        assert!(thread.has_registered_tool("word_list"));
+    });
+
+    let allowed: collections::HashSet<gpui::SharedString> =
+        vec!["echo".into()].into_iter().collect();
+
+    subagent.update(cx, |thread, _cx| {
+        thread.restrict_tools(&allowed);
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool("echo"),
+            "echo should still be available"
+        );
+        assert!(
+            !thread.has_registered_tool("delay"),
+            "delay should be removed"
+        );
+        assert!(
+            !thread.has_registered_tool("word_list"),
+            "word_list should be removed"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        )
+    });
+
+    parent.update(cx, |thread, _cx| {
+        thread.register_running_subagent(subagent.downgrade());
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message("Do work", cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            !thread.is_turn_complete(),
+            "subagent should be running"
+        );
+    });
+
+    parent.update(cx, |thread, cx| {
+        thread.cancel(cx);
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.is_turn_complete(),
+            "subagent should be cancelled when parent cancels"
         );
     });
 }

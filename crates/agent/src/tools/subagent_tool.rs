@@ -1,5 +1,6 @@
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
+use collections::HashSet;
 use futures::channel::mpsc;
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
 use project::Project;
@@ -8,6 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::{
     AgentTool, ContextServerRegistry, MAX_SUBAGENT_DEPTH, SubagentContext, Templates, Thread,
@@ -81,6 +83,7 @@ pub struct SubagentTool {
     context_server_registry: Entity<ContextServerRegistry>,
     templates: Arc<Templates>,
     current_depth: u8,
+    parent_tool_names: HashSet<SharedString>,
 }
 
 impl SubagentTool {
@@ -91,6 +94,7 @@ impl SubagentTool {
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         current_depth: u8,
+        parent_tool_names: Vec<SharedString>,
     ) -> Self {
         Self {
             parent_thread,
@@ -99,7 +103,23 @@ impl SubagentTool {
             context_server_registry,
             templates,
             current_depth,
+            parent_tool_names: parent_tool_names.into_iter().collect(),
         }
+    }
+
+    fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
+        if let Some(tools) = allowed_tools {
+            for tool in tools {
+                if !self.parent_tool_names.contains(tool.as_str()) {
+                    return Err(anyhow!(
+                        "Tool '{}' is not available to the parent agent. Available tools: {:?}",
+                        tool,
+                        self.parent_tool_names.iter().collect::<Vec<_>>()
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -138,6 +158,10 @@ impl AgentTool for SubagentTool {
             )));
         }
 
+        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools) {
+            return Task::ready(Err(e));
+        }
+
         let Some(parent_thread) = self.parent_thread.upgrade() else {
             return Task::ready(Err(anyhow!("Parent thread no longer exists")));
         };
@@ -150,15 +174,12 @@ impl AgentTool for SubagentTool {
             return Task::ready(Err(anyhow!("No model configured")));
         };
 
-        let (status_tx, _status_rx) = mpsc::unbounded();
-
         let subagent_context = SubagentContext {
             parent_thread_id,
             tool_use_id,
             depth: self.current_depth + 1,
             summary_prompt: input.summary_prompt.clone(),
             context_low_prompt: input.context_low_prompt.clone(),
-            status_tx,
         };
 
         let project = self.project.clone();
@@ -166,6 +187,12 @@ impl AgentTool for SubagentTool {
         let context_server_registry = self.context_server_registry.clone();
         let templates = self.templates.clone();
         let task_prompt = input.task_prompt;
+        let timeout_ms = input.timeout_ms;
+        let allowed_tools: Option<HashSet<SharedString>> = input
+            .allowed_tools
+            .map(|tools| tools.into_iter().map(SharedString::from).collect());
+
+        let parent_thread = self.parent_thread.clone();
 
         cx.spawn(async move |cx| {
             let subagent_thread = cx.new(|cx| {
@@ -180,27 +207,76 @@ impl AgentTool for SubagentTool {
                 )
             })?;
 
-            let mut events_rx = subagent_thread
-                .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
+            let subagent_weak = subagent_thread.downgrade();
 
-            wait_for_turn_completion(&mut events_rx).await;
-
-            let is_context_low = check_context_low(&subagent_thread, CONTEXT_LOW_THRESHOLD, cx)?;
-
-            if is_context_low {
-                let mut summary_rx =
-                    subagent_thread.update(cx, |thread, cx| thread.interrupt_for_summary(cx))??;
-                wait_for_turn_completion(&mut summary_rx).await;
-            } else {
-                let mut summary_rx =
-                    subagent_thread.update(cx, |thread, cx| thread.request_final_summary(cx))??;
-                wait_for_turn_completion(&mut summary_rx).await;
+            if let Some(parent) = parent_thread.upgrade() {
+                parent.update(cx, |thread, _cx| {
+                    thread.register_running_subagent(subagent_weak.clone());
+                })?;
             }
 
-            let summary = extract_last_message(&subagent_thread, cx)?;
-            Ok(summary)
+            let result = run_subagent(
+                &subagent_thread,
+                allowed_tools,
+                task_prompt,
+                timeout_ms,
+                cx,
+            )
+            .await;
+
+            if let Some(parent) = parent_thread.upgrade() {
+                let _ = parent.update(cx, |thread, _cx| {
+                    thread.unregister_running_subagent(&subagent_weak);
+                });
+            }
+
+            result
         })
     }
+}
+
+async fn run_subagent(
+    subagent_thread: &Entity<Thread>,
+    allowed_tools: Option<HashSet<SharedString>>,
+    task_prompt: String,
+    timeout_ms: Option<u64>,
+    cx: &mut AsyncApp,
+) -> Result<String> {
+    if let Some(ref allowed) = allowed_tools {
+        subagent_thread.update(cx, |thread, _cx| {
+            thread.restrict_tools(allowed);
+        })?;
+    }
+
+    let mut events_rx = subagent_thread
+        .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
+
+    let timed_out = if let Some(timeout) = timeout_ms {
+        wait_for_turn_completion_with_timeout(
+            &mut events_rx,
+            Duration::from_millis(timeout),
+            cx,
+        )
+        .await
+    } else {
+        wait_for_turn_completion(&mut events_rx).await;
+        false
+    };
+
+    let should_interrupt =
+        timed_out || check_context_low(subagent_thread, CONTEXT_LOW_THRESHOLD, cx)?;
+
+    if should_interrupt {
+        let mut summary_rx =
+            subagent_thread.update(cx, |thread, cx| thread.interrupt_for_summary(cx))??;
+        wait_for_turn_completion(&mut summary_rx).await;
+    } else {
+        let mut summary_rx =
+            subagent_thread.update(cx, |thread, cx| thread.request_final_summary(cx))??;
+        wait_for_turn_completion(&mut summary_rx).await;
+    }
+
+    extract_last_message(subagent_thread, cx)
 }
 
 async fn wait_for_turn_completion(events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>) {
@@ -209,6 +285,36 @@ async fn wait_for_turn_completion(events_rx: &mut mpsc::UnboundedReceiver<Result
             Ok(ThreadEvent::Stop(_)) => break,
             Err(_) => break,
             _ => continue,
+        }
+    }
+}
+
+async fn wait_for_turn_completion_with_timeout(
+    events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    timeout: Duration,
+    cx: &AsyncApp,
+) -> bool {
+    use futures::future::{self, Either};
+
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+
+        let timeout_future = cx.background_executor().timer(remaining);
+        let event_future = events_rx.next();
+
+        match future::select(event_future, timeout_future).await {
+            Either::Left((event, _)) => match event {
+                Some(Ok(ThreadEvent::Stop(_))) => return false,
+                Some(Err(_)) => return false,
+                None => return false,
+                Some(_) => continue,
+            },
+            Either::Right((_, _)) => return true,
         }
     }
 }
