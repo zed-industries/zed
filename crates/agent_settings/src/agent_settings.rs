@@ -317,7 +317,11 @@ fn compile_regex_rules(tool_name: &str, rules: Vec<settings::ToolRegexRule>) -> 
     rules
         .into_iter()
         .filter_map(|rule| {
-            CompiledRegex::new_for_tool(tool_name, &rule.pattern, rule.case_sensitive.unwrap_or(false))
+            CompiledRegex::new_for_tool(
+                tool_name,
+                &rule.pattern,
+                rule.case_sensitive.unwrap_or(false),
+            )
         })
         .collect()
 }
@@ -556,27 +560,45 @@ mod tests {
             .tools
             .get("terminal")
             .expect("terminal tool should be configured");
-        assert!(!terminal.always_deny.is_empty(), "terminal should have deny rules");
-        assert!(!terminal.always_confirm.is_empty(), "terminal should have confirm rules");
-        assert!(!terminal.always_allow.is_empty(), "terminal should have allow rules");
+        assert!(
+            !terminal.always_deny.is_empty(),
+            "terminal should have deny rules"
+        );
+        assert!(
+            !terminal.always_confirm.is_empty(),
+            "terminal should have confirm rules"
+        );
+        assert!(
+            !terminal.always_allow.is_empty(),
+            "terminal should have allow rules"
+        );
 
         let edit_file = permissions
             .tools
             .get("edit_file")
             .expect("edit_file tool should be configured");
-        assert!(!edit_file.always_deny.is_empty(), "edit_file should have deny rules");
+        assert!(
+            !edit_file.always_deny.is_empty(),
+            "edit_file should have deny rules"
+        );
 
         let delete_path = permissions
             .tools
             .get("delete_path")
             .expect("delete_path tool should be configured");
-        assert!(!delete_path.always_deny.is_empty(), "delete_path should have deny rules");
+        assert!(
+            !delete_path.always_deny.is_empty(),
+            "delete_path should have deny rules"
+        );
 
         let fetch = permissions
             .tools
             .get("fetch")
             .expect("fetch tool should be configured");
-        assert!(!fetch.always_allow.is_empty(), "fetch should have allow rules");
+        assert!(
+            !fetch.always_allow.is_empty(),
+            "fetch should have allow rules"
+        );
     }
 
     #[test]
@@ -584,8 +606,7 @@ mod tests {
         let default_json = include_str!("../../../assets/settings/default.json");
         let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
         let tool_permissions = value["agent"]["tool_permissions"].clone();
-        let content: ToolPermissionsContent =
-            serde_json::from_value(tool_permissions).unwrap();
+        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal = permissions.tools.get("terminal").unwrap();
@@ -617,8 +638,7 @@ mod tests {
         let default_json = include_str!("../../../assets/settings/default.json");
         let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
         let tool_permissions = value["agent"]["tool_permissions"].clone();
-        let content: ToolPermissionsContent =
-            serde_json::from_value(tool_permissions).unwrap();
+        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal = permissions.tools.get("terminal").unwrap();
