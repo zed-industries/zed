@@ -138,6 +138,9 @@
   //  3. Do not restore previous workspaces
   //         "restore_on_startup": "none",
   "restore_on_startup": "last_session",
+  // Whether zed should automatically download binaries to run
+  // language servers if they are missing.
+  "allow_executable_downloads": true,
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.
