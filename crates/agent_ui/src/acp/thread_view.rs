@@ -2565,7 +2565,6 @@ impl AcpThreadView {
                     .when(show_mcp_raw_input, |this| {
                         let is_raw_input_expanded =
                             self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
-                        let tool_call_id = tool_call.id.clone();
 
                         let input_header = if is_raw_input_expanded {
                             "Raw Input:"
@@ -2597,7 +2596,8 @@ impl AcpThreadView {
                                             .closed_icon(IconName::ChevronDown),
                                         )
                                         .on_click(cx.listener({
-                                            let id = tool_call_id.clone();
+                                            let id = tool_call.id.clone();
+
                                             move |this: &mut Self, _, _, cx| {
                                                 if this.expanded_tool_call_raw_inputs.contains(&id)
                                                 {
