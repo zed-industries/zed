@@ -13,23 +13,12 @@ use serde::{Deserialize, Serialize};
 use similar::{DiffTag, TextDiff};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Write};
+use std::path::PathBuf;
 
 /// `ep split-commit` CLI args.
 #[derive(Debug, Args)]
 pub struct SplitCommitArgs {
-    /// Path to the commit file (use "-" for stdin)
-    #[arg(long, short = 'c')]
-    pub commit: String,
-
-    /// Repository URL
-    #[arg(long, short = 'r', default_value_t = String::new())]
-    pub repository_url: String,
-
-    /// Commit hash
-    #[arg(long, default_value_t = String::new())]
-    pub commit_hash: String,
-
     /// Split point (float 0.0-1.0 for fraction, or integer for index)
     #[arg(long, short = 's')]
     pub split_point: Option<String>,
@@ -41,6 +30,24 @@ pub struct SplitCommitArgs {
     /// Pretty-print JSON output
     #[arg(long, short = 'p')]
     pub pretty: bool,
+}
+
+/// Input format for annotated commits (JSON Lines).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct AnnotatedCommit {
+    /// Repository path (e.g., "repos/zed")
+    pub repo: String,
+    /// Repository URL (e.g., "https://github.com/zed-industries/zed")
+    pub repo_url: String,
+    /// Commit SHA
+    pub commit_sha: String,
+    /// Chronologically reordered commit diff
+    pub reordered_commit: String,
+    /// Original commit diff
+    pub original_commit: String,
+    /// Whether diff stats match between original and reordered
+    pub diff_stats_match: bool,
 }
 
 /// Cursor position in a file.
@@ -98,38 +105,81 @@ fn parse_split_point(value: &str) -> Option<SplitPoint> {
 
 /// Entry point for the `ep split-commit` subcommand.
 ///
-/// This runs synchronously and prints a single JSON object to stdout.
-pub fn run_split_commit(args: &SplitCommitArgs) -> Result<()> {
-    let commit = if args.commit == "-" {
-        let mut content = String::new();
-        io::stdin()
-            .read_to_string(&mut content)
-            .context("failed to read commit diff from stdin")?;
-        content
+/// This runs synchronously and outputs JSON Lines (one output per input line).
+pub fn run_split_commit(
+    args: &SplitCommitArgs,
+    inputs: &[PathBuf],
+    output_path: Option<&PathBuf>,
+) -> Result<()> {
+    use std::io::BufRead;
+
+    let stdin_path = PathBuf::from("-");
+    let inputs = if inputs.is_empty() {
+        std::slice::from_ref(&stdin_path)
     } else {
-        fs::read_to_string(&args.commit)
-            .with_context(|| format!("failed to read commit diff from {}", args.commit))?
+        inputs
     };
 
     let split_point = args.split_point.as_deref().and_then(parse_split_point);
+    let mut output_lines = Vec::new();
 
-    let case = generate_evaluation_example_from_ordered_commit(
-        &commit,
-        &args.repository_url,
-        &args.commit_hash,
-        split_point,
-        args.seed,
-    )
-    .context("failed to generate evaluation example")?;
+    for input_path in inputs {
+        let input: Box<dyn BufRead> = if input_path.as_os_str() == "-" {
+            Box::new(io::BufReader::new(io::stdin()))
+        } else {
+            let file = fs::File::open(input_path)
+                .with_context(|| format!("failed to open input file {}", input_path.display()))?;
+            Box::new(io::BufReader::new(file))
+        };
 
-    let json = if args.pretty {
-        serde_json::to_string_pretty(&case)
-    } else {
-        serde_json::to_string(&case)
+        for (line_num, line_result) in input.lines().enumerate() {
+            let line =
+                line_result.with_context(|| format!("failed to read line {}", line_num + 1))?;
+
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let annotated: AnnotatedCommit = serde_json::from_str(&line)
+                .with_context(|| format!("failed to parse JSON at line {}", line_num + 1))?;
+
+            let case = generate_evaluation_example_from_ordered_commit(
+                &annotated.reordered_commit,
+                &annotated.repo_url,
+                &annotated.commit_sha,
+                split_point.clone(),
+                args.seed,
+            )
+            .with_context(|| {
+                format!(
+                    "failed to generate evaluation example for commit {} at line {}",
+                    annotated.commit_sha,
+                    line_num + 1
+                )
+            })?;
+
+            let json = if args.pretty {
+                serde_json::to_string_pretty(&case)
+            } else {
+                serde_json::to_string(&case)
+            }
+            .context("failed to serialize evaluation case as JSON")?;
+
+            output_lines.push(json);
+        }
     }
-    .context("failed to serialize evaluation case as JSON")?;
 
-    println!("{json}");
+    let output_content = output_lines.join("\n") + if output_lines.is_empty() { "" } else { "\n" };
+
+    if let Some(path) = output_path {
+        fs::write(path, &output_content)
+            .with_context(|| format!("failed to write output to {}", path.display()))?;
+    } else {
+        io::stdout()
+            .write_all(output_content.as_bytes())
+            .context("failed to write to stdout")?;
+    }
+
     Ok(())
 }
 
