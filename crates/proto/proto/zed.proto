@@ -450,33 +450,27 @@ message Envelope {
         RestrictWorktrees restrict_worktrees = 405; // current max
     }
 
-    reserved 87 to 88, 396;
+    reserved 87 to 88;
     reserved 90;
     reserved 102 to 103;
     reserved 158 to 161;
     reserved 164;
     reserved 166 to 169;
     reserved 175 to 185;
-    reserved 188;
-    reserved 189 to 192;
-    reserved 193 to 195;
+    reserved 188 to 195;
     reserved 197;
-    reserved 198 to 199;
-    reserved 200 to 202;
+    reserved 198 to 202;
     reserved 205 to 206;
     reserved 221;
-    reserved 224 to 229;
-    reserved 230 to 231;
+    reserved 224 to 231;
     reserved 234 to 236;
     reserved 239 to 240;
-    reserved 246;
-    reserved 247 to 254;
-    reserved 255 to 256;
+    reserved 246 to 256;
     reserved 259;
     reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
-    reserved 394 to 395;
+    reserved 394 to 396;
 }
 
 message Hello {
