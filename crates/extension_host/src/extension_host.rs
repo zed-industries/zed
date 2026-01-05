@@ -1534,7 +1534,7 @@ impl ExtensionStore {
         let is_dev = fs
             .metadata(&extension_dir)
             .await?
-            .with_context(|| format!("extension directory {extension_dir:?}"))?
+            .with_context(|| format!("missing extension directory {extension_dir:?}"))?
             .is_symlink;
 
         let language_dir = extension_dir.join("languages");
