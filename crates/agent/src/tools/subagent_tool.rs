@@ -10,8 +10,8 @@ use smol::stream::StreamExt;
 use std::sync::Arc;
 
 use crate::{
-    AgentTool, ContextServerRegistry, SubagentContext, Templates, Thread, ThreadEvent,
-    ToolCallEventStream, MAX_SUBAGENT_DEPTH,
+    AgentTool, ContextServerRegistry, MAX_SUBAGENT_DEPTH, SubagentContext, Templates, Thread,
+    ThreadEvent, ToolCallEventStream,
 };
 
 const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
@@ -178,8 +178,8 @@ impl AgentTool for SubagentTool {
                 )
             })?;
 
-            let mut events_rx =
-                subagent_thread.update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
+            let mut events_rx = subagent_thread
+                .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
 
             wait_for_turn_completion(&mut events_rx).await;
 
@@ -211,11 +211,7 @@ async fn wait_for_turn_completion(events_rx: &mut mpsc::UnboundedReceiver<Result
     }
 }
 
-fn check_context_low(
-    thread: &Entity<Thread>,
-    threshold: f32,
-    cx: &mut AsyncApp,
-) -> Result<bool> {
+fn check_context_low(thread: &Entity<Thread>, threshold: f32, cx: &mut AsyncApp) -> Result<bool> {
     thread.read_with(cx, |thread, _| {
         if let Some(usage) = thread.latest_token_usage() {
             let remaining_ratio = 1.0 - (usage.used_tokens as f32 / usage.max_tokens as f32);

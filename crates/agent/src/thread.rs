@@ -5,9 +5,9 @@ use crate::{
     RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
     TerminalTool, ThinkingTool, WebSearchTool,
 };
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -2160,10 +2160,7 @@ impl Thread {
     }
 
     pub fn depth(&self) -> u8 {
-        self.subagent_context
-            .as_ref()
-            .map(|c| c.depth)
-            .unwrap_or(0)
+        self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }
 
     pub fn is_turn_complete(&self) -> bool {
