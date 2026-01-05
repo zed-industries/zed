@@ -5,6 +5,21 @@
 //!
 //! TODO: Port Python code to generate chronologically-ordered commits
 use crate::reorder_patch::{Patch, PatchLine, extract_edits, locate_edited_line};
+
+/// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else if s.is_char_boundary(index) {
+        index
+    } else {
+        // Find the nearest valid character boundary at or before index
+        (0..index)
+            .rev()
+            .find(|&i| s.is_char_boundary(i))
+            .unwrap_or(0)
+    }
+}
 use anyhow::{Context as _, Result};
 use clap::Args;
 use rand::Rng;
@@ -641,11 +656,13 @@ pub fn imitate_human_edits(
                     // Split within this replace operation
                     let offset = split_index - edit_index;
                     if offset < ins.len() {
-                        new_src.push_str(&ins[..offset]);
+                        let safe_offset = floor_char_boundary(&ins, offset);
+                        new_src.push_str(&ins[..safe_offset]);
                     } else {
                         new_src.push_str(&ins);
                         let del_offset = offset - ins.len();
-                        new_src.push_str(&del[..del_offset.min(del.len())]);
+                        let safe_del_offset = floor_char_boundary(&del, del_offset.min(del.len()));
+                        new_src.push_str(&del[..safe_del_offset]);
                     }
                     split_found = true;
                     last_old_end = op.old_range().end;
@@ -660,7 +677,8 @@ pub fn imitate_human_edits(
                 let repl: String = op.new_range().map(|i| tgt_tokens[i].as_str()).collect();
                 if edit_index + repl.len() >= split_index {
                     let offset = split_index - edit_index;
-                    new_src.push_str(&repl[..offset]);
+                    let safe_offset = floor_char_boundary(&repl, offset);
+                    new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
                     break;
                 } else {
@@ -672,9 +690,10 @@ pub fn imitate_human_edits(
                 let repl: String = op.old_range().map(|i| src_tokens[i].as_str()).collect();
                 if edit_index + repl.len() >= split_index {
                     let offset = split_index - edit_index;
-                    new_src.push_str(&repl[..offset]);
+                    let safe_offset = floor_char_boundary(&repl, offset);
+                    new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
-                    last_old_end = op.old_range().start + offset.min(op.old_range().len());
+                    last_old_end = op.old_range().start + safe_offset.min(op.old_range().len());
                     break;
                 } else {
                     edit_index += repl.len();
@@ -735,15 +754,25 @@ pub fn imitate_human_edits(
         }
     } else {
         // For pure insertions, we need to add or modify a hunk
-        if let Some(hunk) = new_src_patch.hunks.get_mut(tgt_edit_loc.hunk_index) {
-            // Insert the partial line at the same position as target
-            hunk.lines.insert(
-                tgt_edit_loc.line_index_within_hunk,
-                PatchLine::Addition(new_src.clone()),
-            );
-            hunk.new_count += 1;
-        } else if new_src_patch.hunks.is_empty() {
-            // Source patch is empty, create a new hunk based on target
+        // Check if the source hunk exists AND has enough lines for the target's line index
+        let can_insert_in_existing_hunk = new_src_patch
+            .hunks
+            .get(tgt_edit_loc.hunk_index)
+            .map_or(false, |hunk| {
+                tgt_edit_loc.line_index_within_hunk <= hunk.lines.len()
+            });
+
+        if can_insert_in_existing_hunk {
+            if let Some(hunk) = new_src_patch.hunks.get_mut(tgt_edit_loc.hunk_index) {
+                // Insert the partial line at the same position as target
+                hunk.lines.insert(
+                    tgt_edit_loc.line_index_within_hunk,
+                    PatchLine::Addition(new_src.clone()),
+                );
+                hunk.new_count += 1;
+            }
+        } else {
+            // Source patch is empty or has incompatible hunk structure, create a new hunk based on target
             if let Some(tgt_hunk) = tgt_patch.hunks.get(tgt_edit_loc.hunk_index) {
                 let mut new_hunk = tgt_hunk.clone();
                 // Replace the full addition with the partial one
@@ -884,18 +913,55 @@ pub fn get_cursor_excerpt(
     // Search in target patch if not found
     if excerpt_lines.is_empty() {
         let tgt = Patch::parse_unified_diff(target_patch);
-        if let Some(loc) = locate_edited_line(&tgt, 0) {
-            if loc.filename == cursor.file {
-                if let Some(hunk) = tgt.hunks.get(loc.hunk_index) {
-                    excerpt_first_line = hunk.new_start as usize;
+        // Search all hunks for the cursor file, not just the first edit's hunk
+        for hunk in &tgt.hunks {
+            if hunk.filename == cursor.file {
+                excerpt_first_line = hunk.new_start as usize;
+                // First try to collect deletions and context (what exists before edits)
+                for line in &hunk.lines {
+                    match line {
+                        PatchLine::Deletion(s) | PatchLine::Context(s) => {
+                            excerpt_lines.push(s.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                // If hunk only has additions (no deletions/context), include all lines
+                // This handles cases like adding to an empty file or section
+                if excerpt_lines.is_empty() {
                     for line in &hunk.lines {
                         match line {
-                            PatchLine::Deletion(s) | PatchLine::Context(s) => {
+                            PatchLine::Addition(s)
+                            | PatchLine::Deletion(s)
+                            | PatchLine::Context(s) => {
                                 excerpt_lines.push(s.clone());
                             }
                             _ => {}
                         }
                     }
+                }
+                if !excerpt_lines.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Also search source patch hunks if still not found (for fallback cursor case)
+    if excerpt_lines.is_empty() {
+        for hunk in &src.hunks {
+            if hunk.filename == cursor.file {
+                excerpt_first_line = hunk.new_start as usize;
+                for line in &hunk.lines {
+                    match line {
+                        PatchLine::Addition(s) | PatchLine::Context(s) => {
+                            excerpt_lines.push(s.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                if !excerpt_lines.is_empty() {
+                    break;
                 }
             }
         }
@@ -910,6 +976,16 @@ pub fn get_cursor_excerpt(
         let line_num = excerpt_first_line + i;
         if line_num == cursor.line {
             let col = cursor.column.min(line.len());
+            // Ensure we split at a valid UTF-8 character boundary
+            let col = if line.is_char_boundary(col) {
+                col
+            } else {
+                // Find the nearest valid character boundary
+                (0..=col)
+                    .rev()
+                    .find(|&i| line.is_char_boundary(i))
+                    .unwrap_or(0)
+            };
             let (before, after) = line.split_at(col);
             *line = format!("{}<|user_cursor|>{}", before, after);
             break;
@@ -1511,5 +1587,37 @@ index 123..456 789
             found_partial,
             "At least one seed should produce a partial intermediate state"
         );
+    }
+
+    #[test]
+    fn test_cursor_excerpt_with_multibyte_utf8() {
+        // Test that cursor excerpt handles multi-byte UTF-8 characters correctly
+        // The Chinese character '第' is 3 bytes (0..3)
+        let cursor = CursorPosition {
+            file: "test.md".to_string(),
+            line: 1,
+            column: 1, // Byte index 1 is inside '第' (bytes 0..3)
+        };
+
+        let source_patch = r#"--- a/test.md
++++ b/test.md
+@@ -1,1 +1,1 @@
++第 14 章 Flask 工作原理与机制解析**
+"#;
+
+        let target_patch = "";
+
+        // This should not panic even though column=1 is not a char boundary
+        let result = get_cursor_excerpt(&cursor, source_patch, target_patch);
+
+        // The function should handle the invalid byte index gracefully
+        if let Some(excerpt) = result {
+            assert!(
+                excerpt.contains("<|user_cursor|>"),
+                "Cursor excerpt should contain marker"
+            );
+            // The marker should be placed at a valid character boundary
+            // (either at the start or after '第')
+        }
     }
 }
