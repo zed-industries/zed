@@ -1645,10 +1645,13 @@ impl EditPredictionStore {
             && self.can_collect_events(&inputs.events);
 
         if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
+            let events_for_capture =
+                self.edit_history_for_project_with_pause_split_last_event(&project, cx);
             if let Some(example_task) = capture_example::capture_example(
                 project.clone(),
                 active_buffer.clone(),
                 position,
+                events_for_capture,
                 cx,
             ) {
                 cx.spawn(async move |_this, _cx| {
