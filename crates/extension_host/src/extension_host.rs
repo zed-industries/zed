@@ -1555,7 +1555,7 @@ impl ExtensionStore {
                 let config = fs
                     .load(&language_config_path)
                     .await
-                    .with_context(|| format!("language config {language_config_path:?}"))?;
+                    .with_context(|| format!("loading language config from {language_config_path:?}"))?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
                 let relative_path = relative_path.to_path_buf();
