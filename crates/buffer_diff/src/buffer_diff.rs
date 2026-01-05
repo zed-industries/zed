@@ -1148,8 +1148,7 @@ impl BufferDiff {
             None,
             cx,
         ));
-        let task = this.set_snapshot(inner, &buffer, cx);
-        executor.block(task);
+        this.set_snapshot(inner, &buffer, cx).detach();
         this
     }
 
@@ -1459,10 +1458,10 @@ impl BufferDiff {
                 return;
             };
             let state = state.await;
-            let task = this
+            if let Some(task) = this
                 .update(cx, |this, cx| this.set_snapshot(state, &buffer, cx))
-                .log_err();
-            if let Some(task) = task {
+                .log_err()
+            {
                 task.await;
             }
             drop(complete_on_drop)
@@ -1484,8 +1483,7 @@ impl BufferDiff {
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
         let executor = cx.background_executor().clone();
         let snapshot = executor.block(fut);
-        let task = self.set_snapshot(snapshot, &buffer, cx);
-        executor.block(task);
+        self.set_snapshot(snapshot, &buffer, cx).detach();
     }
 
     pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
@@ -2598,6 +2596,7 @@ mod tests {
         let diff = cx.new(|cx| {
             BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
         });
+        cx.run_until_parked();
         let (tx, rx) = mpsc::channel();
         let subscription =
             cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));

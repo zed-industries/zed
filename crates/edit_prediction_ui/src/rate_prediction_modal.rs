@@ -335,12 +335,12 @@ impl RatePredictionsModal {
                     );
                     cx.spawn(async move |diff, cx| {
                         let update = update.await;
-                        let task = diff
+                        if let Some(task) = diff
                             .update(cx, |diff, cx| {
                                 diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
                             })
-                            .ok();
-                        if let Some(task) = task {
+                            .ok()
+                        {
                             task.await;
                         }
                     })
