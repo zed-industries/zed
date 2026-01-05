@@ -559,4 +559,33 @@ mod tests {
         let expected_url = "https://github.com/zed-industries/nonexistent/blob/3ef1539900037dd3601be7149b2b39ed6d0ce3db/app/blog/%5Bslug%5D/page.tsx#L8";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
+
+    #[test]
+    fn test_build_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let github = Github::public_instance();
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://github.com/zed-industries/zed/pull/new/feature%2Fnew-feature"
+        );
+
+        let base_url = Url::parse("https://github.zed.com").unwrap();
+        let github = Github::new("GitHub Self-Hosted", base_url);
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://github.zed.com/zed-industries/zed/pull/new/feature%2Fnew-feature"
+        );
+    }
 }
