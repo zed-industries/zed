@@ -170,7 +170,8 @@ pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()
         let mut json_path = child_path.clone();
         json_path.set_extension("json");
         let Ok(metadata) = smol::fs::read(&json_path)
-            .await.map_err(|e| anyhow::anyhow!(e))
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
             .and_then(|data| serde_json::from_slice(&data).map_err(|e| anyhow::anyhow!(e)))
         else {
             continue;
