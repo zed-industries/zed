@@ -672,7 +672,7 @@ pub fn imitate_human_edits(
     }
 
     // Build new source patch with the intermediate line
-    let mut new_src_patch = src_patch.clone();
+    let mut new_src_patch = src_patch;
     if is_replacement {
         // For replacements, insert after the deletion line
         let src_loc = src_edit_loc.as_ref().unwrap();
@@ -721,7 +721,7 @@ pub fn imitate_human_edits(
     }
 
     // Build new target patch with the intermediate line as deletion
-    let mut new_tgt_patch = tgt_patch.clone();
+    let mut new_tgt_patch = tgt_patch;
     if let Some(hunk) = new_tgt_patch.hunks.get_mut(tgt_edit_loc.hunk_index) {
         hunk.lines.insert(
             tgt_edit_loc.line_index_within_hunk,

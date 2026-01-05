@@ -84,9 +84,7 @@ pub fn reorder_edits(patch: &Patch, edits_order: Vec<BTreeSet<usize>>) -> Patch 
         let order = patch_edits_order
             .iter()
             .map(|&i| {
-                indexes_map[&i].expect(&format!(
-                    "Edit index {i} has been already used. Perhaps your spec contains duplicates"
-                ))
+                indexes_map[&i].unwrap_or_else(|| panic!("Edit index {i} has been already used. Perhaps your spec contains duplicates"))
             })
             .collect::<BTreeSet<_>>();
 
@@ -186,26 +184,18 @@ impl Patch {
                 }
                 hunk = Hunk::from_header(line, &current_file, is_filename_inherited);
                 is_filename_inherited = true;
-            } else if line.starts_with("--- ") {
+            } else if let Some(path) = line.strip_prefix("--- ") {
                 is_filename_inherited = false;
-                current_file = line[4..].trim().into();
-                current_file = current_file
-                    .strip_prefix("a/")
-                    .unwrap_or(&current_file)
-                    .into();
-            } else if line.starts_with("+++ ") {
+                current_file = path.trim().strip_prefix("a/").unwrap_or(path).into();
+            } else if let Some(path) = line.strip_prefix("+++ ") {
                 is_filename_inherited = false;
-                current_file = line[4..].trim().into();
-                current_file = current_file
-                    .strip_prefix("b/")
-                    .unwrap_or(&current_file)
-                    .into();
-            } else if line.starts_with("+") {
-                hunk.lines.push(PatchLine::Addition(line[1..].to_string()));
-            } else if line.starts_with("-") {
-                hunk.lines.push(PatchLine::Deletion(line[1..].to_string()));
-            } else if line.starts_with(" ") {
-                hunk.lines.push(PatchLine::Context(line[1..].to_string()));
+                current_file = path.trim().strip_prefix("b/").unwrap_or(path).into();
+            } else if let Some(line) = line.strip_prefix("+") {
+                hunk.lines.push(PatchLine::Addition(line.to_string()));
+            } else if let Some(line) = line.strip_prefix("-") {
+                hunk.lines.push(PatchLine::Deletion(line.to_string()));
+            } else if let Some(line) = line.strip_prefix(" ") {
+                hunk.lines.push(PatchLine::Context(line.to_string()));
             } else {
                 hunk.lines.push(PatchLine::Garbage(line.to_string()));
             }
@@ -332,10 +322,7 @@ impl ToString for Hunk {
         let lines = self
             .lines
             .iter()
-            .map(|line| match line {
-                // PatchLine::Garbage(_) => String::new(),
-                _ => line.to_string() + "\n",
-            })
+            .map(|line| line.to_string() + "\n")
             .collect::<Vec<String>>()
             .join("");
         format!("{header}\n{lines}")
@@ -433,12 +420,12 @@ pub enum PatchLine {
 
 impl PatchLine {
     pub fn parse(line: &str) -> Self {
-        if line.starts_with("+") {
-            Self::Addition(line[1..].to_string())
-        } else if line.starts_with("-") {
-            Self::Deletion(line[1..].to_string())
-        } else if line.starts_with(" ") {
-            Self::Context(line[1..].to_string())
+        if let Some(line) = line.strip_prefix("+") {
+            Self::Addition(line.to_string())
+        } else if let Some(line) = line.strip_prefix("-") {
+            Self::Deletion(line.to_string())
+        } else if let Some(line) = line.strip_prefix(" ") {
+            Self::Context(line.to_string())
         } else {
             Self::Garbage(line.to_string())
         }
@@ -459,7 +446,7 @@ impl ToString for PatchLine {
             .into(),
             PatchLine::FileStartMinus(filename) => format!("--- {}", filename),
             PatchLine::FileStartPlus(filename) => format!("+++ {}", filename),
-            PatchLine::Garbage(line) => format!("{}", line),
+            PatchLine::Garbage(line) => line.to_string(),
         }
     }
 }
