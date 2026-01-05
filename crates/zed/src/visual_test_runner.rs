@@ -65,9 +65,8 @@ fn main() {
     // Create test files in the real filesystem
     create_test_files(&project_path);
 
-    let project_path_clone = project_path.clone();
-
     let test_result = std::panic::catch_unwind(|| {
+        let project_path = project_path;
         Application::new().run(move |cx| {
             // Initialize settings store first (required by theme and other subsystems)
             let settings_store = SettingsStore::test(cx);
@@ -134,7 +133,7 @@ fn main() {
             let add_worktree_task = workspace_window
                 .update(cx, |workspace, _window, cx| {
                     workspace.project().update(cx, |project, cx| {
-                        project.find_or_create_worktree(&project_path_clone, true, cx)
+                        project.find_or_create_worktree(&project_path, true, cx)
                     })
                 })
                 .expect("Failed to update workspace");
@@ -206,7 +205,7 @@ fn main() {
                                 let rel_path: std::sync::Arc<util::rel_path::RelPath> =
                                     util::rel_path::rel_path("src/main.rs").into();
                                 let project_path: project::ProjectPath =
-                                    (worktree_id, rel_path.clone()).into();
+                                    (worktree_id, rel_path).into();
                                 Some(workspace.open_path(project_path, None, true, window, cx))
                             } else {
                                 None
