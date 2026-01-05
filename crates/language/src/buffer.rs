@@ -1771,7 +1771,7 @@ impl Buffer {
                 language.clone(),
                 sync_parse_timeout,
             ) {
-                self.did_finish_parsing(syntax_snapshot, cx);
+                self.did_finish_parsing(syntax_snapshot, Duration::from_millis(300), cx);
                 self.reparse = None;
                 return;
             }
@@ -1803,7 +1803,7 @@ impl Buffer {
                 let parse_again = this.version.changed_since(&parsed_version)
                     || language_registry_changed()
                     || grammar_changed();
-                this.did_finish_parsing(new_syntax_map, cx);
+                this.did_finish_parsing(new_syntax_map, Duration::ZERO, cx);
                 this.reparse = None;
                 if parse_again {
                     this.reparse(cx, false);
@@ -1813,11 +1813,16 @@ impl Buffer {
         }));
     }
 
-    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
-        self.was_changed();
+    fn did_finish_parsing(
+        &mut self,
+        syntax_snapshot: SyntaxSnapshot,
+        block_budget: Duration,
+        cx: &mut Context<Self>,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
-        self.request_autoindent(cx);
+        self.was_changed();
+        self.request_autoindent(cx, block_budget);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
         self.invalidate_tree_sitter_data(self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
@@ -1875,12 +1880,12 @@ impl Buffer {
         }
     }
 
-    fn request_autoindent(&mut self, cx: &mut Context<Self>) {
+    fn request_autoindent(&mut self, cx: &mut Context<Self>, block_budget: Duration) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
-                .block_with_timeout(Duration::from_micros(500), indent_sizes)
+                .block_with_timeout(block_budget, indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
                 Err(indent_sizes) => {
@@ -2782,7 +2787,7 @@ impl Buffer {
             is_block_mode: false,
             ignore_empty_lines: true,
         }));
-        self.request_autoindent(cx);
+        self.request_autoindent(cx, Duration::from_micros(300));
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
