@@ -624,15 +624,14 @@ impl ToolbarItemView for BufferSearchBar {
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
             drop(self.update_matches(true, false, window, cx));
-            // Need to think through this a bit
-            // Copy this over to dismiss
             if self.needs_expand_collapse_option(cx) {
                 return ToolbarItemLocation::PrimaryLeft;
             } else if !self.is_dismissed() {
                 if is_project_search {
                     self.dismiss(&Default::default(), window, cx);
+                } else {
+                    return ToolbarItemLocation::Secondary;
                 }
-                return ToolbarItemLocation::Secondary;
             }
         }
         ToolbarItemLocation::Hidden
@@ -839,19 +838,17 @@ impl BufferSearchBar {
         }
 
         let needs_collapse_expand = self.needs_expand_collapse_option(cx);
-        let mut is_in_project_search = false;
 
         if let Some(active_editor) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = None;
             self.replace_enabled = false;
             active_editor.search_bar_visibility_changed(false, window, cx);
             active_editor.toggle_filtered_search_ranges(None, window, cx);
-            is_in_project_search = active_editor.supported_options(cx).find_in_results;
             let handle = active_editor.item_focus_handle(cx);
             self.focus(&handle, window, cx);
         }
 
-        if needs_collapse_expand && !is_in_project_search {
+        if needs_collapse_expand {
             cx.emit(Event::UpdateLocation);
             cx.emit(ToolbarItemEvent::ChangeLocation(
                 ToolbarItemLocation::PrimaryLeft,
@@ -955,22 +952,20 @@ impl BufferSearchBar {
             .unwrap_or_default()
     }
 
-    // TODO we should clean this up
-    // We only provide an expand/collapse button if we are in a multibuffer and
-    // not doing a project search. In a project search, the button is already rendered.
-    // In a singleton buffer, this option doesn't make sense.
+    // We provide an expand/collapse button if we are in a multibuffer
+    // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
         if let Some(item) = &self.active_searchable_item {
             let buffer_kind = item.buffer_kind(cx);
 
-            if buffer_kind == ItemBufferKind::Multibuffer {
-                let workspace::searchable::SearchOptions {
-                    find_in_results, ..
-                } = item.supported_options(cx);
-                !find_in_results
-            } else {
-                false
+            if buffer_kind == ItemBufferKind::Singleton {
+                return false;
             }
+
+            let workspace::searchable::SearchOptions {
+                find_in_results, ..
+            } = item.supported_options(cx);
+            !find_in_results
         } else {
             false
         }
