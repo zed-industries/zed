@@ -39,6 +39,7 @@ impl Render for Breadcrumbs {
             .h_8()
             .overflow_x_scroll()
             .text_ui(cx);
+
         let Some(active_item) = self.active_item.as_ref() else {
             return element.into_any_element();
         };
@@ -46,9 +47,18 @@ impl Render for Breadcrumbs {
         let Some(segments) = active_item.breadcrumbs(cx.theme(), cx) else {
             return element.into_any_element();
         };
+
         let prefix_element = active_item.breadcrumb_prefix(window, cx);
-        render_breadcrumb_text(segments, prefix_element, active_item.as_ref(), window, cx)
-            .into_any_element()
+
+        render_breadcrumb_text(
+            segments,
+            prefix_element,
+            active_item.as_ref(),
+            false,
+            window,
+            cx,
+        )
+        .into_any_element()
     }
 }
 

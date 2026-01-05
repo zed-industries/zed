@@ -4106,6 +4106,7 @@ impl EditorElement {
                                             breadcrumbs,
                                             None,
                                             editor_handle,
+                                            true,
                                             window,
                                             cx,
                                         ))
@@ -7904,12 +7905,13 @@ pub fn render_breadcrumb_text(
     mut segments: Vec<BreadcrumbText>,
     prefix: Option<gpui::AnyElement>,
     active_item: &dyn ItemHandle,
+    multibuffer_header: bool,
     window: &mut Window,
     cx: &App,
 ) -> impl IntoElement {
     const MAX_SEGMENTS: usize = 12;
 
-    let element = h_flex().id("breadcrumb-container").flex_grow().text_ui(cx);
+    let element = h_flex().flex_grow().text_ui(cx);
 
     let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
     let suffix_start_ix = cmp::max(
@@ -7950,6 +7952,7 @@ pub fn render_breadcrumb_text(
             .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
             .into_any()
     });
+
     let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
         Label::new("›").color(Color::Placeholder).into_any_element()
     });
@@ -7962,43 +7965,48 @@ pub fn render_breadcrumb_text(
         breadcrumbs_stack
     };
 
-    match active_item
+    let editor = active_item
         .downcast::<Editor>()
-        .map(|editor| editor.downgrade())
-    {
-        Some(editor) => element.child(
-            ButtonLike::new("toggle outline view")
-                .child(breadcrumbs)
-                .style(ButtonStyle::Transparent)
-                .on_click({
-                    let editor = editor.clone();
-                    move |_, window, cx| {
-                        if let Some((editor, callback)) = editor
-                            .upgrade()
-                            .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                        {
-                            callback(editor.to_any_view(), window, cx);
-                        }
-                    }
-                })
-                .tooltip(move |_window, cx| {
-                    if let Some(editor) = editor.upgrade() {
-                        let focus_handle = editor.read(cx).focus_handle(cx);
-                        Tooltip::for_action_in(
-                            "Show Symbol Outline",
-                            &zed_actions::outline::ToggleOutline,
-                            &focus_handle,
-                            cx,
-                        )
-                    } else {
-                        Tooltip::for_action(
-                            "Show Symbol Outline",
-                            &zed_actions::outline::ToggleOutline,
-                            cx,
-                        )
-                    }
-                }),
-        ),
+        .map(|editor| editor.downgrade());
+
+    match editor {
+        Some(editor) => element
+            .when(multibuffer_header, |this| {
+                this.pl_1()
+                    .ml_1()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border.opacity(0.6))
+            })
+            .child(
+                ButtonLike::new("toggle outline view")
+                    .child(breadcrumbs)
+                    .when(multibuffer_header, |this| {
+                        this.style(ButtonStyle::Transparent)
+                    })
+                    .when(!multibuffer_header, |this| {
+                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+
+                        this.tooltip(move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_, window, cx| {
+                                if let Some((editor, callback)) = editor
+                                    .upgrade()
+                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                                {
+                                    callback(editor.to_any_view(), window, cx);
+                                }
+                            }
+                        })
+                    }),
+            ),
         None => element
             // Match the height and padding of the `ButtonLike` in the other arm.
             .h(rems_from_px(22.))
