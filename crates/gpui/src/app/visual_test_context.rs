@@ -1,5 +1,3 @@
-#[cfg(feature = "screen-capture")]
-use crate::capture_window_screenshot;
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds,
     ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
@@ -8,7 +6,6 @@ use crate::{
     app::GpuiMode, current_platform,
 };
 use anyhow::anyhow;
-#[cfg(feature = "screen-capture")]
 use image::RgbaImage;
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
@@ -342,35 +339,13 @@ impl VisualTestAppContext {
         }
     }
 
-    /// Returns the native window ID (CGWindowID on macOS) for a window.
-    /// This can be used to capture screenshots of specific windows.
-    #[cfg(feature = "screen-capture")]
-    pub fn native_window_id(&mut self, window: AnyWindowHandle) -> Result<u32> {
-        self.update_window(window, |_, window, _| {
-            window
-                .native_window_id()
-                .ok_or_else(|| anyhow!("Window does not have a native window ID"))
-        })?
-    }
-
-    /// Captures a screenshot of the specified window.
+    /// Captures a screenshot of the specified window using direct texture capture.
     ///
-    /// This uses ScreenCaptureKit to capture the window contents, even if the window
-    /// is positioned off-screen (e.g., at -10000, -10000 for invisible rendering).
-    ///
-    /// # Arguments
-    /// * `window` - The window handle to capture
-    ///
-    /// # Returns
-    /// An `RgbaImage` containing the captured window contents, or an error if capture failed.
-    #[cfg(feature = "screen-capture")]
-    pub async fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
-        let window_id = self.native_window_id(window)?;
-
-        let rx = capture_window_screenshot(window_id);
-
-        rx.await
-            .map_err(|_| anyhow!("Screenshot capture was cancelled"))?
+    /// This renders the scene to a Metal texture and reads the pixels directly,
+    /// which does not require the window to be visible on screen.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
+        self.update_window(window, |_, window, _cx| window.render_to_image())?
     }
 
     /// Waits for animations to complete by waiting a couple of frames.

@@ -126,7 +126,7 @@ pub async fn capture_and_save_screenshot(
 ) -> Result<RgbaImage> {
     wait_for_ui_stabilization(cx).await;
 
-    let screenshot = cx.capture_screenshot(window).await?;
+    let screenshot = cx.capture_screenshot(window)?;
 
     if let Some(path) = output_path {
         if let Some(parent) = path.parent() {
@@ -492,7 +492,7 @@ mod tests {
         smol::block_on(async {
             wait_for_ui_stabilization(&cx).await;
 
-            let screenshot_result = cx.capture_screenshot(workspace.into()).await;
+            let screenshot_result = cx.capture_screenshot(workspace.into());
 
             match screenshot_result {
                 Ok(screenshot) => {
