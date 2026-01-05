@@ -7970,7 +7970,14 @@ pub fn render_breadcrumb_text(
         Label::new("›").color(Color::Placeholder).into_any_element()
     });
 
-    let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
+    let breadcrumbs_stack = h_flex()
+        .gap_1()
+        .when(multibuffer_header, |this| {
+            this.pl_2()
+                .border_l_1()
+                .border_color(cx.theme().colors().border.opacity(0.6))
+        })
+        .children(breadcrumbs);
 
     let breadcrumbs = if let Some(prefix) = prefix {
         h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
@@ -7983,43 +7990,36 @@ pub fn render_breadcrumb_text(
         .map(|editor| editor.downgrade());
 
     match editor {
-        Some(editor) => element
-            .when(multibuffer_header, |this| {
-                this.pl_1()
-                    .ml_1()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border.opacity(0.6))
-            })
-            .child(
-                ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs)
-                    .when(multibuffer_header, |this| {
-                        this.style(ButtonStyle::Transparent)
-                    })
-                    .when(!multibuffer_header, |this| {
-                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+        Some(editor) => element.child(
+            ButtonLike::new("toggle outline view")
+                .child(breadcrumbs)
+                .when(multibuffer_header, |this| {
+                    this.style(ButtonStyle::Transparent)
+                })
+                .when(!multibuffer_header, |this| {
+                    let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
 
-                        this.tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
-                                &focus_handle,
-                                cx,
-                            )
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_, window, cx| {
-                                if let Some((editor, callback)) = editor
-                                    .upgrade()
-                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                                {
-                                    callback(editor.to_any_view(), window, cx);
-                                }
+                    this.tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Show Symbol Outline",
+                            &zed_actions::outline::ToggleOutline,
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_, window, cx| {
+                            if let Some((editor, callback)) = editor
+                                .upgrade()
+                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                            {
+                                callback(editor.to_any_view(), window, cx);
                             }
-                        })
-                    }),
-            ),
+                        }
+                    })
+                }),
+        ),
         None => element
             // Match the height and padding of the `ButtonLike` in the other arm.
             .h(rems_from_px(22.))
