@@ -12,12 +12,6 @@ impl FeatureFlag for PanicFeatureFlag {
     const NAME: &'static str = "panic";
 }
 
-pub struct InlineAssistantUseToolFeatureFlag;
-
-impl FeatureFlag for InlineAssistantUseToolFeatureFlag {
-    const NAME: &'static str = "inline-assistant-use-tool";
-}
-
 pub struct AgentV2FeatureFlag;
 
 impl FeatureFlag for AgentV2FeatureFlag {
