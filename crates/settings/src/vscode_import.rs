@@ -302,6 +302,7 @@ impl VsCodeSettings {
             use_smartcase_search: self.read_bool("search.smartCase"),
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
+            completion_detail_alignment: None,
         }
     }
 
@@ -906,6 +907,21 @@ impl VsCodeSettings {
                 .filter(|r| !r.is_empty()),
             private_files: None,
             hidden_files: None,
+            read_only_files: self
+                .read_value("files.readonlyExclude")
+                .and_then(|v| v.as_object())
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|(k, v)| {
+                            if v.as_bool().unwrap_or(false) {
+                                Some(k.to_owned())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .filter(|r| !r.is_empty()),
         }
     }
 }
