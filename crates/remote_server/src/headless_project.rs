@@ -776,7 +776,7 @@ impl HeadlessProject {
     async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
