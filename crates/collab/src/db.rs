@@ -385,7 +385,6 @@ pub struct NewUserParams {
 #[derive(Debug)]
 pub struct NewUserResult {
     pub user_id: UserId,
-    pub metrics_id: String,
     pub inviting_user_id: Option<UserId>,
     pub signup_device_id: Option<String>,
 }

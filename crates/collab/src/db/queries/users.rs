@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use chrono::NaiveDateTime;
 
 use super::*;
@@ -20,7 +19,6 @@ impl Database {
                 github_login: ActiveValue::set(params.github_login.clone()),
                 github_user_id: ActiveValue::set(params.github_user_id),
                 admin: ActiveValue::set(admin),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
             .on_conflict(
@@ -37,7 +35,6 @@ impl Database {
 
             Ok(NewUserResult {
                 user_id: user.id,
-                metrics_id: user.metrics_id.to_string(),
                 signup_device_id: None,
                 inviting_user_id: None,
             })
@@ -136,7 +133,6 @@ impl Database {
                 github_user_id: ActiveValue::set(github_user_id),
                 github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
                 admin: ActiveValue::set(false),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
             .exec_with_returning(tx)
@@ -194,26 +190,6 @@ impl Database {
                 .offset(page as u64 * limit as u64)
                 .all(&*tx)
                 .await?)
-        })
-        .await
-    }
-
-    /// Returns the metrics id for the user.
-    pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryAs {
-            MetricsId,
-        }
-
-        self.transaction(|tx| async move {
-            let metrics_id: Uuid = user::Entity::find_by_id(id)
-                .select_only()
-                .column(user::Column::MetricsId)
-                .into_values::<_, QueryAs>()
-                .one(&*tx)
-                .await?
-                .context("could not find user")?;
-            Ok(metrics_id.to_string())
         })
         .await
     }
