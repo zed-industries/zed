@@ -29,3 +29,13 @@ pub struct AcpBetaFeatureFlag;
 impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
 }
+
+pub struct SubagentsFeatureFlag;
+
+impl FeatureFlag for SubagentsFeatureFlag {
+    const NAME: &'static str = "subagents";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}

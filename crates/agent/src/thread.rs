@@ -2,9 +2,10 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ThinkingTool, WebSearchTool,
 };
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 
@@ -57,6 +58,44 @@ use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
+pub const MAX_SUBAGENT_DEPTH: u8 = 4;
+
+/// Context passed to a subagent thread for lifecycle management
+#[derive(Clone)]
+pub struct SubagentContext {
+    /// ID of the parent thread
+    pub parent_thread_id: acp::SessionId,
+
+    /// ID of the tool call that spawned this subagent
+    pub tool_use_id: LanguageModelToolUseId,
+
+    /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
+    pub depth: u8,
+
+    /// Prompt to send when subagent completes successfully
+    pub summary_prompt: String,
+
+    /// Prompt to send when context is running low (≤25% remaining)
+    pub context_low_prompt: String,
+
+    /// Channel to send updates to parent (token usage, status)
+    pub status_tx: mpsc::UnboundedSender<SubagentStatusUpdate>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SubagentStatusUpdate {
+    /// Token usage updated
+    TokenUsage { used: u64, max: u64 },
+    /// Subagent completed with summary
+    Completed { summary: String },
+    /// Subagent encountered an error
+    Error {
+        message: String,
+        partial_transcript: Option<String>,
+    },
+    /// Subagent was canceled
+    Canceled,
+}
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -622,6 +661,8 @@ pub struct Thread {
     pub(crate) action_log: Entity<ActionLog>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
+    /// If this is a subagent thread, contains context about the parent
+    subagent_context: Option<SubagentContext>,
 }
 
 impl Thread {
@@ -678,6 +719,53 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            subagent_context: None,
+        }
+    }
+
+    pub fn new_subagent(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Arc<dyn LanguageModel>,
+        subagent_context: SubagentContext,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
+        let (prompt_capabilities_tx, prompt_capabilities_rx) =
+            watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+        Self {
+            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
+            prompt_id: PromptId::new(),
+            updated_at: Utc::now(),
+            title: None,
+            pending_title_generation: None,
+            pending_summary_generation: None,
+            summary: None,
+            messages: Vec::new(),
+            user_store: project.read(cx).user_store(),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
+            running_turn: None,
+            pending_message: None,
+            tools: BTreeMap::default(),
+            tool_use_limit_reached: false,
+            request_token_usage: HashMap::default(),
+            cumulative_token_usage: TokenUsage::default(),
+            initial_project_snapshot: Task::ready(None).shared(),
+            context_server_registry,
+            profile_id,
+            project_context,
+            templates,
+            model: Some(model),
+            summarization_model: None,
+            prompt_capabilities_tx,
+            prompt_capabilities_rx,
+            project,
+            action_log,
+            file_read_times: HashMap::default(),
+            subagent_context: Some(subagent_context),
         }
     }
 
@@ -866,6 +954,7 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
+            subagent_context: None,
         }
     }
 
@@ -969,7 +1058,6 @@ impl Thread {
         cx.notify()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1014,6 +1102,17 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+
+        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+            self.add_tool(SubagentTool::new(
+                cx.weak_entity(),
+                self.project.clone(),
+                self.project_context.clone(),
+                self.context_server_registry.clone(),
+                self.templates.clone(),
+                self.depth(),
+            ));
+        }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -2051,6 +2150,65 @@ impl Thread {
             .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_registered_tool(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        self.subagent_context.is_some()
+    }
+
+    pub fn depth(&self) -> u8 {
+        self.subagent_context
+            .as_ref()
+            .map(|c| c.depth)
+            .unwrap_or(0)
+    }
+
+    pub fn is_turn_complete(&self) -> bool {
+        self.running_turn.is_none()
+    }
+
+    pub fn submit_user_message(
+        &mut self,
+        content: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let content = content.into();
+        self.messages.push(Message::User(UserMessage {
+            id: UserMessageId::new(),
+            content: vec![UserMessageContent::Text(content)],
+        }));
+        cx.notify();
+        self.send_existing(cx)
+    }
+
+    pub fn interrupt_for_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let context = self
+            .subagent_context
+            .as_ref()
+            .context("Not a subagent thread")?;
+        let prompt = context.context_low_prompt.clone();
+        self.cancel(cx);
+        self.submit_user_message(prompt, cx)
+    }
+
+    pub fn request_final_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let context = self
+            .subagent_context
+            .as_ref()
+            .context("Not a subagent thread")?;
+        let prompt = context.summary_prompt.clone();
+        self.submit_user_message(prompt, cx)
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -2518,6 +2676,10 @@ impl ToolCallEventStream {
             stream,
             fs,
         }
+    }
+
+    pub fn tool_use_id(&self) -> &LanguageModelToolUseId {
+        &self.tool_use_id
     }
 
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
