@@ -22,6 +22,7 @@ struct ProgressInner {
     total_steps: usize,
     failed_examples: usize,
     last_line_is_logging: bool,
+    ticker: Option<std::thread::JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -87,6 +88,7 @@ static LOGGER: ProgressLogger = ProgressLogger;
 
 const MARGIN: usize = 4;
 const MAX_STATUS_LINES: usize = 10;
+const STATUS_TICK_INTERVAL: Duration = Duration::from_millis(300);
 
 impl Progress {
     /// Returns the global Progress instance, initializing it if necessary.
@@ -104,6 +106,7 @@ impl Progress {
                         total_steps: 0,
                         failed_examples: 0,
                         last_line_is_logging: false,
+                        ticker: None,
                     }),
                 });
                 let _ = log::set_logger(&LOGGER);
@@ -155,6 +158,23 @@ impl Progress {
                 info: None,
             },
         );
+
+        if inner.is_tty && inner.ticker.is_none() {
+            let progress = self.clone();
+            inner.ticker = Some(std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(STATUS_TICK_INTERVAL);
+
+                    let mut inner = progress.inner.lock().unwrap();
+                    if inner.in_progress.is_empty() {
+                        break;
+                    }
+
+                    Progress::clear_status_lines(&mut inner);
+                    Progress::print_status_lines(&mut inner);
+                }
+            }));
+        }
 
         Self::print_status_lines(&mut inner);
 
@@ -351,6 +371,15 @@ impl Progress {
     }
 
     pub fn finalize(&self) {
+        let ticker = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.ticker.take()
+        };
+
+        if let Some(ticker) = ticker {
+            let _ = ticker.join();
+        }
+
         let mut inner = self.inner.lock().unwrap();
         Self::clear_status_lines(&mut inner);
 
