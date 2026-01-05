@@ -205,6 +205,7 @@ impl OpenAiLanguageModel {
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
+        let is_codex = self.model.is_codex_model();
 
         let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
@@ -224,6 +225,7 @@ impl OpenAiLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                is_codex,
             );
             let response = request.await?;
             Ok(response)
@@ -328,10 +330,16 @@ impl LanguageModel for OpenAiLanguageModel {
             self.max_output_tokens(),
             self.model.reasoning_effort(),
         );
+        let is_codex = self.model.is_codex_model();
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            if is_codex {
+                let mapper = OpenAiResponsesEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            } else {
+                let mapper = OpenAiEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
         }
         .boxed()
     }
@@ -606,6 +614,122 @@ struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+}
+
+pub struct OpenAiResponsesEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
+
+impl OpenAiResponsesEventMapper {
+    pub fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        let Some(choice) = event.choices.first() else {
+            return events;
+        };
+
+        if let Some(delta) = choice.delta.as_ref() {
+            if let Some(content) = delta.content.clone() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
+
+            if let Some(tool_calls) = delta.tool_calls.as_ref() {
+                for tool_call in tool_calls {
+                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                    if let Some(tool_id) = tool_call.id.clone() {
+                        entry.id = tool_id;
+                    }
+
+                    if let Some(function) = tool_call.function.as_ref() {
+                        if let Some(name) = function.name.clone() {
+                            entry.name = name;
+                        }
+
+                        if let Some(arguments) = function.arguments.clone() {
+                            entry.arguments.push_str(&arguments);
+                        }
+                    }
+                }
+            }
+        }
+
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::Value::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.clone().into(),
+                                name: tool_call.name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )),
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.into(),
+                            raw_input: tool_call.arguments.clone().into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some("length") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    StopReason::MaxTokens,
+                )));
+            }
+            Some("content_filter") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
+        }
+
+        events
+    }
 }
 
 pub(crate) fn collect_tiktoken_messages(
@@ -895,5 +1019,45 @@ mod tests {
                 .unwrap();
             assert!(count > 0);
         }
+    }
+
+    #[test]
+    fn test_codex_model_detection() {
+        use open_ai::Model;
+
+        // Test that models with "codex" in the name are detected as codex models
+        let codex_model = Model::Custom {
+            name: "gpt-5.1-codex-max".to_string(),
+            display_name: Some("GPT-5.1 Codex Max".to_string()),
+            max_tokens: 128_000,
+            max_output_tokens: Some(32_768),
+            max_completion_tokens: None,
+            reasoning_effort: None,
+        };
+        assert!(codex_model.is_codex_model());
+
+        let another_codex = Model::Custom {
+            name: "gpt-5-codex".to_string(),
+            display_name: None,
+            max_tokens: 100_000,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            reasoning_effort: None,
+        };
+        assert!(another_codex.is_codex_model());
+
+        // Test that models without "codex" in the name are not detected as codex models
+        let regular_model = Model::FourOmni;
+        assert!(!regular_model.is_codex_model());
+
+        let custom_regular = Model::Custom {
+            name: "gpt-5-turbo".to_string(),
+            display_name: None,
+            max_tokens: 128_000,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            reasoning_effort: None,
+        };
+        assert!(!custom_regular.is_codex_model());
     }
 }

@@ -225,6 +225,7 @@ impl XAiLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                false, // xAI doesn't use codex models
             );
             let response = request.await?;
             Ok(response)
