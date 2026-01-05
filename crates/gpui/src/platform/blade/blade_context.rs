@@ -35,6 +35,7 @@ impl BladeContext {
         Ok(Self { gpu })
     }
 
+    #[allow(dead_code)]
     pub fn supports_dual_source_blending(&self) -> bool {
         self.gpu.capabilities().dual_source_blending
     }
