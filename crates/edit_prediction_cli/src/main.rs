@@ -70,10 +70,6 @@ Inputs can be file paths or special specifiers:
       Required environment variables to connect to Snowflake:
           EP_SNOWFLAKE_API_KEY
           EP_SNOWFLAKE_BASE_URL
-          EP_SNOWFLAKE_EVENTS_TABLE
-          EP_SNOWFLAKE_DATABASE
-          EP_SNOWFLAKE_SCHEMA
-          EP_SNOWFLAKE_WAREHOUSE
 
       Optional:
           EP_SNOWFLAKE_ROLE

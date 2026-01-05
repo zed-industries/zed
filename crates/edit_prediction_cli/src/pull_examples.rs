@@ -37,15 +37,7 @@ pub async fn fetch_captured_examples_after(
     let base_url = std::env::var("EP_SNOWFLAKE_BASE_URL").context(
         "missing required environment variable EP_SNOWFLAKE_BASE_URL (e.g. https://<account>.snowflakecomputing.com)",
     )?;
-    let database = std::env::var("EP_SNOWFLAKE_DATABASE")
-        .context("missing required environment variable EP_SNOWFLAKE_DATABASE")?;
-    let schema = std::env::var("EP_SNOWFLAKE_SCHEMA")
-        .context("missing required environment variable EP_SNOWFLAKE_SCHEMA")?;
-    let warehouse = std::env::var("EP_SNOWFLAKE_WAREHOUSE")
-        .context("missing required environment variable EP_SNOWFLAKE_WAREHOUSE")?;
     let role = std::env::var("EP_SNOWFLAKE_ROLE").ok();
-    let events_table = std::env::var("EP_SNOWFLAKE_EVENTS_TABLE")
-        .context("missing required environment variable EP_SNOWFLAKE_EVENTS_TABLE")?;
 
     let mut all_examples = Vec::new();
 
@@ -54,25 +46,22 @@ pub async fn fetch_captured_examples_after(
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
-        let statement = format!(
-            indoc! {r#"
-                SELECT
-                  event_properties:example AS example
-                FROM {}
-                WHERE event_type = ?
-                  AND time > TRY_TO_TIMESTAMP_NTZ(?)
-                ORDER BY time ASC
-                LIMIT ?
-            "#},
-            events_table
-        );
+        let statement = indoc! {r#"
+            SELECT
+                event_properties:example AS example
+            FROM events
+            WHERE event_type = ?
+                AND time > TRY_TO_TIMESTAMP_NTZ(?)
+            ORDER BY time ASC
+            LIMIT ?
+        "#};
 
         let request = json!({
             "statement": statement,
             "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
-            "database": database,
-            "schema": schema,
-            "warehouse": warehouse,
+            "database": "EVENTS",
+            "schema": "PUBLIC",
+            "warehouse": "DBT",
             "role": role,
             "bindings": {
                 "1": { "type": "TEXT", "value": EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT },
