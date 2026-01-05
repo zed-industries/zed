@@ -1701,9 +1701,8 @@ impl SearchableItem for Editor {
                         .map(|replacement| (m.clone(), Arc::from(&*replacement)))
                 })
                 .collect();
-        } else if let Some(replacement) = query.replacement() {
-            let edit: Arc<str> = Arc::from(&*replacement);
-            edits = matches.map(|m| (m.clone(), edit.clone())).collect();
+        } else if let Some(replacement) = query.replacement().map(Arc::<str>::from) {
+            edits = matches.map(|m| (m.clone(), replacement.clone())).collect();
         }
 
         if !edits.is_empty() {
