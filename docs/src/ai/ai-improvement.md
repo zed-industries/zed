@@ -93,6 +93,7 @@ For open source projects where you have opted-in, Zed may store copies of reques
 
 This data includes:
 
+- sampled edit prediction examples (cursor context + recent diffs/edits) for offline evaluation
 - the edit prediction
 - a portion of the buffer content around the cursor
 - a few recent edits

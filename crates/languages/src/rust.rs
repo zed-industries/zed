@@ -2,12 +2,13 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use futures::lock::OwnedMutexGuard;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -513,9 +514,27 @@ impl LspAdapter for RustLspAdapter {
 
     async fn initialization_options_schema(
         self: Arc<Self>,
-        language_server_binary: &LanguageServerBinary,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
-        let mut command = util::command::new_smol_command(&language_server_binary.path);
+        let binary = self
+            .get_language_server_command(
+                delegate.clone(),
+                None,
+                LanguageServerBinaryOptions {
+                    allow_path_lookup: true,
+                    allow_binary_download: false,
+                    pre_release: false,
+                },
+                cached_binary,
+                cx.clone(),
+            )
+            .await
+            .0
+            .ok()?;
+
+        let mut command = util::command::new_smol_command(&binary.path);
         command
             .arg("--print-config-schema")
             .stdout(Stdio::piped())

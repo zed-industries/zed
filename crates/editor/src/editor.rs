@@ -53,8 +53,8 @@ pub(crate) use actions::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
-    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
-    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
+    HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -2680,7 +2680,7 @@ impl Editor {
                     file.full_path(cx)
                         .extension()?
                         .to_string_lossy()
-                        .into_owned(),
+                        .to_lowercase(),
                 )
             }) {
                 key_context.set("extension", extension);
@@ -3356,7 +3356,12 @@ impl Editor {
             {
                 let start_offset = selection_start.to_offset(buffer);
                 let position_matches = start_offset == completion_position.to_offset(buffer);
-                let continue_showing = if position_matches {
+                let continue_showing = if let Some((snap, ..)) =
+                    buffer.point_to_buffer_offset(completion_position)
+                    && !snap.capability.editable()
+                {
+                    false
+                } else if position_matches {
                     if self.snippet_stack.is_empty() {
                         buffer.char_kind_before(start_offset, Some(CharScopeContext::Completion))
                             == Some(CharKind::Word)
@@ -4315,10 +4320,30 @@ impl Editor {
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
+        let mut all_selections_read_only = true;
+        let mut has_adjacent_edits = false;
+        let mut in_adjacent_group = false;
 
-        for (selection, autoclose_region) in
-            self.selections_with_autoclose_regions(selections, &snapshot)
-        {
+        let mut regions = self
+            .selections_with_autoclose_regions(selections, &snapshot)
+            .peekable();
+
+        while let Some((selection, autoclose_region)) = regions.next() {
+            if snapshot
+                .point_to_buffer_point(selection.head())
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
+            {
+                continue;
+            }
+            if snapshot
+                .point_to_buffer_point(selection.tail())
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
+            {
+                // note, ideally we'd clip the tail to the closest writeable region towards the head
+                continue;
+            }
+            all_selections_read_only = false;
+
             if let Some(scope) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
@@ -4564,10 +4589,21 @@ impl Editor {
                 continue;
             }
 
+            let next_is_adjacent = regions
+                .peek()
+                .is_some_and(|(next, _)| selection.end == next.start);
+
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-            let anchor = snapshot.anchor_after(selection.end);
+            let anchor = if in_adjacent_group || next_is_adjacent {
+                // After edits the right bias would shift those anchor to the next visible fragment
+                // but we want to resolve to the previous one
+                snapshot.anchor_before(selection.end)
+            } else {
+                snapshot.anchor_after(selection.end)
+            };
+
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
@@ -4596,8 +4632,16 @@ impl Editor {
 
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
+
+            has_adjacent_edits |= next_is_adjacent;
+            in_adjacent_group = next_is_adjacent;
         }
 
+        if all_selections_read_only {
+            return;
+        }
+
+        drop(regions);
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
@@ -4608,7 +4652,11 @@ impl Editor {
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                if has_adjacent_edits {
+                    buffer.edit_non_coalesce(edits, this.autoindent_mode.clone(), cx);
+                } else {
+                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                }
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
@@ -11065,6 +11113,26 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
+    }
+
+    pub fn toggle_read_only(
+        &mut self,
+        _: &workspace::ToggleReadOnlyFile,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_capability(
+                    match buffer.capability() {
+                        Capability::ReadWrite => Capability::Read,
+                        Capability::Read => Capability::ReadWrite,
+                        Capability::ReadOnly => Capability::ReadOnly,
+                    },
+                    cx,
+                );
+            })
+        }
     }
 
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -20275,6 +20343,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Entity<Self> {
         const MINIMAP_FONT_WEIGHT: gpui::FontWeight = gpui::FontWeight::BLACK;
+        const MINIMAP_FONT_FAMILY: SharedString = SharedString::new_static(".ZedMono");
 
         let mut minimap = Editor::new_internal(
             EditorMode::Minimap {
@@ -20290,6 +20359,7 @@ impl Editor {
         minimap.set_text_style_refinement(TextStyleRefinement {
             font_size: Some(MINIMAP_FONT_SIZE),
             font_weight: Some(MINIMAP_FONT_WEIGHT),
+            font_family: Some(MINIMAP_FONT_FAMILY),
             ..Default::default()
         });
         minimap.update_minimap_configuration(minimap_settings, cx);

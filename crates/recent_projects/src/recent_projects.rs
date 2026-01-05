@@ -350,6 +350,22 @@ impl RecentProjects {
             Self::new(delegate, 34., window, cx)
         })
     }
+
+    pub fn popover(
+        workspace: WeakEntity<Workspace>,
+        create_new_window: bool,
+        focus_handle: FocusHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let delegate =
+                RecentProjectsDelegate::new(workspace, create_new_window, true, focus_handle);
+            let list = Self::new(delegate, 34., window, cx);
+            list.picker.focus_handle(cx).focus(window, cx);
+            list
+        })
+    }
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
