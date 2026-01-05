@@ -12591,7 +12591,6 @@ dependencies = [
  "rpassword",
  "semver",
  "settings",
- "util",
  "watch",
 ]
 

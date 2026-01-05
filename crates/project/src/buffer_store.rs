@@ -1733,8 +1733,14 @@ impl BufferStore {
         else {
             return Ok(proto::Ack {});
         };
+
         for buffer_id in buffer_ids {
-            sender.send(buffer_id).await?;
+            let Ok(_) = sender.send(buffer_id).await else {
+                this.update(&mut cx, |this, _| {
+                    this.project_search_chunks.remove(&handle)
+                })?;
+                return Ok(proto::Ack {});
+            };
         }
         Ok(proto::Ack {})
     }

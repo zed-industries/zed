@@ -20,7 +20,6 @@ remote.workspace = true
 rpassword = "7.4"
 semver.workspace = true
 settings.workspace = true
-util.workspace = true
 watch.workspace = true
 
 [lints]

@@ -808,22 +808,33 @@ impl HeadlessProject {
                 .into_handle(query, cx)
                 .matching_buffers(cx)
             })?;
-            let mut buffer_ids = vec![];
+            let mut batcher = project::project_search::AdaptiveBatcher::new();
             while let Ok(buffer) = results.rx.recv().await {
                 buffer_store
                     .update(cx, |buffer_store, cx| {
                         buffer_store.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                     })?
                     .await?;
-                buffer_ids.push(buffer.read_with(cx, |this, _| this.remote_id().to_proto())?);
+                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto())?;
+                if let Some(buffer_ids) = batcher.push(buffer_id) {
+                    let _ = client
+                        .request(proto::FindSearchCandidatesChunk {
+                            handle: next_project_search_id,
+                            project_id,
+                            variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+                                proto::FindSearchCandidatesMatches { buffer_ids },
+                            )),
+                        })
+                        .await?;
+                }
+            }
+            if let Some(buffer_ids) = batcher.flush() {
                 let _ = client
                     .request(proto::FindSearchCandidatesChunk {
                         handle: next_project_search_id,
                         project_id,
                         variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
-                            proto::FindSearchCandidatesMatches {
-                                buffer_ids: std::mem::take(&mut buffer_ids),
-                            },
+                            proto::FindSearchCandidatesMatches { buffer_ids },
                         )),
                     })
                     .await?;

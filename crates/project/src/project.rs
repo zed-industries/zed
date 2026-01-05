@@ -11,7 +11,7 @@ pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
 pub mod prettier_store;
-mod project_search;
+pub mod project_search;
 pub mod project_settings;
 pub mod search;
 mod task_inventory;
@@ -5068,20 +5068,30 @@ impl Project {
             let results = this.update(cx, |this, cx| {
                 this.search_impl(query, cx).matching_buffers(cx)
             })?;
-            let mut buffer_ids = vec![];
+            let mut batcher = project_search::AdaptiveBatcher::new();
             while let Ok(buffer) = results.rx.recv().await {
-                this.update(cx, |this, cx| {
-                    let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
-                    buffer_ids.push(buffer_id.to_proto());
+                let buffer_id = this.update(cx, |this, cx| {
+                    this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 })?;
+                if let Some(buffer_ids) = batcher.push(buffer_id) {
+                    let _ = client
+                        .request(proto::FindSearchCandidatesChunk {
+                            handle: next_project_search_id,
+                            project_id,
+                            variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+                                proto::FindSearchCandidatesMatches { buffer_ids },
+                            )),
+                        })
+                        .await?;
+                }
+            }
+            if let Some(buffer_ids) = batcher.flush() {
                 let _ = client
                     .request(proto::FindSearchCandidatesChunk {
                         handle: next_project_search_id,
                         project_id,
                         variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
-                            proto::FindSearchCandidatesMatches {
-                                buffer_ids: std::mem::take(&mut buffer_ids),
-                            },
+                            proto::FindSearchCandidatesMatches { buffer_ids },
                         )),
                     })
                     .await?;

@@ -281,14 +281,34 @@ impl Search {
                                         );
                                     })?;
 
-                                    while let Ok(buffer_id) = rx.recv().await {
-                                        let buffer = buffer_store
-                                            .update(cx, |buffer_store, cx| {
-                                                buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                                            })?
-                                            .await?;
-                                        let _ = grab_buffer_snapshot_tx.send(buffer).await;
-                                    }
+                                    let (buffer_tx, buffer_rx) = bounded(24);
+
+                                    let wait_for_remote_buffers = cx.spawn(async move |cx| {
+                                        while let Ok(buffer_id) = rx.recv().await {
+                                            let buffer =
+                                                buffer_store.update(cx, |buffer_store, cx| {
+                                                    buffer_store
+                                                        .wait_for_remote_buffer(buffer_id, cx)
+                                                })?;
+                                            buffer_tx.send(buffer).await?;
+                                        }
+                                        anyhow::Ok(())
+                                    });
+
+                                    let forward_buffers = cx.background_spawn(async move {
+                                        while let Ok(buffer) = buffer_rx.recv().await {
+                                            let _ =
+                                                grab_buffer_snapshot_tx.send(buffer.await?).await;
+                                        }
+                                        anyhow::Ok(())
+                                    });
+                                    let (left, right) = futures::future::join(
+                                        wait_for_remote_buffers,
+                                        forward_buffers,
+                                    )
+                                    .await;
+                                    left?;
+                                    right?;
 
                                     drop(guard);
                                     anyhow::Ok(())
@@ -902,6 +922,66 @@ impl PathInclusionMatcher {
         } else {
             false
         }
+    }
+}
+
+/// Adaptive batcher that starts eager (small batches) and grows batch size
+/// when items arrive quickly, reducing RPC overhead while preserving low latency
+/// for slow streams.
+pub struct AdaptiveBatcher<T> {
+    items: Vec<T>,
+    batch_size: usize,
+    last_send: std::time::Instant,
+    min_send_interval: std::time::Duration,
+    max_batch_size: usize,
+}
+
+impl<T> AdaptiveBatcher<T> {
+    pub fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            batch_size: 1,
+            last_send: std::time::Instant::now(),
+            min_send_interval: std::time::Duration::from_millis(50),
+            max_batch_size: 64,
+        }
+    }
+
+    /// Push an item and return items to send if batch is ready.
+    pub fn push(&mut self, item: T) -> Option<Vec<T>> {
+        self.items.push(item);
+        if self.items.len() >= self.batch_size {
+            Some(self.take())
+        } else {
+            None
+        }
+    }
+
+    /// Take all pending items and adjust batch size based on timing.
+    pub fn take(&mut self) -> Vec<T> {
+        let elapsed = self.last_send.elapsed();
+        if elapsed < self.min_send_interval {
+            self.batch_size = (self.batch_size * 2).min(self.max_batch_size);
+        } else if elapsed > self.min_send_interval * 4 && self.batch_size > 1 {
+            self.batch_size /= 2;
+        }
+        self.last_send = std::time::Instant::now();
+        std::mem::take(&mut self.items)
+    }
+
+    /// Flush remaining items, if any.
+    pub fn flush(&mut self) -> Option<Vec<T>> {
+        if self.items.is_empty() {
+            None
+        } else {
+            Some(self.take())
+        }
+    }
+}
+
+impl<T> Default for AdaptiveBatcher<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
