@@ -1389,19 +1389,17 @@ impl BufferDiff {
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
         let new_state = update.inner;
-        let (mut changed_range, mut base_text_changed_range) = match (
-            dbg!(state.base_text_exists),
-            dbg!(new_state.base_text_exists),
-        ) {
-            (false, false) => (None, None),
-            (true, true) if !update.base_text_changed => {
-                compare_hunks(&new_state.hunks, &old_snapshot.inner.hunks, buffer)
-            }
-            _ => (
-                Some(text::Anchor::min_max_range_for_buffer(self.buffer_id)),
-                Some(0..new_state.base_text.len()),
-            ),
-        };
+        let (mut changed_range, mut base_text_changed_range) =
+            match (state.base_text_exists, new_state.base_text_exists) {
+                (false, false) => (None, None),
+                (true, true) if !update.base_text_changed => {
+                    compare_hunks(&new_state.hunks, &old_snapshot.inner.hunks, buffer)
+                }
+                _ => (
+                    Some(text::Anchor::min_max_range_for_buffer(self.buffer_id)),
+                    Some(0..new_state.base_text.len()),
+                ),
+            };
 
         if let Some(secondary_changed_range) = secondary_diff_change
             && let (Some(secondary_hunk_range), Some(secondary_base_range)) =
@@ -1568,7 +1566,6 @@ impl BufferDiff {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn recalculate_diff_sync(&mut self, buffer: &text::BufferSnapshot, cx: &mut Context<Self>) {
-        dbg!("RECALCULATE DIFF SYNC");
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
@@ -1577,8 +1574,8 @@ impl BufferDiff {
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
         let (changed_range, base_text_changed_range) = executor.block(fut);
         cx.emit(BufferDiffEvent::DiffChanged {
-            changed_range: dbg!(changed_range),
-            base_text_changed_range: dbg!(base_text_changed_range),
+            changed_range: changed_range,
+            base_text_changed_range: base_text_changed_range,
         })
     }
 

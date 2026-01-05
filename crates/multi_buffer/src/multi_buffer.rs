@@ -2349,8 +2349,6 @@ impl MultiBuffer {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        dbg!("BUFFER DIFF CHANGED");
-
         self.sync_mut(cx);
 
         let diff = diff.read(cx);
@@ -2397,8 +2395,6 @@ impl MultiBuffer {
         main_buffer: WeakEntity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        dbg!("INVERTED BUFFER DIFF CHANGED");
-
         self.sync_mut(cx);
 
         let diff = diff.read(cx);
@@ -3121,6 +3117,9 @@ impl MultiBuffer {
                 && let Some((old_diff, old_main_buffer, new_main_buffer)) =
                     inverted_diff_touch_info.get(locator)
             {
+                // TODO(split-diff) this iterates over all excerpts for all edited buffers;
+                // it would be nice to be able to skip excerpts that weren't edited using
+                // new_main_buffer.has_edits_since_in_range.
                 let excerpt_buffer_start = old_excerpt
                     .range
                     .context
@@ -3128,13 +3127,27 @@ impl MultiBuffer {
                     .to_offset(&old_excerpt.buffer);
                 let excerpt_buffer_end = excerpt_buffer_start + old_excerpt.text_summary.len;
 
-                for hunk in old_diff.hunks_intersecting_base_text_range(
-                    excerpt_buffer_start..excerpt_buffer_end,
-                    old_main_buffer,
-                ) {
-                    if hunk.buffer_range.start.is_valid(new_main_buffer) {
-                        continue;
-                    }
+                let mut hunks = old_diff
+                    .hunks_intersecting_base_text_range(
+                        excerpt_buffer_start..excerpt_buffer_end,
+                        old_main_buffer,
+                    )
+                    .chain(old_diff.hunks_intersecting_base_text_range(
+                        excerpt_buffer_start..excerpt_buffer_end,
+                        new_main_buffer,
+                    ))
+                    .filter(|hunk| {
+                        hunk.buffer_range.start.is_valid(&old_main_buffer)
+                            != hunk.buffer_range.start.is_valid(&new_main_buffer)
+                    })
+                    .collect::<Vec<_>>();
+                hunks.sort_by(|l, r| {
+                    l.diff_base_byte_range
+                        .start
+                        .cmp(&r.diff_base_byte_range.start)
+                });
+
+                for hunk in hunks {
                     let hunk_buffer_start = hunk.diff_base_byte_range.start;
                     if hunk_buffer_start >= excerpt_buffer_start
                         && hunk_buffer_start <= excerpt_buffer_end

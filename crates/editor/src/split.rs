@@ -429,7 +429,6 @@ impl SplittableEditor {
                             .diff_for(buffer.read(cx).remote_id())
                             .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                     {
-                        dbg!("PRIMARY ADD DIFF");
                         primary_multibuffer.add_diff(diff.clone(), cx);
                     }
                     (anchors, added_a_new_excerpt)
@@ -658,7 +657,7 @@ impl SplittableEditor {
 
         let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
-        assert_eq!(primary_excerpts.len(), secondary_excerpts.len());
+        assert_eq!(secondary_excerpts.len(), primary_excerpts.len());
 
         if quiesced {
             let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
@@ -671,7 +670,7 @@ impl SplittableEditor {
                 .diff_hunks()
                 .map(|hunk| hunk.diff_base_byte_range)
                 .collect::<Vec<_>>();
-            pretty_assertions::assert_eq!(primary_diff_hunks, secondary_diff_hunks);
+            pretty_assertions::assert_eq!(secondary_diff_hunks, primary_diff_hunks);
 
             // Filtering out empty lines is a bit of a hack, to work around a case where
             // the base text has a trailing newline but the current text doesn't, or vice versa.
@@ -691,7 +690,7 @@ impl SplittableEditor {
                 .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
                 .map(|(line, _)| line.to_owned())
                 .collect::<Vec<_>>();
-            pretty_assertions::assert_eq!(primary_unmodified_rows, secondary_unmodified_rows);
+            pretty_assertions::assert_eq!(secondary_unmodified_rows, primary_unmodified_rows);
         }
     }
 
@@ -903,7 +902,6 @@ impl SecondaryEditor {
                         .diff_for(base_text_buffer.read(cx).remote_id())
                         .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                 {
-                    dbg!("SECONDARY ADD DIFF");
                     buffer.add_inverted_diff(diff, main_buffer, cx);
                 }
             })
