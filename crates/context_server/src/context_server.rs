@@ -56,7 +56,7 @@ impl ContextServer {
                 command,
                 working_directory.map(|directory| directory.to_path_buf()),
             ),
-            request_timeout: None, // Stdio handles timeout through command
+            request_timeout: None,
         }
     }
 

@@ -19,9 +19,9 @@ use crate::{
     worktree_store::WorktreeStore,
 };
 
-/// Maximum timeout for context server requests (10 minutes).
+/// Maximum timeout for context server requests
 /// Prevents extremely large timeout values from tying up resources indefinitely.
-const MAX_TIMEOUT_SECS: u64 = 600;
+const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
 pub fn init(cx: &mut App) {
     extension::init(cx);
