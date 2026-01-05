@@ -6,7 +6,7 @@ use http_client::{self, AsyncBody, HttpClient, Request};
 use log::info;
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
-use reqwest::multipart::{Form, Part};
+use reqwest::{Method, multipart::{Form, Part}};
 use smol::stream::StreamExt;
 use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
 use util::ResultExt;
@@ -301,7 +301,7 @@ async fn upload_minidump(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
         .into_async_read();
     let body = AsyncBody::from_reader(stream);
-    let req = Request::builder().uri(endpoint).body(body)?;
+    let req = Request::builder().method(Method::POST).uri(endpoint).body(body)?;
     let mut response_text = String::new();
     let mut response = client.http_client().send(req).await?;
     response
