@@ -69,7 +69,7 @@ impl WindowsSystemSettings {
         };
         if result.log_err().is_some() {
             self.subpixel_rendering
-                .set(value as u32 == FE_FONTSMOOTHINGCLEARTYPE);
+                .set(value == FE_FONTSMOOTHINGCLEARTYPE);
         }
     }
 
