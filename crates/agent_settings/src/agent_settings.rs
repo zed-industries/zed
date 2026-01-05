@@ -183,6 +183,7 @@ impl Default for ToolRules {
 #[derive(Clone)]
 pub struct CompiledRegex {
     pub pattern: String,
+    pub case_sensitive: bool,
     pub regex: regex::Regex,
 }
 
@@ -190,6 +191,7 @@ impl std::fmt::Debug for CompiledRegex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CompiledRegex")
             .field("pattern", &self.pattern)
+            .field("case_sensitive", &self.case_sensitive)
             .finish()
     }
 }
@@ -206,6 +208,28 @@ impl CompiledRegex {
             .ok()?;
         Some(Self {
             pattern: pattern.to_string(),
+            case_sensitive,
+            regex,
+        })
+    }
+
+    pub fn new_for_tool(tool_name: &str, pattern: &str, case_sensitive: bool) -> Option<Self> {
+        let regex = regex::RegexBuilder::new(pattern)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| {
+                log::warn!(
+                    "Invalid regex pattern '{}' for tool '{}': {}",
+                    pattern,
+                    tool_name,
+                    e
+                );
+                e
+            })
+            .ok()?;
+        Some(Self {
+            pattern: pattern.to_string(),
+            case_sensitive,
             regex,
         })
     }
@@ -271,15 +295,15 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
                 default_mode: rules_content.default_mode.unwrap_or_default(),
                 always_allow: rules_content
                     .always_allow
-                    .map(|v| compile_regex_rules(v.0))
+                    .map(|v| compile_regex_rules(&tool_name, v.0))
                     .unwrap_or_default(),
                 always_deny: rules_content
                     .always_deny
-                    .map(|v| compile_regex_rules(v.0))
+                    .map(|v| compile_regex_rules(&tool_name, v.0))
                     .unwrap_or_default(),
                 always_confirm: rules_content
                     .always_confirm
-                    .map(|v| compile_regex_rules(v.0))
+                    .map(|v| compile_regex_rules(&tool_name, v.0))
                     .unwrap_or_default(),
             };
             (tool_name, rules)
@@ -289,10 +313,12 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
     ToolPermissions { tools }
 }
 
-fn compile_regex_rules(rules: Vec<settings::ToolRegexRule>) -> Vec<CompiledRegex> {
+fn compile_regex_rules(tool_name: &str, rules: Vec<settings::ToolRegexRule>) -> Vec<CompiledRegex> {
     rules
         .into_iter()
-        .filter_map(|rule| CompiledRegex::new(&rule.pattern, rule.case_sensitive.unwrap_or(false)))
+        .filter_map(|rule| {
+            CompiledRegex::new_for_tool(tool_name, &rule.pattern, rule.case_sensitive.unwrap_or(false))
+        })
         .collect()
 }
 
@@ -381,12 +407,243 @@ mod tests {
         ]);
 
         let rules: Vec<ToolRegexRule> = serde_json::from_value(json).unwrap();
-        let compiled = compile_regex_rules(rules);
+        let compiled = compile_regex_rules("terminal", rules);
 
         assert_eq!(compiled.len(), 2);
         assert!(compiled[0].is_match("DELETE FROM users"));
         assert!(!compiled[0].is_match("delete from users"));
         assert!(compiled[1].is_match("SELECT * FROM users"));
         assert!(compiled[1].is_match("select * from users"));
+    }
+
+    #[test]
+    fn test_tool_rules_default_returns_confirm() {
+        let default_rules = ToolRules::default();
+        assert_eq!(default_rules.default_mode, ToolPermissionMode::Confirm);
+        assert!(default_rules.always_allow.is_empty());
+        assert!(default_rules.always_deny.is_empty());
+        assert!(default_rules.always_confirm.is_empty());
+    }
+
+    #[test]
+    fn test_compiled_regex_stores_case_sensitivity() {
+        let case_sensitive = CompiledRegex::new("test", true).unwrap();
+        let case_insensitive = CompiledRegex::new("test", false).unwrap();
+
+        assert!(case_sensitive.case_sensitive);
+        assert!(!case_insensitive.case_sensitive);
+    }
+
+    #[test]
+    fn test_tool_permissions_with_multiple_tools() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "default_mode": "allow",
+                    "always_deny": [{ "pattern": "rm\\s+-rf" }]
+                },
+                "edit_file": {
+                    "default_mode": "confirm",
+                    "always_deny": [{ "pattern": "\\.env$" }]
+                },
+                "delete_path": {
+                    "default_mode": "deny"
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        assert_eq!(permissions.tools.len(), 3);
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal.default_mode, ToolPermissionMode::Allow);
+        assert_eq!(terminal.always_deny.len(), 1);
+
+        let edit_file = permissions.tools.get("edit_file").unwrap();
+        assert_eq!(edit_file.default_mode, ToolPermissionMode::Confirm);
+        assert!(edit_file.always_deny[0].is_match("secrets.env"));
+
+        let delete_path = permissions.tools.get("delete_path").unwrap();
+        assert_eq!(delete_path.default_mode, ToolPermissionMode::Deny);
+    }
+
+    #[test]
+    fn test_tool_permissions_with_all_rule_types() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_deny": [{ "pattern": "rm\\s+-rf" }],
+                    "always_confirm": [{ "pattern": "sudo\\s" }],
+                    "always_allow": [{ "pattern": "^git\\s+status" }]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal.always_deny.len(), 1);
+        assert_eq!(terminal.always_confirm.len(), 1);
+        assert_eq!(terminal.always_allow.len(), 1);
+
+        assert!(terminal.always_deny[0].is_match("rm -rf /"));
+        assert!(terminal.always_confirm[0].is_match("sudo apt install"));
+        assert!(terminal.always_allow[0].is_match("git status"));
+    }
+
+    #[test]
+    fn test_invalid_regex_is_skipped_not_fail() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_deny": [
+                        { "pattern": "[invalid(regex" },
+                        { "pattern": "valid_pattern" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal.always_deny.len(), 1);
+        assert!(terminal.always_deny[0].is_match("valid_pattern"));
+    }
+
+    #[test]
+    fn test_unconfigured_tool_not_in_permissions() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "default_mode": "allow"
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        assert!(permissions.tools.contains_key("terminal"));
+        assert!(!permissions.tools.contains_key("edit_file"));
+        assert!(!permissions.tools.contains_key("fetch"));
+    }
+
+    #[test]
+    fn test_default_json_tool_permissions_parse() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+
+        let value: serde_json::Value = serde_json_lenient::from_str(default_json)
+            .expect("default.json should be valid JSON with comments");
+
+        let agent = value
+            .get("agent")
+            .expect("default.json should have 'agent' key");
+        let tool_permissions = agent
+            .get("tool_permissions")
+            .expect("agent should have 'tool_permissions' key");
+
+        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions.clone())
+            .expect("tool_permissions should parse into ToolPermissionsContent");
+
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions
+            .tools
+            .get("terminal")
+            .expect("terminal tool should be configured");
+        assert!(!terminal.always_deny.is_empty(), "terminal should have deny rules");
+        assert!(!terminal.always_confirm.is_empty(), "terminal should have confirm rules");
+        assert!(!terminal.always_allow.is_empty(), "terminal should have allow rules");
+
+        let edit_file = permissions
+            .tools
+            .get("edit_file")
+            .expect("edit_file tool should be configured");
+        assert!(!edit_file.always_deny.is_empty(), "edit_file should have deny rules");
+
+        let delete_path = permissions
+            .tools
+            .get("delete_path")
+            .expect("delete_path tool should be configured");
+        assert!(!delete_path.always_deny.is_empty(), "delete_path should have deny rules");
+
+        let fetch = permissions
+            .tools
+            .get("fetch")
+            .expect("fetch tool should be configured");
+        assert!(!fetch.always_allow.is_empty(), "fetch should have allow rules");
+    }
+
+    #[test]
+    fn test_default_deny_rules_match_dangerous_commands() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
+        let tool_permissions = value["agent"]["tool_permissions"].clone();
+        let content: ToolPermissionsContent =
+            serde_json::from_value(tool_permissions).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        let dangerous_commands = [
+            "rm -rf /",
+            "rm -rf ~",
+            "rm -rf ..",
+            "mkfs.ext4 /dev/sda",
+            "dd if=/dev/zero of=/dev/sda",
+            "cat /etc/passwd",
+            "cat /etc/shadow",
+            "del /f /s /q c:\\",
+            "format c:",
+            "rd /s /q c:\\windows",
+        ];
+
+        for cmd in &dangerous_commands {
+            assert!(
+                terminal.always_deny.iter().any(|r| r.is_match(cmd)),
+                "Command '{}' should be blocked by deny rules",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_allow_rules_match_safe_commands() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
+        let tool_permissions = value["agent"]["tool_permissions"].clone();
+        let content: ToolPermissionsContent =
+            serde_json::from_value(tool_permissions).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        let safe_commands = [
+            "cargo build",
+            "cargo test",
+            "cargo check",
+            "npm test",
+            "pnpm install",
+            "yarn run build",
+            "ls",
+            "ls -la",
+            "cat file.txt",
+            "git status",
+            "git log",
+            "git diff",
+        ];
+
+        for cmd in &safe_commands {
+            assert!(
+                terminal.always_allow.iter().any(|r| r.is_match(cmd)),
+                "Command '{}' should be allowed by allow rules",
+                cmd
+            );
+        }
     }
 }
