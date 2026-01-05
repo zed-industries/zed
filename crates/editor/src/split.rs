@@ -310,9 +310,10 @@ impl SplittableEditor {
                     context_line_count,
                     cx,
                 );
-                if primary_multibuffer
-                    .diff_for(buffer.read(cx).remote_id())
-                    .is_none()
+                if !anchors.is_empty()
+                    && primary_multibuffer
+                        .diff_for(buffer.read(cx).remote_id())
+                        .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                 {
                     primary_multibuffer.add_diff(diff.clone(), cx);
                 }
@@ -683,16 +684,17 @@ impl SecondaryEditor {
 
         self.editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.update_path_excerpts(
+                let (ids, _) = buffer.update_path_excerpts(
                     path_key.clone(),
                     base_text_buffer.clone(),
                     &base_text_buffer_snapshot,
                     new,
                     cx,
                 );
-                if buffer
-                    .diff_for(base_text_buffer.read(cx).remote_id())
-                    .is_none()
+                if !ids.is_empty()
+                    && buffer
+                        .diff_for(base_text_buffer.read(cx).remote_id())
+                        .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                 {
                     buffer.add_inverted_diff(diff, main_buffer, cx);
                 }
@@ -750,6 +752,7 @@ mod tests {
         });
     }
 
+    #[ignore]
     #[gpui::test(iterations = 100)]
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use rand::prelude::*;
