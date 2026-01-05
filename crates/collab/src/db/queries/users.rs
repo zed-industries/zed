@@ -136,8 +136,6 @@ impl Database {
                 github_user_id: ActiveValue::set(github_user_id),
                 github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
                 admin: ActiveValue::set(false),
-                invite_count: ActiveValue::set(0),
-                invite_code: ActiveValue::set(None),
                 metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
