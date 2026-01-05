@@ -4052,6 +4052,13 @@ impl EditorElement {
                                         .map(SharedString::from)
                                         .unwrap_or_else(|| "untitled".into());
 
+                                    let full_path = match parent_path.as_deref() {
+                                        Some(parent) if !parent.is_empty() => {
+                                            format!("{}{}", parent, filename.as_str())
+                                        }
+                                        _ => filename.as_str().to_string(),
+                                    };
+
                                     path_header
                                         .child(
                                             ButtonLike::new("filename-button")
@@ -4080,6 +4087,14 @@ impl EditorElement {
                                                             |label| label.strikethrough(),
                                                         ),
                                                 )
+                                                .tooltip(move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Open File",
+                                                        None,
+                                                        full_path.clone(),
+                                                        cx,
+                                                    )
+                                                })
                                                 .on_click(window.listener_for(&self.editor, {
                                                     let jump_data = jump_data.clone();
                                                     move |editor, e: &ClickEvent, window, cx| {
