@@ -2098,7 +2098,7 @@ impl Render for ProjectSearchBar {
                     .then_some(ActionButtonState::Disabled),
                 "Select Next Match",
                 &SelectNextMatch,
-                query_focus,
+                query_focus.clone(),
             ))
             .child(
                 div()
@@ -2170,15 +2170,13 @@ impl Render for ProjectSearchBar {
             (IconName::ChevronDownUp, "Collapse All Search Results")
         };
 
-        let tooltip_focus_handle = focus_handle.clone();
-
         let expand_button = IconButton::new("project-search-collapse-expand", icon)
             .shape(IconButtonShape::Square)
             .tooltip(move |_, cx| {
                 Tooltip::for_action_in(
                     tooltip_label,
                     &ToggleAllSearchResults,
-                    &tooltip_focus_handle.clone(),
+                    &query_focus.clone(),
                     cx,
                 )
             })
