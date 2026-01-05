@@ -10,7 +10,7 @@ use crate::{
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -3076,7 +3076,7 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    pub fn create_pull_request(&self, cx: &mut Context<Self>) {
+    pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
         let result = (|| -> anyhow::Result<()> {
             let repo = self
                 .active_repository
@@ -3130,9 +3130,11 @@ impl GitPanel {
             Ok(())
         })();
 
-        if let Err(e) = result {
-            log::error!("Error while creating pull request {:?}", e);
-            self.show_error_toast("Create Pull Request", e, cx);
+        if let Err(err) = result {
+            log::error!("Error while creating pull request {:?}", err);
+            cx.defer_in(window, |panel, _window, cx| {
+                panel.show_error_toast("create pull request", err, cx);
+            });
         }
     }
 
