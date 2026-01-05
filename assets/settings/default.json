@@ -961,6 +961,65 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
+    // Per-tool permission rules for granular control over tool actions.
+    // This setting only applies to the native Zed agent.
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Dangerous rm commands
+            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
+            { "pattern": "rm\\s+-rf\\s*$" },
+            // Disk destruction
+            { "pattern": "> /dev/sd" },
+            { "pattern": "mkfs\\." },
+            { "pattern": "dd\\s+if=/dev/(zero|random)" },
+            // Fork bomb
+            { "pattern": ":\\(\\)\\{ :\\|:& \\};:" },
+            // System files
+            { "pattern": "/etc/passwd" },
+            { "pattern": "/etc/shadow" },
+            // Windows destructive commands
+            { "pattern": "del /f /s /q c:\\\\" },
+            { "pattern": "format c:" },
+            { "pattern": "rd /s /q" },
+          ],
+          "always_confirm": [
+            // File deletion
+            { "pattern": "rm\\s" },
+            // Destructive git operations
+            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+            { "pattern": "git\\s+push\\s+(-f|--force)" },
+            // Database operations
+            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
+            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
+            // Privileged commands
+            { "pattern": "sudo\\s" },
+          ],
+        },
+        "delete_path": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // System directories
+            { "pattern": "^/etc" },
+            { "pattern": "^/usr" },
+            { "pattern": "^/bin" },
+            { "pattern": "^/sbin" },
+            { "pattern": "^/var" },
+            { "pattern": "^/boot" },
+            { "pattern": "^/root" },
+            // Home directory root
+            { "pattern": "^~$" },
+            { "pattern": "^/Users/[^/]+$" },
+            { "pattern": "^/home/[^/]+$" },
+            // Windows system directories
+            { "pattern": "^C:\\\\Windows" },
+            { "pattern": "^C:\\\\Program Files" },
+          ],
+        },
+      },
+    },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.

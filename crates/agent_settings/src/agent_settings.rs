@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, RegisterSetting, Settings,
+    NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
 };
 
 pub use crate::agent_profile::*;
@@ -49,6 +49,7 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
+    pub tool_permissions: ToolPermissions,
 }
 
 impl AgentSettings {
@@ -155,6 +156,65 @@ impl Default for AgentProfileId {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ToolPermissions {
+    pub tools: collections::HashMap<Arc<str>, ToolRules>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolRules {
+    pub default_mode: ToolPermissionMode,
+    pub always_allow: Vec<CompiledRegex>,
+    pub always_deny: Vec<CompiledRegex>,
+    pub always_confirm: Vec<CompiledRegex>,
+}
+
+impl Default for ToolRules {
+    fn default() -> Self {
+        Self {
+            default_mode: ToolPermissionMode::Confirm,
+            always_allow: Vec::new(),
+            always_deny: Vec::new(),
+            always_confirm: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct CompiledRegex {
+    pub pattern: String,
+    pub regex: regex::Regex,
+}
+
+impl std::fmt::Debug for CompiledRegex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompiledRegex")
+            .field("pattern", &self.pattern)
+            .finish()
+    }
+}
+
+impl CompiledRegex {
+    pub fn new(pattern: &str, case_sensitive: bool) -> Option<Self> {
+        let regex = regex::RegexBuilder::new(pattern)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| {
+                log::warn!("Invalid regex pattern '{}': {}", pattern, e);
+                e
+            })
+            .ok()?;
+        Some(Self {
+            pattern: pattern.to_string(),
+            regex,
+        })
+    }
+
+    pub fn is_match(&self, input: &str) -> bool {
+        self.regex.is_match(input)
+    }
+}
+
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
@@ -193,6 +253,140 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
+            tool_permissions: compile_tool_permissions(agent.tool_permissions),
         }
+    }
+}
+
+fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
+    let Some(content) = content else {
+        return ToolPermissions::default();
+    };
+
+    let tools = content
+        .tools
+        .into_iter()
+        .map(|(tool_name, rules_content)| {
+            let rules = ToolRules {
+                default_mode: rules_content.default_mode.unwrap_or_default(),
+                always_allow: rules_content
+                    .always_allow
+                    .map(|v| compile_regex_rules(v.0))
+                    .unwrap_or_default(),
+                always_deny: rules_content
+                    .always_deny
+                    .map(|v| compile_regex_rules(v.0))
+                    .unwrap_or_default(),
+                always_confirm: rules_content
+                    .always_confirm
+                    .map(|v| compile_regex_rules(v.0))
+                    .unwrap_or_default(),
+            };
+            (tool_name, rules)
+        })
+        .collect();
+
+    ToolPermissions { tools }
+}
+
+fn compile_regex_rules(rules: Vec<settings::ToolRegexRule>) -> Vec<CompiledRegex> {
+    rules
+        .into_iter()
+        .filter_map(|rule| CompiledRegex::new(&rule.pattern, rule.case_sensitive.unwrap_or(false)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use settings::{ToolPermissionsContent, ToolRegexRule};
+
+    #[test]
+    fn test_compiled_regex_case_insensitive() {
+        let regex = CompiledRegex::new("rm\\s+-rf", false).unwrap();
+        assert!(regex.is_match("rm -rf /"));
+        assert!(regex.is_match("RM -RF /"));
+        assert!(regex.is_match("Rm -Rf /"));
+    }
+
+    #[test]
+    fn test_compiled_regex_case_sensitive() {
+        let regex = CompiledRegex::new("DROP\\s+TABLE", true).unwrap();
+        assert!(regex.is_match("DROP TABLE users"));
+        assert!(!regex.is_match("drop table users"));
+    }
+
+    #[test]
+    fn test_invalid_regex_returns_none() {
+        let result = CompiledRegex::new("[invalid(regex", false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_tool_permissions_parsing() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "default_mode": "allow",
+                    "always_deny": [
+                        { "pattern": "rm\\s+-rf" }
+                    ],
+                    "always_allow": [
+                        { "pattern": "^git\\s" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal_rules = permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal_rules.default_mode, ToolPermissionMode::Allow);
+        assert_eq!(terminal_rules.always_deny.len(), 1);
+        assert_eq!(terminal_rules.always_allow.len(), 1);
+        assert!(terminal_rules.always_deny[0].is_match("rm -rf /"));
+        assert!(terminal_rules.always_allow[0].is_match("git status"));
+    }
+
+    #[test]
+    fn test_tool_rules_default_mode() {
+        let json = json!({
+            "tools": {
+                "edit_file": {
+                    "default_mode": "deny"
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let rules = permissions.tools.get("edit_file").unwrap();
+        assert_eq!(rules.default_mode, ToolPermissionMode::Deny);
+    }
+
+    #[test]
+    fn test_tool_permissions_empty() {
+        let permissions = compile_tool_permissions(None);
+        assert!(permissions.tools.is_empty());
+    }
+
+    #[test]
+    fn test_regex_rule_with_case_sensitivity() {
+        let json = json!([
+            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
+            { "pattern": "select.*from", "case_sensitive": false }
+        ]);
+
+        let rules: Vec<ToolRegexRule> = serde_json::from_value(json).unwrap();
+        let compiled = compile_regex_rules(rules);
+
+        assert_eq!(compiled.len(), 2);
+        assert!(compiled[0].is_match("DELETE FROM users"));
+        assert!(!compiled[0].is_match("delete from users"));
+        assert!(compiled[1].is_match("SELECT * FROM users"));
+        assert!(compiled[1].is_match("select * from users"));
     }
 }
