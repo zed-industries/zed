@@ -2667,7 +2667,7 @@ impl Project {
 
     #[inline]
     pub fn is_read_only(&self, cx: &App) -> bool {
-        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
+        self.is_disconnected(cx) || !self.capability().editable()
     }
 
     #[inline]
@@ -4564,13 +4564,13 @@ impl Project {
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(path) = RelPath::new(path, path_style)
-                    && let Some(entry) = worktree.entry_for_path(&path)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: entry.path.clone(),
-                    });
+                if let Ok(rel_path) = RelPath::new(path, path_style) {
+                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
+                        return Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: entry.path.clone(),
+                        });
+                    }
                 }
             }
         }
