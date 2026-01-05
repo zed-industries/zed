@@ -838,9 +838,6 @@ impl WindowsPlatformInner {
                     let peek_msg = |msg: &mut _, msg_kind| unsafe {
                         PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
                     };
-                    if peek_msg(&mut msg, PM_QS_PAINT) {
-                        process_message(&msg);
-                    }
                     while peek_msg(&mut msg, PM_QS_INPUT) {
                         process_message(&msg);
                     }
