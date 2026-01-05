@@ -15,26 +15,6 @@ mod retrieve_context;
 mod score;
 mod split_commit;
 mod synthesize;
-
-const CAPTURED_AFTER_HELP: &str = indoc::indoc! {r#"
-captured-after:{timestamp}
-  Fetch captured examples from Snowflake after the given RFC3339 timestamp.
-  You can specify this multiple times and mix it with file inputs.
-
-  Example:
-    ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
-
-Required env vars for captured-after:
-  EP_SNOWFLAKE_API_KEY
-  EP_SNOWFLAKE_BASE_URL
-  EP_SNOWFLAKE_EVENTS_TABLE
-  EP_SNOWFLAKE_DATABASE
-  EP_SNOWFLAKE_SCHEMA
-  EP_SNOWFLAKE_WAREHOUSE
-Optional:
-  EP_SNOWFLAKE_ROLE
-"#};
-
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use edit_prediction::EditPredictionStore;
 use gpui::Application;
@@ -56,7 +36,7 @@ use crate::split_commit::SplitCommitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
 
 #[derive(Parser, Debug)]
-#[command(name = "ep", after_help = CAPTURED_AFTER_HELP)]
+#[command(name = "ep")]
 struct EpArgs {
     #[arg(long, default_value_t = false)]
     printenv: bool,
@@ -66,7 +46,7 @@ struct EpArgs {
     limit: Option<usize>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[clap(global = true)]
+    #[clap(global = true, help = INPUTS_HELP)]
     inputs: Vec<PathBuf>,
     #[arg(long, short, global = true)]
     output: Option<PathBuf>,
@@ -75,6 +55,40 @@ struct EpArgs {
     #[arg(long, short, global = true)]
     failfast: bool,
 }
+
+const INPUTS_HELP: &str = r#"
+Inputs can be file paths or special specifiers:
+
+  path
+      Path to an example(s) file (.md, .json, or .jsonl)
+
+  captured-after:{timestamp}
+      Fetch captured examples from Snowflake after the given RFC3339 timestamp.
+
+      You can specify this multiple times and mix it with file inputs.
+
+      Required environment variables to connect to Snowflake:
+          EP_SNOWFLAKE_API_KEY
+          EP_SNOWFLAKE_BASE_URL
+          EP_SNOWFLAKE_EVENTS_TABLE
+          EP_SNOWFLAKE_DATABASE
+          EP_SNOWFLAKE_SCHEMA
+          EP_SNOWFLAKE_WAREHOUSE
+
+      Optional:
+          EP_SNOWFLAKE_ROLE
+
+Examples:
+
+  # Predict from a file
+  ep predict examples.jsonl
+
+  # Predict from captured examples after a timestamp
+  ep predict captured-after:2025-01-01T00:00:00Z
+
+  # Mix file inputs and captured-after in the same invocation
+  ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
+"#;
 
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
