@@ -1,0 +1,205 @@
+# AST-grep Patterns for AsyncApp Result Removal Refactor
+# ======================================================
+#
+# This file documents the patterns for migrating code from the old AsyncApp API
+# (which returned Result<T>) to the new API (which returns T directly).
+#
+# IMPORTANT: Not all patterns should be auto-fixed! Read carefully.
+#
+# ## What Changed
+#
+# AsyncApp methods no longer return Result<T>. The executor now checks if the app
+# is alive before running each task, cancelling tasks whose app has been dropped.
+# This means AsyncApp methods can return T directly instead of Result<T>.
+#
+# ## What Still Returns Result
+#
+# These operations STILL return Result<T> and should NOT be changed:
+#   - WeakEntity::update(cx, ...) - entity might be dropped
+#   - WeakEntity::read_with(cx, ...) - entity might be dropped
+#   - WeakEntity::update_in(cx, ...) - entity might be dropped
+#   - AsyncWindowContext::update(...) - window might be closed
+#   - AsyncWindowContext::update_root(...) - window might be closed
+#   - cx.update_window(...) - window might be closed
+#   - cx.read_window(...) - window might be closed
+#   - window_handle.update(cx, ...) - window might be closed
+#
+# ## What No Longer Returns Result (THESE ARE WHAT WE'RE CHANGING)
+#
+# These AsyncApp methods now return T directly:
+#   - cx.update(|app| ...) - was Result<T>, now T
+#   - cx.new(...) - was Result<Entity<T>>, now Entity<T>
+#   - cx.reserve_entity() - was Result<Reservation<T>>, now Reservation<T>
+#   - cx.insert_entity(...) - was Result<Entity<T>>, now Entity<T>
+#   - cx.update_entity(&entity, ...) - was Result<T>, now T
+#   - cx.read_entity(&entity, ...) - was Result<T>, now T
+#   - cx.read_global(...) - was Result<T>, now T
+#   - cx.update_global(...) - was Result<T>, now T
+#   - cx.has_global::<T>() - was Result<bool>, now bool
+#   - cx.subscribe(...) - was Result<Subscription>, now Subscription
+#   - cx.refresh() - was Result<()>, now ()
+#   - cx.open_window(...) - was Result<WindowHandle>, now Result<WindowHandle> (STILL Result - window creation can fail)
+#
+# ## Usage
+#
+# Test patterns:
+#   sg run --pattern 'PATTERN' --lang rust crates/
+#
+# Apply fixes (use with caution):
+#   sg run --pattern 'PATTERN' --rewrite 'REPLACEMENT' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 1: cx.update(...)? -> cx.update(...)
+# ============================================================================
+# This is the most common pattern. AsyncApp::update no longer returns Result.
+#
+# Search:
+#   sg run --pattern 'cx.update($$$ARGS)?' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.update($$$ARGS)?' --rewrite 'cx.update($$$ARGS)' --lang rust crates/ -U
+#
+# CAUTION: This will also match AsyncWindowContext::update which STILL returns Result.
+# You need to manually review and revert those changes, or use more targeted paths.
+#
+# To target only files that use AsyncApp (not AsyncWindowContext):
+#   sg run --pattern 'cx.update($$$ARGS)?' --rewrite 'cx.update($$$ARGS)' --lang rust crates/credentials_provider
+#
+# ============================================================================
+# PATTERN 2: cx.update(...).ok() -> Some(cx.update(...)) or just cx.update(...)
+# ============================================================================
+# When .ok() was used to convert Result<T> to Option<T>.
+# Usually this can just become the direct value, unless Option<T> is needed.
+#
+# Search:
+#   sg run --pattern 'cx.update($$$ARGS).ok()' --lang rust crates/
+#
+# Manual review needed - sometimes you want Some(), sometimes just the value.
+#
+# ============================================================================
+# PATTERN 3: cx.update(...).unwrap() -> cx.update(...)
+# ============================================================================
+# Remove .unwrap() since update no longer returns Result.
+#
+# Search:
+#   sg run --pattern 'cx.update($$$ARGS).unwrap()' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.update($$$ARGS).unwrap()' --rewrite 'cx.update($$$ARGS)' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 4: cx.read_global(...)? -> cx.read_global(...)
+# ============================================================================
+#
+# Search:
+#   sg run --pattern 'cx.read_global($$$ARGS)?' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.read_global($$$ARGS)?' --rewrite 'cx.read_global($$$ARGS)' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 5: cx.update_global(...)? -> cx.update_global(...)
+# ============================================================================
+#
+# Search:
+#   sg run --pattern 'cx.update_global($$$ARGS)?' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.update_global($$$ARGS)?' --rewrite 'cx.update_global($$$ARGS)' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 6: cx.new(...)? -> cx.new(...)
+# ============================================================================
+#
+# Search:
+#   sg run --pattern 'cx.new($$$ARGS)?' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.new($$$ARGS)?' --rewrite 'cx.new($$$ARGS)' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 7: cx.update_entity(...)? -> cx.update_entity(...)
+# ============================================================================
+#
+# Search:
+#   sg run --pattern 'cx.update_entity($$$ARGS)?' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.update_entity($$$ARGS)?' --rewrite 'cx.update_entity($$$ARGS)' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 8: cx.read_entity(...)? -> cx.read_entity(...)
+# ============================================================================
+#
+# Search:
+#   sg run --pattern 'cx.read_entity($$$ARGS)?' --lang rust crates/
+#
+# Fix:
+#   sg run --pattern 'cx.read_entity($$$ARGS)?' --rewrite 'cx.read_entity($$$ARGS)' --lang rust crates/ -U
+#
+# ============================================================================
+# PATTERN 9: AppContext::Result removal
+# ============================================================================
+# The AppContext trait no longer has a Result associated type.
+# Functions that used C::Result<T> need to change to just T.
+#
+# Search for usages:
+#   sg run --pattern '$FN -> $C::Result<$T>' --lang rust crates/
+#   grep -rn "::Result<" --include="*.rs" crates/ | grep -v "anyhow::Result"
+#
+# Manual fix required - change return types from C::Result<T> to T.
+#
+# ============================================================================
+# PATTERN 10: Flatten trait removal
+# ============================================================================
+# The Flatten trait has been removed. Search for any imports or usages.
+#
+# Search:
+#   grep -rn "Flatten" --include="*.rs" crates/ | grep -v "^crates/gpui"
+#
+# ============================================================================
+# DO NOT CHANGE THESE PATTERNS
+# ============================================================================
+# These patterns look similar but should NOT be changed because they still
+# return Result for valid reasons:
+#
+# WeakEntity::update - entity might be dropped:
+#   this.update(cx, |this, cx| ...)?
+#   handle.update(cx, |entity, cx| ...)?
+#   weak_entity.update(cx, |entity, cx| ...)?
+#
+# Window operations - window might be closed:
+#   cx.update_window(window, |_, window, cx| ...)?
+#   window.update(cx, |_, window, cx| ...)?
+#   self.update(|window, cx| ...)? // AsyncWindowContext
+#
+# To distinguish: look at the TYPE of the receiver
+#   - If cx is AsyncApp -> remove ?
+#   - If cx is AsyncWindowContext -> keep ?
+#   - If receiver is WeakEntity<T> -> keep ?
+#   - If receiver is WindowHandle or AnyWindowHandle -> keep ?
+#
+# ============================================================================
+# SAFE CRATE-BY-CRATE APPROACH
+# ============================================================================
+# Process crates one at a time, starting with those that have clear patterns:
+#
+# 1. credentials_provider (simple, only uses AsyncApp::update)
+#    sg run --pattern 'cx.update($$$ARGS)?' --rewrite 'cx.update($$$ARGS)' --lang rust crates/credentials_provider -U
+#
+# 2. gpui_tokio (uses AppContext::Result, needs manual fix)
+#    Manual edit to change C::Result<T> to T
+#
+# 3. git (uses .ok().flatten(), needs manual review)
+#    Manual edit
+#
+# 4. Continue with other crates...
+#
+# ============================================================================
+# VERIFICATION
+# ============================================================================
+# After applying fixes, verify compilation:
+#   cargo check -p <crate_name>
+#
+# Run tests:
+#   cargo test -p <crate_name>

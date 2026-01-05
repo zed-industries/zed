@@ -1,0 +1,299 @@
+{
+  "project": "async-app-result-removal",
+  "description": "Remove Result from AsyncApp return types by moving app-alive checks to executor",
+  "phases": [
+    {
+      "id": 1,
+      "name": "Add Trampoline Check Infrastructure (macOS + Test)",
+      "status": "completed",
+      "notes": "Original MainThreadWeak design was unsound - wakers can be dropped on background threads. Fixed by using sync::Weak<()> which is genuinely thread-safe. Simplified by removing AppLiveness/AppLivenessToken wrapper types in favor of plain sync::Arc<()> and sync::Weak<()>.",
+      "tasks": [
+        {
+          "id": "1.1",
+          "description": "Add liveness: sync::Arc<()> field to App struct",
+          "file": "crates/gpui/src/app.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.2",
+          "description": "Update RunnableMeta to use Option<sync::Weak<()>> for app field and add is_app_alive() method",
+          "file": "crates/gpui/src/platform.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.3",
+          "description": "Update trampoline in Mac dispatcher to check metadata.is_app_alive() before run()",
+          "file": "crates/gpui/src/platform/mac/dispatcher.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.4",
+          "description": "Update tick() in Test dispatcher to check runnable.metadata().is_app_alive() before run()",
+          "file": "crates/gpui/src/platform/test/dispatcher.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.5",
+          "description": "Add ForegroundExecutor::spawn_context that accepts sync::Weak<()>",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.6",
+          "description": "Update AsyncApp::spawn to pass liveness_token to spawn_context",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.7",
+          "description": "Update AsyncWindowContext::spawn to pass liveness_token to spawn_context",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.8",
+          "description": "Write unit tests verifying task cancellation when app is dropped",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.9",
+          "description": "Write unit test for nested tasks both cancelling cleanly",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.10",
+          "description": "Create async_cancellation.rs example demonstrating behavior",
+          "file": "crates/gpui/examples/async_cancellation.rs",
+          "status": "completed"
+        },
+        {
+          "id": "1.11",
+          "description": "Write test for foreground waker dropped on background thread scenario",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Extend to Other Platforms",
+      "status": "completed",
+      "notes": "Linux uses calloop event loop with main thread execution in headless/client.rs, wayland/client.rs, and x11/client.rs. Windows uses execute_runnable in dispatcher.rs. Added is_app_alive() checks to all main thread execution paths.",
+      "tasks": [
+        {
+          "id": "2.1",
+          "description": "Update main thread execution in Linux headless client",
+          "file": "crates/gpui/src/platform/linux/headless/client.rs",
+          "status": "completed"
+        },
+        {
+          "id": "2.2",
+          "description": "Update main thread execution in Linux Wayland client",
+          "file": "crates/gpui/src/platform/linux/wayland/client.rs",
+          "status": "completed"
+        },
+        {
+          "id": "2.3",
+          "description": "Update main thread execution in Linux X11 client",
+          "file": "crates/gpui/src/platform/linux/x11/client.rs",
+          "status": "completed"
+        },
+        {
+          "id": "2.4",
+          "description": "Update execute_runnable in Windows dispatcher",
+          "file": "crates/gpui/src/platform/windows/dispatcher.rs",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Update AsyncApp API & Remove AppContext::Result",
+      "status": "completed",
+      "notes": "Removed type Result<T> from AppContext trait. AsyncApp methods now return values directly (panicking if app gone). Removed Flatten trait. Updated WeakEntity to remove Flatten bounds. All gpui tests pass. Clippy passes.",
+      "tasks": [
+        {
+          "id": "3.1",
+          "description": "Update AsyncApp methods to return values directly",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "completed"
+        },
+        {
+          "id": "3.2",
+          "description": "Remove type Result<T> from AppContext trait",
+          "file": "crates/gpui/src/gpui.rs",
+          "status": "completed"
+        },
+        {
+          "id": "3.3",
+          "description": "Update all AppContext trait method signatures",
+          "file": "crates/gpui/src/gpui.rs",
+          "status": "completed"
+        },
+        {
+          "id": "3.4",
+          "description": "Remove Flatten trait",
+          "file": "crates/gpui/src/gpui.rs",
+          "status": "completed"
+        },
+        {
+          "id": "3.5",
+          "description": "Update WeakEntity to remove Flatten bounds",
+          "file": "crates/gpui/src/app/entity_map.rs",
+          "status": "completed"
+        },
+        {
+          "id": "3.6",
+          "description": "Update Entity methods to return R directly",
+          "file": "crates/gpui/src/app/entity_map.rs",
+          "status": "completed"
+        },
+        {
+          "id": "3.7",
+          "description": "Update all AppContext implementations",
+          "files": ["crates/gpui/src/app.rs", "crates/gpui/src/app/context.rs", "crates/gpui/src/app/test_context.rs"],
+          "status": "completed"
+        },
+        {
+          "id": "3.8",
+          "description": "Run cargo test -p gpui",
+          "status": "completed",
+          "notes": "All tests pass"
+        },
+        {
+          "id": "3.9",
+          "description": "Run ./script/clippy",
+          "status": "completed",
+          "notes": "Clippy passes"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Codebase Migration",
+      "status": "not_started",
+      "brief": "async-app-migration.md",
+      "notes": "Migrate ~500+ callsites across the codebase to remove error handling from AsyncApp method calls",
+      "tasks": [
+        {
+          "id": "4.1",
+          "description": "Update ExampleContext in eval crate to remove type Result<T>",
+          "file": "crates/eval/src/example.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "4.2",
+          "description": "Create ast-grep rules for automated transformations",
+          "file": "rules/",
+          "status": "not_started"
+        },
+        {
+          "id": "4.3",
+          "description": "Run automated transforms on codebase",
+          "status": "not_started"
+        },
+        {
+          "id": "4.4",
+          "description": "Fix remaining compile errors iteratively",
+          "status": "not_started"
+        },
+        {
+          "id": "4.5",
+          "description": "Manual review of .ok() and .log_err() patterns",
+          "status": "not_started"
+        },
+        {
+          "id": "4.6",
+          "description": "Run full test suite",
+          "status": "not_started"
+        },
+        {
+          "id": "4.7",
+          "description": "Run clippy on workspace",
+          "status": "not_started"
+        }
+      ]
+    }
+  ],
+  "bugs_found": [
+    {
+      "id": "BUG-001",
+      "title": "MainThreadWeak dropped on wrong thread causes panic",
+      "description": "Original MainThreadWeak design used rc::Weak<AppCell> with unsafe Send+Sync impls. This was unsound because async-task wakers carry the metadata and can be stored by I/O primitives and later dropped on background threads.",
+      "status": "fixed",
+      "fix": "Using plain sync::Weak<()> which is genuinely Send+Sync.",
+      "test": "test_app_liveness_token_can_be_dropped_on_background_thread"
+    }
+  ],
+  "design_decisions": [
+    {
+      "decision": "No try_* variants added initially",
+      "rationale": "Wait for real-world usage data. The executor guarantees foreground tasks only run when app is alive. Can add try_* variants later if needed."
+    },
+    {
+      "decision": "Window operations still return Result<T>",
+      "rationale": "Windows can be closed independently of whether the app is alive."
+    },
+    {
+      "decision": "try_read_global kept",
+      "rationale": "Returns None if the global type hasn't been assigned yet, not just if app is gone."
+    }
+  ],
+  "transformation_patterns": [
+    {
+      "id": "P1",
+      "name": "Remove trailing ?",
+      "before": "this.update(cx, |this, cx| { ... })?",
+      "after": "this.update(cx, |this, cx| { ... })",
+      "frequency": "very_common"
+    },
+    {
+      "id": "P2",
+      "name": "Remove .unwrap()",
+      "before": "cx.new(|cx| MyStruct::new(cx)).unwrap()",
+      "after": "cx.new(|cx| MyStruct::new(cx))",
+      "frequency": "common"
+    },
+    {
+      "id": "P3",
+      "name": "Remove ? from read_with",
+      "before": "this.read_with(cx, |this, _| this.field)?",
+      "after": "this.read_with(cx, |this, _| this.field)",
+      "frequency": "common"
+    },
+    {
+      "id": "P4",
+      "name": "Double ?? to single ?",
+      "before": "})??",
+      "after": "})?",
+      "frequency": "medium"
+    },
+    {
+      "id": "P5",
+      "name": "Chained ?.await? to .await?",
+      "before": "buffer.update(cx, |b, cx| b.reload(cx))?.await?",
+      "after": "buffer.update(cx, |b, cx| b.reload(cx)).await?",
+      "frequency": "medium"
+    },
+    {
+      "id": "P6",
+      "name": ".ok()? patterns",
+      "before": "this.update(cx, |this, cx| ...).ok()?",
+      "after": "Requires manual review",
+      "frequency": "low"
+    }
+  ],
+  "crate_priority": [
+    "gpui (completed)",
+    "eval",
+    "project",
+    "editor",
+    "assistant",
+    "workspace",
+    "collab",
+    "zed",
+    "other crates"
+  ]
+}
