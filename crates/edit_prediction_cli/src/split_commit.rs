@@ -799,20 +799,15 @@ pub fn imitate_human_edits(
             hunk.new_count += 1;
         }
     } else {
-        // For pure insertions, we need to add or modify a hunk
-        // Check if the source hunk exists AND has enough lines for the target's line index
-        let can_insert_in_existing_hunk = new_src_patch
-            .hunks
-            .get(tgt_edit_loc.hunk_index)
-            .map_or(false, |hunk| {
-                tgt_edit_loc.line_index_within_hunk <= hunk.lines.len()
-            });
+        // For pure insertions, insert after the last edit in source patch
+        // This imitates human typing - the intermediate content is what the user is currently typing
+        let last_src_edit = locate_edited_line(&new_src_patch, -1);
 
-        if can_insert_in_existing_hunk {
-            if let Some(hunk) = new_src_patch.hunks.get_mut(tgt_edit_loc.hunk_index) {
-                // Insert the partial line at the same position as target
+        if let Some(src_loc) = last_src_edit {
+            // Insert after the last edit in source
+            if let Some(hunk) = new_src_patch.hunks.get_mut(src_loc.hunk_index) {
                 hunk.lines.insert(
-                    tgt_edit_loc.line_index_within_hunk,
+                    src_loc.line_index_within_hunk + 1,
                     PatchLine::Addition(new_src.clone()),
                 );
                 hunk.new_count += 1;
@@ -1669,6 +1664,85 @@ index 123..456 789
         assert!(
             found_partial,
             "At least one seed should produce a partial intermediate state"
+        );
+    }
+
+    #[test]
+    fn test_imitate_human_edits_inserts_after_last_source_edit() {
+        // Regression test: intermediate content should appear after the last edit
+        // in the source patch, not at the position of the first target edit.
+        // This ensures the diff output correctly imitates human typing order.
+        //
+        // The bug was: when source has edits and target has a pure insertion,
+        // the intermediate content was inserted at tgt_edit_loc.line_index_within_hunk
+        // (position of first target edit) instead of after the last source edit.
+        //
+        // Source patch has edits at lines 1-4, target has a new edit at line 10
+        // (different location to avoid the "same line" early return)
+        let source = r#"--- a/test.py
++++ b/test.py
+@@ -1,4 +1,5 @@
++import foo
+ import bar
+-import old
+ import baz
++import qux
+"#;
+        // Target has a pure insertion at a different line (line 10, not overlapping with source)
+        let target = r#"--- a/test.py
++++ b/test.py
+@@ -10,3 +10,4 @@
+ def main():
++    print("hello world")
+     pass
+"#;
+
+        // Use a seed that produces a partial result
+        let (new_src, _new_tgt, cursor) = imitate_human_edits(source, target, 42);
+
+        // The function should produce a modified patch
+        assert!(cursor.is_some(), "Should produce intermediate state");
+
+        let src_patch = Patch::parse_unified_diff(&new_src);
+        let all_additions: Vec<_> = src_patch
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter_map(|l| match l {
+                PatchLine::Addition(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        // The intermediate content (partial 'print("hello world")') should be
+        // the LAST addition, appearing after "+import qux" (the last source edit)
+        let last_addition = all_additions.last().expect("Should have additions");
+        assert!(
+            last_addition.trim_start().starts_with("pr"),
+            "Intermediate content should be the last addition (partial 'print'), but last was: {:?}",
+            last_addition
+        );
+
+        // Verify the original source edits are still in order before the intermediate
+        let foo_pos = all_additions.iter().position(|s| *s == "import foo");
+        let qux_pos = all_additions.iter().position(|s| *s == "import qux");
+        let intermediate_pos = all_additions
+            .iter()
+            .position(|s| s.trim_start().starts_with("pr"));
+
+        assert!(foo_pos.is_some(), "Should have 'import foo'");
+        assert!(qux_pos.is_some(), "Should have 'import qux'");
+        assert!(
+            intermediate_pos.is_some(),
+            "Should have intermediate content"
+        );
+
+        assert!(
+            foo_pos < qux_pos && qux_pos < intermediate_pos,
+            "Order should be: foo < qux < intermediate. Got foo={:?}, qux={:?}, intermediate={:?}",
+            foo_pos,
+            qux_pos,
+            intermediate_pos
         );
     }
 
