@@ -26,9 +26,9 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, CursorStyle,
     EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
-    ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task, TextStyle,
-    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div, ease_in_out,
-    linear_color_stop, linear_gradient, list, point, pulsating_between,
+    ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -3061,6 +3061,8 @@ impl AcpThreadView {
                         window,
                         cx,
                     )
+                } else if let Some(image) = content.image() {
+                    self.render_image_output(image.clone(), card_layout, cx)
                 } else {
                     Empty.into_any_element()
                 }
@@ -3116,6 +3118,33 @@ impl AcpThreadView {
                         })),
                 )
             })
+            .into_any_element()
+    }
+
+    fn render_image_output(
+        &self,
+        image: Arc<gpui::Image>,
+        card_layout: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .gap_2()
+            .map(|this| {
+                if card_layout {
+                    this
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                }
+            })
+            .child(
+                img(image)
+                    .max_w_96()
+                    .max_h_96()
+                    .object_fit(ObjectFit::ScaleDown),
+            )
             .into_any_element()
     }
 
@@ -6454,6 +6483,16 @@ impl Focusable for AcpThreadView {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl AcpThreadView {
+    /// Expands a tool call so its content is visible.
+    /// This is primarily useful for visual testing.
+    pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
+        self.expanded_tool_calls.insert(tool_call_id);
+        cx.notify();
+    }
+}
+
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
@@ -8047,4 +8086,115 @@ pub(crate) mod tests {
             assert_eq!(text, expected_txt);
         })
     }
+
+    #[gpui::test]
+    async fn test_image_in_tool_call_output(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text_thread_store =
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+        let history_store =
+            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(text_thread_store, cx)));
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    false,
+                    window,
+                    cx,
+                )
+            })
+        });
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.run_until_parked();
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        // Create a small 8x8 red PNG image encoded as base64
+        let red_png_base64 = create_test_png_base64(8, 8, [255, 0, 0, 255]);
+
+        // Set up a tool call that returns an image
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("read_image", "Read image file")
+                .kind(acp::ToolKind::Fetch)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Content(acp::Content::new(
+                    acp::ContentBlock::Image(acp::ImageContent::new(red_png_base64, "image/png")),
+                ))]),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Show me the image", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify the thread has the expected entries
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 2);
+        });
+
+        // Verify the tool call content has an image
+        thread.read_with(cx, |thread, cx| {
+            if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[1] {
+                assert_eq!(tool_call.content.len(), 1);
+                if let acp_thread::ToolCallContent::ContentBlock(content_block) =
+                    &tool_call.content[0]
+                {
+                    assert!(
+                        content_block.image().is_some(),
+                        "Expected image content, got: {:?}",
+                        content_block
+                    );
+                } else {
+                    panic!(
+                        "Expected ContentBlock, got: {:?}",
+                        tool_call.content[0].to_markdown(cx)
+                    );
+                }
+            } else {
+                panic!("Expected ToolCall entry");
+            }
+        });
+    }
+
+    fn create_test_png_base64(width: u32, height: u32, color: [u8; 4]) -> String {
+        use image::ImageEncoder as _;
+
+        let mut png_data = Vec::new();
+        {
+            let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+            for _ in 0..(width * height) {
+                pixels.extend_from_slice(&color);
+            }
+            encoder
+                .write_image(&pixels, width, height, image::ExtendedColorType::Rgba8)
+                .expect("Failed to encode PNG");
+        }
+
+        use image::EncodableLayout as _;
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            png_data.as_bytes(),
+        )
+    }
+
 }

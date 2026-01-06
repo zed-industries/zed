@@ -30,12 +30,21 @@ visual-tests = [
     "dep:image",
     "dep:semver",
     "dep:tempfile",
+    "dep:acp_thread",
+    "dep:assistant_text_thread",
+    "dep:agent",
+    "dep:agent_servers",
+    "dep:agent-client-protocol",
+    "dep:base64",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
     "clock/test-support",
+    "acp_thread/test-support",
+    "assistant_text_thread/test-support",
+    "agent_ui/test-support",
 ]
 
 [[bin]]
@@ -105,6 +114,12 @@ image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
+acp_thread = { workspace = true, optional = true }
+assistant_text_thread = { workspace = true, optional = true }
+agent = { workspace = true, optional = true }
+agent_servers = { workspace = true, optional = true }
+agent-client-protocol = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 
