@@ -58,6 +58,7 @@ pub use editor_settings::{
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
+    render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
@@ -204,9 +205,9 @@ use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
     ViewId, Workspace, WorkspaceId, WorkspaceSettings,
-    item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
+    item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
-    searchable::SearchEvent,
+    searchable::{CollapseDirection, SearchEvent},
 };
 
 use crate::{
@@ -19257,37 +19258,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.buffer.read(cx).is_singleton() {
+        let has_folds = if self.buffer.read(cx).is_singleton() {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let has_folds = display_map
                 .folds_in_range(MultiBufferOffset(0)..display_map.buffer_snapshot().len())
                 .next()
                 .is_some();
-
-            if has_folds {
-                self.unfold_all(&actions::UnfoldAll, window, cx);
-            } else {
-                self.fold_all(&actions::FoldAll, window, cx);
-            }
+            has_folds
         } else {
             let buffer_ids = self.buffer.read(cx).excerpt_buffer_ids();
-            let should_unfold = buffer_ids
+            let has_folds = buffer_ids
                 .iter()
                 .any(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
+            has_folds
+        };
 
-            self.toggle_fold_multiple_buffers = cx.spawn_in(window, async move |editor, cx| {
-                editor
-                    .update_in(cx, |editor, _, cx| {
-                        for buffer_id in buffer_ids {
-                            if should_unfold {
-                                editor.unfold_buffer(buffer_id, cx);
-                            } else {
-                                editor.fold_buffer(buffer_id, cx);
-                            }
-                        }
-                    })
-                    .ok();
-            });
+        if has_folds {
+            self.unfold_all(&actions::UnfoldAll, window, cx);
+        } else {
+            self.fold_all(&actions::FoldAll, window, cx);
         }
     }
 
@@ -19452,6 +19441,9 @@ impl Editor {
                     .ok();
             });
         }
+        cx.emit(SearchEvent::ResultsCollapsedChanged(
+            CollapseDirection::Collapsed,
+        ));
     }
 
     pub fn fold_function_bodies(
@@ -19640,6 +19632,9 @@ impl Editor {
                     .ok();
             });
         }
+        cx.emit(SearchEvent::ResultsCollapsedChanged(
+            CollapseDirection::Expanded,
+        ));
     }
 
     pub fn fold_selected_ranges(
@@ -23329,6 +23324,53 @@ impl Editor {
             unnecessary_code_fade: settings.unnecessary_code_fade,
             show_underlines: self.diagnostics_enabled(),
         }
+    }
+    fn breadcrumbs_inner(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        let cursor = self.selections.newest_anchor().head();
+        let multibuffer = self.buffer().read(cx);
+        let is_singleton = multibuffer.is_singleton();
+        let (buffer_id, symbols) = multibuffer
+            .read(cx)
+            .symbols_containing(cursor, Some(variant.syntax()))?;
+        let buffer = multibuffer.buffer(buffer_id)?;
+
+        let buffer = buffer.read(cx);
+        let settings = ThemeSettings::get_global(cx);
+        // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
+        let mut breadcrumbs = if is_singleton {
+            let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
+                buffer
+                    .snapshot()
+                    .resolve_file_path(
+                        self.project
+                            .as_ref()
+                            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                            .unwrap_or_default(),
+                        cx,
+                    )
+                    .unwrap_or_else(|| {
+                        if multibuffer.is_singleton() {
+                            multibuffer.title(cx).to_string()
+                        } else {
+                            "untitled".to_string()
+                        }
+                    })
+            });
+            vec![BreadcrumbText {
+                text,
+                highlights: None,
+                font: Some(settings.buffer_font.clone()),
+            }]
+        } else {
+            vec![]
+        };
+
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+            text: symbol.text,
+            highlights: Some(symbol.highlight_ranges),
+            font: Some(settings.buffer_font.clone()),
+        }));
+        Some(breadcrumbs)
     }
 }
 

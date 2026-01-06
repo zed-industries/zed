@@ -2334,12 +2334,9 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "itertools 0.14.0",
- "settings",
  "theme",
  "ui",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -4887,6 +4884,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.9.2",
+ "search",
  "serde",
  "serde_json",
  "settings",
@@ -4896,6 +4894,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+ "zed_actions",
  "zlog",
 ]
 
