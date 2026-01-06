@@ -777,11 +777,23 @@ impl SyntaxSnapshot {
                         changed_ranges.is_empty(),
                     ) {
                         for range in &changed_ranges {
+                            let start_point = range.start.to_point(text);
+                            let end_point = range.end.to_point(text);
+
+                            let expanded_start_row = start_point.row.saturating_sub(1);
+                            let expanded_end_row = end_point.row + 2;
+
+                            let expanded_start =
+                                text.point_to_offset(Point::new(expanded_start_row, 0));
+                            let expanded_end = text
+                                .point_to_offset(Point::new(expanded_end_row, 0))
+                                .min(text.len());
+
                             changed_regions.insert(
                                 ChangedRegion {
                                     depth: step.depth + 1,
-                                    range: text.anchor_before(range.start)
-                                        ..text.anchor_after(range.end),
+                                    range: text.anchor_before(expanded_start)
+                                        ..text.anchor_after(expanded_end),
                                 },
                                 text,
                             );
