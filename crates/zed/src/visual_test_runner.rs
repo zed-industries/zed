@@ -26,8 +26,8 @@
 
 use anyhow::{Context, Result};
 use gpui::{
-    App, AppContext as _, Application, Bounds, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+    App, AppContext as _, Application, Bounds, Window, WindowBounds, WindowHandle, WindowOptions,
+    point, px, size,
 };
 use image::RgbaImage;
 use project_panel::ProjectPanel;
@@ -41,7 +41,6 @@ use workspace::{AppState, Workspace};
 use acp_thread::{AgentConnection, StubAgentConnection};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_ui::acp::AcpThreadView;
 use gpui::SharedString;
 
 /// Baseline images are stored relative to this file
@@ -75,7 +74,9 @@ fn main() {
 
     let test_result = std::panic::catch_unwind(|| {
         let project_path = project_path;
-        Application::new().run(move |cx| {
+        Application::new()
+            .with_assets(assets::Assets)
+            .run(move |cx| {
             // Initialize settings store first (required by theme and other subsystems)
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -100,6 +101,23 @@ fn main() {
             image_viewer::init(cx);
             search::init(cx);
             prompt_store::init(cx);
+            language_model::init(app_state.client.clone(), cx);
+            language_models::init(
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                cx,
+            );
+
+            // Dismiss onboarding banners so they don't appear in screenshots
+            cx.spawn(async |_| {
+                db::kvp::KEY_VALUE_STORE
+                    .write_kvp(
+                        "acp_claude_code_onboarding_banner_dismissed_at".to_string(),
+                        chrono::Utc::now().to_rfc3339(),
+                    )
+                    .await
+            })
+            .detach();
 
             // Open a real Zed workspace window
             let window_size = size(px(1280.0), px(800.0));
@@ -768,31 +786,14 @@ impl AgentServer for StubAgentServer {
     }
 }
 
-/// Wrapper to render AcpThreadView as a standalone view in its own window.
-struct ThreadViewWindow {
-    thread_view: Entity<AcpThreadView>,
-}
-
-impl Render for ThreadViewWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        self.thread_view.clone()
-    }
-}
-
-impl Focusable for ThreadViewWindow {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.thread_view.read(cx).focus_handle(cx)
-    }
-}
-
-impl EventEmitter<()> for ThreadViewWindow {}
-
-/// Runs the agent thread view visual test.
+/// Runs the agent panel visual test with full UI chrome.
 async fn run_agent_thread_view_test(
     app_state: Arc<AppState>,
     cx: &mut gpui::AsyncApp,
     update_baseline: bool,
 ) -> Result<TestResult> {
+    use agent_ui::AgentPanel;
+
     // Load the Zed app icon as the test image
     let icon_path = get_workspace_root()?.join("crates/zed/resources/app-icon.png");
     let icon_bytes = std::fs::read(&icon_path)
@@ -813,7 +814,7 @@ async fn run_agent_thread_view_test(
 
     let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
 
-    // Create a project for the thread view
+    // Create a project for the workspace
     let project = cx.update(|cx| {
         project::Project::local(
             app_state.client.clone(),
@@ -827,22 +828,14 @@ async fn run_agent_thread_view_test(
         )
     })?;
 
-    // Create TextThreadStore and HistoryStore
-    let text_thread_store = cx.update(|cx| {
-        cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx))
-    })?;
-
-    let history_store =
-        cx.update(|cx| cx.new(|cx| agent::HistoryStore::new(text_thread_store.clone(), cx)))?;
-
-    // Create a window sized for the thread view (400x1024)
-    let window_size = size(px(400.0), px(1024.0));
+    // Create a window sized for the agent panel (500x900)
+    let window_size = size(px(500.0), px(900.0));
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
         size: window_size,
     };
 
-    // Create a minimal workspace for the thread view context
+    // Create a workspace window
     let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
@@ -862,37 +855,49 @@ async fn run_agent_thread_view_test(
         .timer(std::time::Duration::from_millis(100))
         .await;
 
-    // Create the AcpThreadView inside the workspace window context
-    let thread_view: Entity<AcpThreadView> =
-        workspace_window.update(cx, |workspace, window, cx| {
-            let weak_workspace = workspace.weak_handle();
-            cx.new(|cx| {
-                AcpThreadView::new(
-                    stub_agent,
-                    None, // resume_thread
-                    None, // summarize_thread
-                    weak_workspace,
-                    project.clone(),
-                    history_store.clone(),
-                    None,  // prompt_store
-                    false, // track_load_event
-                    window,
-                    cx,
-                )
-            })
-        })?;
+    // Load the AgentPanel
+    let panel_task = workspace_window.update(cx, |_workspace, window, cx| {
+        let weak_workspace = cx.weak_entity();
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
+        let async_window_cx = window.to_async(cx);
+        AgentPanel::load(weak_workspace, prompt_builder, async_window_cx)
+    })?;
+
+    let panel = panel_task.await?;
+
+    // Add the panel to the workspace
+    workspace_window.update(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<AgentPanel>(window, cx);
+    })?;
+
+    // Wait for panel to be ready
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(200))
+        .await;
+
+    // Inject the stub server and open the stub thread
+    workspace_window.update(cx, |_workspace, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
+        });
+    })?;
 
     // Wait for thread view to initialize
     cx.background_executor()
         .timer(std::time::Duration::from_millis(200))
         .await;
 
-    // Get the thread and send a message to trigger the image response
+    // Get the thread view and send a message
+    let thread_view = panel
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
     let thread = thread_view
         .update(cx, |view, _cx| view.thread().cloned())?
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
-    // Send the message
+    // Send the message to trigger the image response
     thread
         .update(cx, |thread, cx| thread.send_raw("Show me the Zed logo", cx))?
         .await?;
@@ -903,7 +908,6 @@ async fn run_agent_thread_view_test(
         .await;
 
     // Expand the tool call so its content (the image) is visible
-    // Find the tool call ID from the thread entries and expand it
     let tool_call_id = thread.update(cx, |thread, _cx| {
         thread.entries().iter().find_map(|entry| {
             if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
@@ -922,47 +926,22 @@ async fn run_agent_thread_view_test(
 
     // Wait for UI to update
     cx.background_executor()
-        .timer(std::time::Duration::from_millis(200))
-        .await;
-
-    // Now create a dedicated window that just renders the thread view
-    let thread_view_window: WindowHandle<ThreadViewWindow> = cx.update(|cx| {
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                focus: false,
-                show: false,
-                ..Default::default()
-            },
-            |_window, cx| {
-                cx.new(|_cx| ThreadViewWindow {
-                    thread_view: thread_view.clone(),
-                })
-            },
-        )
-    })??;
-
-    // Wait for render
-    cx.background_executor()
-        .timer(std::time::Duration::from_millis(500))
+        .timer(std::time::Duration::from_millis(300))
         .await;
 
     // Refresh window
-    cx.update_window(
-        thread_view_window.into(),
-        |_view, window: &mut Window, _cx| {
-            window.refresh();
-        },
-    )?;
+    cx.update_window(workspace_window.into(), |_view, window: &mut Window, _cx| {
+        window.refresh();
+    })?;
 
     cx.background_executor()
-        .timer(std::time::Duration::from_millis(500))
+        .timer(std::time::Duration::from_millis(300))
         .await;
 
-    // Capture and compare screenshot
+    // Capture and compare screenshot of the full workspace window with AgentPanel chrome
     run_visual_test(
         "agent_thread_with_image",
-        thread_view_window.into(),
+        workspace_window.into(),
         cx,
         update_baseline,
     )
