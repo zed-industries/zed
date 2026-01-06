@@ -11,10 +11,9 @@ use edit_prediction::udiff::OpenedBuffers;
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use project::Project;
 use project::buffer_store::BufferStoreEvent;
-use project::{Project, ProjectPath};
 use std::{fs, path::PathBuf, sync::Arc};
-use util::{paths::PathStyle, rel_path::RelPath};
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -77,15 +76,16 @@ async fn cursor_position(
         return Err(error);
     }
 
-    let worktree = project
-        .read_with(cx, |project, cx| project.visible_worktrees(cx).next())?
-        .context("project has no worktree")?;
-
-    let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
-    let cursor_path = ProjectPath {
-        worktree_id,
-        path: RelPath::new(example.spec.cursor_path.as_ref(), PathStyle::Posix)?.into_arc(),
-    };
+    let cursor_path = project
+        .read_with(cx, |project, cx| {
+            project.find_project_path(&example.spec.cursor_path, cx)
+        })?
+        .with_context(|| {
+            format!(
+                "failed to find cursor path {}",
+                example.spec.cursor_path.display()
+            )
+        })?;
 
     let cursor_buffer = project
         .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
