@@ -50,6 +50,8 @@ required-features = ["visual-tests"]
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 agent_ui_v2.workspace = true

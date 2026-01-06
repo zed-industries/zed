@@ -2,20 +2,17 @@ use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     git,
     headless::EpAppState,
-    paths::WORKTREES_DIR,
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::EditPredictionStore;
-use edit_prediction::udiff::OpenedBuffers;
+use edit_prediction::udiff::{OpenedBuffers, refresh_worktree_entries};
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::Project;
 use project::buffer_store::BufferStoreEvent;
-use smol::stream::StreamExt;
 use std::{fs, path::PathBuf, sync::Arc};
-use util::{paths::PathStyle, rel_path::RelPath};
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -78,22 +75,10 @@ async fn cursor_position(
         return Err(error);
     }
 
-    let worktree = project.update(cx, |project, cx| {
-        project.visible_worktrees(cx).next().context("no worktrees")
-    })??;
-    worktree
-        .update(cx, |worktree, _| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .refresh_entries_for_paths(vec![
-                    RelPath::new(&example.spec.cursor_path, PathStyle::Posix)
-                        .unwrap()
-                        .into_arc(),
-                ])
-        })?
-        .next()
-        .await;
+    // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
+    if let Some(worktree) = project.read_with(cx, |project, cx| project.worktrees(cx).next())? {
+        refresh_worktree_entries(&worktree, [&*example.spec.cursor_path], cx).await?;
+    }
 
     let cursor_path = project
         .read_with(cx, |project, cx| {
@@ -206,15 +191,13 @@ async fn setup_project(
 }
 
 async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Result<PathBuf> {
-    let (repo_owner, repo_name) = example.repo_name().context("failed to get repo name")?;
+    let repo_name = example.repo_name().context("failed to get repo name")?;
     let repo_dir = git::repo_path_for_url(&example.spec.repository_url)?;
-    let worktree_path = WORKTREES_DIR
-        .join(repo_owner.as_ref())
-        .join(repo_name.as_ref());
+    let worktree_path = repo_name.worktree_path();
     let repo_lock = git::lock_repo(&repo_dir).await;
 
     if !repo_dir.is_dir() {
-        step_progress.set_substatus(format!("cloning {}", repo_name));
+        step_progress.set_substatus(format!("cloning {}", repo_name.name));
         fs::create_dir_all(&repo_dir)?;
         git::run_git(&repo_dir, &["init"]).await?;
         git::run_git(

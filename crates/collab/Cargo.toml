@@ -69,7 +69,10 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+agent = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
+agent_ui = { workspace = true, features = ["test-support"] }
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 async-trait.workspace = true
