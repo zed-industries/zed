@@ -9,12 +9,12 @@ mod metrics;
 mod paths;
 mod predict;
 mod progress;
+mod pull_examples;
 mod reorder_patch;
 mod retrieve_context;
 mod score;
 mod split_commit;
 mod synthesize;
-
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use edit_prediction::EditPredictionStore;
 use gpui::Application;
@@ -24,7 +24,7 @@ use std::fmt::Display;
 use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
-use crate::example::{group_examples_by_repo, read_examples, write_examples};
+use crate::example::{Example, group_examples_by_repo, read_example_files, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::paths::FAILED_EXAMPLES_DIR;
@@ -42,9 +42,11 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    #[clap(long, global = true)]
+    limit: Option<usize>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[clap(global = true)]
+    #[clap(global = true, help = INPUTS_HELP)]
     inputs: Vec<PathBuf>,
     #[arg(long, short, global = true)]
     output: Option<PathBuf>,
@@ -54,7 +56,37 @@ struct EpArgs {
     failfast: bool,
 }
 
-#[derive(Subcommand, Debug)]
+const INPUTS_HELP: &str = r#"
+Inputs can be file paths or special specifiers:
+
+  path
+      Path to an example(s) file (.md, .json, or .jsonl)
+
+  captured-after:{timestamp}
+      Fetch captured examples from Snowflake after the given RFC3339 timestamp.
+
+      You can specify this multiple times and mix it with file inputs.
+
+      Required environment variables to connect to Snowflake:
+          EP_SNOWFLAKE_API_KEY
+          EP_SNOWFLAKE_BASE_URL
+
+      Optional:
+          EP_SNOWFLAKE_ROLE
+
+Examples:
+
+  # Predict from a file
+  ep predict examples.jsonl
+
+  # Predict from captured examples after a timestamp
+  ep predict captured-after:2025-01-01T00:00:00Z
+
+  # Mix file inputs and captured-after in the same invocation
+  ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
+"#;
+
+#[derive(Subcommand, Debug, Clone)]
 enum Command {
     /// Parse markdown examples and output a combined .jsonl file
     ParseExample,
@@ -137,7 +169,7 @@ impl Display for Command {
     }
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
     #[clap(long)]
     prompt_format: PromptFormat,
@@ -149,7 +181,7 @@ enum PromptFormat {
     Zeta2,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 struct PredictArgs {
     #[clap(long)]
     provider: PredictionProvider,
@@ -167,7 +199,7 @@ enum PredictionProvider {
     TeacherNonBatching,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 struct SynthesizeArgs {
     /// Repository URL (git@github.com:owner/repo or https://...)
     #[clap(long)]
@@ -200,6 +232,60 @@ impl EpArgs {
     }
 }
 
+async fn load_examples(
+    http_client: Arc<dyn http_client::HttpClient>,
+    args: &EpArgs,
+) -> anyhow::Result<Vec<Example>> {
+    let mut captured_after_timestamps = Vec::new();
+    let mut file_inputs = Vec::new();
+
+    for input in &args.inputs {
+        let input_string = input.to_string_lossy();
+        if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
+            captured_after_timestamps.push(timestamp.to_string());
+        } else {
+            file_inputs.push(input.clone());
+        }
+    }
+
+    let mut examples = read_example_files(&file_inputs);
+    let total_steps = examples.len() + captured_after_timestamps.len();
+    Progress::global().set_total_steps(total_steps);
+
+    let remaining_limit_for_snowflake =
+        args.limit.map(|limit| limit.saturating_sub(examples.len()));
+
+    if let Some(0) = remaining_limit_for_snowflake {
+        log::info!(
+            "skipping captured-after inputs because --limit is already satisfied by example files"
+        );
+    } else if !captured_after_timestamps.is_empty() {
+        captured_after_timestamps.sort();
+
+        let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
+
+        let mut captured_examples = pull_examples::fetch_captured_examples_after(
+            http_client,
+            &captured_after_timestamps,
+            max_rows_per_timestamp,
+        )
+        .await?;
+        examples.append(&mut captured_examples);
+    }
+
+    crate::example::sort_examples_by_repo_and_rev(&mut examples);
+
+    if let Some(limit) = args.limit {
+        if examples.len() > limit {
+            examples.truncate(limit);
+        }
+    }
+
+    Progress::global().set_total_steps(examples.len() + captured_after_timestamps.len());
+
+    Ok(examples)
+}
+
 fn main() {
     let args = EpArgs::parse();
 
@@ -209,8 +295,8 @@ fn main() {
     }
 
     let output = args.output_path();
-    let command = match args.command {
-        Some(cmd) => cmd,
+    let command = match &args.command {
+        Some(cmd) => cmd.clone(),
         None => {
             EpArgs::command().print_help().unwrap();
             return;
@@ -251,7 +337,6 @@ fn main() {
         _ => {}
     }
 
-    let mut examples = read_examples(&args.inputs);
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client);
 
@@ -261,12 +346,13 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let result = async {
+                let mut examples = load_examples(app_state.client.http_client(), &args).await?;
+
                 if let Command::Predict(args) = &command {
                     predict::sync_batches(&args.provider).await?;
                 }
 
-                let total_examples = examples.len();
-                Progress::global().set_total_examples(total_examples);
+                let failfast_on_single_example = examples.len() == 1;
 
                 let mut grouped_examples = group_examples_by_repo(&mut examples);
                 let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
@@ -347,7 +433,7 @@ fn main() {
 
                                 let msg = format!(
                                     indoc::indoc! {"
-                                        While processing {}:
+                                        While processing \"{}\":
 
                                         {:?}
 
@@ -366,7 +452,7 @@ fn main() {
                                     command,
                                     failed_example_path.display(),
                                 );
-                                if args.failfast || total_examples == 1 {
+                                if args.failfast || failfast_on_single_example {
                                     Progress::global().finalize();
                                     panic!("{}", msg);
                                 } else {
