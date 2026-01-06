@@ -518,36 +518,36 @@ impl ContentBlock {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        if matches!(self, ContentBlock::Empty) {
-            if let acp::ContentBlock::ResourceLink(resource_link) = block {
-                *self = ContentBlock::ResourceLink { resource_link };
-                return;
+        match (&mut *self, &block) {
+            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
+                *self = ContentBlock::ResourceLink {
+                    resource_link: resource_link.clone(),
+                };
             }
-            if let acp::ContentBlock::Image(ref image_content) = block {
+            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
                 if let Some(image) = Self::decode_image(image_content) {
                     *self = ContentBlock::Image { image };
-                    return;
+                } else {
+                    let new_content = Self::image_md(image_content);
+                    *self = Self::create_markdown_block(new_content, language_registry, cx);
                 }
             }
-        }
-
-        let new_content = self.block_string_contents(&block, path_style);
-
-        match self {
-            ContentBlock::Empty => {
+            (ContentBlock::Empty, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
-            ContentBlock::Markdown { markdown } => {
+            (ContentBlock::Markdown { markdown }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
-            ContentBlock::ResourceLink { resource_link } => {
+            (ContentBlock::ResourceLink { resource_link }, _) => {
                 let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
-
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
-            ContentBlock::Image { .. } => {
-                // If we already have an image and receive more content, convert to markdown
+            (ContentBlock::Image { .. }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("`Image`\n{}", new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
@@ -575,7 +575,7 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: &acp::ContentBlock, path_style: PathStyle) -> String {
+    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
             acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
