@@ -1,7 +1,7 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, LoadError, MentionUri, RetryStatus, ThreadStatus, ToolCall, ToolCallContent,
-    ToolCallStatus, ToolSource, UserMessageId,
+    ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
@@ -2529,8 +2529,7 @@ impl AcpThreadView {
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
-        let show_mcp_raw_input =
-            tool_call.source == ToolSource::Mcp && tool_call.raw_input_markdown.is_some();
+        let should_show_raw_input = !is_terminal_tool && !is_edit;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
@@ -2562,7 +2561,7 @@ impl AcpThreadView {
                                     .into_any_element()
                             }),
                     )
-                    .when(show_mcp_raw_input, |this| {
+                    .when(should_show_raw_input, |this| {
                         let is_raw_input_expanded =
                             self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
 
@@ -2643,7 +2642,7 @@ impl AcpThreadView {
                 | ToolCallStatus::Failed
                 | ToolCallStatus::Canceled => {
                     v_flex()
-                        .when(!is_edit && !is_terminal_tool, |this| {
+                        .when(should_show_raw_input, |this| {
                             this.mt_1p5().w_full().child(
                                 v_flex()
                                     .ml(rems(0.4))

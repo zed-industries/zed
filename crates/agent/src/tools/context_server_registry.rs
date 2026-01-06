@@ -292,10 +292,6 @@ impl AnyAgentTool for ContextServerTool {
         self.tool.name.clone().into()
     }
 
-    fn source(&self) -> acp_thread::ToolSource {
-        acp_thread::ToolSource::Mcp
-    }
-
     fn description(&self) -> SharedString {
         self.tool.description.clone().unwrap_or_default().into()
     }
