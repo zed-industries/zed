@@ -8005,41 +8005,46 @@ pub fn render_breadcrumb_text(
         .map(|editor| editor.downgrade());
 
     match editor {
-        Some(editor) => element.child(
-            ButtonLike::new("toggle outline view")
-                .child(breadcrumbs)
-                .when(multibuffer_header, |this| {
-                    this.style(ButtonStyle::Transparent)
-                })
-                .when(!multibuffer_header, |this| {
-                    let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+        Some(editor) => element
+            .id("breadcrumb_container")
+            .when(!multibuffer_header, |this| this.overflow_x_scroll())
+            .child(
+                ButtonLike::new("toggle outline view")
+                    .child(breadcrumbs)
+                    .when(multibuffer_header, |this| {
+                        this.style(ButtonStyle::Transparent)
+                    })
+                    .when(!multibuffer_header, |this| {
+                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
 
-                    this.tooltip(move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Show Symbol Outline",
-                            &zed_actions::outline::ToggleOutline,
-                            &focus_handle,
-                            cx,
-                        )
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_, window, cx| {
-                            if let Some((editor, callback)) = editor
-                                .upgrade()
-                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                            {
-                                callback(editor.to_any_view(), window, cx);
+                        this.tooltip(move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_, window, cx| {
+                                if let Some((editor, callback)) = editor
+                                    .upgrade()
+                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                                {
+                                    callback(editor.to_any_view(), window, cx);
+                                }
                             }
-                        }
-                    })
-                }),
-        ),
+                        })
+                    }),
+            )
+            .into_any_element(),
         None => element
             // Match the height and padding of the `ButtonLike` in the other arm.
             .h(rems_from_px(22.))
             .pl_1()
-            .child(breadcrumbs),
+            .child(breadcrumbs)
+            .into_any_element(),
     }
 }
 
