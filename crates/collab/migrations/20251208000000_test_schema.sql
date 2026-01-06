@@ -335,7 +335,9 @@ CREATE TABLE public.project_repositories (
     current_merge_conflicts character varying,
     branch_summary character varying,
     head_commit_details character varying,
-    merge_message character varying
+    merge_message character varying,
+    remote_upstream_url character varying,
+    remote_origin_url character varying
 );
 
 CREATE TABLE public.project_repository_statuses (

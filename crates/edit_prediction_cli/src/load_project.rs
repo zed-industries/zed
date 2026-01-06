@@ -86,6 +86,7 @@ async fn cursor_position(
                 example.spec.cursor_path.display()
             )
         })?;
+
     let cursor_buffer = project
         .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
         .await?;

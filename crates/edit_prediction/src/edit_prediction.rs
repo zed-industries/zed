@@ -1642,7 +1642,7 @@ impl EditPredictionStore {
         let can_collect_example = snapshot
             .file()
             .is_some_and(|file| self.can_collect_file(&project, file, cx))
-            && self.can_collect_events(&inputs.events);
+            && self.can_collect_events(&inputs.events, cx);
 
         if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
             let events_for_capture =
@@ -2010,11 +2010,11 @@ impl EditPredictionStore {
     }
 
     fn can_collect_file(&self, project: &Entity<Project>, file: &Arc<dyn File>, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
+        self.data_collection_choice.is_enabled(cx) && self.is_file_open_source(project, file, cx)
     }
 
-    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>]) -> bool {
-        if !self.data_collection_choice.is_enabled() {
+    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>], cx: &App) -> bool {
+        if !self.data_collection_choice.is_enabled(cx) {
             return false;
         }
         events.iter().all(|event| {
@@ -2048,10 +2048,11 @@ impl EditPredictionStore {
     fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
         self.data_collection_choice = self.data_collection_choice.toggle();
         let new_choice = self.data_collection_choice;
+        let is_enabled = new_choice.is_enabled(cx);
         db::write_and_log(cx, move || {
             KEY_VALUE_STORE.write_kvp(
                 ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                new_choice.is_enabled().to_string(),
+                is_enabled.to_string(),
             )
         });
     }
@@ -2139,17 +2140,13 @@ pub enum DataCollectionChoice {
 }
 
 impl DataCollectionChoice {
-    pub fn is_enabled(self) -> bool {
+    pub fn is_enabled(self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return true;
+        }
         match self {
             Self::Enabled => true,
             Self::NotAnswered | Self::Disabled => false,
-        }
-    }
-
-    pub fn is_answered(self) -> bool {
-        match self {
-            Self::Enabled | Self::Disabled => true,
-            Self::NotAnswered => false,
         }
     }
 

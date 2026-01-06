@@ -66,7 +66,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.store
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
-            if self.store.read(cx).data_collection_choice.is_enabled() {
+            if self.store.read(cx).data_collection_choice.is_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
                 }
