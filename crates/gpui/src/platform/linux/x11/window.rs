@@ -13,6 +13,7 @@ use crate::{
 use blade_graphics as gpu;
 use collections::FxHashSet;
 use raw_window_handle as rwh;
+use image::Pixel as _;
 use util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
@@ -61,6 +62,7 @@ x11rb::atom_manager! {
         WM_TRANSIENT_FOR,
         _NET_WM_PID,
         _NET_WM_NAME,
+        _NET_WM_ICON,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
@@ -507,6 +509,29 @@ impl X11WindowState {
                         )
                     },
                     size_hints.set_normal_hints(xcb, x_window),
+                )?;
+            }
+
+            if let Some(image) = params.icon {
+                // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html#id-1.6.13
+                let property_size = 2 + (image.width() * image.height()) as usize;
+                let mut property_data: Vec<u32> = Vec::with_capacity(property_size);
+                property_data.push(image.width());
+                property_data.push(image.height());
+                property_data.extend(image.pixels().map(|px| {
+                    let [r, g, b, a]: [u8; 4] = px.to_rgba().0;
+                    u32::from_le_bytes([r, g, b, a])
+                }));
+
+                check_reply(
+                    || "X11 ChangeProperty32 for _NET_ICON_NAME failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_ICON,
+                        xproto::AtomEnum::CARDINAL,
+                        &property_data,
+                    ),
                 )?;
             }
 

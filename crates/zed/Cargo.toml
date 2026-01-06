@@ -16,7 +16,6 @@ tracy = ["ztracing/tracy"]
 test-support = [
     "gpui/test-support",
     "gpui/screen-capture",
-    "dep:image",
     "dep:semver",
     "workspace/test-support",
     "project/test-support",
@@ -27,7 +26,6 @@ test-support = [
 visual-tests = [
     "gpui/test-support",
     "gpui/screen-capture",
-    "dep:image",
     "dep:semver",
     "dep:tempfile",
     "dep:acp_thread",
@@ -113,7 +111,6 @@ gpui = { workspace = true, features = [
     "font-kit",
     "windows-manifest",
 ] }
-image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
@@ -126,6 +123,7 @@ rayon.workspace = true
 edit_prediction.workspace = true
 edit_prediction_ui.workspace = true
 http_client.workspace = true
+image.workspace = true
 image_viewer.workspace = true
 inspector_ui.workspace = true
 install_cli.workspace = true
@@ -225,6 +223,9 @@ winresource = "0.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
+image.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

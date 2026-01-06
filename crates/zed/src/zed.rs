@@ -99,6 +99,9 @@ use zed_actions::{
     Quit,
 };
 
+#[cfg(target_os = "linux")]
+pub const APP_ICON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
+
 actions!(
     zed,
     [
@@ -317,6 +320,16 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
 
+    #[cfg(target_os = "linux")]
+    let app_icon = {
+        // decoding is checked at build time
+        image::ImageReader::new(std::io::Cursor::new(APP_ICON))
+            .with_guessed_format()
+            .unwrap()
+            .decode()
+            .unwrap()
+    };
+
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: None,
@@ -331,6 +344,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        #[cfg(target_os = "linux")]
+        icon: Some(app_icon.into()),
         window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
