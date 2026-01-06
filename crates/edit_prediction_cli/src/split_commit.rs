@@ -340,7 +340,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         // cursor_position: cursor.to_string(),
         cursor_path: Path::new(&cursor.file).into(),
         cursor_position: cursor_excerpt,
-        expected_patches: vec![split_commit.target_patch.clone()],
+        expected_patches: vec![split_commit.target_patch],
         tags: vec![],
         reasoning: None,
         uncommitted_diff: String::new(),
@@ -1067,7 +1067,7 @@ pub fn get_cursor_excerpt(
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::path::Path;
 
     use edit_prediction::example_spec::ExampleSpec;
 
@@ -1226,7 +1226,7 @@ Date: Mon Jan 1 00:00:00 2024
 
         // Results should be identical
         assert_eq!(result1.edit_history, result2.edit_history);
-        assert_eq!(result1.expected_patch, result2.expected_patch);
+        assert_eq!(result1.expected_patches, result2.expected_patches);
         assert_eq!(result1.cursor_position, result2.cursor_position);
     }
 
@@ -1359,9 +1359,9 @@ Date: Mon Jan 1 00:00:00 2024
 
         // Cursor excerpt should contain the cursor marker
         assert!(
-            result.cursor_excerpt.contains("<|user_cursor|>"),
+            result.cursor_position.contains("<|user_cursor|>"),
             "Cursor excerpt should contain marker: {}",
-            result.cursor_excerpt
+            result.cursor_position
         );
     }
 
