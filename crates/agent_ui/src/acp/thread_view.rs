@@ -8196,5 +8196,4 @@ pub(crate) mod tests {
             png_data.as_bytes(),
         )
     }
-
 }

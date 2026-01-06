@@ -797,7 +797,8 @@ async fn run_agent_thread_view_test(
     let icon_path = get_workspace_root()?.join("crates/zed/resources/app-icon.png");
     let icon_bytes = std::fs::read(&icon_path)
         .with_context(|| format!("Failed to read app icon from {:?}", icon_path))?;
-    let icon_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &icon_bytes);
+    let icon_base64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &icon_bytes);
 
     // Create stub connection with image response
     let connection = StubAgentConnection::new();
@@ -831,9 +832,8 @@ async fn run_agent_thread_view_test(
         cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx))
     })?;
 
-    let history_store = cx.update(|cx| {
-        cx.new(|cx| agent::HistoryStore::new(text_thread_store.clone(), cx))
-    })?;
+    let history_store =
+        cx.update(|cx| cx.new(|cx| agent::HistoryStore::new(text_thread_store.clone(), cx)))?;
 
     // Create a window sized for the thread view (400x1024)
     let window_size = size(px(400.0), px(1024.0));
@@ -852,9 +852,7 @@ async fn run_agent_thread_view_test(
                 ..Default::default()
             },
             |window, cx| {
-                cx.new(|cx| {
-                    Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                })
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
     })??;
@@ -865,23 +863,24 @@ async fn run_agent_thread_view_test(
         .await;
 
     // Create the AcpThreadView inside the workspace window context
-    let thread_view: Entity<AcpThreadView> = workspace_window.update(cx, |workspace, window, cx| {
-        let weak_workspace = workspace.weak_handle();
-        cx.new(|cx| {
-            AcpThreadView::new(
-                stub_agent,
-                None,  // resume_thread
-                None,  // summarize_thread
-                weak_workspace,
-                project.clone(),
-                history_store.clone(),
-                None,  // prompt_store
-                false, // track_load_event
-                window,
-                cx,
-            )
-        })
-    })?;
+    let thread_view: Entity<AcpThreadView> =
+        workspace_window.update(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    stub_agent,
+                    None, // resume_thread
+                    None, // summarize_thread
+                    weak_workspace,
+                    project.clone(),
+                    history_store.clone(),
+                    None,  // prompt_store
+                    false, // track_load_event
+                    window,
+                    cx,
+                )
+            })
+        })?;
 
     // Wait for thread view to initialize
     cx.background_executor()
@@ -906,16 +905,13 @@ async fn run_agent_thread_view_test(
     // Expand the tool call so its content (the image) is visible
     // Find the tool call ID from the thread entries and expand it
     let tool_call_id = thread.update(cx, |thread, _cx| {
-        thread
-            .entries()
-            .iter()
-            .find_map(|entry| {
-                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
-                    Some(tool_call.id.clone())
-                } else {
-                    None
-                }
-            })
+        thread.entries().iter().find_map(|entry| {
+            if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
+                Some(tool_call.id.clone())
+            } else {
+                None
+            }
+        })
     })?;
 
     if let Some(tool_call_id) = tool_call_id {
@@ -952,16 +948,25 @@ async fn run_agent_thread_view_test(
         .await;
 
     // Refresh window
-    cx.update_window(thread_view_window.into(), |_view, window: &mut Window, _cx| {
-        window.refresh();
-    })?;
+    cx.update_window(
+        thread_view_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(500))
         .await;
 
     // Capture and compare screenshot
-    run_visual_test("agent_thread_with_image", thread_view_window.into(), cx, update_baseline).await
+    run_visual_test(
+        "agent_thread_with_image",
+        thread_view_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await
 }
 
 fn get_workspace_root() -> Result<PathBuf> {
