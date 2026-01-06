@@ -3280,7 +3280,10 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "agent",
+ "agent-client-protocol",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "assistant_slash_command",
  "assistant_text_thread",
@@ -20662,6 +20665,8 @@ version = "0.219.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
+ "agent",
+ "agent-client-protocol",
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",

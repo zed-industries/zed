@@ -5,7 +5,9 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
+use agent::{
+    DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer, SharedThread,
+};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
@@ -20,15 +22,16 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, CursorStyle,
-    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
-    ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task, TextStyle,
-    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div, ease_in_out,
-    linear_color_stop, linear_gradient, list, point, pulsating_between,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
+    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
+    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -52,7 +55,7 @@ use ui::{
     WithScrollbar, prelude::*, right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, NewTerminal, Workspace};
+use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -933,6 +936,124 @@ impl AcpThreadView {
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
         }
+    }
+
+    fn share_thread(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let client = self.project.read(cx).client();
+        let workspace = self.workspace.clone();
+        let session_id = thread.read(cx).id().to_string();
+
+        let load_task = thread.read(cx).to_db(cx);
+
+        cx.spawn(async move |_this, cx| {
+            let db_thread = load_task.await;
+
+            let shared_thread = SharedThread::from_db_thread(&db_thread);
+            let thread_data = shared_thread.to_bytes()?;
+            let title = shared_thread.title.to_string();
+
+            client
+                .request(proto::ShareAgentThread {
+                    session_id: session_id.clone(),
+                    title,
+                    thread_data,
+                })
+                .await?;
+
+            let share_url = client::zed_urls::shared_agent_thread_url(&session_id);
+
+            cx.update(|cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadSharedToast;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<ThreadSharedToast>(),
+                                "Thread shared!",
+                            )
+                            .on_click(
+                                "Copy URL",
+                                move |_window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        share_url.clone(),
+                                    ));
+                                },
+                            ),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn sync_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_imported_thread(cx) {
+            return;
+        }
+
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let client = self.project.read(cx).client();
+        let history_store = self.history_store.clone();
+        let session_id = thread.read(cx).id().clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let response = client
+                .request(proto::GetSharedAgentThread {
+                    session_id: session_id.to_string(),
+                })
+                .await?;
+
+            let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
+
+            let db_thread = shared_thread.to_db_thread();
+
+            history_store
+                .update(&mut cx.clone(), |store, cx| {
+                    store.save_thread(session_id.clone(), db_thread, cx)
+                })?
+                .await?;
+
+            let thread_metadata = agent::DbThreadMetadata {
+                id: session_id,
+                title: format!("🔗 {}", response.title).into(),
+                updated_at: chrono::Utc::now(),
+            };
+
+            this.update_in(cx, |this, window, cx| {
+                this.resume_thread_metadata = Some(thread_metadata);
+                this.reset(window, cx);
+            })?;
+
+            this.update_in(cx, |this, _window, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadSyncedToast;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<ThreadSyncedToast>(),
+                                "Thread synced with latest version",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn expand_message_editor(
@@ -4904,6 +5025,13 @@ impl AcpThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    fn is_imported_thread(&self, cx: &App) -> bool {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return false;
+        };
+        thread.read(cx).is_imported()
+    }
+
     fn is_using_zed_ai_models(&self, cx: &App) -> bool {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
@@ -5817,6 +5945,41 @@ impl AcpThreadView {
                             this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
                         })),
                 );
+        }
+
+        if cx.has_flag::<AgentSharingFeatureFlag>()
+            && self.is_imported_thread(cx)
+            && self
+                .project
+                .read(cx)
+                .client()
+                .status()
+                .borrow()
+                .is_connected()
+        {
+            let sync_button = IconButton::new("sync-thread", IconName::ArrowCircle)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Ignored)
+                .tooltip(Tooltip::text("Sync with source thread"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.sync_thread(window, cx);
+                }));
+
+            container = container.child(sync_button);
+        }
+
+        if cx.has_flag::<AgentSharingFeatureFlag>() && !self.is_imported_thread(cx) {
+            let share_button = IconButton::new("share-thread", IconName::ArrowUpRight)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Ignored)
+                .tooltip(Tooltip::text("Share Thread"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.share_thread(window, cx);
+                }));
+
+            container = container.child(share_button);
         }
 
         container

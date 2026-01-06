@@ -430,6 +430,15 @@ CREATE SEQUENCE public.servers_id_seq
 
 ALTER SEQUENCE public.servers_id_seq OWNED BY public.servers.id;
 
+CREATE TABLE public.shared_threads (
+    id uuid NOT NULL,
+    user_id integer NOT NULL,
+    title text NOT NULL,
+    data bytea NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.user_features (
     user_id integer NOT NULL,
     feature_id integer NOT NULL
@@ -630,6 +639,9 @@ ALTER TABLE ONLY public.rooms
 ALTER TABLE ONLY public.servers
     ADD CONSTRAINT servers_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.user_features
     ADD CONSTRAINT user_features_pkey PRIMARY KEY (user_id, feature_id);
 
@@ -647,6 +659,8 @@ ALTER TABLE ONLY public.worktree_settings_files
 
 ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
+
+CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
 
 CREATE INDEX index_access_tokens_user_id ON public.access_tokens USING btree (user_id);
 
@@ -878,6 +892,9 @@ ALTER TABLE ONLY public.room_participants
 
 ALTER TABLE ONLY public.rooms
     ADD CONSTRAINT rooms_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.user_features
     ADD CONSTRAINT user_features_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.feature_flags(id) ON DELETE CASCADE;
