@@ -1459,11 +1459,11 @@ impl PlatformWindow for X11Window {
         state.renderer.update_transparency(transparent);
     }
 
-    fn is_subpixel_rendering_enabled(&self) -> bool {
-        if self.0.state.borrow().background_appearance != WindowBackgroundAppearance::Opaque {
-            return false;
-        }
+    fn is_opaque(&self) -> bool {
+        self.0.state.borrow().background_appearance == WindowBackgroundAppearance::Opaque
+    }
 
+    fn is_subpixel_rendering_supported(&self) -> bool {
         self.0
             .state
             .borrow()
@@ -1472,11 +1472,7 @@ impl PlatformWindow for X11Window {
             .upgrade()
             .map(|ref_cell| {
                 let state = ref_cell.borrow();
-                state
-                    .common
-                    .subpixel_render_enabled
-                    .get()
-                    .unwrap_or_else(|| state.gpu_context.supports_dual_source_blending())
+                state.gpu_context.supports_dual_source_blending()
             })
             .unwrap_or_default()
     }

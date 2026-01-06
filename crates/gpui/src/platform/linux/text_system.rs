@@ -1,7 +1,8 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, point, size,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
+    size,
 };
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
@@ -187,6 +188,15 @@ impl PlatformTextSystem for CosmicTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, runs)
     }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        // Ideally, we'd use fontconfig to read the user preference.
+        TextRenderingMode::Subpixel
+    }
 }
 
 impl CosmicTextSystemState {
@@ -349,7 +359,10 @@ impl CosmicTextSystemState {
         }));
 
         if params.subpixel_rendering {
-            renderer.format(Format::Subpixel).offset(subpixel_offset);
+            // There seems to be a bug in Swash where the B and R values are swapped.
+            renderer
+                .format(Format::subpixel_bgra())
+                .offset(subpixel_offset);
         } else {
             renderer.format(Format::Alpha).offset(subpixel_offset);
         }

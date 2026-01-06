@@ -892,15 +892,15 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Text Rendering"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Subpixel Rendering",
-                    description: "Whether to use subpixel rendering for text.",
+                    title: "Text Rendering Mode",
+                    description: "The text rendering mode to use.",
                     field: Box::new(SettingField {
-                        json_path: Some("use_subpixel_text_rendering"),
+                        json_path: Some("text_rendering_mode"),
                         pick: |settings_content| {
-                            settings_content.workspace.use_subpixel_text_rendering.as_ref()
+                            settings_content.workspace.text_rendering_mode.as_ref()
                         },
                         write: |settings_content, value| {
-                            settings_content.workspace.use_subpixel_text_rendering = value;
+                            settings_content.workspace.text_rendering_mode = value;
                         },
                     }),
                     metadata: None,

@@ -1354,6 +1354,14 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn is_opaque(&self) -> bool {
+        self.borrow().renderer.layer().is_opaque()
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        false
+    }
+
     fn set_edited(&mut self, edited: bool) {
         unsafe {
             let window = self.0.lock().native_window;

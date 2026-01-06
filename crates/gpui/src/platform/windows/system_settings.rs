@@ -7,9 +7,8 @@ use ::util::ResultExt;
 use windows::Win32::UI::{
     Shell::{ABM_GETSTATE, ABM_GETTASKBARPOS, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
     WindowsAndMessaging::{
-        FE_FONTSMOOTHINGCLEARTYPE, SPI_GETFONTSMOOTHINGTYPE, SPI_GETWHEELSCROLLCHARS,
-        SPI_GETWHEELSCROLLLINES, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_ACTION,
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SPI_SETWORKAREA,
+        SYSTEM_PARAMETERS_INFO_ACTION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
     },
 };
 
@@ -23,7 +22,6 @@ use super::WindowsDisplay;
 pub(crate) struct WindowsSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
     pub(crate) auto_hide_taskbar_position: Cell<Option<AutoHideTaskbarPosition>>,
-    pub(crate) subpixel_rendering: Cell<bool>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -45,31 +43,13 @@ impl WindowsSystemSettings {
         self.mouse_wheel_settings.update();
         self.auto_hide_taskbar_position
             .set(AutoHideTaskbarPosition::new(display).log_err().flatten());
-        self.update_subpixel_rendering();
     }
 
     pub(crate) fn update(&self, display: WindowsDisplay, wparam: usize) {
         match SYSTEM_PARAMETERS_INFO_ACTION(wparam as u32) {
             SPI_SETWORKAREA => self.update_taskbar_position(display),
             SPI_GETWHEELSCROLLLINES | SPI_GETWHEELSCROLLCHARS => self.update_mouse_wheel_settings(),
-            SPI_GETFONTSMOOTHINGTYPE => self.update_subpixel_rendering(),
             _ => {}
-        }
-    }
-
-    fn update_subpixel_rendering(&self) {
-        let mut value = c_uint::default();
-        let result = unsafe {
-            SystemParametersInfoW(
-                SPI_GETFONTSMOOTHINGTYPE,
-                0,
-                Some((&mut value) as *mut c_uint as *mut c_void),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
-            )
-        };
-        if result.log_err().is_some() {
-            self.subpixel_rendering
-                .set(value == FE_FONTSMOOTHINGCLEARTYPE);
         }
     }
 

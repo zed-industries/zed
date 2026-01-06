@@ -282,8 +282,6 @@ pub(crate) trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
-
-    fn set_subpixel_rendering_enabled(&self, _enabled: Option<bool>) {}
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -499,6 +497,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
+    fn is_opaque(&self) -> bool;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
@@ -518,6 +517,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn is_subpixel_rendering_supported(&self) -> bool;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -571,10 +571,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
-    }
-
-    fn is_subpixel_rendering_enabled(&self) -> bool {
-        false
     }
 }
 
@@ -650,6 +646,8 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
+    -> TextRenderingMode;
 }
 
 pub(crate) struct NoopTextSystem;
@@ -769,6 +767,14 @@ impl PlatformTextSystem for NoopTextSystem {
             runs,
             len: text.len(),
         }
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
     }
 }
 
@@ -1440,6 +1446,18 @@ pub enum WindowBackgroundAppearance {
     MicaBackdrop,
     /// The Mica Alt backdrop material, supported on Windows 11.
     MicaAltBackdrop,
+}
+
+/// The text rendering mode to use for drawing glyphs.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TextRenderingMode {
+    /// Use the platform's default text rendering mode.
+    #[default]
+    PlatformDefault,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 /// The options that can be configured for a file dialog prompt

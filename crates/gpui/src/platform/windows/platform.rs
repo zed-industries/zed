@@ -44,7 +44,6 @@ pub(crate) struct WindowsPlatform {
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
     disable_direct_composition: bool,
-    subpixel_render_enabled: Rc<Cell<Option<bool>>>,
 }
 
 struct WindowsPlatformInner {
@@ -170,7 +169,6 @@ impl WindowsPlatform {
             windows_version,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
-            subpixel_render_enabled: Rc::new(Cell::new(None)),
         })
     }
 
@@ -205,7 +203,6 @@ impl WindowsPlatform {
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
             invalidate_devices: self.invalidate_devices.clone(),
-            subpixel_render_enabled: self.subpixel_render_enabled.clone(),
         }
     }
 
@@ -725,10 +722,6 @@ impl Platform for WindowsPlatform {
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
         self.update_jump_list(menus, entries)
     }
-
-    fn set_subpixel_rendering_enabled(&self, enabled: Option<bool>) {
-        self.subpixel_render_enabled.set(enabled);
-    }
 }
 
 impl WindowsPlatformInner {
@@ -947,7 +940,6 @@ pub(crate) struct WindowCreationInfo {
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub(crate) invalidate_devices: Arc<AtomicBool>,
-    pub(crate) subpixel_render_enabled: Rc<Cell<Option<bool>>>,
 }
 
 struct PlatformWindowCreateContext {

@@ -1,4 +1,8 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    ffi::{c_uint, c_void},
+    sync::Arc,
+};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
@@ -60,6 +64,7 @@ struct DirectWriteState {
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
     font_id_by_identifier: HashMap<FontIdentifier, FontId>,
+    system_subpixel_rendering: bool,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -199,6 +204,7 @@ impl DirectWriteTextSystem {
                 .CreateFontCollectionFromFontSet(&custom_font_set)?
         };
         let system_ui_font_name = get_system_ui_font_name();
+        let system_subpixel_rendering = get_system_subpixel_rendering();
 
         Ok(Self(RwLock::new(DirectWriteState {
             components,
@@ -208,6 +214,7 @@ impl DirectWriteTextSystem {
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
+            system_subpixel_rendering,
         })))
     }
 
@@ -279,6 +286,18 @@ impl PlatformTextSystem for DirectWriteTextSystem {
                 font_size,
                 ..Default::default()
             })
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        if self.0.read().system_subpixel_rendering {
+            TextRenderingMode::Subpixel
+        } else {
+            TextRenderingMode::Grayscale
+        }
     }
 }
 
@@ -1864,6 +1883,23 @@ fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
     }
 
     Ok(String::from_utf16_lossy(&name_vec[..name_length]))
+}
+
+fn get_system_subpixel_rendering() -> bool {
+    let mut value = c_uint::default();
+    let result = unsafe {
+        SystemParametersInfoW(
+            SPI_GETFONTSMOOTHINGTYPE,
+            0,
+            Some((&mut value) as *mut c_uint as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+        )
+    };
+    if result.log_err().is_some() {
+        value == FE_FONTSMOOTHINGCLEARTYPE
+    } else {
+        true
+    }
 }
 
 fn get_system_ui_font_name() -> SharedString {

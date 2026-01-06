@@ -678,11 +678,15 @@ fn main() {
                         .ok();
                 }
 
-                cx.set_subpixel_rendering_enabled(
-                    match WorkspaceSettings::get_global(cx).use_subpixel_text_rendering {
-                        settings::SubpixelTextRendering::PlatformDefault => None,
-                        settings::SubpixelTextRendering::Always => Some(true),
-                        settings::SubpixelTextRendering::Never => Some(false),
+                cx.set_text_rendering_mode(
+                    match WorkspaceSettings::get_global(cx).text_rendering_mode {
+                        settings::TextRenderingMode::PlatformDefault => {
+                            gpui::TextRenderingMode::PlatformDefault
+                        }
+                        settings::TextRenderingMode::Subpixel => gpui::TextRenderingMode::Subpixel,
+                        settings::TextRenderingMode::Grayscale => {
+                            gpui::TextRenderingMode::Grayscale
+                        }
                     },
                 );
 

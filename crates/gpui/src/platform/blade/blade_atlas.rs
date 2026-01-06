@@ -162,9 +162,8 @@ impl BladeAtlasState {
                 format = gpu::TextureFormat::R8Unorm;
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
-
             AtlasTextureKind::Subpixel => {
-                format = gpu::TextureFormat::Rgba8Unorm;
+                format = gpu::TextureFormat::Bgra8Unorm;
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Polychrome => {

@@ -15,10 +15,10 @@ use crate::{
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePaneModifiers>,
-    /// Whether to enable subpixel (ClearType-style) text rendering.
+    /// The text rendering mode to use.
     ///
     /// Default: platform_default
-    pub use_subpixel_text_rendering: Option<SubpixelTextRendering>,
+    pub text_rendering_mode: Option<TextRenderingMode>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -564,14 +564,14 @@ pub enum OnLastWindowClosed {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum SubpixelTextRendering {
+pub enum TextRenderingMode {
     /// Use platform default behavior.
     #[default]
     PlatformDefault,
-    /// Always enable subpixel text rendering.
-    Always,
-    /// Always disable subpixel text rendering.
-    Never,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 impl OnLastWindowClosed {

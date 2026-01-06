@@ -85,7 +85,6 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) parent_hwnd: Option<HWND>,
-    pub(crate) subpixel_render_enabled: Rc<Cell<Option<bool>>>,
 }
 
 impl WindowsWindowState {
@@ -246,7 +245,6 @@ impl WindowsWindowInner {
             platform_window_handle: context.platform_window_handle,
             system_settings: WindowsSystemSettings::new(context.display),
             parent_hwnd: context.parent_hwnd,
-            subpixel_render_enabled: context.subpixel_render_enabled.clone(),
         }))
     }
 
@@ -375,7 +373,6 @@ struct WindowCreateContext {
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     parent_hwnd: Option<HWND>,
-    subpixel_render_enabled: Rc<Cell<Option<bool>>>,
 }
 
 impl WindowsWindow {
@@ -396,7 +393,6 @@ impl WindowsWindow {
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
-            subpixel_render_enabled,
         } = creation_info;
         register_window_class(icon);
         let parent_hwnd = if params.kind == WindowKind::Dialog {
@@ -479,7 +475,6 @@ impl WindowsWindow {
             directx_devices,
             invalidate_devices,
             parent_hwnd,
-            subpixel_render_enabled,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -795,6 +790,14 @@ impl PlatformWindow for WindowsWindow {
         self.state.hovered.get()
     }
 
+    fn is_opaque(&self) -> bool {
+        self.state.background_appearance.get() == WindowBackgroundAppearance::Opaque
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        true
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.0.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
@@ -941,16 +944,6 @@ impl PlatformWindow for WindowsWindow {
         };
 
         self.0.update_ime_position(self.0.hwnd, caret_position);
-    }
-
-    fn is_subpixel_rendering_enabled(&self) -> bool {
-        if self.state.background_appearance.get() != WindowBackgroundAppearance::Opaque {
-            return false;
-        }
-        self.0
-            .subpixel_render_enabled
-            .get()
-            .unwrap_or(self.0.system_settings.subpixel_rendering.get())
     }
 }
 
