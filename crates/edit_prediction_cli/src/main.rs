@@ -433,6 +433,12 @@ fn main() {
                                     .await
                                     .unwrap();
 
+                                let file_path = example
+                                    .repo_name()
+                                    .unwrap()
+                                    .worktree_path()
+                                    .join(&example.spec.cursor_path);
+
                                 let msg = format!(
                                     indoc::indoc! {"
                                         While processing \"{}\":
@@ -440,6 +446,8 @@ fn main() {
                                         {:?}
 
                                         Written to: \x1b[36m{}\x1b[0m
+
+                                        Cursor File: \x1b[36m{}\x1b[0m
 
                                         Explore this example data with:
                                             fx \x1b[36m{}\x1b[0m
@@ -450,6 +458,7 @@ fn main() {
                                     example.spec.name,
                                     e,
                                     err_path.display(),
+                                    file_path.display(),
                                     failed_example_path.display(),
                                     command,
                                     failed_example_path.display(),
