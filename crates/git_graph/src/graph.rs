@@ -214,8 +214,9 @@ impl GitGraph {
     pub fn clear(&mut self) {
         self.lane_states.clear();
         self.lane_colors.clear();
-        self.next_color = BranchColor(0);
         self.commits.clear();
+        self.next_color = BranchColor(0);
+        self.max_commit_count = AllCommitCount::NotLoaded;
         self.max_lanes = 0;
     }
 

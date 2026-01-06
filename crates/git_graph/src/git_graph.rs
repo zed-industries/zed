@@ -261,21 +261,6 @@ impl GitGraph {
                 this.selected_commit = Some(idx);
             }))
             .child(
-                div()
-                    .w(graph_width)
-                    .h_full()
-                    .flex_shrink_0()
-                    .child(render_graph_cell(
-                        lane,
-                        lines,
-                        color_idx,
-                        row_height,
-                        graph_width,
-                        // todo! Make this owned by self so we don't have to allocate every frame
-                        cx.theme().accents().clone(),
-                    )),
-            )
-            .child(
                 h_flex()
                     .flex_1()
                     .min_w(px(0.0))
