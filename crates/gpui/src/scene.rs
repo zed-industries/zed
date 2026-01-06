@@ -470,7 +470,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 #[derive(Debug)]
 #[cfg_attr(
     all(
-        any(target_os = "linux", target_os = "freebsd"),
+        any(target_os = "linux", target_os = "freebsd", target_os = "macos"),
         not(any(feature = "x11", feature = "wayland"))
     ),
     allow(dead_code)
