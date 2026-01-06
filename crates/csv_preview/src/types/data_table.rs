@@ -18,7 +18,7 @@ use ui::{
     px, single_example, v_flex,
 };
 
-use crate::types::{IntoTableRow, IntoTableRowForArray as _, TableRow};
+use crate::types::{IntoTableRow as _, TableRow};
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 

@@ -132,15 +132,15 @@ impl<T> IntoTableRow<T> for Vec<T> {
     }
 }
 
-pub trait IntoTableRowForArray<T> {
-    fn into_table_row(self) -> TableRow<T>;
-}
+// pub trait IntoTableRowForArray<T> {
+//     fn into_table_row(self) -> TableRow<T>;
+// }
 
-impl<T, const COLS: usize> IntoTableRowForArray<T> for [T; COLS] {
-    fn into_table_row(self) -> TableRow<T> {
-        TableRow::from_vec(self.into(), COLS)
-    }
-}
+// impl<T, const COLS: usize> IntoTableRowForArray<T> for [T; COLS] {
+//     fn into_table_row(self) -> TableRow<T> {
+//         TableRow::from_vec(self.into(), COLS)
+//     }
+// }
 
 // Index implementations for convenient access
 impl<T> Index<usize> for TableRow<T> {
