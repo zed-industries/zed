@@ -2972,6 +2972,11 @@ impl Dismissable for TrialEndUpsell {
 
 #[cfg(feature = "test-support")]
 impl AgentPanel {
+    /// Opens an external thread using an arbitrary AgentServer.
+    ///
+    /// This is a test-only helper that allows visual tests and integration tests
+    /// to inject a stub server without modifying production code paths.
+    /// Not compiled into production builds.
     pub fn open_external_thread_with_server(
         &mut self,
         server: Rc<dyn AgentServer>,
@@ -2990,6 +2995,10 @@ impl AgentPanel {
         );
     }
 
+    /// Returns the currently active thread view, if any.
+    ///
+    /// This is a test-only accessor that exposes the private `active_thread_view()`
+    /// method for test assertions. Not compiled into production builds.
     pub fn active_thread_view_for_tests(&self) -> Option<&Entity<AcpThreadView>> {
         self.active_thread_view()
     }

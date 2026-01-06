@@ -46,6 +46,9 @@ use gpui::SharedString;
 /// Baseline images are stored relative to this file
 const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
 
+/// A small embedded test image (8x8 red PNG) for use when app-icon.png is not available
+const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
+
 /// Threshold for image comparison (0.0 to 1.0)
 /// Images must match at least this percentage to pass
 const MATCH_THRESHOLD: f64 = 0.99;
@@ -791,12 +794,9 @@ async fn run_agent_thread_view_test(
 ) -> Result<TestResult> {
     use agent_ui::AgentPanel;
 
-    // Load the Zed app icon as the test image
-    let icon_path = get_workspace_root()?.join("crates/zed/resources/app-icon.png");
-    let icon_bytes = std::fs::read(&icon_path)
-        .with_context(|| format!("Failed to read app icon from {:?}", icon_path))?;
+    // Use embedded test image (compiled into the binary)
     let icon_base64 =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &icon_bytes);
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, EMBEDDED_TEST_IMAGE);
 
     // Create stub connection with image response
     let connection = StubAgentConnection::new();
@@ -905,21 +905,21 @@ async fn run_agent_thread_view_test(
         .await;
 
     // Expand the tool call so its content (the image) is visible
-    let tool_call_id = thread.update(cx, |thread, _cx| {
-        thread.entries().iter().find_map(|entry| {
-            if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
-                Some(tool_call.id.clone())
-            } else {
-                None
-            }
-        })
-    })?;
+    let tool_call_id = thread
+        .update(cx, |thread, _cx| {
+            thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
+                    Some(tool_call.id.clone())
+                } else {
+                    None
+                }
+            })
+        })?
+        .ok_or_else(|| anyhow::anyhow!("Expected a ToolCall entry in thread for visual test"))?;
 
-    if let Some(tool_call_id) = tool_call_id {
-        thread_view.update(cx, |view, cx| {
-            view.expand_tool_call(tool_call_id, cx);
-        })?;
-    }
+    thread_view.update(cx, |view, cx| {
+        view.expand_tool_call(tool_call_id, cx);
+    })?;
 
     // Wait for UI to update
     cx.background_executor()
@@ -946,14 +946,4 @@ async fn run_agent_thread_view_test(
         update_baseline,
     )
     .await
-}
-
-fn get_workspace_root() -> Result<PathBuf> {
-    let mut path = std::env::current_dir().expect("Failed to get current directory");
-    while !path.join("Cargo.toml").exists() || !path.join("crates").exists() {
-        if !path.pop() {
-            anyhow::bail!("Could not find workspace root");
-        }
-    }
-    Ok(path)
 }

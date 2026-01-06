@@ -6800,7 +6800,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::StubAgentConnection;
+    use acp_thread::{StubAgentConnection, create_test_png_base64};
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
@@ -8173,27 +8173,5 @@ pub(crate) mod tests {
                 panic!("Expected ToolCall entry");
             }
         });
-    }
-
-    fn create_test_png_base64(width: u32, height: u32, color: [u8; 4]) -> String {
-        use image::ImageEncoder as _;
-
-        let mut png_data = Vec::new();
-        {
-            let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
-            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-            for _ in 0..(width * height) {
-                pixels.extend_from_slice(&color);
-            }
-            encoder
-                .write_image(&pixels, width, height, image::ExtendedColorType::Rgba8)
-                .expect("Failed to encode PNG");
-        }
-
-        use image::EncodableLayout as _;
-        base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            png_data.as_bytes(),
-        )
     }
 }
