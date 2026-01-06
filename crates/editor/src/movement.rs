@@ -514,6 +514,8 @@ pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> b
     is_word_end || is_subword_boundary_end(left, right, classifier)
 }
 
+/// Returns true if the transition from `left` to `right` is a subword boundary,
+/// such as case changes, underscores, or dashes. Does not include word boundaries like whitespace.
 fn is_subword_boundary_end(left: char, right: char, classifier: &CharClassifier) -> bool {
     classifier.is_word('-') && left != '-' && right == '-'
         || left != '_' && right == '_'
