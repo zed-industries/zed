@@ -2,7 +2,6 @@ use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
 use crate::data_table::UncheckedTableRow;
-use crate::types::IntoTableRow;
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
@@ -82,7 +81,8 @@ impl CsvPreviewView {
             //     AbsoluteLength::Pixels(3000u32.into()),
             // )))
             // .fixed_width(DefiniteLength::Fraction(1.))
-            .column_driven_width()
+            // .column_driven_width()
+            .table_width(self.settings.table_width_mode.into())
             .striped()
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)

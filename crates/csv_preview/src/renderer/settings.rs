@@ -6,7 +6,9 @@ use ui::{
 
 use crate::{
     CsvPreviewView,
-    settings::{CopyFormat, CopyMode, FontType, RowRenderMechanism, VerticalAlignment},
+    settings::{
+        CopyFormat, CopyMode, FontType, RowRenderMechanism, TableWidthMode, VerticalAlignment,
+    },
 };
 
 ///// Settings related /////
@@ -42,6 +44,11 @@ impl CsvPreviewView {
         let current_copy_mode_text = match self.settings.copy_mode {
             CopyMode::Display => "Display Order",
             CopyMode::Data => "File Order",
+        };
+
+        let current_table_width_text = match self.settings.table_width_mode {
+            TableWidthMode::Responsive => "Responsive",
+            TableWidthMode::ColumnDriven => "Column Driven",
         };
 
         let view = cx.entity();
@@ -170,6 +177,27 @@ impl CsvPreviewView {
             })
         });
 
+        let table_width_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("Responsive", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.table_width_mode = TableWidthMode::Responsive;
+                        cx.notify();
+                    });
+                }
+            })
+            .entry("Column Driven", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.table_width_mode = TableWidthMode::ColumnDriven;
+                        cx.notify();
+                    });
+                }
+            })
+        });
+
         h_flex()
                 .gap_4()
                 .p_2()
@@ -275,6 +303,26 @@ impl CsvPreviewView {
                             )
                             .trigger_size(ButtonSize::Compact)
                             .trigger_tooltip(Tooltip::text("Choose whether to copy in display order (what you see) or file order (original data)"))
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child("Table Width:"),
+                        )
+                        .child(
+                            DropdownMenu::new(
+                                ElementId::Name("table-width-dropdown".into()),
+                                current_table_width_text,
+                                table_width_dropdown_menu,
+                            )
+                            .trigger_size(ButtonSize::Compact)
+                            .trigger_tooltip(Tooltip::text("Responsive: Table width adjusts to container (fractional column resizing). Column Driven: Table width grows with columns (absolute column resizing)"))
                         ),
                 )
                 .child(

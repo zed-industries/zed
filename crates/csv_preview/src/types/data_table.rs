@@ -746,6 +746,11 @@ impl Table {
         self
     }
 
+    /// Set directly
+    pub fn table_width(mut self, table_width: TableWidth) -> Self {
+        self.width = table_width;
+        self
+    }
     /// Sets the width of the table.
     /// Will enable horizontal scrolling if [`Self::interactable`] is also called.
     pub fn fixed_width(mut self, width: impl Into<Length>) -> Self {
