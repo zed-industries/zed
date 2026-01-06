@@ -1,4 +1,6 @@
-use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
+use gpui::{
+    App, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, Window, canvas, point, px,
+};
 use theme::AccentColors;
 use ui::ActiveTheme as _;
 
@@ -44,55 +46,17 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                         bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
                             - scroll_offset;
 
-                    for line in row.lines.iter() {
-                        let line_color = accent_colors.color_for_index(line.color_idx as u32);
-
-                        let from_x = lane_center_x(bounds, left_padding, line.from_lane as f32);
-                        let to_x = lane_center_x(bounds, left_padding, line.to_lane as f32);
-
-                        match line.line_type {
-                            LineType::Straight => {
-                                let start_y = if line.continues_from_above {
-                                    row_y_center - row_height / 2.0
-                                } else {
-                                    row_y_center
-                                };
-                                let end_y = if line.ends_at_commit {
-                                    row_y_center
-                                } else {
-                                    row_y_center + row_height / 2.0
-                                };
-
-                                draw_straight_line(
-                                    window, from_x, start_y, from_x, end_y, LINE_WIDTH, line_color,
-                                );
-                            }
-                            LineType::MergeDown | LineType::BranchOut => {
-                                draw_s_curve(
-                                    window,
-                                    from_x,
-                                    row_y_center,
-                                    to_x,
-                                    row_y_center + row_height / 2.0,
-                                    LINE_WIDTH,
-                                    line_color,
-                                );
-                            }
-                        }
-                    }
-
                     let commit_x = lane_center_x(bounds, left_padding, row.lane as f32);
-                    let dot_radius = px(4.5);
+                    let radius = px(4.5);
                     let stroke_width = px(1.5);
 
-                    // Draw colored outline only (hollow/transparent circle)
-                    draw_circle_outline(
-                        window,
+                    draw_commit_circle(
                         commit_x,
                         row_y_center,
-                        dot_radius,
+                        radius,
                         stroke_width,
                         row_color,
+                        window,
                     );
                 }
             })
@@ -102,51 +66,39 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     .h_full()
 }
 
-fn draw_circle_outline(
-    window: &mut Window,
+fn draw_commit_circle(
     center_x: Pixels,
     center_y: Pixels,
     radius: Pixels,
     stroke_width: Pixels,
     color: Hsla,
+    window: &mut Window,
 ) {
-    // Draw a circle outline using path segments
-    let segments = 32;
-    let outer_radius = radius;
-    let inner_radius = radius - stroke_width;
+    let mut builder = PathBuilder::stroke(stroke_width);
 
-    let mut outer_points = Vec::with_capacity(segments);
-    let mut inner_points = Vec::with_capacity(segments);
+    // Start at the rightmost point of the circle
+    builder.move_to(point(center_x + radius, center_y));
 
-    for i in 0..segments {
-        let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
-        let cos_a = angle.cos();
-        let sin_a = angle.sin();
+    // Draw the circle using two arc_to calls (top half, then bottom half)
+    builder.arc_to(
+        point(radius, radius),
+        px(0.),
+        false,
+        true,
+        point(center_x - radius, center_y),
+    );
+    builder.arc_to(
+        point(radius, radius),
+        px(0.),
+        false,
+        true,
+        point(center_x + radius, center_y),
+    );
+    builder.close();
 
-        outer_points.push(Point::new(
-            center_x + px(f32::from(outer_radius) * cos_a),
-            center_y + px(f32::from(outer_radius) * sin_a),
-        ));
-        inner_points.push(Point::new(
-            center_x + px(f32::from(inner_radius) * cos_a),
-            center_y + px(f32::from(inner_radius) * sin_a),
-        ));
+    if let Ok(path) = builder.build() {
+        window.paint_path(path, color);
     }
-
-    // Create path: outer circle clockwise, then inner circle counter-clockwise
-    let mut path = gpui::Path::new(outer_points[0]);
-    for point in outer_points.iter().skip(1) {
-        path.line_to(*point);
-    }
-    path.line_to(outer_points[0]); // Close outer circle
-
-    // Connect to inner circle and trace it in reverse
-    path.line_to(inner_points[0]);
-    for point in inner_points.iter().rev() {
-        path.line_to(*point);
-    }
-
-    window.paint_path(path, color);
 }
 
 fn draw_straight_line(
