@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
-    Bias, DisplayPoint, Editor, EditorSettings, SelectionEffects, ToPoint,
+    Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
@@ -243,7 +243,9 @@ struct VimRead {
 struct VimNorm {
     pub range: Option<CommandRange>,
     pub command: String,
-    pub override_selections: Option<Vec<DisplayPoint>>,
+    /// Places cursors at beginning of each given row.
+    /// Overrides given range and current cursor.
+    pub override_rows: Option<Vec<u32>>,
 }
 
 #[derive(Debug)]
@@ -760,10 +762,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             .map(|c| Keystroke::parse(&c.to_string()).unwrap())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
-        if let Some(new_selections) = &action.override_selections {
-            let _ = vim.update_editor(cx, |_, editor, cx| {
+        if let Some(override_rows) = &action.override_rows {
+            vim.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.replace_cursors_with(|_| new_selections.to_vec());
+                    s.replace_cursors_with(|map| {
+                        override_rows
+                            .iter()
+                            .map(|row| Point::new(*row, 0).to_display_point(map))
+                            .collect()
+                    });
                 });
             });
         } else if let Some(range) = &action.range {
@@ -795,7 +802,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             workspace.send_keystrokes_impl(keystrokes, window, cx)
         });
         let had_range = action.range.is_some();
-        let had_override = action.override_selections.is_some();
+        let had_override = action.override_rows.is_some();
 
         cx.spawn_in(window, async move |vim, cx| {
             task.await;
@@ -823,7 +830,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     });
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     });
@@ -1609,7 +1616,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             VimNorm {
                 command: "".into(),
                 range: None,
-                override_selections: None,
+                override_rows: None,
             },
         )
         .args(|_, args| {
@@ -1617,7 +1624,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 VimNorm {
                     command: args,
                     range: None,
-                    override_selections: None,
+                    override_rows: None,
                 }
                 .boxed_clone(),
             )
@@ -2202,12 +2209,13 @@ impl OnMatchingLines {
 
                 if let Some(vim_norm) = action.as_any().downcast_ref::<VimNorm>() {
                     let mut vim_norm = vim_norm.clone();
-                    vim_norm.override_selections = Some(new_selections);
+                    vim_norm.override_rows =
+                        Some(new_selections.iter().map(|point| point.row().0).collect());
                     editor
                         .update_in(cx, |_, window, cx| {
                             window.dispatch_action(vim_norm.boxed_clone(), cx);
                         })
-                        .ok();
+                        .log_err();
                     return;
                 }
 
@@ -2234,7 +2242,7 @@ impl OnMatchingLines {
                             editor.end_transaction_at(Instant::now(), cx);
                         })
                     })
-                    .ok();
+                    .log_err();
             })
             .detach();
         });
