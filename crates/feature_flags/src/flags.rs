@@ -30,12 +30,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
 }
 
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-}
-
 pub struct SubagentsFeatureFlag;
 
 impl FeatureFlag for SubagentsFeatureFlag {
