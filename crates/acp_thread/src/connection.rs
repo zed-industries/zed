@@ -371,6 +371,10 @@ mod test_support {
             &[]
         }
 
+        fn model_selector(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
+            Some(self.model_selector_impl())
+        }
+
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -503,6 +507,48 @@ mod test_support {
     impl AgentSessionTruncate for StubAgentSessionEditor {
         fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
+        }
+    }
+
+    /// A stub model selector for visual tests that provides a static model list.
+    #[derive(Clone)]
+    pub struct StubModelSelector {
+        selected_model: Arc<Mutex<AgentModelInfo>>,
+    }
+
+    impl StubModelSelector {
+        pub fn new() -> Self {
+            Self {
+                selected_model: Arc::new(Mutex::new(AgentModelInfo {
+                    id: acp::ModelId::new("visual-test-model"),
+                    name: "Visual Test Model".into(),
+                    description: Some("A stub model for visual testing".into()),
+                    icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                })),
+            }
+        }
+    }
+
+    impl AgentModelSelector for StubModelSelector {
+        fn list_models(&self, _cx: &mut App) -> Task<Result<AgentModelList>> {
+            let model = self.selected_model.lock().clone();
+            Task::ready(Ok(AgentModelList::Flat(vec![model])))
+        }
+
+        fn select_model(&self, model_id: acp::ModelId, _cx: &mut App) -> Task<Result<()>> {
+            self.selected_model.lock().id = model_id;
+            Task::ready(Ok(()))
+        }
+
+        fn selected_model(&self, _cx: &mut App) -> Task<Result<AgentModelInfo>> {
+            Task::ready(Ok(self.selected_model.lock().clone()))
+        }
+    }
+
+    impl StubAgentConnection {
+        /// Returns a model selector for this stub connection.
+        pub fn model_selector_impl(&self) -> Rc<dyn AgentModelSelector> {
+            Rc::new(StubModelSelector::new())
         }
     }
 }
