@@ -1302,12 +1302,12 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 if let Some(window) = cx.active_window()
                     && let Some(workspace) = window.downcast::<Workspace>()
                 {
-                    workspace.update(cx, |workspace, _, cx| {
-                        workspace.show_toast(
-                            Toast::new(NotificationId::unique::<()>(), message),
-                            cx,
-                        )
-                    });
+                    workspace
+                        .update(cx, |workspace, _, cx| {
+                            workspace
+                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                        })
+                        .ok();
                     return true;
                 }
                 false
@@ -1350,8 +1350,7 @@ pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
-    let mut restore_behavior =
-        cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
+    let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();
     let (last_session_id, last_session_window_stack) = cx.update(|cx| {

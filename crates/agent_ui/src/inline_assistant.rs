@@ -1996,7 +1996,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     cx,
                 );
                 assistant.start_assist(assist_id, window, cx);
-            });
+            })?;
 
             Ok(ProjectTransaction::default())
         })

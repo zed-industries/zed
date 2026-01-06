@@ -575,7 +575,8 @@ pub(crate) fn paste_images_as_context(
         let replacement_text = MentionUri::PastedImage.as_link().to_string();
         cx.update(|_window, cx| {
             cx.stop_propagation();
-        });
+        })
+        .ok();
         for image in images {
             let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
                 .update_in(cx, |message_editor, window, cx| {
