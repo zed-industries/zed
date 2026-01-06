@@ -46,7 +46,7 @@ use gpui::SharedString;
 /// Baseline images are stored relative to this file
 const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
 
-/// A small embedded test image (8x8 red PNG) for use when app-icon.png is not available
+/// Embedded test image (Zed app icon) for visual tests.
 const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
 
 /// Threshold for image comparison (0.0 to 1.0)
