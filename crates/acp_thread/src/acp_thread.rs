@@ -717,6 +717,13 @@ impl ToolCallContent {
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
         }
     }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            Self::ContentBlock(content) => content.image(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

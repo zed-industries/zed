@@ -776,33 +776,23 @@ impl AgentServer for StubAgentServer {
 }
 
 /// Runs the agent panel visual test with full UI chrome.
+/// This test actually runs the real ReadFileTool to capture image output.
 async fn run_agent_thread_view_test(
     app_state: Arc<AppState>,
     cx: &mut gpui::AsyncApp,
     update_baseline: bool,
 ) -> Result<TestResult> {
+    use agent::AgentTool;
     use agent_ui::AgentPanel;
 
-    // Use embedded test image (compiled into the binary)
-    let icon_base64 = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        EMBEDDED_TEST_IMAGE,
-    );
+    // Create a temporary directory with the test image using real filesystem
+    let temp_dir = tempfile::tempdir()?;
+    let project_path = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project_path)?;
+    let image_path = project_path.join("test-image.png");
+    std::fs::write(&image_path, EMBEDDED_TEST_IMAGE)?;
 
-    // Create stub connection with image response
-    let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-        acp::ToolCall::new("read_image", "Reading Zed app icon")
-            .kind(acp::ToolKind::Fetch)
-            .status(acp::ToolCallStatus::Completed)
-            .content(vec![acp::ToolCallContent::Content(acp::Content::new(
-                acp::ContentBlock::Image(acp::ImageContent::new(icon_base64, "image/png")),
-            ))]),
-    )]);
-
-    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
-
-    // Create a project for the workspace
+    // Create a project with the real filesystem containing the test image
     let project = cx.update(|cx| {
         project::Project::local(
             app_state.client.clone(),
@@ -815,6 +805,102 @@ async fn run_agent_thread_view_test(
             cx,
         )
     })?;
+
+    // Add the test directory as a worktree
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    })?;
+    let (worktree, _) = add_worktree_task.await?;
+
+    // Wait for worktree to scan and find the image file
+    let worktree_name = worktree.read_with(cx, |wt, _| wt.root_name_str().to_string())?;
+
+    // Wait for worktree to be fully scanned
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    // Create the necessary entities for the ReadFileTool
+    let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()))?;
+    let context_server_registry = cx.new(|cx| {
+        agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx)
+    })?;
+    let fake_model = Arc::new(language_model::fake_provider::FakeLanguageModel::default());
+    let project_context = cx.new(|_| prompt_store::ProjectContext::default())?;
+
+    // Create the agent Thread
+    let thread = cx.new(|cx| {
+        agent::Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            agent::Templates::new(),
+            Some(fake_model),
+            cx,
+        )
+    })?;
+
+    // Create the ReadFileTool
+    let tool = Arc::new(agent::ReadFileTool::new(
+        thread.downgrade(),
+        project.clone(),
+        action_log,
+    ));
+
+    // Create a test event stream to capture tool output
+    let (event_stream, mut event_receiver) = agent::ToolCallEventStream::test();
+
+    // Run the real ReadFileTool to get the actual image content
+    // The path is relative to the worktree root name
+    let input = agent::ReadFileToolInput {
+        path: format!("{}/test-image.png", worktree_name),
+        start_line: None,
+        end_line: None,
+    };
+    let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx))?;
+
+    // The tool runs async - wait for it
+    run_task.await?;
+
+    // Collect the events from the tool execution
+    let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
+    let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
+
+    while let Ok(Some(event)) = event_receiver.try_next() {
+        if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+            update,
+        ))) = event
+        {
+            if let Some(content) = update.fields.content {
+                tool_content.extend(content);
+            }
+            if let Some(locations) = update.fields.locations {
+                tool_locations.extend(locations);
+            }
+        }
+    }
+
+    // Verify we got image content from the real tool
+    if tool_content.is_empty() {
+        return Err(anyhow::anyhow!(
+            "ReadFileTool did not produce any content - the tool is broken!"
+        ));
+    }
+
+    // Create stub connection with the REAL tool output
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+        acp::ToolCall::new(
+            "read_file",
+            format!("Read file `{}/test-image.png`", worktree_name),
+        )
+        .kind(acp::ToolKind::Read)
+        .status(acp::ToolCallStatus::Completed)
+        .locations(tool_locations)
+        .content(tool_content),
+    )]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
 
     // Create a window sized for the agent panel (500x900)
     let window_size = size(px(500.0), px(900.0));

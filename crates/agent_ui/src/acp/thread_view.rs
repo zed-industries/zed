@@ -286,6 +286,7 @@ pub struct AcpThreadView {
     list_state: ListState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
+    collapsed_image_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -454,6 +455,7 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
+            collapsed_image_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
@@ -2727,9 +2729,12 @@ impl AcpThreadView {
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
+        let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-
-        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_image_collapsed = self.collapsed_image_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation
+            || (has_image_content && !is_image_collapsed)
+            || self.expanded_tool_calls.contains(&tool_call.id);
         let input_output_header = |label: SharedString| {
             Label::new(label)
                 .size(LabelSize::XSmall)
@@ -2751,6 +2756,7 @@ impl AcpThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
+                                        has_image_content,
                                         window,
                                         cx,
                                     ))
@@ -2777,7 +2783,7 @@ impl AcpThreadView {
                     | ToolCallStatus::Completed
                     | ToolCallStatus::Failed
                     | ToolCallStatus::Canceled => v_flex()
-                        .when(!is_edit && !is_terminal_tool, |this| {
+                        .when(!is_edit && !is_terminal_tool && !has_image_content, |this| {
                             this.mt_1p5().w_full().child(
                                 v_flex()
                                     .ml(rems(0.4))
@@ -2807,6 +2813,7 @@ impl AcpThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
+                                        has_image_content,
                                         window,
                                         cx,
                                     ),
@@ -2905,7 +2912,13 @@ impl AcpThreadView {
                                                 .on_click(cx.listener({
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                        if is_open {
+                                                        if has_image_content {
+                                                            if is_open {
+                                                                this.collapsed_image_tool_calls.insert(id.clone());
+                                                            } else {
+                                                                this.collapsed_image_tool_calls.remove(&id);
+                                                            }
+                                                        } else if is_open {
                                                             this.expanded_tool_calls.remove(&id);
                                                         } else {
                                                             this.expanded_tool_calls.insert(id.clone());
@@ -3045,6 +3058,7 @@ impl AcpThreadView {
         context_ix: usize,
         tool_call: &ToolCall,
         card_layout: bool,
+        is_image_tool_call: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3062,7 +3076,15 @@ impl AcpThreadView {
                         cx,
                     )
                 } else if let Some(image) = content.image() {
-                    self.render_image_output(image.clone(), card_layout, cx)
+                    let location = tool_call.locations.first().cloned();
+                    self.render_image_output(
+                        entry_ix,
+                        image.clone(),
+                        location,
+                        card_layout,
+                        is_image_tool_call,
+                        cx,
+                    )
                 } else {
                     Empty.into_any_element()
                 }
@@ -3123,10 +3145,33 @@ impl AcpThreadView {
 
     fn render_image_output(
         &self,
+        entry_ix: usize,
         image: Arc<gpui::Image>,
+        location: Option<acp::ToolCallLocation>,
         card_layout: bool,
+        show_dimensions: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let dimensions_label = if show_dimensions {
+            let format_name = match image.format() {
+                gpui::ImageFormat::Png => "PNG",
+                gpui::ImageFormat::Jpeg => "JPEG",
+                gpui::ImageFormat::Webp => "WebP",
+                gpui::ImageFormat::Gif => "GIF",
+                gpui::ImageFormat::Svg => "SVG",
+                gpui::ImageFormat::Bmp => "BMP",
+                gpui::ImageFormat::Tiff => "TIFF",
+                gpui::ImageFormat::Ico => "ICO",
+            };
+            let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok());
+            dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
+        } else {
+            None
+        };
+
         v_flex()
             .gap_2()
             .map(|this| {
@@ -3138,6 +3183,29 @@ impl AcpThreadView {
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
                 }
+            })
+            .when(dimensions_label.is_some() || location.is_some(), |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .children(dimensions_label.map(|label| {
+                            Label::new(label)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx)
+                        }))
+                        .when_some(location, |this, _loc| {
+                            this.child(
+                                Button::new(("go-to-file", entry_ix), "Go to File")
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_tool_call_location(entry_ix, 0, window, cx);
+                                    })),
+                            )
+                        }),
+                )
             })
             .child(
                 img(image)

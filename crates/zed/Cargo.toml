@@ -31,10 +31,10 @@ visual-tests = [
     "dep:semver",
     "dep:tempfile",
     "dep:acp_thread",
+    "dep:action_log",
     "dep:agent",
     "dep:agent_servers",
     "dep:agent-client-protocol",
-    "dep:base64",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
@@ -44,6 +44,9 @@ visual-tests = [
     "acp_thread/test-support",
     "agent_ui/test-support",
     "db/test-support",
+    "agent/test-support",
+    "language_model/test-support",
+    "fs/test-support",
 ]
 
 [[bin]]
@@ -114,10 +117,10 @@ semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
 acp_thread = { workspace = true, optional = true }
+action_log = { workspace = true, optional = true }
 agent = { workspace = true, optional = true }
 agent_servers = { workspace = true, optional = true }
 agent-client-protocol = { workspace = true, optional = true }
-base64 = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 
