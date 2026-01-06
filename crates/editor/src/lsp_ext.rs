@@ -144,8 +144,7 @@ pub fn lsp_tasks(
                             cx,
                         )
                     });
-                    if let Some(new_runnables) = runnables_task.await.log_err()
-                    {
+                    if let Some(new_runnables) = runnables_task.await.log_err() {
                         new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
                             |(location, runnable)| {
                                 let resolved_task =

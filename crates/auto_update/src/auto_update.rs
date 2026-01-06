@@ -576,8 +576,7 @@ impl AutoUpdater {
         let fetched_release_data =
             Self::get_release_asset(&this, release_channel, None, "zed", OS, ARCH, cx).await?;
         let fetched_version = fetched_release_data.clone().version;
-        let app_commit_sha =
-            Ok(cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full())));
+        let app_commit_sha = Ok(cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full())));
         let newer_version = Self::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,

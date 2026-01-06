@@ -642,7 +642,9 @@ impl ConfigurationView {
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.set_api_key(Some(api_key), cx)).await
+            state
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
+                .await
         })
         .detach_and_log_err(cx);
     }
@@ -653,7 +655,9 @@ impl ConfigurationView {
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.set_api_key(None, cx)).await
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))
+                .await
         })
         .detach_and_log_err(cx);
 

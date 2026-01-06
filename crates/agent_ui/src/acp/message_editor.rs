@@ -686,8 +686,8 @@ impl MessageEditor {
                                     .map_err(|e| e.to_string())?;
 
                                 Ok(buffer.update(cx, |buffer, cx| {
-                                    let start = Point::new(*line_range.start(), 0)
-                                        .min(buffer.max_point());
+                                    let start =
+                                        Point::new(*line_range.start(), 0).min(buffer.max_point());
                                     let end = Point::new(*line_range.end() + 1, 0)
                                         .min(buffer.max_point());
                                     let content = buffer.text_for_range(start..end).collect();

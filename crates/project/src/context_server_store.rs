@@ -136,8 +136,8 @@ impl ContextServerConfiguration {
                 enabled: _,
                 settings,
             } => {
-                let descriptor = cx
-                    .update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
+                let descriptor =
+                    cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
 
                 match descriptor.command(worktree_store, cx).await {
                     Ok(command) => {
@@ -344,9 +344,10 @@ impl ContextServerStore {
     pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Context server store dropped")?;
-            let settings = this.update(cx, |this, _| {
-                this.context_server_settings.get(&server.id().0).cloned()
-            })
+            let settings = this
+                .update(cx, |this, _| {
+                    this.context_server_settings.get(&server.id().0).cloned()
+                })
                 .context("Failed to get context server settings")?;
 
             if !settings.enabled() {
@@ -607,9 +608,7 @@ impl ContextServerStore {
             )
         })?;
 
-        for (id, _) in
-            registry.read_with(cx, |registry, _| registry.context_server_descriptors())
-        {
+        for (id, _) in registry.read_with(cx, |registry, _| registry.context_server_descriptors()) {
             configured_servers
                 .entry(id)
                 .or_insert(ContextServerSettings::default_extension());

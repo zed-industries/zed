@@ -11594,7 +11594,7 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
-                    Some(cx.spawn(async move |cx| cx.new(|_| TestPngItem {})))
+                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestPngItem {}))))
                 } else {
                     None
                 }
@@ -11669,7 +11669,7 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
-                    Some(cx.spawn(async move |cx| cx.new(|_| TestIpynbItem {})))
+                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestIpynbItem {}))))
                 } else {
                     None
                 }

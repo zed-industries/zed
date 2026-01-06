@@ -142,8 +142,7 @@ async fn cursor_position(
     })?;
 
     let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
-    let cursor_anchor =
-        cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset));
+    let cursor_anchor = cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset));
 
     Ok((cursor_buffer, cursor_anchor))
 }

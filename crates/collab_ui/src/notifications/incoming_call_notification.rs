@@ -35,10 +35,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                         cx.update(|cx| notification_window_options(screen, window_size, cx));
                     if let Ok(window) = cx.open_window(options, |_, cx| {
                         cx.new(|_| {
-                            IncomingCallNotification::new(
-                                incoming_call.clone(),
-                                app_state.clone(),
-                            )
+                            IncomingCallNotification::new(incoming_call.clone(), app_state.clone())
                         })
                     }) {
                         notification_windows.push(window);

@@ -362,30 +362,32 @@ fn possible_open_target(
     cx.spawn(async move |cx| {
         background_fs_checks_task.await.or_else(|| {
             for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-                if let Some(found_entry) = worktree.update(cx, |worktree, _| -> Option<OpenTarget> {
-                    let traversal =
-                        worktree.traverse_from_path(true, true, false, RelPath::empty());
-                    for entry in traversal {
-                        if let Some(path_in_worktree) =
-                            worktree_paths_to_check.iter().find(|path_to_check| {
-                                RelPath::new(&path_to_check.path, PathStyle::local())
-                                    .is_ok_and(|path| entry.path.ends_with(&path))
-                            })
-                        {
-                            return Some(OpenTarget::Worktree(
-                                PathWithPosition {
-                                    path: worktree.absolutize(&entry.path),
-                                    row: path_in_worktree.row,
-                                    column: path_in_worktree.column,
-                                },
-                                entry.clone(),
-                                #[cfg(test)]
-                                OpenTargetFoundBy::WorktreeScan,
-                            ));
+                if let Some(found_entry) =
+                    worktree.update(cx, |worktree, _| -> Option<OpenTarget> {
+                        let traversal =
+                            worktree.traverse_from_path(true, true, false, RelPath::empty());
+                        for entry in traversal {
+                            if let Some(path_in_worktree) =
+                                worktree_paths_to_check.iter().find(|path_to_check| {
+                                    RelPath::new(&path_to_check.path, PathStyle::local())
+                                        .is_ok_and(|path| entry.path.ends_with(&path))
+                                })
+                            {
+                                return Some(OpenTarget::Worktree(
+                                    PathWithPosition {
+                                        path: worktree.absolutize(&entry.path),
+                                        row: path_in_worktree.row,
+                                        column: path_in_worktree.column,
+                                    },
+                                    entry.clone(),
+                                    #[cfg(test)]
+                                    OpenTargetFoundBy::WorktreeScan,
+                                ));
+                            }
                         }
-                    }
-                    None
-                }) {
+                        None
+                    })
+                {
                     return Some(found_entry);
                 }
             }

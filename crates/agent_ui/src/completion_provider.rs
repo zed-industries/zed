@@ -1474,9 +1474,7 @@ pub(crate) fn search_symbols(
                 symbols
                     .iter()
                     .enumerate()
-                    .map(|(id, symbol)| {
-                        StringMatchCandidate::new(id, symbol.label.filter_text())
-                    })
+                    .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.label.filter_text()))
                     .partition(|candidate| match &symbols[candidate.id].path {
                         SymbolLocation::InProject(project_path) => project
                             .entry_for_path(project_path, cx)

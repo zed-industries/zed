@@ -642,8 +642,7 @@ impl ConfigurationView {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx)))
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     task.await.log_err();
                 }
                 this.update(cx, |this, cx| {

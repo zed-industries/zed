@@ -496,8 +496,7 @@ pub(crate) fn resolve_conflict(
         });
         if save.await.log_err().is_none() {
             let open_path = maybe!({
-                let path = buffer
-                    .read_with(cx, |buffer, cx| buffer.project_path(cx))?;
+                let path = buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_path_preview(path, None, false, false, false, window, cx)

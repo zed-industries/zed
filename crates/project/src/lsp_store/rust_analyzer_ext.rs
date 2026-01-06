@@ -156,8 +156,8 @@ pub fn run_flycheck(
         };
 
         if let Some((client, project_id)) = upstream_client {
-            let buffer_id =
-                buffer.map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto()));
+            let buffer_id = buffer
+                .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto()));
             let request = proto::LspExtRunFlycheck {
                 project_id,
                 buffer_id,
@@ -241,33 +241,32 @@ fn find_rust_analyzer_server(
     buffer: Option<&Entity<Buffer>>,
     cx: &mut AsyncApp,
 ) -> Option<LanguageServerId> {
-    project
-        .read_with(cx, |project, cx| {
-            buffer
-                .and_then(|buffer| {
-                    project.language_server_id_for_name(buffer.read(cx), &RUST_ANALYZER_NAME, cx)
-                })
-                // If no rust-analyzer found for the current buffer (e.g. `settings.json`), fall back to the project lookup
-                // and use project's rust-analyzer if it's the only one.
-                .or_else(|| {
-                    let rust_analyzer_servers = project
-                        .lsp_store()
-                        .read(cx)
-                        .language_server_statuses
-                        .iter()
-                        .filter_map(|(server_id, server_status)| {
-                            if server_status.name == RUST_ANALYZER_NAME {
-                                Some(*server_id)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    if rust_analyzer_servers.len() == 1 {
-                        rust_analyzer_servers.first().copied()
-                    } else {
-                        None
-                    }
-                })
-        })
+    project.read_with(cx, |project, cx| {
+        buffer
+            .and_then(|buffer| {
+                project.language_server_id_for_name(buffer.read(cx), &RUST_ANALYZER_NAME, cx)
+            })
+            // If no rust-analyzer found for the current buffer (e.g. `settings.json`), fall back to the project lookup
+            // and use project's rust-analyzer if it's the only one.
+            .or_else(|| {
+                let rust_analyzer_servers = project
+                    .lsp_store()
+                    .read(cx)
+                    .language_server_statuses
+                    .iter()
+                    .filter_map(|(server_id, server_status)| {
+                        if server_status.name == RUST_ANALYZER_NAME {
+                            Some(*server_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if rust_analyzer_servers.len() == 1 {
+                    rust_analyzer_servers.first().copied()
+                } else {
+                    None
+                }
+            })
+    })
 }

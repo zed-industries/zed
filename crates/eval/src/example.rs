@@ -359,9 +359,12 @@ impl ExampleContext {
     pub fn edits(&self) -> HashMap<Arc<RelPath>, FileEdits> {
         self.agent_thread.read_with(&self.app, |thread, cx| {
             let action_log = thread.action_log().read(cx);
-            HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
-                |(buffer, diff)| {
-                    let snapshot = buffer.read(cx).snapshot();
+            HashMap::from_iter(
+                action_log
+                    .changed_buffers(cx)
+                    .into_iter()
+                    .map(|(buffer, diff)| {
+                        let snapshot = buffer.read(cx).snapshot();
 
                         let file = snapshot.file().unwrap();
                         let base_text = diff.read(cx).base_text(cx).text();
@@ -379,9 +382,9 @@ impl ExampleContext {
                             })
                             .collect();
 
-                    (file.path().clone(), FileEdits { hunks })
-                },
-            ))
+                        (file.path().clone(), FileEdits { hunks })
+                    }),
+            )
         })
     }
 
@@ -428,11 +431,7 @@ impl AppContext for ExampleContext {
         self.app.as_mut(handle)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> R
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {

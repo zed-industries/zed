@@ -1104,8 +1104,7 @@ impl acp::Client for ClientDelegate {
                 cx,
             )
         })?;
-        let terminal_id =
-            terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone());
+        let terminal_id = terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone());
         Ok(acp::CreateTerminalResponse::new(terminal_id))
     }
 

@@ -2534,30 +2534,29 @@ impl GitPanel {
         repo_work_dir: &Arc<Path>,
         cx: &mut AsyncApp,
     ) -> Option<String> {
-        let rules_path = cx
-            .update(|cx| {
-                for worktree in project.read(cx).worktrees(cx) {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    if !worktree_abs_path.starts_with(&repo_work_dir) {
-                        continue;
-                    }
+        let rules_path = cx.update(|cx| {
+            for worktree in project.read(cx).worktrees(cx) {
+                let worktree_abs_path = worktree.read(cx).abs_path();
+                if !worktree_abs_path.starts_with(&repo_work_dir) {
+                    continue;
+                }
 
-                    let worktree_snapshot = worktree.read(cx).snapshot();
-                    for rules_name in RULES_FILE_NAMES {
-                        if let Ok(rel_path) = RelPath::unix(rules_name) {
-                            if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
-                                if entry.is_file() {
-                                    return Some(ProjectPath {
-                                        worktree_id: worktree.read(cx).id(),
-                                        path: entry.path.clone(),
-                                    });
-                                }
+                let worktree_snapshot = worktree.read(cx).snapshot();
+                for rules_name in RULES_FILE_NAMES {
+                    if let Ok(rel_path) = RelPath::unix(rules_name) {
+                        if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
+                            if entry.is_file() {
+                                return Some(ProjectPath {
+                                    worktree_id: worktree.read(cx).id(),
+                                    path: entry.path.clone(),
+                                });
                             }
                         }
                     }
                 }
-                None
-            })?;
+            }
+            None
+        })?;
 
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(rules_path, cx))

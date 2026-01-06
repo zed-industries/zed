@@ -209,8 +209,8 @@ impl RunningMode {
             }
         });
 
-        let client = if let Some(client) = parent_session
-            .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()))
+        let client = if let Some(client) =
+            parent_session.and_then(|session| cx.update(|cx| session.read(cx).adapter_client()))
         {
             client
                 .create_child_connection(session_id, binary.clone(), message_handler, cx)
@@ -464,7 +464,8 @@ impl RunningMode {
                         )
                     })?;
                 initialized_rx.await?;
-                let errors_by_path = cx.update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))
+                let errors_by_path = cx
+                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))
                     .await;
 
                 dap_store.update(cx, |_, cx| {

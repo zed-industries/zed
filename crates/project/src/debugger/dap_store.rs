@@ -811,9 +811,10 @@ impl DapStore {
             .context("missing definition")?;
         let build_task = SpawnInTerminal::from_proto(task);
         let locator = envelope.payload.locator;
-        let request = this.update(&mut cx, |this, cx| {
-            this.run_debug_locator(&locator, build_task, cx)
-        })
+        let request = this
+            .update(&mut cx, |this, cx| {
+                this.run_debug_locator(&locator, build_task, cx)
+            })
             .await?;
 
         Ok(request.to_proto())
@@ -849,21 +850,23 @@ impl DapStore {
         })
         .detach();
 
-        let worktree = this.update(&mut cx, |this, cx| {
-            this.worktree_store
-                .read(cx)
-                .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
-        })
+        let worktree = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .read(cx)
+                    .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
+            })
             .context("Failed to find worktree with a given ID")?;
-        let binary = this.update(&mut cx, |this, cx| {
-            this.get_debug_adapter_binary(
-                definition,
-                SessionId::from_proto(session_id),
-                &worktree,
-                tx,
-                cx,
-            )
-        })
+        let binary = this
+            .update(&mut cx, |this, cx| {
+                this.get_debug_adapter_binary(
+                    definition,
+                    SessionId::from_proto(session_id),
+                    &worktree,
+                    tx,
+                    cx,
+                )
+            })
             .await?;
         Ok(binary.to_proto())
     }

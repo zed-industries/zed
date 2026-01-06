@@ -101,8 +101,7 @@ pub async fn run_prediction(
     let updated_example = Arc::new(Mutex::new(example.clone()));
     let current_run_ix = Arc::new(AtomicUsize::new(0));
 
-    let mut debug_rx =
-        ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx));
+    let mut debug_rx = ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx));
     let debug_task = cx.background_spawn({
         let updated_example = updated_example.clone();
         let current_run_ix = current_run_ix.clone();

@@ -1433,7 +1433,6 @@ mod tests {
         cx.spawn(async move |mut cx| {
             for branch in branch_names {
                 repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
-                    .unwrap()
                     .await
                     .unwrap()
                     .unwrap();
@@ -1498,7 +1497,6 @@ mod tests {
                 repo.update(&mut cx, |repo, _| {
                     repo.create_remote(branch, String::from("test"))
                 })
-                .unwrap()
                 .await
                 .unwrap()
                 .unwrap();

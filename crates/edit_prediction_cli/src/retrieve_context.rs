@@ -77,17 +77,18 @@ async fn wait_for_language_servers_to_start(
 ) -> anyhow::Result<()> {
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
-    let (language_server_ids, mut starting_language_server_ids) = buffer.update(cx, |buffer, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            let ids = lsp_store.language_servers_for_local_buffer(buffer, cx);
-            let starting_ids = ids
-                .iter()
-                .copied()
-                .filter(|id| !lsp_store.language_server_statuses.contains_key(&id))
-                .collect::<HashSet<_>>();
-            (ids, starting_ids)
-        })
-    });
+    let (language_server_ids, mut starting_language_server_ids) =
+        buffer.update(cx, |buffer, cx| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                let ids = lsp_store.language_servers_for_local_buffer(buffer, cx);
+                let starting_ids = ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !lsp_store.language_server_statuses.contains_key(&id))
+                    .collect::<HashSet<_>>();
+                (ids, starting_ids)
+            })
+        });
 
     step_progress.set_substatus(format!("waiting for {} LSPs", language_server_ids.len()));
 

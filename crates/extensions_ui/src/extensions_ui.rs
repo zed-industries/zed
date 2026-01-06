@@ -131,24 +131,22 @@ pub fn init(cx: &mut App) {
                 let workspace_handle = cx.entity().downgrade();
                 window
                     .spawn(cx, async move |cx| {
-                        let extension_path =
-                            match prompt.await.map_err(anyhow::Error::from) {
-                                Ok(Some(mut paths)) => paths.pop()?,
-                                Ok(None) => return None,
-                                Err(err) => {
-                                    workspace_handle
-                                        .update(cx, |workspace, cx| {
-                                            workspace.show_portal_error(err.to_string(), cx);
-                                        })
-                                        .ok();
-                                    return None;
-                                }
-                            };
+                        let extension_path = match prompt.await.map_err(anyhow::Error::from) {
+                            Ok(Some(mut paths)) => paths.pop()?,
+                            Ok(None) => return None,
+                            Err(err) => {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.show_portal_error(err.to_string(), cx);
+                                    })
+                                    .ok();
+                                return None;
+                            }
+                        };
 
-                        let install_task = store
-                            .update(cx, |store, cx| {
-                                store.install_dev_extension(extension_path, cx)
-                            });
+                        let install_task = store.update(cx, |store, cx| {
+                            store.install_dev_extension(extension_path, cx)
+                        });
 
                         match install_task.await {
                             Ok(_) => {}

@@ -200,8 +200,8 @@ impl ChannelStore {
                 maybe!(async move {
                     while let Some(update_channels) = update_channels_rx.next().await {
                         if let Some(this) = this.upgrade() {
-                            let update_task =
-                                this.update(cx, |this, cx| this.update_channels(update_channels, cx));
+                            let update_task = this
+                                .update(cx, |this, cx| this.update_channels(update_channels, cx));
                             if let Some(update_task) = update_task {
                                 update_task.await.log_err();
                             }
