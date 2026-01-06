@@ -67,16 +67,14 @@ pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
     pub custom_scrollbar: Option<Scrollbars>,
-    pub list_state: ListState,
 }
 
 impl TableInteractionState {
-    pub fn new(cx: &mut App, list_state: ListState) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             custom_scrollbar: None,
-            list_state,
         }
     }
 
