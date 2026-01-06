@@ -21,7 +21,9 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
-use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
+use ui::{
+    Checkbox, Divider, ListItem, ListItemSpacing, ListSubHeader, ToggleState, Tooltip, prelude::*,
+};
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
@@ -44,7 +46,13 @@ actions!(
         /// Toggles whether the selected rule is a default rule.
         ToggleDefaultRule,
         /// Restores a built-in rule to its default content.
-        RestoreDefaultContent
+        RestoreDefaultContent,
+        /// Sets the active rule to static type.
+        SetRuleTypeStatic,
+        /// Sets the active rule to command type.
+        SetRuleTypeCommand,
+        /// Runs the active command rule immediately.
+        RunCommand
     ]
 );
 
@@ -176,6 +184,29 @@ struct RuleEditor {
     next_title_and_body_to_save: Option<(String, Rope)>,
     pending_save: Option<Task<Option<()>>>,
     _subscriptions: Vec<Subscription>,
+    // Command rule fields
+    rule_type: RuleType,
+    command_config: Option<CommandConfig>,
+    // Command config editors (only created when rule_type is Command)
+    cmd_editor: Option<Entity<Editor>>,
+    args_editor: Option<Entity<Editor>>,
+    timeout_editor: Option<Entity<Editor>>,
+    max_output_editor: Option<Entity<Editor>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CommandField {
+    Cmd,
+    Args,
+    Timeout,
+    MaxOutput,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CommandTrigger {
+    OnStartup,
+    OnNewChat,
+    OnEveryMessage,
 }
 
 enum RulePickerEntry {
@@ -467,6 +498,230 @@ impl PickerDelegate for RulePickerDelegate {
 }
 
 impl RulesLibrary {
+    pub fn set_rule_type_static(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(prompt_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get_mut(&prompt_id) {
+                rule_editor.rule_type = RuleType::Static;
+                rule_editor.command_config = None;
+                self.save_rule(prompt_id, window, cx);
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn set_rule_type_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(prompt_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get_mut(&prompt_id) {
+                rule_editor.rule_type = RuleType::Command;
+                if rule_editor.command_config.is_none() {
+                    // Initialize with default command config
+                    rule_editor.command_config = Some(CommandConfig {
+                        cmd: String::new(),
+                        args: Vec::new(),
+                        timeout_seconds: 5,
+                        max_output_bytes: 40_000,
+                        on_startup: false,
+                        on_new_chat: false,
+                        on_every_message: false,
+                    });
+                }
+                self.save_rule(prompt_id, window, cx);
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn run_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(prompt_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
+                if let Some(config) = &rule_editor.command_config {
+                    let config = config.clone();
+
+                    cx.spawn_in(window, async move |this, cx| {
+                        match execute_command(&config).await {
+                            Ok(result) => {
+                                let save_params = this.update_in(cx, |this, window, cx| {
+                                    let mut new_body_result: Option<String> = None;
+                                    let mut title_opt: Option<SharedString> = None;
+                                    let mut default_flag: bool = false;
+                                    let mut rule_type = RuleType::Static;
+                                    let mut command_cfg: Option<CommandConfig> = None;
+
+                                    if let Some(rule_editor_mut) =
+                                        this.rule_editors.get_mut(&prompt_id)
+                                    {
+                                        let output_text =
+                                            if result.success && !result.stdout.is_empty() {
+                                                result.stdout.clone()
+                                            } else if !result.stderr.is_empty() {
+                                                format!("(stderr)\n{}", result.stderr)
+                                            } else if !result.stdout.is_empty() {
+                                                result.stdout.clone()
+                                            } else {
+                                                String::new()
+                                            };
+
+                                        let new_body = output_text;
+
+                                        rule_editor_mut.body_editor.update(cx, |editor, cx| {
+                                            editor.set_text(new_body.clone(), window, cx);
+                                        });
+
+                                        title_opt = Some(
+                                            rule_editor_mut.title_editor.read(cx).text(cx).into(),
+                                        );
+                                        default_flag = this
+                                            .store
+                                            .read_with(cx, |store, _cx| {
+                                                store.metadata(prompt_id).map(|m| m.default)
+                                            })
+                                            .unwrap_or(false);
+
+                                        rule_type = rule_editor_mut.rule_type.clone();
+                                        command_cfg = rule_editor_mut.command_config.clone();
+
+                                        new_body_result = Some(new_body);
+                                    }
+
+                                    anyhow::Ok((
+                                        new_body_result,
+                                        title_opt,
+                                        default_flag,
+                                        rule_type,
+                                        command_cfg,
+                                    ))
+                                });
+
+                                let (
+                                    maybe_new_body,
+                                    title_opt,
+                                    default_flag,
+                                    rule_type,
+                                    command_cfg,
+                                ) = match save_params? {
+                                    Ok(tuple) => tuple,
+                                    Err(e) => {
+                                        log::error!("Failed to update editor: {}", e);
+                                        return anyhow::Ok(());
+                                    }
+                                };
+
+                                let new_body = match maybe_new_body {
+                                    Some(b) => b,
+                                    None => {
+                                        return anyhow::Ok(());
+                                    }
+                                };
+
+                                match this
+                                    .update_in(cx, move |this, _window, cx| {
+                                        let title_owned = title_opt.clone();
+                                        this.store.update(cx, |store, cx| {
+                                            store.save(
+                                                prompt_id,
+                                                title_owned,
+                                                default_flag,
+                                                Rope::from(new_body.clone()),
+                                                rule_type,
+                                                command_cfg,
+                                                cx,
+                                            )
+                                        })
+                                    })?
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        this.update_in(cx, |this, window, cx| {
+                                            this.store
+                                                .update(cx, |_store, cx| {
+                                                    cx.emit(PromptsUpdatedEvent);
+                                                    anyhow::Ok(())
+                                                })
+                                                .ok();
+                                            this.picker.update(cx, |picker, cx| {
+                                                picker.refresh(window, cx)
+                                            });
+                                            anyhow::Ok(())
+                                        })
+                                        .ok();
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to persist command output: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Failed to execute command: {}", e);
+                            }
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            }
+        }
+    }
+
+    pub fn update_command_field(
+        &mut self,
+        field: CommandField,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(prompt_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get_mut(&prompt_id) {
+                if let Some(config) = &mut rule_editor.command_config {
+                    match field {
+                        CommandField::Cmd => config.cmd = value,
+                        CommandField::Args => {
+                            config.args = value
+                                .lines()
+                                .filter(|line| !line.trim().is_empty())
+                                .map(|line| line.trim().to_string())
+                                .collect();
+                        }
+                        CommandField::Timeout => {
+                            if let Ok(timeout) = value.parse::<u64>() {
+                                config.timeout_seconds = timeout.max(1);
+                            }
+                        }
+                        CommandField::MaxOutput => {
+                            if let Ok(max_output) = value.parse::<usize>() {
+                                config.max_output_bytes = max_output.max(100);
+                            }
+                        }
+                    }
+                    self.save_rule(prompt_id, window, cx);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    pub fn toggle_command_trigger(
+        &mut self,
+        trigger: CommandTrigger,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(prompt_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get_mut(&prompt_id) {
+                if let Some(config) = &mut rule_editor.command_config {
+                    match trigger {
+                        CommandTrigger::OnStartup => config.on_startup = !config.on_startup,
+                        CommandTrigger::OnNewChat => config.on_new_chat = !config.on_new_chat,
+                        CommandTrigger::OnEveryMessage => {
+                            config.on_every_message = !config.on_every_message
+                        }
+                    }
+                    self.save_rule(prompt_id, window, cx);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
     fn new(
         store: Entity<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
@@ -555,7 +810,15 @@ impl RulesLibrary {
 
         let prompt_id = PromptId::new();
         let save = self.store.update(cx, |store, cx| {
-            store.save(prompt_id, None, false, "".into(), cx)
+            store.save(
+                prompt_id,
+                None,
+                false,
+                "".into(),
+                RuleType::Static,
+                None,
+                cx,
+            )
         });
         self.picker
             .update(cx, |picker, cx| picker.refresh(window, cx));
@@ -569,7 +832,7 @@ impl RulesLibrary {
     }
 
     pub fn save_rule(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
-        const SAVE_THROTTLE: Duration = Duration::from_millis(500);
+        const SAVE_THROTTLE: Duration = Duration::from_millis(2000);
 
         if !prompt_id.can_edit() {
             return;
@@ -610,9 +873,26 @@ impl RulesLibrary {
                             } else {
                                 Some(SharedString::from(title))
                             };
+
+                            let (rule_type, command_config) = this.update(cx, |this, _cx| {
+                                let rule_editor = this.rule_editors.get(&prompt_id).unwrap();
+                                (
+                                    rule_editor.rule_type.clone(),
+                                    rule_editor.command_config.clone(),
+                                )
+                            })?;
+
                             cx.update(|_window, cx| {
                                 store.update(cx, |store, cx| {
-                                    store.save(prompt_id, title, rule_metadata.default, body, cx)
+                                    store.save(
+                                        prompt_id,
+                                        title,
+                                        rule_metadata.default,
+                                        body,
+                                        rule_type,
+                                        command_config,
+                                        cx,
+                                    )
                                 })
                             })?
                             .await
@@ -762,7 +1042,7 @@ impl RulesLibrary {
                             }
                             editor
                         });
-                        let _subscriptions = vec![
+                        let mut subscriptions = vec![
                             cx.subscribe_in(
                                 &title_editor,
                                 window,
@@ -782,6 +1062,117 @@ impl RulesLibrary {
                                 },
                             ),
                         ];
+
+                        // Create command config editors and subscriptions if needed
+                        let (cmd_editor, args_editor, timeout_editor, max_output_editor) =
+                            if rule_metadata.id.is_built_in() {
+                                (None, None, None, None)
+                            } else {
+                                let cmd_ed = cx.new(|cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_placeholder_text("e.g., git", window, cx);
+                                    editor
+                                });
+                                subscriptions.push(cx.subscribe_in(
+                                    &cmd_ed,
+                                    window,
+                                    move |this, editor, event, window, cx| {
+                                        this.handle_cmd_editor_event(
+                                            prompt_id, editor, event, window, cx,
+                                        )
+                                    },
+                                ));
+
+                                let args_ed = cx.new(|cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_placeholder_text("e.g., status --short", window, cx);
+                                    editor
+                                });
+                                subscriptions.push(cx.subscribe_in(
+                                    &args_ed,
+                                    window,
+                                    move |this, editor, event, window, cx| {
+                                        this.handle_args_editor_event(
+                                            prompt_id, editor, event, window, cx,
+                                        )
+                                    },
+                                ));
+
+                                let timeout_ed = cx.new(|cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_placeholder_text("5", window, cx);
+                                    editor.set_text("5", window, cx);
+                                    editor
+                                });
+                                subscriptions.push(cx.subscribe_in(
+                                    &timeout_ed,
+                                    window,
+                                    move |this, editor, event, window, cx| {
+                                        this.handle_timeout_editor_event(
+                                            prompt_id, editor, event, window, cx,
+                                        )
+                                    },
+                                ));
+
+                                let max_out_ed = cx.new(|cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_placeholder_text("10000", window, cx);
+                                    editor.set_text("10000", window, cx);
+                                    editor
+                                });
+                                subscriptions.push(cx.subscribe_in(
+                                    &max_out_ed,
+                                    window,
+                                    move |this, editor, event, window, cx| {
+                                        this.handle_max_output_editor_event(
+                                            prompt_id, editor, event, window, cx,
+                                        )
+                                    },
+                                ));
+
+                                (
+                                    Some(cmd_ed),
+                                    Some(args_ed),
+                                    Some(timeout_ed),
+                                    Some(max_out_ed),
+                                )
+                            };
+
+                        let _subscriptions = subscriptions;
+
+                        // Populate command editors with saved values if this is a command rule
+                        if let Some(ref cmd_config) = rule_metadata.command {
+                            if let Some(ref cmd_ed) = cmd_editor {
+                                cmd_ed.update(cx, |editor, cx| {
+                                    editor.set_text(cmd_config.cmd.clone(), window, cx);
+                                });
+                            }
+                            if let Some(ref args_ed) = args_editor {
+                                let args_str = cmd_config.args.join(" ");
+                                args_ed.update(cx, |editor, cx| {
+                                    editor.set_text(args_str, window, cx);
+                                });
+                            }
+                            if let Some(ref timeout_ed) = timeout_editor {
+                                timeout_ed.update(cx, |editor, cx| {
+                                    editor.set_text(
+                                        cmd_config.timeout_seconds.to_string(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                            if let Some(ref max_out_ed) = max_output_editor {
+                                max_out_ed.update(cx, |editor, cx| {
+                                    editor.set_text(
+                                        cmd_config.max_output_bytes.to_string(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
+
                         this.rule_editors.insert(
                             prompt_id,
                             RuleEditor {
@@ -792,6 +1183,12 @@ impl RulesLibrary {
                                 token_count: None,
                                 pending_token_count: Task::ready(None),
                                 _subscriptions,
+                                rule_type: rule_metadata.rule_type.clone(),
+                                command_config: rule_metadata.command.clone(),
+                                cmd_editor,
+                                args_editor,
+                                timeout_editor,
+                                max_output_editor,
                             },
                         );
                         this.set_active_rule(Some(prompt_id), window, cx);
@@ -916,7 +1313,15 @@ impl RulesLibrary {
             let new_id = PromptId::new();
             let body = rule.body_editor.read(cx).text(cx);
             let save = self.store.update(cx, |store, cx| {
-                store.save(new_id, Some(title.into()), false, body.into(), cx)
+                store.save(
+                    new_id,
+                    Some(title.into()),
+                    false,
+                    body.into(),
+                    RuleType::Static,
+                    None,
+                    cx,
+                )
             });
             self.picker
                 .update(cx, |picker, cx| picker.refresh(window, cx));
@@ -1043,30 +1448,70 @@ impl RulesLibrary {
     fn handle_rule_body_editor_event(
         &mut self,
         prompt_id: PromptId,
-        body_editor: &Entity<Editor>,
+        _editor: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            EditorEvent::BufferEdited => {
-                self.save_rule(prompt_id, window, cx);
-                self.count_tokens(prompt_id, window, cx);
-            }
-            EditorEvent::Blurred => {
-                body_editor.update(cx, |body_editor, cx| {
-                    body_editor.change_selections(
-                        SelectionEffects::no_scroll(),
-                        window,
-                        cx,
-                        |selections| {
-                            let cursor = selections.oldest_anchor().head();
-                            selections.select_anchor_ranges([cursor..cursor]);
-                        },
-                    );
-                });
-            }
-            _ => {}
+        if let EditorEvent::Edited { .. } = event {
+            self.save_rule(prompt_id, window, cx);
+            self.count_tokens(prompt_id, window, cx);
+        }
+    }
+
+    fn handle_cmd_editor_event(
+        &mut self,
+        _prompt_id: PromptId,
+        editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let EditorEvent::Edited { .. } = event {
+            let text = editor.read(cx).text(cx);
+            self.update_command_field(CommandField::Cmd, text, window, cx);
+        }
+    }
+
+    fn handle_args_editor_event(
+        &mut self,
+        _prompt_id: PromptId,
+        editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let EditorEvent::Edited { .. } = event {
+            let text = editor.read(cx).text(cx);
+            self.update_command_field(CommandField::Args, text, window, cx);
+        }
+    }
+
+    fn handle_timeout_editor_event(
+        &mut self,
+        _prompt_id: PromptId,
+        editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let EditorEvent::Edited { .. } = event {
+            let text = editor.read(cx).text(cx);
+            self.update_command_field(CommandField::Timeout, text, window, cx);
+        }
+    }
+
+    fn handle_max_output_editor_event(
+        &mut self,
+        _prompt_id: PromptId,
+        editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let EditorEvent::Edited { .. } = event {
+            let text = editor.read(cx).text(cx);
+            self.update_command_field(CommandField::MaxOutput, text, window, cx);
         }
     }
 
@@ -1281,6 +1726,241 @@ impl RulesLibrary {
             )
     }
 
+    fn render_rule_type_selector(
+        &self,
+        prompt_id: PromptId,
+        rule_editor: &RuleEditor,
+        cx: &mut Context<RulesLibrary>,
+    ) -> impl IntoElement {
+        let is_static = rule_editor.rule_type == RuleType::Static;
+        let is_command = rule_editor.rule_type == RuleType::Command;
+        let built_in = prompt_id.is_built_in();
+
+        h_flex()
+            .gap_1()
+            .px_2()
+            .py_1p5()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(Label::new("Rule Type:").color(Color::Muted))
+            .child(
+                Button::new("static-rule-type", "Static Text")
+                    .style(if is_static {
+                        ButtonStyle::Filled
+                    } else {
+                        ButtonStyle::Subtle
+                    })
+                    .disabled(built_in)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_rule_type_static(window, cx);
+                    })),
+            )
+            .child(
+                Button::new("command-rule-type", "Command")
+                    .style(if is_command {
+                        ButtonStyle::Filled
+                    } else {
+                        ButtonStyle::Subtle
+                    })
+                    .disabled(built_in)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_rule_type_command(window, cx);
+                    })),
+            )
+    }
+
+    fn render_command_config_form(
+        &self,
+        prompt_id: PromptId,
+        rule_editor: &RuleEditor,
+        cx: &mut Context<RulesLibrary>,
+    ) -> Option<impl IntoElement> {
+        if rule_editor.rule_type != RuleType::Command {
+            return None;
+        }
+
+        let config = rule_editor.command_config.as_ref()?;
+        let built_in = prompt_id.is_built_in();
+        let has_command = !config.cmd.is_empty();
+
+        Some(
+            v_flex()
+                .gap_2()
+                .px_2()
+                .py_2()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().editor_subheader_background)
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("Command:")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .children(
+                            rule_editor
+                                .cmd_editor
+                                .clone()
+                                .map(|editor| div().h_8().w_full().child(editor)),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("Arguments (space-separated):")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .children(
+                            rule_editor
+                                .args_editor
+                                .clone()
+                                .map(|editor| div().h_8().w_full().child(editor)),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new("Timeout (seconds):")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                                .children(
+                                    rule_editor
+                                        .timeout_editor
+                                        .clone()
+                                        .map(|editor| div().h_8().w_32().child(editor)),
+                                ),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new("Max output (bytes):")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                                .children(
+                                    rule_editor
+                                        .max_output_editor
+                                        .clone()
+                                        .map(|editor| div().h_8().w_32().child(editor)),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    Checkbox::new(
+                                        "on-startup",
+                                        if config.on_startup {
+                                            ToggleState::Selected
+                                        } else {
+                                            ToggleState::Unselected
+                                        },
+                                    )
+                                    .disabled(built_in)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.toggle_command_trigger(
+                                                CommandTrigger::OnStartup,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(Label::new("On startup").size(LabelSize::Small)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    Checkbox::new(
+                                        "on-new-chat",
+                                        if config.on_new_chat {
+                                            ToggleState::Selected
+                                        } else {
+                                            ToggleState::Unselected
+                                        },
+                                    )
+                                    .disabled(built_in)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.toggle_command_trigger(
+                                                CommandTrigger::OnNewChat,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(Label::new("On new chat").size(LabelSize::Small)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    Checkbox::new(
+                                        "on-every-message",
+                                        if config.on_every_message {
+                                            ToggleState::Selected
+                                        } else {
+                                            ToggleState::Unselected
+                                        },
+                                    )
+                                    .disabled(built_in)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.toggle_command_trigger(
+                                                CommandTrigger::OnEveryMessage,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(Label::new("On every message").size(LabelSize::Small)),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("run-command-now", "Run Now")
+                                .disabled(built_in || !has_command)
+                                .tooltip(|window, cx| {
+                                    Tooltip::text("Execute this command immediately to test it")(
+                                        window, cx,
+                                    )
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.run_command(window, cx);
+                                })),
+                        )
+                        .child(
+                            Label::new("Test your command and see the output")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        ),
+                ),
+        )
+    }
+
     fn render_active_rule(&mut self, cx: &mut Context<RulesLibrary>) -> gpui::Stateful<Div> {
         div()
             .id("rule-editor")
@@ -1365,6 +2045,8 @@ impl RulesLibrary {
                                         }),
                                 ),
                         )
+                        .child(self.render_rule_type_selector(prompt_id, rule_editor, cx))
+                        .children(self.render_command_config_form(prompt_id, rule_editor, cx))
                         .child(
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
@@ -1410,6 +2092,15 @@ impl Render for RulesLibrary {
                 .on_action(cx.listener(|this, &RestoreDefaultContent, window, cx| {
                     this.restore_default_content_for_active_rule(window, cx)
                 }))
+                .on_action(cx.listener(|this, &SetRuleTypeStatic, window, cx| {
+                    this.set_rule_type_static(window, cx)
+                }))
+                .on_action(cx.listener(|this, &SetRuleTypeCommand, window, cx| {
+                    this.set_rule_type_command(window, cx)
+                }))
+                .on_action(
+                    cx.listener(|this, &RunCommand, window, cx| this.run_command(window, cx)),
+                )
                 .size_full()
                 .overflow_hidden()
                 .font(ui_font)
