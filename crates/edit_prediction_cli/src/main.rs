@@ -328,7 +328,9 @@ fn main() {
             return;
         }
         Command::SplitCommit(split_commit_args) => {
-            if let Err(error) = split_commit::run_split_commit(split_commit_args) {
+            if let Err(error) =
+                split_commit::run_split_commit(split_commit_args, &args.inputs, output.as_ref())
+            {
                 eprintln!("{error:#}");
                 std::process::exit(1);
             }
