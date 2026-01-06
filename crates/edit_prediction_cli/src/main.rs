@@ -427,54 +427,16 @@ fn main() {
                             }
                             .await;
 
-                            if let Err(e) = result {
-                                Progress::global().increment_failed();
-                                let example_name = example.spec.filename();
-                                let failed_example_path =
-                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
-                                app_state
-                                    .fs
-                                    .write(
-                                        &failed_example_path,
-                                        &serde_json::to_vec_pretty(&example).unwrap(),
-                                    )
-                                    .await
-                                    .unwrap();
-                                let err_path =
-                                    FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
-                                app_state
-                                    .fs
-                                    .write(&err_path, format!("{e:?}").as_bytes())
-                                    .await
-                                    .unwrap();
-
-                                let msg = format!(
-                                    indoc::indoc! {"
-                                        While processing \"{}\":
-
-                                        {:?}
-
-                                        Written to: \x1b[36m{}\x1b[0m
-
-                                        Explore this example data with:
-                                            fx \x1b[36m{}\x1b[0m
-
-                                        Re-run this example with:
-                                            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
-                                    "},
-                                    example.spec.name,
-                                    e,
-                                    err_path.display(),
-                                    failed_example_path.display(),
-                                    command,
-                                    failed_example_path.display(),
-                                );
-                                if args.failfast || failfast_on_single_example {
-                                    Progress::global().finalize();
-                                    panic!("{}", msg);
-                                } else {
-                                    log::error!("{}", msg);
-                                }
+                            if let Err(error) = result {
+                                handle_error(
+                                    error,
+                                    &args,
+                                    &command,
+                                    &app_state,
+                                    failfast_on_single_example,
+                                    example,
+                                )
+                                .await;
                             }
                         }
                     });
@@ -504,4 +466,59 @@ fn main() {
         })
         .detach();
     });
+}
+
+async fn handle_error(
+    error: anyhow::Error,
+    args: &EpArgs,
+    command: &Command,
+    app_state: &Arc<headless::EpAppState>,
+    failfast_on_single_example: bool,
+    example: &Example,
+) {
+    Progress::global().increment_failed();
+    let example_name = example.spec.filename();
+    let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
+    app_state
+        .fs
+        .write(
+            &failed_example_path,
+            &serde_json::to_vec_pretty(&example).unwrap(),
+        )
+        .await
+        .unwrap();
+    let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
+    app_state
+        .fs
+        .write(&err_path, format!("{error:?}").as_bytes())
+        .await
+        .unwrap();
+
+    let msg = format!(
+        indoc::indoc! {"
+            While processing \"{}\":
+
+            {:?}
+
+            Written to: \x1b[36m{}\x1b[0m
+
+            Explore this example data with:
+            fx \x1b[36m{}\x1b[0m
+
+            Re-run this example with:
+            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+        "},
+        example.spec.name,
+        error,
+        err_path.display(),
+        failed_example_path.display(),
+        command,
+        failed_example_path.display(),
+    );
+    if args.failfast || failfast_on_single_example {
+        Progress::global().finalize();
+        panic!("{}", msg);
+    } else {
+        log::error!("{}", msg);
+    }
 }
