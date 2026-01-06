@@ -784,8 +784,10 @@ async fn run_agent_thread_view_test(
     use agent_ui::AgentPanel;
 
     // Use embedded test image (compiled into the binary)
-    let icon_base64 =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, EMBEDDED_TEST_IMAGE);
+    let icon_base64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        EMBEDDED_TEST_IMAGE,
+    );
 
     // Create stub connection with image response
     let connection = StubAgentConnection::new();
