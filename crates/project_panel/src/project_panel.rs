@@ -2165,7 +2165,7 @@ impl ProjectPanel {
         cx: &mut Context<ProjectPanel>,
     ) {
         maybe!({
-            let items_to_delete = self.disjoint_entries(cx);
+            let items_to_delete = self.disjoint_effective_entries(cx);
             if items_to_delete.is_empty() {
                 return None;
             }
@@ -2819,7 +2819,7 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.disjoint_entries(cx);
+        let entries = self.disjoint_effective_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
@@ -2827,7 +2827,7 @@ impl ProjectPanel {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.disjoint_entries(cx);
+        let entries = self.disjoint_effective_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
@@ -3280,15 +3280,22 @@ impl ProjectPanel {
         self.index_for_entry(selection.entry_id, selection.worktree_id)
     }
 
-    fn disjoint_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.effective_entries();
+    fn disjoint_effective_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
+        self.disjoint_entries(self.effective_entries(), cx)
+    }
+
+    fn disjoint_entries(
+        &self,
+        entries: BTreeSet<SelectedEntry>,
+        cx: &App,
+    ) -> BTreeSet<SelectedEntry> {
         let mut sanitized_entries = BTreeSet::new();
-        if marked_entries.is_empty() {
+        if entries.is_empty() {
             return sanitized_entries;
         }
 
         let project = self.project.read(cx);
-        let marked_entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = marked_entries
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = entries
             .into_iter()
             .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
             .fold(HashMap::default(), |mut map, entry| {
@@ -3296,10 +3303,10 @@ impl ProjectPanel {
                 map
             });
 
-        for (worktree_id, marked_entries) in marked_entries_by_worktree {
+        for (worktree_id, worktree_entries) in entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 let worktree = worktree.read(cx);
-                let marked_dir_paths = marked_entries
+                let dir_paths = worktree_entries
                     .iter()
                     .filter_map(|entry| {
                         worktree.entry_for_id(entry.entry_id).and_then(|entry| {
@@ -3312,63 +3319,7 @@ impl ProjectPanel {
                     })
                     .collect::<BTreeSet<_>>();
 
-                sanitized_entries.extend(marked_entries.into_iter().filter(|entry| {
-                    let Some(entry_info) = worktree.entry_for_id(entry.entry_id) else {
-                        return false;
-                    };
-                    let entry_path = entry_info.path.as_ref();
-                    let inside_marked_dir = marked_dir_paths.iter().any(|&marked_dir_path| {
-                        entry_path != marked_dir_path && entry_path.starts_with(marked_dir_path)
-                    });
-                    !inside_marked_dir
-                }));
-            }
-        }
-
-        sanitized_entries
-    }
-
-    /// Filters a slice of selections to remove entries that are children of other selected directories.
-    /// This is used by drag and drop operations to match VSCode's behavior - when both a parent folder
-    /// and its child are selected, only the parent should be operated on.
-    fn filter_disjoint_selections(
-        &self,
-        selections: &[SelectedEntry],
-        cx: &App,
-    ) -> Vec<SelectedEntry> {
-        if selections.is_empty() {
-            return Vec::new();
-        }
-
-        let project = self.project.read(cx);
-
-        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = selections
-            .iter()
-            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
-            .fold(HashMap::default(), |mut map, entry| {
-                map.entry(entry.worktree_id).or_default().push(*entry);
-                map
-            });
-
-        let mut result = Vec::new();
-        for (worktree_id, entries) in entries_by_worktree {
-            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
-                let worktree = worktree.read(cx);
-
-                let dir_paths: BTreeSet<_> = entries
-                    .iter()
-                    .filter_map(|entry| {
-                        worktree.entry_for_id(entry.entry_id).and_then(|e| {
-                            if e.is_dir() {
-                                Some(e.path.as_ref())
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect();
-
-                result.extend(entries.into_iter().filter(|entry| {
+                sanitized_entries.extend(worktree_entries.into_iter().filter(|entry| {
                     let Some(entry_info) = worktree.entry_for_id(entry.entry_id) else {
                         return false;
                     };
@@ -3381,12 +3332,12 @@ impl ProjectPanel {
             }
         }
 
-        result
+        sanitized_entries
     }
 
     fn detect_move_conflicts(
         &self,
-        selections: &[SelectedEntry],
+        selections: &BTreeSet<SelectedEntry>,
         destination_entry: ProjectEntryId,
         destination_is_file: bool,
         cx: &App,
@@ -4019,12 +3970,13 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Filter out entries that are children of other selected directories.
-        // This matches VSCode behavior: when both a parent folder and its child are selected,
-        // only the parent folder is operated on.
-        let all_selections: Vec<SelectedEntry> = selections.items().cloned().collect();
-        let filtered_selections = self.filter_disjoint_selections(&all_selections, cx);
-
+        let entries = self.disjoint_entries(
+            selections
+                .items()
+                .cloned()
+                .collect::<BTreeSet<SelectedEntry>>(),
+            cx,
+        );
         if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -4037,7 +3989,7 @@ impl ProjectPanel {
 
                 let mut copy_tasks = Vec::new();
                 let mut disambiguation_range = None;
-                for selection in &filtered_selections {
+                for selection in &entries {
                     let (new_path, new_disambiguation_range) = self.create_paste_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
@@ -4081,8 +4033,7 @@ impl ProjectPanel {
                 Some(())
             });
         } else {
-            let conflicts =
-                self.detect_move_conflicts(&filtered_selections, target_entry_id, is_file, cx);
+            let conflicts = self.detect_move_conflicts(&entries, target_entry_id, is_file, cx);
 
             if !conflicts.is_empty() {
                 let message = format!(
@@ -4105,7 +4056,7 @@ impl ProjectPanel {
                             if let Ok(0) = prompt.await {
                                 this.update(&mut cx, |this: &mut Self, cx: &mut Context<Self>| {
                                     let mut errors = Vec::new();
-                                    for selection in filtered_selections {
+                                    for selection in entries {
                                         if let Err(err) = std::panic::catch_unwind(
                                             std::panic::AssertUnwindSafe(|| {
                                                 this.move_entry(
@@ -4132,7 +4083,7 @@ impl ProjectPanel {
                 )
                 .detach_and_log_err(cx);
             } else {
-                for selection in filtered_selections {
+                for selection in entries {
                     self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
                 }
             }
