@@ -8052,4 +8052,124 @@ pub(crate) mod tests {
             assert_eq!(text, expected_txt);
         })
     }
+
+    #[gpui::test]
+    async fn test_subagent_tool_call_renders_as_card(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let subagent_tool_call = acp::ToolCall::new("subagent-1", "Researching alternatives")
+            .kind(acp::ToolKind::Other)
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "subagent".into(),
+            )]))
+            .status(acp::ToolCallStatus::InProgress);
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(subagent_tool_call)]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Use a subagent to research alternatives", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.entries().len() >= 2, "Should have at least 2 entries");
+
+            let has_subagent_tool_call = thread.entries().iter().any(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
+                    tool_call.is_subagent()
+                } else {
+                    false
+                }
+            });
+
+            assert!(
+                has_subagent_tool_call,
+                "Should have a subagent tool call entry"
+            );
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            let tool_call_id = acp::ToolCallId::new("subagent-1");
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_call_id),
+                "Subagent tool call should be collapsed by default"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_subagent_tool_call_expand_collapse_toggle(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let subagent_tool_call = acp::ToolCall::new("subagent-toggle", "Analyzing code patterns")
+            .kind(acp::ToolKind::Other)
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "subagent".into(),
+            )]))
+            .status(acp::ToolCallStatus::Completed);
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(subagent_tool_call)]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Analyze code patterns", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let tool_call_id = acp::ToolCallId::new("subagent-toggle");
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_call_id),
+                "Should start collapsed"
+            );
+        });
+
+        thread_view.update(cx, |view, cx| {
+            view.expanded_tool_calls.insert(tool_call_id.clone());
+            cx.notify();
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                view.expanded_tool_calls.contains(&tool_call_id),
+                "Should be expanded after insert"
+            );
+        });
+
+        thread_view.update(cx, |view, cx| {
+            view.expanded_tool_calls.remove(&tool_call_id);
+            cx.notify();
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_call_id),
+                "Should be collapsed after remove"
+            );
+        });
+    }
 }

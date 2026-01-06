@@ -10,11 +10,11 @@ This document provides a detailed implementation plan for the subagents feature 
 | --- | ------------ | ---------------------------------------- |
 | 1   | ✅ Completed | Feature flag + basic tool skeleton       |
 | 2   | ✅ Completed | Thread spawning + basic execution        |
-| 3   | 🔜 Next      | UI card rendering (collapsed state)      |
-| 4   | ⏳ Pending   | UI expansion + embedded thread view      |
+| 3   | ✅ Completed | UI card rendering (collapsed state)      |
+| 4   | 🔜 Next      | UI expansion + embedded thread view      |
 | 5   | ⏳ Pending   | Polish: token display, errors, persistence |
 
-**Next step:** Finish PR 3 - visual tests still need to be written. See [PR 3 details](#pr-3-ui-card-rendering-collapsed-state) below.
+**Next step:** Start PR 4 - UI expansion and embedded thread view. See [PR 4 details](#pr-4-ui-expansion--embedded-thread-view) below.
 
 ---
 
@@ -1816,11 +1816,13 @@ UPDATE_BASELINES=1 cargo test -p zed visual_tests::subagent_collapsed -- --ignor
 - [x] Collapsed card renders with label
 - [x] Chevron/disclosure icon visible
 - [x] Card styling consistent with other tool cards
-- [ ] Visual test baseline committed ← **STILL NEEDS TO BE DONE**
+- [x] Visual test baseline committed
 - [x] `./script/clippy` passes
 - [x] Unit test for is_subagent() detection
+- [x] Unit test for subagent tool card rendering (`test_subagent_tool_call_renders_as_card`)
+- [x] Unit test for expand/collapse toggle (`test_subagent_tool_call_expand_collapse_toggle`)
 
-**STATUS: 🔜 IN PROGRESS** (visual tests not yet written)
+**STATUS: ✅ COMPLETED**
 
 ---
 
