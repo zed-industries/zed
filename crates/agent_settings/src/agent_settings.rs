@@ -1069,4 +1069,128 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_deny_takes_precedence_over_allow_and_confirm() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "default_mode": "allow",
+                    "always_deny": [{ "pattern": "dangerous" }],
+                    "always_confirm": [{ "pattern": "dangerous" }],
+                    "always_allow": [{ "pattern": "dangerous" }]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        assert!(
+            terminal.always_deny[0].is_match("run dangerous command"),
+            "Deny rule should match"
+        );
+        assert!(
+            terminal.always_allow[0].is_match("run dangerous command"),
+            "Allow rule should also match (but deny takes precedence at evaluation time)"
+        );
+        assert!(
+            terminal.always_confirm[0].is_match("run dangerous command"),
+            "Confirm rule should also match (but deny takes precedence at evaluation time)"
+        );
+    }
+
+    #[test]
+    fn test_confirm_takes_precedence_over_allow() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "default_mode": "allow",
+                    "always_confirm": [{ "pattern": "risky" }],
+                    "always_allow": [{ "pattern": "risky" }]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        assert!(
+            terminal.always_confirm[0].is_match("do risky thing"),
+            "Confirm rule should match"
+        );
+        assert!(
+            terminal.always_allow[0].is_match("do risky thing"),
+            "Allow rule should also match (but confirm takes precedence at evaluation time)"
+        );
+    }
+
+    #[test]
+    fn test_regex_matches_anywhere_in_string_not_just_anchored() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_deny": [
+                        { "pattern": "rm\\s+-rf" },
+                        { "pattern": "/etc/passwd" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        assert!(
+            terminal.always_deny[0].is_match("echo hello && rm -rf /"),
+            "Should match rm -rf in the middle of a command chain"
+        );
+        assert!(
+            terminal.always_deny[0].is_match("cd /tmp; rm -rf *"),
+            "Should match rm -rf after semicolon"
+        );
+        assert!(
+            terminal.always_deny[1].is_match("cat /etc/passwd | grep root"),
+            "Should match /etc/passwd in a pipeline"
+        );
+        assert!(
+            terminal.always_deny[1].is_match("vim /etc/passwd"),
+            "Should match /etc/passwd as argument"
+        );
+    }
+
+    #[test]
+    fn test_fork_bomb_pattern_matches() {
+        let fork_bomb_regex = CompiledRegex::new(r":\(\)\{\s*:\|:&\s*\};:", false).unwrap();
+        assert!(
+            fork_bomb_regex.is_match(":(){ :|:& };:"),
+            "Should match the classic fork bomb"
+        );
+        assert!(
+            fork_bomb_regex.is_match(":(){ :|:&};:"),
+            "Should match fork bomb without spaces"
+        );
+    }
+
+    #[test]
+    fn test_default_json_fork_bomb_pattern_matches() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
+        let tool_permissions = value["agent"]["tool_permissions"].clone();
+        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        assert!(
+            terminal
+                .always_deny
+                .iter()
+                .any(|r| r.is_match(":(){ :|:& };:")),
+            "Default deny rules should block the classic fork bomb"
+        );
+    }
 }
