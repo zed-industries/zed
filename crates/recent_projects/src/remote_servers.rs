@@ -1411,11 +1411,12 @@ impl RemoteServerProjects {
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(project.paths.join(", ")))
+                    .child(Label::new(project.paths.join(", ")).truncate_start())
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
+                    .tooltip(Tooltip::text(project.paths.join("\n")))
                     .when(is_from_zed, |server_list_item| {
                         server_list_item.end_hover_slot::<AnyElement>(Some(
                             div()
