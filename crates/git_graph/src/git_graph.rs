@@ -8,7 +8,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
     list, px,
 };
-use graph_rendering::{accent_colors_count, render_graph_cell};
+use graph_rendering::accent_colors_count;
 use project::{
     Project,
     git_store::{GitStoreEvent, RepositoryEvent},
@@ -195,27 +195,17 @@ impl GitGraph {
         let row_height = self.row_height;
         // let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
         // todo! make these widths constant
-        let graph_width = px(16.0) * (4 as f32) + px(24.0);
         let date_width = px(140.0);
         let author_width = px(120.0);
         let commit_width = px(80.0);
 
-        self.render_commit_row(
-            idx,
-            row_height,
-            graph_width,
-            date_width,
-            author_width,
-            commit_width,
-            cx,
-        )
+        self.render_commit_row(idx, row_height, date_width, author_width, commit_width, cx)
     }
 
     fn render_commit_row(
         &mut self,
         idx: usize,
         row_height: Pixels,
-        graph_width: Pixels,
         date_width: Pixels,
         author_width: Pixels,
         commit_width: Pixels,
@@ -234,9 +224,6 @@ impl GitGraph {
         let author_name: SharedString = commit.data.author_name.clone().into();
         let short_sha: SharedString = commit.data.sha.display_short().into();
         let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
-        let lane = commit.lane;
-        let lines = commit.lines.clone();
-        let color_idx = commit.color_idx;
 
         let is_selected = self.expanded_commit == Some(idx);
         let bg = if is_selected {

@@ -2,10 +2,7 @@ use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas
 use theme::AccentColors;
 use ui::ActiveTheme as _;
 
-use crate::{
-    GitGraph,
-    graph::{GraphLine, LineType},
-};
+use crate::{GitGraph, graph::LineType};
 
 pub fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
@@ -110,80 +107,6 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     )
     .w(graph_width)
     .h_full()
-}
-
-pub fn render_graph_cell(
-    lane: usize,
-    lines: Vec<GraphLine>,
-    commit_color_idx: usize,
-    row_height: Pixels,
-    graph_width: Pixels,
-    accent_colors: AccentColors,
-) -> impl IntoElement {
-    canvas(
-        move |_bounds, _window, _cx| {},
-        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
-            let accent_colors = &accent_colors;
-            let lane_width = px(16.0);
-            let left_padding = px(12.0);
-            let y_top = bounds.origin.y;
-            let y_center = bounds.origin.y + row_height / 2.0;
-            let y_bottom = bounds.origin.y + row_height;
-            let line_width = px(1.5);
-
-            for line in &lines {
-                let color = accent_colors.color_for_index(line.color_idx as u32);
-                let from_x = bounds.origin.x
-                    + left_padding
-                    + lane_width * line.from_lane as f32
-                    + lane_width / 2.0;
-                let to_x = bounds.origin.x
-                    + left_padding
-                    + lane_width * line.to_lane as f32
-                    + lane_width / 2.0;
-
-                match line.line_type {
-                    LineType::Straight => {
-                        let start_y = if line.continues_from_above {
-                            y_top
-                        } else {
-                            y_center
-                        };
-                        let end_y = if line.ends_at_commit {
-                            y_center
-                        } else {
-                            y_bottom
-                        };
-
-                        draw_straight_line(
-                            window, from_x, start_y, from_x, end_y, line_width, color,
-                        );
-                    }
-                    LineType::MergeDown | LineType::BranchOut => {
-                        draw_s_curve(window, from_x, y_center, to_x, y_bottom, line_width, color);
-                    }
-                }
-            }
-
-            let commit_x =
-                bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
-            let commit_color = accent_colors.color_for_index(commit_color_idx as u32);
-            let dot_radius = px(4.5);
-            let stroke_width = px(1.5);
-
-            // Draw colored outline only (hollow/transparent circle)
-            draw_circle_outline(
-                window,
-                commit_x,
-                y_center,
-                dot_radius,
-                stroke_width,
-                commit_color,
-            );
-        },
-    )
-    .w(graph_width)
-    .h(row_height)
 }
 
 fn draw_circle_outline(
