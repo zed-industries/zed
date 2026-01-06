@@ -69,7 +69,7 @@ You must grant Screen Recording permission to your terminal:
 ### Running Visual Tests
 
 ```sh
-cargo run -p zed --bin visual_test_runner --features visual-tests
+cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 ```
 
 ### Updating Baselines
@@ -77,7 +77,7 @@ cargo run -p zed --bin visual_test_runner --features visual-tests
 When UI changes are intentional, update the baseline images:
 
 ```sh
-UPDATE_BASELINE=1 cargo run -p zed --bin visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 ```
 
 Baseline images are stored in `crates/zed/test_fixtures/visual_tests/` and should be committed to the repository.
