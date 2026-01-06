@@ -80,7 +80,7 @@ impl ActionLog {
 
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let language = buffer.read(cx).language().cloned();
-                let language_registry = buffer.read(cx).language_registry().clone();
+                let language_registry = buffer.read(cx).language_registry();
                 let diff = cx.new(|cx| {
                     let mut diff = BufferDiff::new(&text_snapshot, cx);
                     diff.language_changed(language, language_registry, cx);
