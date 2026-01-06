@@ -985,6 +985,8 @@ impl AppContext for VisualTestContext {
 }
 
 impl VisualContext for VisualTestContext {
+    type Result<T> = T;
+
     /// Get the underlying window handle underlying this context.
     fn window_handle(&self) -> AnyWindowHandle {
         self.window
@@ -993,38 +995,46 @@ impl VisualContext for VisualTestContext {
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
-    ) -> Result<Entity<T>> {
-        self.window.update(&mut self.cx, |_, window, cx| {
-            cx.new(|cx| build_entity(window, cx))
-        })
+    ) -> Entity<T> {
+        self.window
+            .update(&mut self.cx, |_, window, cx| {
+                cx.new(|cx| build_entity(window, cx))
+            })
+            .expect("window was unexpectedly closed")
     }
 
     fn update_window_entity<V: 'static, R>(
         &mut self,
         view: &Entity<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
-    ) -> Result<R> {
-        self.window.update(&mut self.cx, |_, window, cx| {
-            view.update(cx, |v, cx| update(v, window, cx))
-        })
+    ) -> R {
+        self.window
+            .update(&mut self.cx, |_, window, cx| {
+                view.update(cx, |v, cx| update(v, window, cx))
+            })
+            .expect("window was unexpectedly closed")
     }
 
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> Result<Entity<V>>
+    ) -> Entity<V>
     where
         V: 'static + Render,
     {
-        self.window.update(&mut self.cx, |_, window, cx| {
-            window.replace_root(cx, build_view)
-        })
+        self.window
+            .update(&mut self.cx, |_, window, cx| {
+                window.replace_root(cx, build_view)
+            })
+            .expect("window was unexpectedly closed")
     }
 
-    fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Result<()> {
-        self.window.update(&mut self.cx, |_, window, cx| {
-            view.read(cx).focus_handle(cx).focus(window, cx)
-        })
+    fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) {
+        self.window
+            .update(&mut self.cx, |_, window, cx| {
+                view.read(cx).focus_handle(cx).focus(window, cx)
+            })
+            .expect("window was unexpectedly closed")
     }
 }
 

@@ -467,7 +467,7 @@ impl<T: 'static> Entity<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
-    ) -> Result<R> {
+    ) -> C::Result<R> {
         cx.update_window_entity(self, update)
     }
 }

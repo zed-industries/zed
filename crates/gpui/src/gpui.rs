@@ -196,6 +196,9 @@ impl<T: 'static> Reservation<T> {
 /// This trait is used for the different visual contexts in GPUI that
 /// require a window to be present.
 pub trait VisualContext: AppContext {
+    /// The result type for window operations.
+    type Result<T>;
+
     /// Returns the handle of the window associated with this context.
     fn window_handle(&self) -> AnyWindowHandle;
 
@@ -204,24 +207,24 @@ pub trait VisualContext: AppContext {
         &mut self,
         entity: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
-    ) -> Result<R>;
+    ) -> Self::Result<R>;
 
     /// Create a new entity, with access to `Window`.
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
-    ) -> Result<Entity<T>>;
+    ) -> Self::Result<Entity<T>>;
 
     /// Replace the root view of a window with a new view.
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> Result<Entity<V>>
+    ) -> Self::Result<Entity<V>>
     where
         V: 'static + Render;
 
     /// Focus a entity in the window, if it implements the [`Focusable`] trait.
-    fn focus<V>(&mut self, entity: &Entity<V>) -> Result<()>
+    fn focus<V>(&mut self, entity: &Entity<V>) -> Self::Result<()>
     where
         V: Focusable;
 }

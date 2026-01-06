@@ -426,6 +426,8 @@ impl AppContext for AsyncWindowContext {
 }
 
 impl VisualContext for AsyncWindowContext {
+    type Result<T> = Result<T>;
+
     fn window_handle(&self) -> AnyWindowHandle {
         self.window
     }
