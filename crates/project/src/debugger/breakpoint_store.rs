@@ -17,7 +17,7 @@ use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
 use text::{Point, PointUtf16};
 use util::maybe;
 
-use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
+use crate::{ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
 use super::session::ThreadId;
 
@@ -130,18 +130,12 @@ mod breakpoints_in_file {
 #[derive(Clone)]
 struct RemoteBreakpointStore {
     upstream_client: AnyProtoClient,
-    _upstream_project_id: u64,
-}
-
-#[derive(Clone)]
-struct LocalBreakpointStore {
-    worktree_store: Entity<WorktreeStore>,
-    buffer_store: Entity<BufferStore>,
+    upstream_project_id: u64,
 }
 
 #[derive(Clone)]
 enum BreakpointStoreMode {
-    Local(LocalBreakpointStore),
+    Local,
     Remote(RemoteBreakpointStore),
 }
 
@@ -155,6 +149,8 @@ pub struct ActiveStackFrame {
 }
 
 pub struct BreakpointStore {
+    buffer_store: Entity<BufferStore>,
+    worktree_store: Entity<WorktreeStore>,
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<ActiveStackFrame>,
@@ -170,28 +166,34 @@ impl BreakpointStore {
     pub fn local(worktree_store: Entity<WorktreeStore>, buffer_store: Entity<BufferStore>) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            mode: BreakpointStoreMode::Local(LocalBreakpointStore {
-                worktree_store,
-                buffer_store,
-            }),
+            mode: BreakpointStoreMode::Local,
+            buffer_store,
+            worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
         }
     }
 
-    pub(crate) fn remote(upstream_project_id: u64, upstream_client: AnyProtoClient) -> Self {
+    pub(crate) fn remote(
+        upstream_project_id: u64,
+        upstream_client: AnyProtoClient,
+        buffer_store: Entity<BufferStore>,
+        worktree_store: Entity<WorktreeStore>,
+    ) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
             mode: BreakpointStoreMode::Remote(RemoteBreakpointStore {
                 upstream_client,
-                _upstream_project_id: upstream_project_id,
+                upstream_project_id,
             }),
+            buffer_store,
+            worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
         }
     }
 
-    pub(crate) fn shared(&mut self, project_id: u64, downstream_client: AnyProtoClient) {
+    pub fn shared(&mut self, project_id: u64, downstream_client: AnyProtoClient) {
         self.downstream_client = Some((downstream_client, project_id));
     }
 
@@ -202,27 +204,31 @@ impl BreakpointStore {
     }
 
     async fn handle_breakpoints_for_file(
-        this: Entity<Project>,
+        this: Entity<Self>,
         message: TypedEnvelope<proto::BreakpointsForFile>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
         if message.payload.breakpoints.is_empty() {
             return Ok(());
         }
 
         let buffer = this
             .update(&mut cx, |this, cx| {
-                let path =
-                    this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)?;
-                Some(this.open_buffer(path, cx))
+                let path = this
+                    .worktree_store
+                    .read(cx)
+                    .project_path_for_absolute_path(message.payload.path.as_ref(), cx)?;
+                Some(
+                    this.buffer_store
+                        .update(cx, |this, cx| this.open_buffer(path, cx)),
+                )
             })
             .ok()
             .flatten()
             .context("Invalid project path")?
             .await?;
 
-        breakpoints.update(&mut cx, move |this, cx| {
+        this.update(&mut cx, move |this, cx| {
             let bps = this
                 .breakpoints
                 .entry(Arc::<Path>::from(message.payload.path.as_ref()))
@@ -263,19 +269,20 @@ impl BreakpointStore {
     }
 
     async fn handle_toggle_breakpoint(
-        this: Entity<Project>,
+        this: Entity<Self>,
         message: TypedEnvelope<proto::ToggleBreakpoint>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let breakpoints = this.read_with(&cx, |this, _| this.breakpoint_store())?;
         let path = this
             .update(&mut cx, |this, cx| {
-                this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)
+                this.worktree_store
+                    .read(cx)
+                    .project_path_for_absolute_path(message.payload.path.as_ref(), cx)
             })?
             .context("Could not resolve provided abs path")?;
         let buffer = this
             .update(&mut cx, |this, cx| {
-                this.buffer_store().read(cx).get_by_path(&path)
+                this.buffer_store.read(cx).get_by_path(&path)
             })?
             .context("Could not find buffer for a given path")?;
         let breakpoint = message
@@ -292,7 +299,7 @@ impl BreakpointStore {
         let breakpoint =
             Breakpoint::from_proto(breakpoint).context("Could not deserialize breakpoint")?;
 
-        breakpoints.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, cx| {
             this.toggle_breakpoint(
                 buffer,
                 BreakpointWithPosition {
@@ -547,7 +554,7 @@ impl BreakpointStore {
                     .to_proto(&abs_path, &breakpoint.position, &HashMap::default())
             {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
-                    project_id: remote._upstream_project_id,
+                    project_id: remote.upstream_project_id,
                     path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
                     breakpoint: Some(breakpoint),
                 }))
@@ -775,22 +782,21 @@ impl BreakpointStore {
         breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
         cx: &mut Context<BreakpointStore>,
     ) -> Task<Result<()>> {
-        if let BreakpointStoreMode::Local(mode) = &self.mode {
-            let mode = mode.clone();
+        if let BreakpointStoreMode::Local = &self.mode {
+            let worktree_store = self.worktree_store.downgrade();
+            let buffer_store = self.buffer_store.downgrade();
             cx.spawn(async move |this, cx| {
                 let mut new_breakpoints = BTreeMap::default();
                 for (path, bps) in breakpoints {
                     if bps.is_empty() {
                         continue;
                     }
-                    let (worktree, relative_path) = mode
-                        .worktree_store
+                    let (worktree, relative_path) = worktree_store
                         .update(cx, |this, cx| {
                             this.find_or_create_worktree(&path, false, cx)
                         })?
                         .await?;
-                    let buffer = mode
-                        .buffer_store
+                    let buffer = buffer_store
                         .update(cx, |this, cx| {
                             let path = ProjectPath {
                                 worktree_id: worktree.read(cx).id(),

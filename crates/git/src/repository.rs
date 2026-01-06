@@ -144,6 +144,12 @@ impl Upstream {
     pub fn stripped_ref_name(&self) -> Option<&str> {
         self.ref_name.strip_prefix("refs/remotes/")
     }
+
+    pub fn branch_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split_once('/').map(|(_, name)| name))
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -567,6 +573,7 @@ pub trait GitRepository: Send + Sync {
     fn push(
         &self,
         branch_name: String,
+        remote_branch_name: String,
         upstream_name: String,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
@@ -1880,6 +1887,7 @@ impl GitRepository for RealGitRepository {
     fn push(
         &self,
         branch_name: String,
+        remote_branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
         ask_pass: AskPassDelegate,
@@ -1904,7 +1912,7 @@ impl GitRepository for RealGitRepository {
                     PushOptions::Force => "--force-with-lease",
                 }))
                 .arg(remote_name)
-                .arg(format!("{}:{}", branch_name, branch_name))
+                .arg(format!("{}:{}", branch_name, remote_branch_name))
                 .stdin(smol::process::Stdio::null())
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
@@ -3125,6 +3133,46 @@ mod tests {
                 }
             ]
         )
+    }
+
+    #[test]
+    fn test_upstream_branch_name() {
+        let upstream = Upstream {
+            ref_name: "refs/remotes/origin/feature/branch".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), Some("feature/branch"));
+
+        let upstream = Upstream {
+            ref_name: "refs/remotes/upstream/main".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), Some("main"));
+
+        let upstream = Upstream {
+            ref_name: "refs/heads/local".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), None);
+
+        // Test case where upstream branch name differs from what might be the local branch name
+        let upstream = Upstream {
+            ref_name: "refs/remotes/origin/feature/git-pull-request".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), Some("feature/git-pull-request"));
     }
 
     impl RealGitRepository {

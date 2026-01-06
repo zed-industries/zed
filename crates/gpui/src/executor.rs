@@ -125,6 +125,30 @@ impl<T> Task<T> {
             Task(TaskState::Spawned(task)) => task.detach(),
         }
     }
+
+    /// Converts this task into a fallible task that returns `Option<T>`.
+    ///
+    /// Unlike the standard `Task<T>`, a [`FallibleTask`] will return `None`
+    /// if the app was dropped while the task is executing.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Background task that gracefully handles app shutdown:
+    /// cx.background_spawn(async move {
+    ///     let result = foreground_task.fallible().await;
+    ///     if let Some(value) = result {
+    ///         // Process the value
+    ///     }
+    ///     // If None, app was shut down - just exit gracefully
+    /// }).detach();
+    /// ```
+    pub fn fallible(self) -> FallibleTask<T> {
+        FallibleTask(match self.0 {
+            TaskState::Ready(val) => FallibleTaskState::Ready(val),
+            TaskState::Spawned(task) => FallibleTaskState::Spawned(task.fallible()),
+        })
+    }
 }
 
 impl<E, T> Task<Result<T, E>>
@@ -150,6 +174,55 @@ impl<T> Future for Task<T> {
         match unsafe { self.get_unchecked_mut() } {
             Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
             Task(TaskState::Spawned(task)) => task.poll(cx),
+        }
+    }
+}
+
+/// A task that returns `Option<T>` instead of panicking when cancelled.
+#[must_use]
+pub struct FallibleTask<T>(FallibleTaskState<T>);
+
+enum FallibleTaskState<T> {
+    /// A task that is ready to return a value
+    Ready(Option<T>),
+
+    /// A task that is currently running (wraps async_task::FallibleTask).
+    Spawned(async_task::FallibleTask<T, RunnableMeta>),
+}
+
+impl<T> FallibleTask<T> {
+    /// Creates a new fallible task that will resolve with the value.
+    pub fn ready(val: T) -> Self {
+        FallibleTask(FallibleTaskState::Ready(Some(val)))
+    }
+
+    /// Detaching a task runs it to completion in the background.
+    pub fn detach(self) {
+        match self.0 {
+            FallibleTaskState::Ready(_) => {}
+            FallibleTaskState::Spawned(task) => task.detach(),
+        }
+    }
+}
+
+impl<T> Future for FallibleTask<T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            FallibleTask(FallibleTaskState::Ready(val)) => Poll::Ready(val.take()),
+            FallibleTask(FallibleTaskState::Spawned(task)) => Pin::new(task).poll(cx),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for FallibleTask<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            FallibleTaskState::Ready(_) => f.debug_tuple("FallibleTask::Ready").finish(),
+            FallibleTaskState::Spawned(task) => {
+                f.debug_tuple("FallibleTask::Spawned").field(task).finish()
+            }
         }
     }
 }
@@ -252,7 +325,10 @@ impl BackgroundExecutor {
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -290,19 +366,9 @@ impl BackgroundExecutor {
         &self,
         future: AnyFuture<R>,
         label: Option<TaskLabel>,
-        #[cfg_attr(
-            target_os = "windows",
-            expect(
-                unused_variables,
-                reason = "Multi priority scheduler is broken on windows"
-            )
-        )]
         priority: Priority,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        #[cfg(target_os = "windows")]
-        let priority = Priority::Medium; // multi-prio scheduler is broken on windows
-
         let (runnable, task) = if let Priority::Realtime(realtime) = priority {
             let location = core::panic::Location::caller();
             let (mut tx, rx) = flume::bounded::<Runnable<RunnableMeta>>(1);
@@ -330,7 +396,10 @@ impl BackgroundExecutor {
             );
 
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn(
                     move |_| future,
                     move |runnable| {
@@ -340,7 +409,10 @@ impl BackgroundExecutor {
         } else {
             let location = core::panic::Location::caller();
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn(
                     move |_| future,
                     move |runnable| {
@@ -425,6 +497,7 @@ impl BackgroundExecutor {
         timeout: Option<Duration>,
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
+        use std::time::Instant;
 
         use parking::Parker;
 
@@ -432,8 +505,40 @@ impl BackgroundExecutor {
         if timeout == Some(Duration::ZERO) {
             return Err(future);
         }
+
+        // When using a real platform (e.g., MacPlatform for visual tests that need actual
+        // Metal rendering), there's no test dispatcher. In this case, we block the thread
+        // directly by polling the future and parking until woken. This is required for
+        // VisualTestAppContext which uses real platform rendering but still needs blocking
+        // behavior for code paths like editor initialization that call block_with_timeout.
         let Some(dispatcher) = self.dispatcher.as_test() else {
-            return Err(future);
+            let deadline = timeout.map(|timeout| Instant::now() + timeout);
+
+            let parker = Parker::new();
+            let unparker = parker.unparker();
+            let waker = waker_fn(move || {
+                unparker.unpark();
+            });
+            let mut cx = std::task::Context::from_waker(&waker);
+
+            loop {
+                match future.as_mut().poll(&mut cx) {
+                    Poll::Ready(result) => return Ok(result),
+                    Poll::Pending => {
+                        let timeout = deadline
+                            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+                        if let Some(timeout) = timeout {
+                            if !parker.park_timeout(timeout)
+                                && deadline.is_some_and(|deadline| deadline < Instant::now())
+                            {
+                                return Err(future);
+                            }
+                        } else {
+                            parker.park();
+                        }
+                    }
+                }
+            }
         };
 
         let mut max_ticks = if timeout.is_some() {
@@ -566,7 +671,10 @@ impl BackgroundExecutor {
         }
         let location = core::panic::Location::caller();
         let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta {
+                location,
+                app: None,
+            })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
                 move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
@@ -681,13 +789,38 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        self.spawn_with_priority(Priority::default(), future)
+        self.inner_spawn(None, Priority::default(), future)
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
     #[track_caller]
     pub fn spawn_with_priority<R>(
         &self,
+        priority: Priority,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        self.inner_spawn(None, priority, future)
+    }
+
+    #[track_caller]
+    pub(crate) fn spawn_context<R>(
+        &self,
+        app: std::sync::Weak<()>,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        self.inner_spawn(Some(app), Priority::default(), future)
+    }
+
+    #[track_caller]
+    pub(crate) fn inner_spawn<R>(
+        &self,
+        app: Option<std::sync::Weak<()>>,
         priority: Priority,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
@@ -702,6 +835,7 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
+            app: Option<std::sync::Weak<()>>,
             priority: Priority,
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
@@ -709,12 +843,12 @@ impl ForegroundExecutor {
                 move |runnable| {
                     dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
                 },
-                RunnableMeta { location },
+                RunnableMeta { location, app },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future), location, priority)
+        inner::<R>(dispatcher, Box::pin(future), location, app, priority)
     }
 }
 
@@ -845,5 +979,261 @@ impl Drop for Scope<'_> {
         // Wait until the channel is closed, which means that all of the spawned
         // futures have resolved.
         self.executor.block(self.rx.next());
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{App, TestDispatcher, TestPlatform};
+    use rand::SeedableRng;
+    use std::cell::RefCell;
+
+    #[test]
+    fn sanity_test_tasks_run() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+
+        let task_ran = Rc::new(RefCell::new(false));
+
+        foreground_executor
+            .spawn_context(liveness_token, {
+                let task_ran = Rc::clone(&task_ran);
+                async move {
+                    *task_ran.borrow_mut() = true;
+                }
+            })
+            .detach();
+
+        // Run dispatcher while app is still alive
+        dispatcher.run_until_parked();
+
+        // Task should have run
+        assert!(
+            *task_ran.borrow(),
+            "Task should run normally when app is alive"
+        );
+    }
+
+    #[test]
+    fn test_task_cancelled_when_app_dropped() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let app_weak = Rc::downgrade(&app);
+
+        let task_ran = Rc::new(RefCell::new(false));
+        let task_ran_clone = Rc::clone(&task_ran);
+
+        foreground_executor
+            .spawn_context(liveness_token, async move {
+                *task_ran_clone.borrow_mut() = true;
+            })
+            .detach();
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        // The task should have been cancelled, not run
+        assert!(
+            !*task_ran.borrow(),
+            "Task should have been cancelled when app was dropped, but it ran!"
+        );
+    }
+
+    #[test]
+    fn test_nested_tasks_both_cancel() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let app_weak = Rc::downgrade(&app);
+
+        let outer_completed = Rc::new(RefCell::new(false));
+        let inner_completed = Rc::new(RefCell::new(false));
+        let reached_await = Rc::new(RefCell::new(false));
+
+        let outer_flag = Rc::clone(&outer_completed);
+        let inner_flag = Rc::clone(&inner_completed);
+        let await_flag = Rc::clone(&reached_await);
+
+        // Channel to block the inner task until we're ready
+        let (tx, rx) = futures::channel::oneshot::channel::<()>();
+
+        // We need clones of executor and liveness_token for the inner spawn
+        let inner_executor = foreground_executor.clone();
+        let inner_liveness_token = liveness_token.clone();
+
+        foreground_executor
+            .spawn_context(liveness_token, async move {
+                let inner_task = inner_executor.spawn_context(inner_liveness_token, {
+                    let inner_flag = Rc::clone(&inner_flag);
+                    async move {
+                        rx.await.ok();
+                        *inner_flag.borrow_mut() = true;
+                    }
+                });
+
+                *await_flag.borrow_mut() = true;
+
+                inner_task.await;
+
+                *outer_flag.borrow_mut() = true;
+            })
+            .detach();
+
+        // Run dispatcher until outer task reaches the await point
+        // The inner task will be blocked on the channel
+        dispatcher.run_until_parked();
+
+        // Verify we actually reached the await point before dropping the app
+        assert!(
+            *reached_await.borrow(),
+            "Outer task should have reached the await point"
+        );
+
+        // Neither task should have completed yet
+        assert!(
+            !*outer_completed.borrow(),
+            "Outer task should not have completed yet"
+        );
+        assert!(
+            !*inner_completed.borrow(),
+            "Inner task should not have completed yet"
+        );
+
+        // Drop the channel sender and app while outer is awaiting inner
+        drop(tx);
+        drop(app);
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        // Run dispatcher - both tasks should be cancelled
+        dispatcher.run_until_parked();
+
+        // Neither task should have completed (both were cancelled)
+        assert!(
+            !*outer_completed.borrow(),
+            "Outer task should have been cancelled, not completed"
+        );
+        assert!(
+            !*inner_completed.borrow(),
+            "Inner task should have been cancelled, not completed"
+        );
+    }
+
+    #[test]
+    fn test_task_without_app_tracking_still_runs() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let app_weak = Rc::downgrade(&app);
+
+        let task_ran = Rc::new(RefCell::new(false));
+        let task_ran_clone = Rc::clone(&task_ran);
+
+        let _task = foreground_executor.spawn(async move {
+            *task_ran_clone.borrow_mut() = true;
+        });
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        assert!(
+            *task_ran.borrow(),
+            "Task without app tracking should still run after app is dropped"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_polling_cancelled_task_panics() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let app_weak = Rc::downgrade(&app);
+
+        let task = foreground_executor.spawn_context(liveness_token, async move { 42 });
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        background_executor.block(task);
+    }
+
+    #[test]
+    fn test_polling_cancelled_task_returns_none_with_fallible() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let app_weak = Rc::downgrade(&app);
+
+        let task = foreground_executor
+            .spawn_context(liveness_token, async move { 42 })
+            .fallible();
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        let result = background_executor.block(task);
+        assert_eq!(result, None, "Cancelled task should return None");
     }
 }

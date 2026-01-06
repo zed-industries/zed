@@ -57,6 +57,8 @@ extend-exclude = [
     "crates/multi_buffer/src/multi_buffer_tests.rs",
     # Macos apis
     "crates/gpui/src/platform/mac/dispatcher.rs",
+    # Tests contain partially incomplete words (by design)
+    "crates/edit_prediction_cli/src/split_commit.rs",
 ]
 
 [default]

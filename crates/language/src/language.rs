@@ -331,6 +331,21 @@ impl CachedLspAdapter {
             .unwrap_or_else(|| language_name.lsp_id())
     }
 
+    pub async fn initialization_options_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .initialization_options_schema(
+                delegate,
+                self.cached_binary.clone().lock_owned().await,
+                cx,
+            )
+            .await
+    }
+
     pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
         self.adapter.process_prompt_response(context, cx)
     }
@@ -464,7 +479,9 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     /// Returns the JSON schema of the initialization_options for the language server.
     async fn initialization_options_schema(
         self: Arc<Self>,
-        _language_server_binary: &LanguageServerBinary,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
         None
     }
@@ -591,6 +608,7 @@ pub trait DynLspInstaller {
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary>;
+
     fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -686,17 +704,17 @@ where
                 return (Ok(binary), None);
             }
 
+            if let Some((pre_release, cached_binary)) = cached_binary_deref
+                && *pre_release == binary_options.pre_release
+            {
+                return (Ok(cached_binary.clone()), None);
+            }
+
             if !binary_options.allow_binary_download {
                 return (
                     Err(anyhow::anyhow!("downloading language servers disabled")),
                     None,
                 );
-            }
-
-            if let Some((pre_release, cached_binary)) = cached_binary_deref
-                && *pre_release == binary_options.pre_release
-            {
-                return (Ok(cached_binary.clone()), None);
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
@@ -1308,7 +1326,6 @@ pub struct Grammar {
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
-    pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
@@ -1393,16 +1410,6 @@ impl TextObject {
 pub struct TextObjectConfig {
     pub query: Query,
     pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
-}
-
-#[derive(Debug)]
-pub struct EmbeddingConfig {
-    pub query: Query,
-    pub item_capture_ix: u32,
-    pub name_capture_ix: Option<u32>,
-    pub context_capture_ix: Option<u32>,
-    pub collapse_capture_ix: Option<u32>,
-    pub keep_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -1501,7 +1508,6 @@ impl Language {
                     brackets_config: None,
                     outline_config: None,
                     text_object_config: None,
-                    embedding_config: None,
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
@@ -1555,11 +1561,6 @@ impl Language {
             self = self
                 .with_outline_query(query.as_ref())
                 .context("Error loading outline query")?;
-        }
-        if let Some(query) = queries.embedding {
-            self = self
-                .with_embedding_query(query.as_ref())
-                .context("Error loading embedding query")?;
         }
         if let Some(query) = queries.injections {
             self = self
@@ -1706,38 +1707,6 @@ impl Language {
             query,
             text_objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
-        let mut item_capture_ix = 0;
-        let mut name_capture_ix = None;
-        let mut context_capture_ix = None;
-        let mut collapse_capture_ix = None;
-        let mut keep_capture_ix = None;
-        if populate_capture_indices(
-            &query,
-            &self.config.name,
-            "embedding",
-            &[],
-            &mut [
-                Capture::Required("item", &mut item_capture_ix),
-                Capture::Optional("name", &mut name_capture_ix),
-                Capture::Optional("context", &mut context_capture_ix),
-                Capture::Optional("keep", &mut keep_capture_ix),
-                Capture::Optional("collapse", &mut collapse_capture_ix),
-            ],
-        ) {
-            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
-                query,
-                item_capture_ix,
-                name_capture_ix,
-                context_capture_ix,
-                collapse_capture_ix,
-                keep_capture_ix,
-            });
-        }
         Ok(self)
     }
 
@@ -2786,9 +2755,6 @@ pub fn rust_lang() -> Arc<Language> {
         ))),
         highlights: Some(Cow::from(include_str!(
             "../../languages/src/rust/highlights.scm"
-        ))),
-        embedding: Some(Cow::from(include_str!(
-            "../../languages/src/rust/embedding.scm"
         ))),
         injections: Some(Cow::from(include_str!(
             "../../languages/src/rust/injections.scm"
