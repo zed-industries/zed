@@ -234,7 +234,7 @@ To assign a custom keybinding to start a new thread for agents that were added b
 },
 ```
 
-> For most extensions, the `agent.custom.name` attribute matches the name of the agent that appears in the [Agent Panel](../ai/agent-panel.html) UI.
+> For most extensions, the `agent.custom.name` attribute matches the name of the agent that appears in the [Agent Panel](../ai/agent-panel.md) UI.
 > In some cases however, the name might need to be written differently (e.g. in lowercase).
 
 ## Debugging Agents
