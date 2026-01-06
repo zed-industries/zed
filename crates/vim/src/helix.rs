@@ -1201,7 +1201,11 @@ impl Vim {
             // start of a line, it's safe to use the full width.
             let left_is_indentation =
                 left_stopped_at_line_break || (!left_stopped_at_non_ws && !left_hit_limit);
-            let min_left_gap = if left_is_indentation { px(0.0) } else { px(2.0) };
+            let min_left_gap = if left_is_indentation {
+                px(0.0)
+            } else {
+                px(2.0)
+            };
             let max_left_shift = (left_ws_width - min_left_gap).max(px(0.0));
 
             // Determine how much whitespace after the word is safe to hide (if needed).
@@ -1324,11 +1328,7 @@ impl Vim {
 
             let scale_factor = if label_width > px(0.0) {
                 let scale = ((hidden_width + left_shift) / label_width).min(1.0);
-                if scale < 1.0 {
-                    scale * 0.99
-                } else {
-                    1.0
-                }
+                if scale < 1.0 { scale * 0.99 } else { 1.0 }
             } else {
                 1.0
             };
