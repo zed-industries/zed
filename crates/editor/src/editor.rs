@@ -18952,7 +18952,7 @@ impl Editor {
                 if already_used_buffers.insert(buffer_id) {
                     if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx)) {
                         return !edited_buffer_ids.contains(&buffer_id)
-                            && !edited_worktree_ids.contains(&worktree_id);
+                            && edited_worktree_ids.contains(&worktree_id);
                     }
                 }
                 false
