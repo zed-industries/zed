@@ -1,15 +1,17 @@
 mod app_menus;
-pub mod component_preview;
 pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
 mod quick_action_bar;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
+use agent_ui_v2::agents_panel::AgentsPanel;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -31,8 +33,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
-    actions, image_cache, point, px, retain_all,
+    Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -81,8 +83,9 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
+use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
+    AppState, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
@@ -159,15 +162,15 @@ pub fn init(cx: &mut App) {
             || flag.await
         {
             cx.update(|cx| {
-                cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"));
-                cx.on_action(|_: &TestCrash, _| {
-                    unsafe extern "C" {
-                        fn puts(s: *const i8);
-                    }
-                    unsafe {
-                        puts(0xabad1d3a as *const i8);
-                    }
-                });
+                cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"))
+                    .on_action(|_: &TestCrash, _| {
+                        unsafe extern "C" {
+                            fn puts(s: *const i8);
+                        }
+                        unsafe {
+                            puts(0xabad1d3a as *const i8);
+                        }
+                    });
             })
             .ok();
         };
@@ -177,11 +180,11 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_log_file(workspace, window, cx);
         });
-    });
-    cx.on_action(|_: &workspace::RevealLogInFileManager, cx| {
+    })
+    .on_action(|_: &workspace::RevealLogInFileManager, cx| {
         cx.reveal_path(paths::log_file().as_path());
-    });
-    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
+    })
+    .on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -192,13 +195,13 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
+    })
+    .on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_telemetry_log_file(workspace, window, cx);
         });
-    });
-    cx.on_action(|&zed_actions::OpenKeymapFile, cx| {
+    })
+    .on_action(|&zed_actions::OpenKeymapFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
@@ -207,8 +210,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenSettingsFile, cx| {
+    })
+    .on_action(|_: &OpenSettingsFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
@@ -217,13 +220,13 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenAccountSettings, cx| {
+    })
+    .on_action(|_: &OpenAccountSettings, cx| {
         with_active_or_new_workspace(cx, |_, _, cx| {
             cx.open_url(&zed_urls::account_url(cx));
         });
-    });
-    cx.on_action(|_: &OpenTasks, cx| {
+    })
+    .on_action(|_: &OpenTasks, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::tasks_file(),
@@ -232,8 +235,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenDebugTasks, cx| {
+    })
+    .on_action(|_: &OpenDebugTasks, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::debug_scenarios_file(),
@@ -242,8 +245,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenDefaultSettings, cx| {
+    })
+    .on_action(|_: &OpenDefaultSettings, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -254,8 +257,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
+    })
+    .on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -266,8 +269,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &zed_actions::About, cx| {
+    })
+    .on_action(|_: &zed_actions::About, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             about(workspace, window, cx);
         });
@@ -351,6 +354,8 @@ pub fn initialize_workspace(
 ) {
     let mut _on_close_subscription = bind_on_window_closed(cx);
     cx.observe_global::<SettingsStore>(move |cx| {
+        // A 1.92 regression causes unused-assignment to trigger on this variable.
+        _ = _on_close_subscription.is_some();
         _on_close_subscription = bind_on_window_closed(cx);
     })
     .detach();
@@ -401,8 +406,8 @@ pub fn initialize_workspace(
         unstable_version_notification(cx);
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
-        let edit_prediction_button = cx.new(|cx| {
-            edit_prediction_button::EditPredictionButton::new(
+        let edit_prediction_ui = cx.new(|cx| {
+            edit_prediction_ui::EditPredictionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
@@ -411,7 +416,7 @@ pub fn initialize_workspace(
             )
         });
         workspace.register_action({
-            move |_, _: &edit_prediction_button::ToggleMenu, window, cx| {
+            move |_, _: &edit_prediction_ui::ToggleMenu, window, cx| {
                 edit_prediction_menu_handle.toggle(window, cx);
             }
         });
@@ -450,7 +455,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(edit_prediction_button, window, cx);
+            status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(line_ending_indicator, window, cx);
@@ -473,7 +478,7 @@ pub fn initialize_workspace(
         initialize_panels(prompt_builder.clone(), window, cx);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window);
+        workspace.focus_handle(cx).focus(window, cx);
     })
     .detach();
 }
@@ -679,7 +684,8 @@ fn initialize_panels(
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err())
+            initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
+            initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
         );
 
         anyhow::Ok(())
@@ -687,58 +693,64 @@ fn initialize_panels(
     .detach();
 }
 
+fn setup_or_teardown_ai_panel<P: Panel>(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+    load_panel: impl FnOnce(
+        WeakEntity<Workspace>,
+        AsyncWindowContext,
+    ) -> Task<anyhow::Result<Entity<P>>>
+    + 'static,
+) -> Task<anyhow::Result<()>> {
+    let disable_ai = SettingsStore::global(cx)
+        .get::<DisableAiSettings>(None)
+        .disable_ai
+        || cfg!(test);
+    let existing_panel = workspace.panel::<P>(cx);
+    match (disable_ai, existing_panel) {
+        (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+            let panel = load_panel(workspace.clone(), cx.clone()).await?;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let disable_ai = SettingsStore::global(cx)
+                    .get::<DisableAiSettings>(None)
+                    .disable_ai;
+                let have_panel = workspace.panel::<P>(cx).is_some();
+                if !disable_ai && !have_panel {
+                    workspace.add_panel(panel, window, cx);
+                }
+            })
+        }),
+        (true, Some(existing_panel)) => {
+            workspace.remove_panel::<P>(&existing_panel, window, cx);
+            Task::ready(Ok(()))
+        }
+        _ => Task::ready(Ok(())),
+    }
+}
+
 async fn initialize_agent_panel(
     workspace_handle: WeakEntity<Workspace>,
     prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncWindowContext,
 ) -> anyhow::Result<()> {
-    fn setup_or_teardown_agent_panel(
-        workspace: &mut Workspace,
-        prompt_builder: Arc<PromptBuilder>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<anyhow::Result<()>> {
-        let disable_ai = SettingsStore::global(cx)
-            .get::<DisableAiSettings>(None)
-            .disable_ai
-            || cfg!(test);
-        let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
-        match (disable_ai, existing_panel) {
-            (false, None) => cx.spawn_in(window, async move |workspace, cx| {
-                let panel =
-                    agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
-                        .await?;
-                workspace.update_in(cx, |workspace, window, cx| {
-                    let disable_ai = SettingsStore::global(cx)
-                        .get::<DisableAiSettings>(None)
-                        .disable_ai;
-                    let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
-                    if !disable_ai && !have_panel {
-                        workspace.add_panel(panel, window, cx);
-                    }
-                })
-            }),
-            (true, Some(existing_panel)) => {
-                workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
-                Task::ready(Ok(()))
-            }
-            _ => Task::ready(Ok(())),
-        }
-    }
-
     workspace_handle
         .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+            let prompt_builder = prompt_builder.clone();
+            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
+                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+            })
         })?
         .await?;
 
     workspace_handle.update_in(&mut cx, |workspace, window, cx| {
-        cx.observe_global_in::<SettingsStore>(window, {
+        let prompt_builder = prompt_builder.clone();
+        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
             let prompt_builder = prompt_builder.clone();
-            move |workspace, window, cx| {
-                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
-                    .detach_and_log_err(cx);
-            }
+            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
+                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+            })
+            .detach_and_log_err(cx);
         })
         .detach();
 
@@ -758,6 +770,31 @@ async fn initialize_agent_panel(
                 .register_action(agent_ui::AgentPanel::toggle_focus)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
+    })?;
+
+    anyhow::Ok(())
+}
+
+async fn initialize_agents_panel(
+    workspace_handle: WeakEntity<Workspace>,
+    mut cx: AsyncWindowContext,
+) -> anyhow::Result<()> {
+    workspace_handle
+        .update_in(&mut cx, |workspace, window, cx| {
+            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
+                AgentsPanel::load(workspace, cx)
+            })
+        })?
+        .await?;
+
+    workspace_handle.update_in(&mut cx, |_workspace, window, cx| {
+        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
+            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
+                AgentsPanel::load(workspace, cx)
+            })
+            .detach_and_log_err(cx);
+        })
+        .detach();
     })?;
 
     anyhow::Ok(())
@@ -1052,6 +1089,18 @@ fn register_actions(
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
             },
         )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::agent::ToggleAgentPane,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                if let Some(panel) = workspace.panel::<AgentsPanel>(cx) {
+                    let position = panel.read(cx).position(window, cx);
+                    let slot = utility_slot_for_dock_position(position);
+                    workspace.toggle_utility_pane(slot, window, cx);
+                }
+            },
+        )
         .register_action({
             let app_state = Arc::downgrade(&app_state);
             move |_, _: &NewWindow, _, cx| {
@@ -1062,7 +1111,21 @@ fn register_actions(
                         cx,
                         |workspace, window, cx| {
                             cx.activate(true);
-                            Editor::new_file(workspace, &Default::default(), window, cx)
+                            // Create buffer synchronously to avoid flicker
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", None, true, cx)
+                            });
+                            let editor = cx.new(|cx| {
+                                Editor::for_buffer(buffer, Some(project), window, cx)
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
                         },
                     )
                     .detach();
@@ -1394,8 +1457,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
     };
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+    let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
     let showed_parse_error = match error {
         Some(error) => {
@@ -1427,7 +1489,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             false
         }
     };
-    let id = NotificationId::Named("failed-to-migrate-settings".into());
+    let id = NotificationId::Named(format!("failed-to-migrate-settings-{is_user}").into());
 
     match result.migration_status {
         settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
@@ -1644,6 +1706,7 @@ fn show_keymap_file_json_error(
         cx.new(|cx| {
             MessageNotification::new(message.clone(), cx)
                 .primary_message("Open Keymap File")
+                .primary_icon(IconName::Settings)
                 .primary_on_click(|window, cx| {
                     window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                     cx.emit(DismissEvent);
@@ -1702,16 +1765,18 @@ fn show_markdown_app_notification<F>(
                 cx.new(move |cx| {
                     MessageNotification::new_from_builder(cx, move |window, cx| {
                         image_cache(retain_all("notification-cache"))
-                            .text_xs()
-                            .child(markdown_preview::markdown_renderer::render_parsed_markdown(
-                                &parsed_markdown.clone(),
-                                Some(workspace_handle.clone()),
-                                window,
-                                cx,
+                            .child(div().text_ui(cx).child(
+                                markdown_preview::markdown_renderer::render_parsed_markdown(
+                                    &parsed_markdown.clone(),
+                                    Some(workspace_handle.clone()),
+                                    window,
+                                    cx,
+                                ),
                             ))
                             .into_any()
                     })
                     .primary_message(primary_button_message)
+                    .primary_icon(IconName::Settings)
                     .primary_on_click_arc(primary_button_on_click)
                 })
             })
@@ -2256,12 +2321,13 @@ mod tests {
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, TestAppContext, UpdateGlobal,
         VisualTestContext, WindowHandle, actions,
     };
-    use language::{LanguageMatcher, LanguageRegistry};
+    use language::LanguageRegistry;
+    use languages::{markdown_lang, rust_lang};
     use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath};
     use semver::Version;
     use serde_json::json;
-    use settings::{SettingsStore, watch_config_file};
+    use settings::{SaturatingBool, SettingsStore, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         time::Duration,
@@ -2896,9 +2962,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3328,9 +3392,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3422,9 +3484,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3495,7 +3555,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _| {
-            project.languages().add(markdown_language());
+            project.languages().add(markdown_lang());
             project.languages().add(rust_lang());
         });
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
@@ -3648,8 +3708,8 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| {
-            project.languages().add(rust_lang());
-            project.languages().add(markdown_language());
+            project.languages().add(language::rust_lang());
+            project.languages().add(language::markdown_lang());
         });
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -3728,9 +3788,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3761,7 +3819,7 @@ mod tests {
             })
             .unwrap();
 
-        cx.dispatch_action(window.into(), pane::SplitRight);
+        cx.dispatch_action(window.into(), pane::SplitRight::default());
         let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
@@ -3832,9 +3890,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace
@@ -4226,9 +4282,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
@@ -4726,7 +4780,7 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
-                #[cfg(not(target_os = "macos"))]
+                "agents",
                 "app_menu",
                 "assistant",
                 "assistant2",
@@ -4757,10 +4811,12 @@ mod tests {
                 "git_panel",
                 "go_to_line",
                 "icon_theme_selector",
+                "inline_assistant",
                 "journal",
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
+                "welcome",
                 "line_ending_selector",
                 "lsp_tool",
                 "markdown",
@@ -4915,7 +4971,7 @@ mod tests {
 
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
-            app_state.languages.add(markdown_language());
+            app_state.languages.add(markdown_lang());
 
             gpui_tokio::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -4952,6 +5008,7 @@ mod tests {
                 false,
                 cx,
             );
+            agent_ui_v2::agents_panel::init(cx);
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
@@ -4964,34 +5021,6 @@ mod tests {
             search::init(cx);
             app_state
         })
-    }
-
-    fn rust_lang() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
-    }
-
-    fn markdown_language() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Markdown".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["md".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_md::LANGUAGE.into()),
-        ))
     }
 
     #[track_caller]
@@ -5139,6 +5168,28 @@ mod tests {
             new_content_str.contains("UNIQUEVALUE"),
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_crash(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let _window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings.disable_ai = Some(SaturatingBool(true));
+                });
+            });
+        });
+
+        cx.run_until_parked();
+
+        // If this panics, the test has failed
     }
 
     #[gpui::test]

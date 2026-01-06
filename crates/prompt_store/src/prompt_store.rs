@@ -1,6 +1,6 @@
 mod prompts;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::FutureExt as _;
@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
 };
+use strum::{EnumIter, IntoEnumIterator as _};
 use text::LineEnding;
 use util::ResultExt;
 use uuid::Uuid;
@@ -51,11 +52,51 @@ pub struct PromptMetadata {
     pub saved_at: DateTime<Utc>,
 }
 
+impl PromptMetadata {
+    fn builtin(builtin: BuiltInPrompt) -> Self {
+        Self {
+            id: PromptId::BuiltIn(builtin),
+            title: Some(builtin.title().into()),
+            default: false,
+            saved_at: DateTime::default(),
+        }
+    }
+}
+
+/// Built-in prompts that have default content and can be customized by users.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
+pub enum BuiltInPrompt {
+    CommitMessage,
+}
+
+impl BuiltInPrompt {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::CommitMessage => "Commit message",
+        }
+    }
+
+    /// Returns the default content for this built-in prompt.
+    pub fn default_content(&self) -> &'static str {
+        match self {
+            Self::CommitMessage => include_str!("../../git_ui/src/commit_message_prompt.txt"),
+        }
+    }
+}
+
+impl std::fmt::Display for BuiltInPrompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CommitMessage => write!(f, "Commit message"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum PromptId {
     User { uuid: UserPromptId },
-    EditWorkflow,
+    BuiltIn(BuiltInPrompt),
 }
 
 impl PromptId {
@@ -63,8 +104,37 @@ impl PromptId {
         UserPromptId::new().into()
     }
 
+    pub fn as_user(&self) -> Option<UserPromptId> {
+        match self {
+            Self::User { uuid } => Some(*uuid),
+            Self::BuiltIn { .. } => None,
+        }
+    }
+
+    pub fn as_built_in(&self) -> Option<BuiltInPrompt> {
+        match self {
+            Self::User { .. } => None,
+            Self::BuiltIn(builtin) => Some(*builtin),
+        }
+    }
+
     pub fn is_built_in(&self) -> bool {
-        !matches!(self, PromptId::User { .. })
+        matches!(self, Self::BuiltIn { .. })
+    }
+
+    pub fn can_edit(&self) -> bool {
+        match self {
+            Self::User { .. } => true,
+            Self::BuiltIn(builtin) => match builtin {
+                BuiltInPrompt::CommitMessage => true,
+            },
+        }
+    }
+}
+
+impl From<BuiltInPrompt> for PromptId {
+    fn from(builtin: BuiltInPrompt) -> Self {
+        PromptId::BuiltIn(builtin)
     }
 }
 
@@ -94,7 +164,7 @@ impl std::fmt::Display for PromptId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
-            PromptId::EditWorkflow => write!(f, "Edit workflow"),
+            PromptId::BuiltIn(builtin) => write!(f, "{}", builtin),
         }
     }
 }
@@ -123,9 +193,27 @@ impl MetadataCache {
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
         for result in db.iter(txn)? {
-            let (prompt_id, metadata) = result?;
+            // Fail-open: skip records that can't be decoded (e.g. from a different branch)
+            // rather than failing the entire prompt store initialization.
+            let Ok((prompt_id, metadata)) = result else {
+                log::warn!(
+                    "Skipping unreadable prompt record in database: {:?}",
+                    result.err()
+                );
+                continue;
+            };
             cache.metadata.push(metadata.clone());
             cache.metadata_by_id.insert(prompt_id, metadata);
+        }
+
+        // Insert all the built-in prompts that were not customized by the user
+        for builtin in BuiltInPrompt::iter() {
+            let builtin_id = PromptId::BuiltIn(builtin);
+            if !cache.metadata_by_id.contains_key(&builtin_id) {
+                let metadata = PromptMetadata::builtin(builtin);
+                cache.metadata.push(metadata.clone());
+                cache.metadata_by_id.insert(builtin_id, metadata);
+            }
         }
         cache.sort();
         Ok(cache)
@@ -175,12 +263,6 @@ impl PromptStore {
             let mut txn = db_env.write_txn()?;
             let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
             let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
-
-            // Remove edit workflow prompt, as we decided to opt into it using
-            // a slash command instead.
-            metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
-            bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
-
             txn.commit()?;
 
             Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
@@ -273,7 +355,16 @@ impl PromptStore {
         let bodies = self.bodies;
         cx.background_spawn(async move {
             let txn = env.read_txn()?;
-            let mut prompt = bodies.get(&txn, &id)?.context("prompt not found")?.into();
+            let mut prompt: String = match bodies.get(&txn, &id)? {
+                Some(body) => body.into(),
+                None => {
+                    if let Some(built_in) = id.as_built_in() {
+                        built_in.default_content().into()
+                    } else {
+                        anyhow::bail!("prompt not found")
+                    }
+                }
+            };
             LineEnding::normalize(&mut prompt);
             Ok(prompt)
         })
@@ -316,11 +407,6 @@ impl PromptStore {
             this.update(cx, |_, cx| cx.emit(PromptsUpdatedEvent)).ok();
             anyhow::Ok(())
         })
-    }
-
-    /// Returns the number of prompts in the store.
-    pub fn prompt_count(&self) -> usize {
-        self.metadata_cache.read().metadata.len()
     }
 
     pub fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
@@ -387,27 +473,42 @@ impl PromptStore {
         body: Rope,
         cx: &Context<Self>,
     ) -> Task<Result<()>> {
-        if id.is_built_in() {
-            return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
+        if !id.can_edit() {
+            return Task::ready(Err(anyhow!("this prompt cannot be edited")));
         }
 
-        let prompt_metadata = PromptMetadata {
-            id,
-            title,
-            default,
-            saved_at: Utc::now(),
+        let body = body.to_string();
+        let is_default_content = id
+            .as_built_in()
+            .is_some_and(|builtin| body.trim() == builtin.default_content().trim());
+
+        let metadata = if let Some(builtin) = id.as_built_in() {
+            PromptMetadata::builtin(builtin)
+        } else {
+            PromptMetadata {
+                id,
+                title,
+                default,
+                saved_at: Utc::now(),
+            }
         };
-        self.metadata_cache.write().insert(prompt_metadata.clone());
+
+        self.metadata_cache.write().insert(metadata.clone());
 
         let db_connection = self.env.clone();
         let bodies = self.bodies;
-        let metadata = self.metadata;
+        let metadata_db = self.metadata;
 
         let task = cx.background_spawn(async move {
             let mut txn = db_connection.write_txn()?;
 
-            metadata.put(&mut txn, &id, &prompt_metadata)?;
-            bodies.put(&mut txn, &id, &body.to_string())?;
+            if is_default_content {
+                metadata_db.delete(&mut txn, &id)?;
+                bodies.delete(&mut txn, &id)?;
+            } else {
+                metadata_db.put(&mut txn, &id, &metadata)?;
+                bodies.put(&mut txn, &id, &body)?;
+            }
 
             txn.commit()?;
 
@@ -430,7 +531,7 @@ impl PromptStore {
     ) -> Task<Result<()>> {
         let mut cache = self.metadata_cache.write();
 
-        if id.is_built_in() {
+        if !id.can_edit() {
             title = cache
                 .metadata_by_id
                 .get(&id)
@@ -469,3 +570,201 @@ impl PromptStore {
 pub struct GlobalPromptStore(Shared<Task<Result<Entity<PromptStore>, Arc<anyhow::Error>>>>);
 
 impl Global for GlobalPromptStore {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_built_in_prompt_load_save(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("prompts-db");
+
+        let store = cx.update(|cx| PromptStore::new(db_path, cx)).await.unwrap();
+        let store = cx.new(|_cx| store);
+
+        let commit_message_id = PromptId::BuiltIn(BuiltInPrompt::CommitMessage);
+
+        let loaded_content = store
+            .update(cx, |store, cx| store.load(commit_message_id, cx))
+            .await
+            .unwrap();
+
+        let mut expected_content = BuiltInPrompt::CommitMessage.default_content().to_string();
+        LineEnding::normalize(&mut expected_content);
+        assert_eq!(
+            loaded_content.trim(),
+            expected_content.trim(),
+            "Loading a built-in prompt not in DB should return default content"
+        );
+
+        let metadata = store.read_with(cx, |store, _| store.metadata(commit_message_id));
+        assert!(
+            metadata.is_some(),
+            "Built-in prompt should always have metadata"
+        );
+        assert!(
+            store.read_with(cx, |store, _| {
+                store
+                    .metadata_cache
+                    .read()
+                    .metadata_by_id
+                    .contains_key(&commit_message_id)
+            }),
+            "Built-in prompt should always be in cache"
+        );
+
+        let custom_content = "Custom commit message prompt";
+        store
+            .update(cx, |store, cx| {
+                store.save(
+                    commit_message_id,
+                    Some("Commit message".into()),
+                    false,
+                    Rope::from(custom_content),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let loaded_custom = store
+            .update(cx, |store, cx| store.load(commit_message_id, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded_custom.trim(),
+            custom_content.trim(),
+            "Custom content should be loaded after saving"
+        );
+
+        assert!(
+            store
+                .read_with(cx, |store, _| store.metadata(commit_message_id))
+                .is_some(),
+            "Built-in prompt should have metadata after customization"
+        );
+
+        store
+            .update(cx, |store, cx| {
+                store.save(
+                    commit_message_id,
+                    Some("Commit message".into()),
+                    false,
+                    Rope::from(BuiltInPrompt::CommitMessage.default_content()),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let metadata_after_reset =
+            store.read_with(cx, |store, _| store.metadata(commit_message_id));
+        assert!(
+            metadata_after_reset.is_some(),
+            "Built-in prompt should still have metadata after reset"
+        );
+        assert_eq!(
+            metadata_after_reset
+                .as_ref()
+                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
+            Some("Commit message"),
+            "Built-in prompt should have default title after reset"
+        );
+
+        let loaded_after_reset = store
+            .update(cx, |store, cx| store.load(commit_message_id, cx))
+            .await
+            .unwrap();
+        let mut expected_content_after_reset =
+            BuiltInPrompt::CommitMessage.default_content().to_string();
+        LineEnding::normalize(&mut expected_content_after_reset);
+        assert_eq!(
+            loaded_after_reset.trim(),
+            expected_content_after_reset.trim(),
+            "Content should be back to default after saving default content"
+        );
+    }
+
+    /// Test that the prompt store initializes successfully even when the database
+    /// contains records with incompatible/undecodable PromptId keys (e.g., from
+    /// a different branch that used a different serialization format).
+    ///
+    /// This is a regression test for the "fail-open" behavior: we should skip
+    /// bad records rather than failing the entire store initialization.
+    #[gpui::test]
+    async fn test_prompt_store_handles_incompatible_db_records(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("prompts-db-with-bad-records");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // First, create the DB and write an incompatible record directly.
+        // We simulate a record written by a different branch that used
+        // `{"kind":"CommitMessage"}` instead of `{"kind":"BuiltIn", ...}`.
+        {
+            let db_env = unsafe {
+                heed::EnvOpenOptions::new()
+                    .map_size(1024 * 1024 * 1024)
+                    .max_dbs(4)
+                    .open(&db_path)
+                    .unwrap()
+            };
+
+            let mut txn = db_env.write_txn().unwrap();
+            // Create the metadata.v2 database with raw bytes so we can write
+            // an incompatible key format.
+            let metadata_db: Database<heed::types::Bytes, heed::types::Bytes> = db_env
+                .create_database(&mut txn, Some("metadata.v2"))
+                .unwrap();
+
+            // Write an incompatible PromptId key: `{"kind":"CommitMessage"}`
+            // This is the old/branch format that current code can't decode.
+            let bad_key = br#"{"kind":"CommitMessage"}"#;
+            let dummy_metadata = br#"{"id":{"kind":"CommitMessage"},"title":"Bad Record","default":false,"saved_at":"2024-01-01T00:00:00Z"}"#;
+            metadata_db.put(&mut txn, bad_key, dummy_metadata).unwrap();
+
+            // Also write a valid record to ensure we can still read good data.
+            let good_key = br#"{"kind":"User","uuid":"550e8400-e29b-41d4-a716-446655440000"}"#;
+            let good_metadata = br#"{"id":{"kind":"User","uuid":"550e8400-e29b-41d4-a716-446655440000"},"title":"Good Record","default":false,"saved_at":"2024-01-01T00:00:00Z"}"#;
+            metadata_db.put(&mut txn, good_key, good_metadata).unwrap();
+
+            txn.commit().unwrap();
+        }
+
+        // Now try to create a PromptStore from this DB.
+        // With fail-open behavior, this should succeed and skip the bad record.
+        // Without fail-open, this would return an error.
+        let store_result = cx.update(|cx| PromptStore::new(db_path, cx)).await;
+
+        assert!(
+            store_result.is_ok(),
+            "PromptStore should initialize successfully even with incompatible DB records. \
+             Got error: {:?}",
+            store_result.err()
+        );
+
+        let store = cx.new(|_cx| store_result.unwrap());
+
+        // Verify the good record was loaded.
+        let good_id = PromptId::User {
+            uuid: UserPromptId("550e8400-e29b-41d4-a716-446655440000".parse().unwrap()),
+        };
+        let metadata = store.read_with(cx, |store, _| store.metadata(good_id));
+        assert!(
+            metadata.is_some(),
+            "Valid records should still be loaded after skipping bad ones"
+        );
+        assert_eq!(
+            metadata
+                .as_ref()
+                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
+            Some("Good Record"),
+            "Valid record should have correct title"
+        );
+    }
+}

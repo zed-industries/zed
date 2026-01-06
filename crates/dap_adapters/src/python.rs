@@ -870,7 +870,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 .active_toolchain(
                     delegate.worktree_id(),
                     base_path.into_arc(),
-                    language::LanguageName::new(Self::LANGUAGE_NAME),
+                    language::LanguageName::new_static(Self::LANGUAGE_NAME),
                     cx,
                 )
                 .await

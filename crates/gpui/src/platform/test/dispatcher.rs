@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, RunnableVariant, TaskLabel};
+use crate::{PlatformDispatcher, Priority, RunnableVariant, TaskLabel};
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
 use parking::Unparker;
@@ -177,7 +177,14 @@ impl TestDispatcher {
 
         // todo(localcc): add timings to tests
         match runnable {
-            RunnableVariant::Meta(runnable) => runnable.run(),
+            RunnableVariant::Meta(runnable) => {
+                if !runnable.metadata().is_app_alive() {
+                    drop(runnable);
+                    self.state.lock().is_main_thread = was_main_thread;
+                    return true;
+                }
+                runnable.run()
+            }
             RunnableVariant::Compat(runnable) => runnable.run(),
         };
 
@@ -284,7 +291,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.start_time + state.time
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>) {
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, _priority: Priority) {
         {
             let mut state = self.state.lock();
             if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
@@ -296,7 +303,7 @@ impl PlatformDispatcher for TestDispatcher {
         self.unpark_all();
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         self.state
             .lock()
             .foreground
@@ -317,5 +324,11 @@ impl PlatformDispatcher for TestDispatcher {
 
     fn as_test(&self) -> Option<&TestDispatcher> {
         Some(self)
+    }
+
+    fn spawn_realtime(&self, _priority: crate::RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            f();
+        });
     }
 }

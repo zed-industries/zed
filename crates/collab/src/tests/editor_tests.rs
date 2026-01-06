@@ -1,7 +1,4 @@
-use crate::{
-    rpc::RECONNECT_TIMEOUT,
-    tests::{TestServer, rust_lang},
-};
+use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
 use editor::{
     DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
@@ -23,8 +20,9 @@ use gpui::{
     App, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext,
 };
 use indoc::indoc;
-use language::FakeLspAdapter;
+use language::{FakeLspAdapter, rust_lang};
 use lsp::LSP_REQUEST_TIMEOUT;
+use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
@@ -314,6 +312,49 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             "Rust",
             FakeLspAdapter {
                 capabilities: capabilities.clone(),
+                initializer: Some(Box::new(|fake_server| {
+                    fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+                        |params, _| async move {
+                            assert_eq!(
+                                params.text_document_position.text_document.uri,
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                            );
+                            assert_eq!(
+                                params.text_document_position.position,
+                                lsp::Position::new(0, 14),
+                            );
+
+                            Ok(Some(lsp::CompletionResponse::Array(vec![
+                                lsp::CompletionItem {
+                                    label: "first_method(…)".into(),
+                                    detail: Some("fn(&mut self, B) -> C".into()),
+                                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        new_text: "first_method($1)".to_string(),
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 14),
+                                            lsp::Position::new(0, 14),
+                                        ),
+                                    })),
+                                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                                    ..Default::default()
+                                },
+                                lsp::CompletionItem {
+                                    label: "second_method(…)".into(),
+                                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        new_text: "second_method()".to_string(),
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 14),
+                                            lsp::Position::new(0, 14),
+                                        ),
+                                    })),
+                                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                                    ..Default::default()
+                                },
+                            ])))
+                        },
+                    );
+                })),
                 ..FakeLspAdapter::default()
             },
         ),
@@ -322,6 +363,11 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             FakeLspAdapter {
                 name: "fake-analyzer",
                 capabilities: capabilities.clone(),
+                initializer: Some(Box::new(|fake_server| {
+                    fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+                        |_, _| async move { Ok(None) },
+                    );
+                })),
                 ..FakeLspAdapter::default()
             },
         ),
@@ -375,6 +421,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     let fake_language_server = fake_language_servers[0].next().await.unwrap();
     let second_fake_language_server = fake_language_servers[1].next().await.unwrap();
     cx_a.background_executor.run_until_parked();
+    cx_b.background_executor.run_until_parked();
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert!(!buffer.completion_triggers().is_empty())
@@ -389,58 +436,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     });
     cx_b.focus(&editor_b);
 
-    // Receive a completion request as the host's language server.
-    // Return some completions from the host's language server.
-    cx_a.executor().start_waiting();
-    fake_language_server
-        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
-
-            Ok(Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "second_method(…)".into(),
-                    detail: Some("fn(&mut self, C) -> D<E>".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "second_method()".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            ])))
-        })
-        .next()
-        .await
-        .unwrap();
-    second_fake_language_server
-        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) })
-        .next()
-        .await
-        .unwrap();
-    cx_a.executor().finish_waiting();
+    // Allow the completion request to propagate from guest to host to LSP.
+    cx_b.background_executor.run_until_parked();
+    cx_a.background_executor.run_until_parked();
 
     // Open the buffer on the host.
     let buffer_a = project_a
@@ -486,6 +484,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // The additional edit is applied.
     cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(
@@ -643,12 +642,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                         ),
                     })),
                     insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
+                    ..lsp::CompletionItem::default()
                 },
             ])))
         });
-
-    cx_b.executor().run_until_parked();
 
     // Await both language server responses
     first_lsp_completion.next().await.unwrap();
@@ -3192,13 +3189,12 @@ async fn test_lsp_pull_diagnostics(
             .collect::<Vec<_>>();
         let expected_messages = [
             expected_pull_diagnostic_lib_message,
-            // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
-            // expected_push_diagnostic_lib_message,
+            expected_push_diagnostic_lib_message,
         ];
         assert_eq!(
             all_diagnostics.len(),
-            1,
-            "Expected pull diagnostics, but got: {all_diagnostics:?}"
+            2,
+            "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
         );
         for diagnostic in all_diagnostics {
             assert!(
@@ -3258,14 +3254,15 @@ async fn test_lsp_pull_diagnostics(
                 .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
                 .collect::<Vec<_>>();
             let expected_messages = [
-                expected_workspace_pull_diagnostics_lib_message,
-                // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
-                // expected_push_diagnostic_lib_message,
+                // Despite workspace diagnostics provided,
+                // the currently open file's diagnostics should be preferred, as LSP suggests.
+                expected_pull_diagnostic_lib_message,
+                expected_push_diagnostic_lib_message,
             ];
             assert_eq!(
                 all_diagnostics.len(),
-                1,
-                "Expected pull diagnostics, but got: {all_diagnostics:?}"
+                2,
+                "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
             );
             for diagnostic in all_diagnostics {
                 assert!(
@@ -3378,8 +3375,9 @@ async fn test_lsp_pull_diagnostics(
         "Another workspace diagnostics pull should happen after the diagnostics refresh server request"
     );
     {
-        assert!(
-            diagnostics_pulls_result_ids.lock().await.len() == diagnostic_pulls_result_ids,
+        assert_eq!(
+            diagnostics_pulls_result_ids.lock().await.len(),
+            diagnostic_pulls_result_ids,
             "Pulls should not happen hence no extra ids should appear"
         );
         assert!(
@@ -3397,7 +3395,7 @@ async fn test_lsp_pull_diagnostics(
             expected_pull_diagnostic_lib_message,
             expected_push_diagnostic_lib_message,
         ];
-        assert_eq!(all_diagnostics.len(), 1);
+        assert_eq!(all_diagnostics.len(), 2);
         for diagnostic in &all_diagnostics {
             assert!(
                 expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
@@ -3516,7 +3514,6 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
-        remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
@@ -3601,10 +3598,6 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             for (idx, (buffer, entry)) in entries.iter().flatten().enumerate() {
                 let details = blame.details_for_entry(*buffer, entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
-                assert_eq!(
-                    details.permalink.unwrap().to_string(),
-                    format!("https://github.com/zed-industries/zed/commit/{}", entry.sha)
-                );
             }
         });
     });

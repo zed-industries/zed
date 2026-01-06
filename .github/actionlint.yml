@@ -25,6 +25,7 @@ self-hosted-runner:
     - namespace-profile-32x64-ubuntu-2204
     # Namespace Ubuntu 24.04 (like ubuntu-latest)
     - namespace-profile-2x4-ubuntu-2404
+    - namespace-profile-8x32-ubuntu-2404
     # Namespace Limited Preview
     - namespace-profile-8x16-ubuntu-2004-arm-m4
     - namespace-profile-8x32-ubuntu-2004-arm-m4

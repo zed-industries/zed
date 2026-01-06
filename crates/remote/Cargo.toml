@@ -43,7 +43,6 @@ urlencoding.workspace = true
 util.workspace = true
 which.workspace = true
 
-
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }

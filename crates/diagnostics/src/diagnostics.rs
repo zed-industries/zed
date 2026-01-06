@@ -12,7 +12,7 @@ use buffer_diagnostics::BufferDiagnosticsEditor;
 use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
-    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -243,7 +243,7 @@ impl ProjectDiagnosticsEditor {
                 match event {
                     EditorEvent::Focused => {
                         if this.multibuffer.read(cx).is_empty() {
-                            window.focus(&this.focus_handle);
+                            window.focus(&this.focus_handle, cx);
                         }
                     }
                     EditorEvent::Blurred => this.close_diagnosticless_buffers(cx, false),
@@ -434,7 +434,7 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window, cx)
         }
     }
 
@@ -650,7 +650,7 @@ impl ProjectDiagnosticsEditor {
                         })
                     });
                     if this.focus_handle.is_focused(window) {
-                        this.editor.read(cx).focus_handle(cx).focus(window);
+                        this.editor.read(cx).focus_handle(cx).focus(window, cx);
                     }
                 }
 
@@ -894,8 +894,12 @@ impl Item for ProjectDiagnosticsEditor {
         Some(Box::new(self.editor.clone()))
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
@@ -1045,54 +1049,47 @@ async fn heuristic_syntactic_expand(
         let node_range = node_start..node_end;
         let row_count = node_end.row - node_start.row + 1;
         let mut ancestor_range = None;
-        let reached_outline_node = cx.background_executor().scoped({
-            let node_range = node_range.clone();
-            let outline_range = outline_range.clone();
-            let ancestor_range = &mut ancestor_range;
-            |scope| {
-                scope.spawn(async move {
-                    // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
-                    // of node children which contains the query range. For example, this allows just returning
-                    // the header of a declaration rather than the entire declaration.
-                    if row_count > max_row_count || outline_range == Some(node_range.clone()) {
-                        let mut cursor = node.walk();
-                        let mut included_child_start = None;
-                        let mut included_child_end = None;
-                        let mut previous_end = node_start;
-                        if cursor.goto_first_child() {
-                            loop {
-                                let child_node = cursor.node();
-                                let child_range =
-                                    previous_end..Point::from_ts_point(child_node.end_position());
-                                if included_child_start.is_none()
-                                    && child_range.contains(&input_range.start)
-                                {
-                                    included_child_start = Some(child_range.start);
-                                }
-                                if child_range.contains(&input_range.end) {
-                                    included_child_end = Some(child_range.end);
-                                }
-                                previous_end = child_range.end;
-                                if !cursor.goto_next_sibling() {
-                                    break;
-                                }
+        cx.background_executor()
+            .await_on_background(async {
+                // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
+                // of node children which contains the query range. For example, this allows just returning
+                // the header of a declaration rather than the entire declaration.
+                if row_count > max_row_count || outline_range == Some(node_range.clone()) {
+                    let mut cursor = node.walk();
+                    let mut included_child_start = None;
+                    let mut included_child_end = None;
+                    let mut previous_end = node_start;
+                    if cursor.goto_first_child() {
+                        loop {
+                            let child_node = cursor.node();
+                            let child_range =
+                                previous_end..Point::from_ts_point(child_node.end_position());
+                            if included_child_start.is_none()
+                                && child_range.contains(&input_range.start)
+                            {
+                                included_child_start = Some(child_range.start);
+                            }
+                            if child_range.contains(&input_range.end) {
+                                included_child_end = Some(child_range.end);
+                            }
+                            previous_end = child_range.end;
+                            if !cursor.goto_next_sibling() {
+                                break;
                             }
                         }
-                        let end = included_child_end.unwrap_or(node_range.end);
-                        if let Some(start) = included_child_start {
-                            let row_count = end.row - start.row;
-                            if row_count < max_row_count {
-                                *ancestor_range =
-                                    Some(Some(RangeInclusive::new(start.row, end.row)));
-                                return;
-                            }
-                        }
-                        *ancestor_range = Some(None);
                     }
-                })
-            }
-        });
-        reached_outline_node.await;
+                    let end = included_child_end.unwrap_or(node_range.end);
+                    if let Some(start) = included_child_start {
+                        let row_count = end.row - start.row;
+                        if row_count < max_row_count {
+                            ancestor_range = Some(Some(RangeInclusive::new(start.row, end.row)));
+                            return;
+                        }
+                    }
+                    ancestor_range = Some(None);
+                }
+            })
+            .await;
         if let Some(node) = ancestor_range {
             return node;
         }

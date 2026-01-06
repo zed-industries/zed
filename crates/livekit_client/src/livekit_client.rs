@@ -98,6 +98,14 @@ impl Room {
         self.room.connection_state()
     }
 
+    pub fn name(&self) -> String {
+        self.room.name()
+    }
+
+    pub async fn sid(&self) -> String {
+        self.room.sid().await.to_string()
+    }
+
     pub async fn publish_local_microphone_track(
         &self,
         user_name: String,

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
+use dap::adapters::DebugAdapterName;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
@@ -20,7 +21,7 @@ use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{ItemHandle, Workspace};
+use workspace::{ItemHandle, Workspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -56,6 +57,14 @@ impl From<StackFrameFilter> for String {
             StackFrameFilter::OnlyUserFrames => "user".to_string(),
         }
     }
+}
+
+pub(crate) fn stack_frame_filter_key(
+    adapter_name: &DebugAdapterName,
+    workspace_id: WorkspaceId,
+) -> String {
+    let database_id: i64 = workspace_id.into();
+    format!("stack-frame-list-filter-{}-{}", adapter_name.0, database_id)
 }
 
 pub struct StackFrameList {
@@ -97,7 +106,9 @@ impl StackFrameList {
                 SessionEvent::Threads => {
                     this.schedule_refresh(false, window, cx);
                 }
-                SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
+                SessionEvent::Stopped(..)
+                | SessionEvent::StackTrace
+                | SessionEvent::HistoricSnapshotSelected => {
                     this.schedule_refresh(true, window, cx);
                 }
                 _ => {}
@@ -105,14 +116,18 @@ impl StackFrameList {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
 
-        let list_filter = KEY_VALUE_STORE
-            .read_kvp(&format!(
-                "stack-frame-list-filter-{}",
-                session.read(cx).adapter().0
-            ))
+        let list_filter = workspace
+            .read_with(cx, |workspace, _| workspace.database_id())
             .ok()
             .flatten()
-            .map(StackFrameFilter::from_str_or_default)
+            .and_then(|database_id| {
+                let key = stack_frame_filter_key(&session.read(cx).adapter(), database_id);
+                KEY_VALUE_STORE
+                    .read_kvp(&key)
+                    .ok()
+                    .flatten()
+                    .map(StackFrameFilter::from_str_or_default)
+            })
             .unwrap_or(StackFrameFilter::All);
 
         let mut this = Self {
@@ -225,7 +240,6 @@ impl StackFrameList {
             }
             this.update_in(cx, |this, window, cx| {
                 this.build_entries(select_first, window, cx);
-                cx.notify();
             })
             .ok();
         })
@@ -806,15 +820,8 @@ impl StackFrameList {
             .ok()
             .flatten()
         {
-            let database_id: i64 = database_id.into();
-            let save_task = KEY_VALUE_STORE.write_kvp(
-                format!(
-                    "stack-frame-list-filter-{}-{}",
-                    self.session.read(cx).adapter().0,
-                    database_id,
-                ),
-                self.list_filter.into(),
-            );
+            let key = stack_frame_filter_key(&self.session.read(cx).adapter(), database_id);
+            let save_task = KEY_VALUE_STORE.write_kvp(key, self.list_filter.into());
             cx.background_spawn(save_task).detach();
         }
 

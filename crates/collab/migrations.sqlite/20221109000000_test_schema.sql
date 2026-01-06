@@ -121,6 +121,8 @@ CREATE TABLE "project_repositories" (
     "merge_message" VARCHAR,
     "branch_summary" VARCHAR,
     "head_commit_details" VARCHAR,
+    "remote_upstream_url" VARCHAR,
+    "remote_origin_url" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 

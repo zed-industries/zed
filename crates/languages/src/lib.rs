@@ -28,6 +28,7 @@ mod package_json;
 mod python;
 mod rust;
 mod tailwind;
+mod tailwindcss;
 mod typescript;
 mod vtsls;
 mod yaml;
@@ -89,7 +90,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
     let json_context_provider = Arc::new(JsonTaskProvider);
-    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone()));
+    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(languages.clone(), node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(fs.clone()));
@@ -101,6 +102,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
+    let tailwindcss_adapter = Arc::new(tailwindcss::TailwindCssLspAdapter::new(node.clone()));
     let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new(fs.clone()));
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(
         node.clone(),
@@ -262,6 +264,10 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         tailwind_adapter.clone(),
     );
     languages.register_available_lsp_adapter(
+        LanguageServerName("tailwindcss-intellisense-css".into()),
+        tailwindcss_adapter,
+    );
+    languages.register_available_lsp_adapter(
         LanguageServerName("eslint".into()),
         eslint_adapter.clone(),
     );
@@ -283,7 +289,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         "CSS",
         "ERB",
         "HTML+ERB",
-        "HTML/ERB",
         "HEEX",
         "HTML",
         "JavaScript",

@@ -1389,11 +1389,12 @@ mod test {
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
+        // Adjacent line selections stay separate (not merged)
         cx.assert_state(
             indoc! {"
             «line one
             line two
-            line three
+            ˇ»«line three
             line four
             ˇ»line five"},
             Mode::HelixNormal,

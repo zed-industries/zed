@@ -366,7 +366,7 @@ impl ThreadsDatabase {
 
             for (id, summary, updated_at) in rows {
                 threads.push(DbThreadMetadata {
-                    id: acp::SessionId(id),
+                    id: acp::SessionId::new(id),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 });

@@ -1,13 +1,14 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob, Workflow,
+    Event, Expression, Input, Job, Level, Permissions, PullRequest, PullRequestType, Push, Run,
+    Step, UsesJob, Workflow, WorkflowDispatch,
 };
 use indexmap::IndexMap;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{NamedJob, named},
-    vars::{self, JobOutput, StepOutput},
+    steps::{CommonJobConditions, NamedJob, named},
+    vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
 pub(crate) fn bump_version() -> Workflow {
@@ -18,8 +19,14 @@ pub(crate) fn bump_version() -> Workflow {
 
     named::workflow()
         .on(Event::default()
-            .push(Push::default().add_branch("main"))
-            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled)))
+            .push(
+                Push::default()
+                    .add_branch("main")
+                    .add_ignored_path(".github/**"),
+            )
+            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled))
+            .workflow_dispatch(WorkflowDispatch::default()))
+        .concurrency(one_workflow_per_non_main_branch_and_token("labels"))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)
 }
@@ -30,12 +37,16 @@ pub(crate) fn call_bump_version(
 ) -> NamedJob<UsesJob> {
     let job = Job::default()
         .cond(Expression::new(format!(
-            indoc! {
-                "(github.event.action == 'labeled' && {} != 'patch') ||
-                github.event_name == 'push'"
-            },
+            "github.event.action != 'labeled' || {} != 'patch'",
             bump_type.expr()
         )))
+        .permissions(
+            Permissions::default()
+                .contents(Level::Write)
+                .issues(Level::Write)
+                .pull_requests(Level::Write)
+                .actions(Level::Write),
+        )
         .uses(
             "zed-industries",
             "zed",
@@ -62,7 +73,9 @@ pub(crate) fn call_bump_version(
 fn determine_bump_type() -> (NamedJob, StepOutput) {
     let (get_bump_type, output) = get_bump_type();
     let job = Job::default()
-        .runs_on(runners::LINUX_DEFAULT)
+        .with_repository_owner_guard()
+        .permissions(Permissions::default())
+        .runs_on(runners::LINUX_SMALL)
         .add_step(get_bump_type)
         .outputs([(output.name.to_owned(), output.to_string())]);
     (named::job(job), output)

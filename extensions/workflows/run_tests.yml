@@ -1,13 +1,18 @@
-# Generated from xtask::workflows:: within the Zed repository.extensions::run_tests
+# Generated from xtask::workflows::extensions::run_tests within the Zed repository.
 # Rebuild with `cargo xtask workflows`.
 name: extensions::run_tests
 on:
   pull_request:
     branches:
     - '**'
+  push:
+    branches:
+    - main
 jobs:
   call_extension_tests:
+    permissions:
+      contents: read
     uses: zed-industries/zed/.github/workflows/extension_tests.yml@main
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}pr
   cancel-in-progress: true

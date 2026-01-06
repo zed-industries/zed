@@ -1,24 +1,16 @@
-use gh_workflow::*;
+use gh_workflow::{ctx::Context, *};
 use indoc::indoc;
 
 use crate::tasks::workflows::{
     extension_release::extension_workflow_secrets,
     extension_tests::{self},
     runners,
-    steps::{self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
+    steps::{
+        self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, named,
+    },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
     },
-};
-
-const BUMPVERSION_CONFIG: &str = indoc! {r#"
-    [bumpversion]
-    current_version = "$OLD_VERSION"
-
-    [bumpversion:file:Cargo.toml]
-
-    [bumpversion:file:extension.toml]
-    "#
 };
 
 const VERSION_CHECK: &str = r#"sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml"#;
@@ -31,15 +23,12 @@ pub(crate) fn extension_bump() -> Workflow {
     let force_bump = WorkflowInput::bool("force-bump", None);
 
     let (app_id, app_secret) = extension_workflow_secrets();
-
-    let test_extension = extension_tests::check_extension();
     let (check_bump_needed, needs_bump, current_version) = check_bump_needed();
 
     let needs_bump = needs_bump.as_job_output(&check_bump_needed);
     let current_version = current_version.as_job_output(&check_bump_needed);
 
-    let dependencies = [&test_extension, &check_bump_needed];
-
+    let dependencies = [&check_bump_needed];
     let bump_version = bump_extension_version(
         &dependencies,
         &current_version,
@@ -80,7 +69,6 @@ pub(crate) fn extension_bump() -> Workflow {
             "ZED_EXTENSION_CLI_SHA",
             extension_tests::ZED_EXTENSION_CLI_SHA,
         ))
-        .add_job(test_extension.name, test_extension.job)
         .add_job(check_bump_needed.name, check_bump_needed.job)
         .add_job(bump_version.name, bump_version.job)
         .add_job(create_label.name, create_label.job)
@@ -113,13 +101,14 @@ fn create_version_label(
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(app_id, app_secret);
+    let (generate_token, generated_token) =
+        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && github.ref == 'refs/heads/main' && {} == 'false'",
             needs_bump.expr(),
         )))
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
@@ -193,7 +182,8 @@ fn bump_extension_version(
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(app_id, app_secret);
+    let (generate_token, generated_token) =
+        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
     let (bump_version, new_version) = bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
@@ -202,7 +192,7 @@ fn bump_extension_version(
             force_bump.expr(),
             needs_bump.expr(),
         )))
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
@@ -214,15 +204,39 @@ fn bump_extension_version(
 }
 
 pub(crate) fn generate_token(
-    app_id: &WorkflowSecret,
-    app_secret: &WorkflowSecret,
+    app_id_source: &str,
+    app_secret_source: &str,
+    repository_target: Option<RepositoryTarget>,
 ) -> (Step<Use>, StepOutput) {
     let step = named::uses("actions", "create-github-app-token", "v2")
         .id("generate-token")
         .add_with(
             Input::default()
-                .add("app-id", app_id.to_string())
-                .add("private-key", app_secret.to_string()),
+                .add("app-id", app_id_source)
+                .add("private-key", app_secret_source)
+                .when_some(
+                    repository_target,
+                    |input,
+                     RepositoryTarget {
+                         owner,
+                         repositories,
+                         permissions,
+                     }| {
+                        input
+                            .add("owner", owner)
+                            .add("repositories", repositories)
+                            .when_some(permissions, |input, permissions| {
+                                permissions
+                                    .into_iter()
+                                    .fold(input, |input, (permission, level)| {
+                                        input.add(
+                                            permission,
+                                            serde_json::to_value(&level).unwrap_or_default(),
+                                        )
+                                    })
+                            })
+                    },
+                ),
         );
 
     let generated_token = StepOutput::new(&step, "token");
@@ -231,7 +245,10 @@ pub(crate) fn generate_token(
 }
 
 fn install_bump_2_version() -> Step<Run> {
-    named::run(runners::Platform::Linux, "pip install bump2version")
+    named::run(
+        runners::Platform::Linux,
+        "pip install bump2version --break-system-packages",
+    )
 }
 
 fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
@@ -239,20 +256,23 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
         indoc! {r#"
             OLD_VERSION="{}"
 
-            cat <<EOF > .bumpversion.cfg
-            {}
-            EOF
+            BUMP_FILES=("extension.toml")
+            if [[ -f "Cargo.toml" ]]; then
+                BUMP_FILES+=("Cargo.toml")
+            fi
 
-            bump2version --verbose {}
+            bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files {} "${{BUMP_FILES[@]}}"
+
+            if [[ -f "Cargo.toml" ]]; then
+                cargo update --workspace
+            fi
+
             NEW_VERSION="$({})"
-            cargo update --workspace
-
-            rm .bumpversion.cfg
 
             echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
             "#
         },
-        current_version, BUMPVERSION_CONFIG, bump_type, VERSION_CHECK
+        current_version, bump_type, VERSION_CHECK
     ))
     .id("bump-version");
 
@@ -285,6 +305,30 @@ fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> 
             .add("base", "main")
             .add("delete-branch", true)
             .add("token", generated_token.to_string())
-            .add("sign-commits", true),
+            .add("sign-commits", true)
+            .add("assignees", Context::github().actor().to_string()),
     )
+}
+
+pub(crate) struct RepositoryTarget {
+    owner: String,
+    repositories: String,
+    permissions: Option<Vec<(String, Level)>>,
+}
+
+impl RepositoryTarget {
+    pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
+        Self {
+            owner: owner.to_string(),
+            repositories: repositories.join("\n"),
+            permissions: None,
+        }
+    }
+
+    pub fn permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
+        Self {
+            permissions: Some(permissions.into()),
+            ..self
+        }
+    }
 }

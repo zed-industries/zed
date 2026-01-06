@@ -118,33 +118,29 @@ impl AgentTool for FindPathTool {
             let paginated_matches: &[PathBuf] = &matches[cmp::min(input.offset, matches.len())
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
-            event_stream.update_fields(acp::ToolCallUpdateFields {
-                title: Some(if paginated_matches.is_empty() {
-                    "No matches".into()
-                } else if paginated_matches.len() == 1 {
-                    "1 match".into()
-                } else {
-                    format!("{} matches", paginated_matches.len())
-                }),
-                content: Some(
-                    paginated_matches
-                        .iter()
-                        .map(|path| acp::ToolCallContent::Content {
-                            content: acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                uri: format!("file://{}", path.display()),
-                                name: path.to_string_lossy().into(),
-                                annotations: None,
-                                description: None,
-                                mime_type: None,
-                                size: None,
-                                title: None,
-                                meta: None,
-                            }),
-                        })
-                        .collect(),
-                ),
-                ..Default::default()
-            });
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new()
+                    .title(if paginated_matches.is_empty() {
+                        "No matches".into()
+                    } else if paginated_matches.len() == 1 {
+                        "1 match".into()
+                    } else {
+                        format!("{} matches", paginated_matches.len())
+                    })
+                    .content(
+                        paginated_matches
+                            .iter()
+                            .map(|path| {
+                                acp::ToolCallContent::Content(acp::Content::new(
+                                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                        path.to_string_lossy(),
+                                        format!("file://{}", path.display()),
+                                    )),
+                                ))
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+            );
 
             Ok(FindPathToolOutput {
                 offset: input.offset,

@@ -25,7 +25,7 @@ use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
 use project::{
-    Project, ProjectPath,
+    Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
@@ -326,7 +326,9 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
-            let mut matches = pin!(search.ready_chunks(1024));
+            let SearchResults { rx, _task_handle } = search;
+
+            let mut matches = pin!(rx.ready_chunks(1024));
             project_search
                 .update(cx, |project_search, cx| {
                     project_search.match_ranges.clear();
@@ -954,9 +956,9 @@ impl ProjectSearchView {
             cx.on_next_frame(window, |this, window, cx| {
                 if this.focus_handle.is_focused(window) {
                     if this.has_matches() {
-                        this.results_editor.focus_handle(cx).focus(window);
+                        this.results_editor.focus_handle(cx).focus(window, cx);
                     } else {
-                        this.query_editor.focus_handle(cx).focus(window);
+                        this.query_editor.focus_handle(cx).focus(window, cx);
                     }
                 }
             });
@@ -1147,7 +1149,7 @@ impl ProjectSearchView {
         };
 
         search.update(cx, |search, cx| {
-            search.replace_enabled = action.replace_enabled;
+            search.replace_enabled |= action.replace_enabled;
             if let Some(query) = query {
                 search.set_query(&query, window, cx);
             }
@@ -1444,6 +1446,7 @@ impl ProjectSearchView {
                     s.select_ranges([range_to_select])
                 });
             });
+            self.highlight_matches(&match_ranges, Some(new_index), cx);
         }
     }
 
@@ -1452,7 +1455,7 @@ impl ProjectSearchView {
             query_editor.select_all(&SelectAll, window, cx);
         });
         let editor_handle = self.query_editor.focus_handle(cx);
-        window.focus(&editor_handle);
+        window.focus(&editor_handle, cx);
     }
 
     fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1492,7 +1495,7 @@ impl ProjectSearchView {
             });
         });
         let results_handle = self.results_editor.focus_handle(cx);
-        window.focus(&results_handle);
+        window.focus(&results_handle, cx);
     }
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1518,11 +1521,6 @@ impl ProjectSearchView {
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
-                editor.highlight_background::<Self>(
-                    &match_ranges,
-                    |theme| theme.colors().search_match_background,
-                    cx,
-                );
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
@@ -1535,16 +1533,46 @@ impl ProjectSearchView {
 
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
-        let new_index = active_match_index(
-            Direction::Next,
-            &self.entity.read(cx).match_ranges,
-            &results_editor.selections.newest_anchor().head(),
-            &results_editor.buffer().read(cx).snapshot(cx),
-        );
+        let newest_anchor = results_editor.selections.newest_anchor().head();
+        let buffer_snapshot = results_editor.buffer().read(cx).snapshot(cx);
+        let new_index = self.entity.update(cx, |this, cx| {
+            let new_index = active_match_index(
+                Direction::Next,
+                &this.match_ranges,
+                &newest_anchor,
+                &buffer_snapshot,
+            );
+
+            self.highlight_matches(&this.match_ranges, new_index, cx);
+            new_index
+        });
+
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
             cx.notify();
         }
+    }
+
+    #[ztracing::instrument(skip_all)]
+    fn highlight_matches(
+        &self,
+        match_ranges: &[Range<Anchor>],
+        active_index: Option<usize>,
+        cx: &mut App,
+    ) {
+        self.results_editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                match_ranges,
+                move |index, theme| {
+                    if active_index == Some(*index) {
+                        theme.colors().search_active_match_background
+                    } else {
+                        theme.colors().search_match_background
+                    }
+                },
+                cx,
+            );
+        });
     }
 
     pub fn has_matches(&self) -> bool {
@@ -1730,7 +1758,7 @@ impl ProjectSearchBar {
     fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.query_editor.focus_handle(cx).focus(window);
+                search_view.query_editor.focus_handle(cx).focus(window, cx);
             });
         }
     }
@@ -1763,7 +1791,7 @@ impl ProjectSearchBar {
                 Direction::Prev => (current_index - 1) % views.len(),
             };
             let next_focus_handle = &views[new_index];
-            window.focus(next_focus_handle);
+            window.focus(next_focus_handle, cx);
             cx.stop_propagation();
         });
     }
@@ -1812,7 +1840,7 @@ impl ProjectSearchBar {
                 } else {
                     this.query_editor.focus_handle(cx)
                 };
-                window.focus(&editor_to_focus);
+                window.focus(&editor_to_focus, cx);
                 cx.notify();
             });
         }
@@ -2456,7 +2484,9 @@ pub mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
-    use settings::{InlayHintSettingsContent, SettingsStore};
+    use settings::{
+        InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
+    };
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
     use workspace::DeploySearch;
@@ -2464,7 +2494,104 @@ pub mod tests {
     #[perf]
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
+        fn dp(row: u32, col: u32) -> DisplayPoint {
+            DisplayPoint::new(DisplayRow(row), col)
+        }
+
+        fn assert_active_match_index(
+            search_view: &WindowHandle<ProjectSearchView>,
+            cx: &mut TestAppContext,
+            expected_index: usize,
+        ) {
+            search_view
+                .update(cx, |search_view, _window, _cx| {
+                    assert_eq!(search_view.active_match_index, Some(expected_index));
+                })
+                .unwrap();
+        }
+
+        fn assert_selection_range(
+            search_view: &WindowHandle<ProjectSearchView>,
+            cx: &mut TestAppContext,
+            expected_range: Range<DisplayPoint>,
+        ) {
+            search_view
+                .update(cx, |search_view, _window, cx| {
+                    assert_eq!(
+                        search_view.results_editor.update(cx, |editor, cx| editor
+                            .selections
+                            .display_ranges(&editor.display_snapshot(cx))),
+                        [expected_range]
+                    );
+                })
+                .unwrap();
+        }
+
+        fn assert_highlights(
+            search_view: &WindowHandle<ProjectSearchView>,
+            cx: &mut TestAppContext,
+            expected_highlights: Vec<(Range<DisplayPoint>, &str)>,
+        ) {
+            search_view
+                .update(cx, |search_view, window, cx| {
+                    let match_bg = cx.theme().colors().search_match_background;
+                    let active_match_bg = cx.theme().colors().search_active_match_background;
+                    let selection_bg = cx
+                        .theme()
+                        .colors()
+                        .editor_document_highlight_bracket_background;
+
+                    let highlights: Vec<_> = expected_highlights
+                        .into_iter()
+                        .map(|(range, color_type)| {
+                            let color = match color_type {
+                                "active" => active_match_bg,
+                                "match" => match_bg,
+                                "selection" => selection_bg,
+                                _ => panic!("Unknown color type"),
+                            };
+                            (range, color)
+                        })
+                        .collect();
+
+                    assert_eq!(
+                        search_view.results_editor.update(cx, |editor, cx| editor
+                            .all_text_background_highlights(window, cx)),
+                        highlights.as_slice()
+                    );
+                })
+                .unwrap();
+        }
+
+        fn select_match(
+            search_view: &WindowHandle<ProjectSearchView>,
+            cx: &mut TestAppContext,
+            direction: Direction,
+        ) {
+            search_view
+                .update(cx, |search_view, window, cx| {
+                    search_view.select_match(direction, window, cx);
+                })
+                .unwrap();
+        }
+
         init_test(cx);
+
+        // Override active search match color since the fallback theme uses the same color
+        // for normal search match and active one, which can make this test less robust.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        colors: ThemeColorsContent {
+                            search_active_match_background: Some("#ff0000ff".to_string()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                });
+            });
+        });
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
@@ -2486,113 +2613,113 @@ pub mod tests {
         });
 
         perform_search(search_view, "TWO", cx);
-        search_view.update(cx, |search_view, window, cx| {
-            assert_eq!(
-                search_view
-                    .results_editor
-                    .update(cx, |editor, cx| editor.display_text(cx)),
-                "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
-            );
-            let match_background_color = cx.theme().colors().search_match_background;
-            let selection_background_color = cx.theme().colors().editor_document_highlight_bracket_background;
-            assert_eq!(
-                search_view
-                    .results_editor
-                    .update(cx, |editor, cx| editor.all_text_background_highlights(window, cx)),
-                &[
-                    (
-                        DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35),
-                        match_background_color
-                    ),
-                    (
-                        DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
-                        selection_background_color
-                    ),
-                    (
-                        DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
-                        match_background_color
-                    ),
-                    (
-                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
-                        match_background_color
-                    ),
-
-                ]
-            );
-            assert_eq!(search_view.active_match_index, Some(0));
-            assert_eq!(
-                search_view
-                    .results_editor
-                    .update(cx, |editor, cx| editor.selections.display_ranges(&editor.display_snapshot(cx))),
-                [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
-            );
-
-            search_view.select_match(Direction::Next, window, cx);
-        }).unwrap();
+        cx.run_until_parked();
 
         search_view
-            .update(cx, |search_view, window, cx| {
-                assert_eq!(search_view.active_match_index, Some(1));
+            .update(cx, |search_view, _window, cx| {
                 assert_eq!(
-                    search_view.results_editor.update(cx, |editor, cx| editor
-                        .selections
-                        .display_ranges(&editor.display_snapshot(cx))),
-                    [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
-                );
-                search_view.select_match(Direction::Next, window, cx);
-            })
-            .unwrap();
-
-        search_view
-            .update(cx, |search_view, window, cx| {
-                assert_eq!(search_view.active_match_index, Some(2));
-                assert_eq!(
-                    search_view.results_editor.update(cx, |editor, cx| editor
-                        .selections
-                        .display_ranges(&editor.display_snapshot(cx))),
-                    [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
-                );
-                search_view.select_match(Direction::Next, window, cx);
-            })
-            .unwrap();
-
-        search_view
-            .update(cx, |search_view, window, cx| {
-                assert_eq!(search_view.active_match_index, Some(0));
-                assert_eq!(
-                    search_view.results_editor.update(cx, |editor, cx| editor
-                        .selections
-                        .display_ranges(&editor.display_snapshot(cx))),
-                    [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
-                );
-                search_view.select_match(Direction::Prev, window, cx);
-            })
-            .unwrap();
-
-        search_view
-            .update(cx, |search_view, window, cx| {
-                assert_eq!(search_view.active_match_index, Some(2));
-                assert_eq!(
-                    search_view.results_editor.update(cx, |editor, cx| editor
-                        .selections
-                        .display_ranges(&editor.display_snapshot(cx))),
-                    [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
-                );
-                search_view.select_match(Direction::Prev, window, cx);
-            })
-            .unwrap();
-
-        search_view
-            .update(cx, |search_view, _, cx| {
-                assert_eq!(search_view.active_match_index, Some(1));
-                assert_eq!(
-                    search_view.results_editor.update(cx, |editor, cx| editor
-                        .selections
-                        .display_ranges(&editor.display_snapshot(cx))),
-                    [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
                 );
             })
             .unwrap();
+
+        assert_active_match_index(&search_view, cx, 0);
+        assert_selection_range(&search_view, cx, dp(2, 32)..dp(2, 35));
+        assert_highlights(
+            &search_view,
+            cx,
+            vec![
+                (dp(2, 32)..dp(2, 35), "active"),
+                (dp(2, 37)..dp(2, 40), "selection"),
+                (dp(2, 37)..dp(2, 40), "match"),
+                (dp(5, 6)..dp(5, 9), "match"),
+                // TODO: we should be getting selection highlight here after project search
+                // but for some reason we are not getting it here
+            ],
+        );
+        select_match(&search_view, cx, Direction::Next);
+        cx.run_until_parked();
+
+        assert_active_match_index(&search_view, cx, 1);
+        assert_selection_range(&search_view, cx, dp(2, 37)..dp(2, 40));
+        assert_highlights(
+            &search_view,
+            cx,
+            vec![
+                (dp(2, 32)..dp(2, 35), "selection"),
+                (dp(2, 32)..dp(2, 35), "match"),
+                (dp(2, 37)..dp(2, 40), "active"),
+                (dp(5, 6)..dp(5, 9), "selection"),
+                (dp(5, 6)..dp(5, 9), "match"),
+            ],
+        );
+        select_match(&search_view, cx, Direction::Next);
+        cx.run_until_parked();
+
+        assert_active_match_index(&search_view, cx, 2);
+        assert_selection_range(&search_view, cx, dp(5, 6)..dp(5, 9));
+        assert_highlights(
+            &search_view,
+            cx,
+            vec![
+                (dp(2, 32)..dp(2, 35), "selection"),
+                (dp(2, 32)..dp(2, 35), "match"),
+                (dp(2, 37)..dp(2, 40), "selection"),
+                (dp(2, 37)..dp(2, 40), "match"),
+                (dp(5, 6)..dp(5, 9), "active"),
+            ],
+        );
+        select_match(&search_view, cx, Direction::Next);
+        cx.run_until_parked();
+
+        assert_active_match_index(&search_view, cx, 0);
+        assert_selection_range(&search_view, cx, dp(2, 32)..dp(2, 35));
+        assert_highlights(
+            &search_view,
+            cx,
+            vec![
+                (dp(2, 32)..dp(2, 35), "active"),
+                (dp(2, 37)..dp(2, 40), "selection"),
+                (dp(2, 37)..dp(2, 40), "match"),
+                (dp(5, 6)..dp(5, 9), "selection"),
+                (dp(5, 6)..dp(5, 9), "match"),
+            ],
+        );
+        select_match(&search_view, cx, Direction::Prev);
+        cx.run_until_parked();
+
+        assert_active_match_index(&search_view, cx, 2);
+        assert_selection_range(&search_view, cx, dp(5, 6)..dp(5, 9));
+        assert_highlights(
+            &search_view,
+            cx,
+            vec![
+                (dp(2, 32)..dp(2, 35), "selection"),
+                (dp(2, 32)..dp(2, 35), "match"),
+                (dp(2, 37)..dp(2, 40), "selection"),
+                (dp(2, 37)..dp(2, 40), "match"),
+                (dp(5, 6)..dp(5, 9), "active"),
+            ],
+        );
+        select_match(&search_view, cx, Direction::Prev);
+        cx.run_until_parked();
+
+        assert_active_match_index(&search_view, cx, 1);
+        assert_selection_range(&search_view, cx, dp(2, 37)..dp(2, 40));
+        assert_highlights(
+            &search_view,
+            cx,
+            vec![
+                (dp(2, 32)..dp(2, 35), "selection"),
+                (dp(2, 32)..dp(2, 35), "match"),
+                (dp(2, 37)..dp(2, 40), "active"),
+                (dp(5, 6)..dp(5, 9), "selection"),
+                (dp(5, 6)..dp(5, 9), "match"),
+            ],
+        );
     }
 
     #[perf]
@@ -4233,7 +4360,7 @@ pub mod tests {
         let buffer_search_query = "search bar query";
         buffer_search_bar
             .update_in(&mut cx, |buffer_search_bar, window, cx| {
-                buffer_search_bar.focus_handle(cx).focus(window);
+                buffer_search_bar.focus_handle(cx).focus(window, cx);
                 buffer_search_bar.search(buffer_search_query, None, true, window, cx)
             })
             .await

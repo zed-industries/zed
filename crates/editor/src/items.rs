@@ -1,6 +1,6 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
+    ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
     ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
@@ -17,8 +17,8 @@ use gpui::{
     ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, DiskState, LocalFile, Point,
-    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, LocalFile, Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::MultiBufferOffset;
@@ -722,7 +722,7 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .is_some_and(|file| file.disk_state() == DiskState::Deleted);
+            .is_some_and(|file| file.disk_state().is_deleted());
 
         h_flex()
             .gap_2()
@@ -805,6 +805,29 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
+    fn capability(&self, cx: &App) -> Capability {
+        self.capability(cx)
+    }
+
+    // Note: this mirrors the logic in `Editor::toggle_read_only`, but is reachable
+    // without relying on focus-based action dispatch.
+    fn toggle_read_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_capability(
+                    match buffer.capability() {
+                        Capability::ReadWrite => Capability::Read,
+                        Capability::Read => Capability::ReadWrite,
+                        Capability::ReadOnly => Capability::ReadOnly,
+                    },
+                    cx,
+                );
+            });
+        }
+        cx.notify();
+        window.refresh();
+    }
+
     fn has_deleted_file(&self, cx: &App) -> bool {
         self.buffer().read(cx).read(cx).has_deleted_file()
     }
@@ -842,7 +865,6 @@ impl Item for Editor {
             .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
             .collect::<HashSet<_>>();
 
-        // let mut buffers_to_save =
         let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
             buffers
         } else {
@@ -1487,6 +1509,7 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
+        active_match_index: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1497,7 +1520,13 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.colors().search_match_background,
+            move |index, theme| {
+                if active_match_index == Some(*index) {
+                    theme.colors().search_active_match_background
+                } else {
+                    theme.colors().search_match_background
+                }
+            },
             cx,
         );
         if updated {
@@ -1653,19 +1682,27 @@ impl SearchableItem for Editor {
         let text = text.snapshot(cx);
         let mut edits = vec![];
 
-        for m in matches {
-            let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
+        // A regex might have replacement variables so we cannot apply
+        // the same replacement to all matches
+        if query.is_regex() {
+            edits = matches
+                .filter_map(|m| {
+                    let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
 
-            let text: Cow<_> = if text.len() == 1 {
-                text.first().cloned().unwrap().into()
-            } else {
-                let joined_chunks = text.join("");
-                joined_chunks.into()
-            };
+                    let text: Cow<_> = if text.len() == 1 {
+                        text.first().cloned().unwrap().into()
+                    } else {
+                        let joined_chunks = text.join("");
+                        joined_chunks.into()
+                    };
 
-            if let Some(replacement) = query.replacement_for(&text) {
-                edits.push((m.clone(), Arc::from(&*replacement)));
-            }
+                    query
+                        .replacement_for(&text)
+                        .map(|replacement| (m.clone(), Arc::from(&*replacement)))
+                })
+                .collect();
+        } else if let Some(replacement) = query.replacement().map(Arc::<str>::from) {
+            edits = matches.map(|m| (m.clone(), replacement.clone())).collect();
         }
 
         if !edits.is_empty() {
@@ -1891,15 +1928,20 @@ fn path_for_buffer<'a>(
     cx: &'a App,
 ) -> Option<Cow<'a, str>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
-    path_for_file(file.as_ref(), height, include_filename, cx)
+    path_for_file(file, height, include_filename, cx)
 }
 
 fn path_for_file<'a>(
-    file: &'a dyn language::File,
+    file: &'a Arc<dyn language::File>,
     mut height: usize,
     include_filename: bool,
     cx: &'a App,
 ) -> Option<Cow<'a, str>> {
+    if project::File::from_dyn(Some(file)).is_none() {
+        return None;
+    }
+
+    let file = file.as_ref();
     // Ensure we always render at least the filename.
     height += 1;
 
@@ -1939,18 +1981,18 @@ mod tests {
     use super::*;
     use fs::MTime;
     use gpui::{App, VisualTestContext};
-    use language::{LanguageMatcher, TestFile};
+    use language::TestFile;
     use project::FakeFs;
     use std::path::{Path, PathBuf};
     use util::{path, rel_path::RelPath};
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
-        let file = TestFile {
+        let file: Arc<dyn language::File> = Arc::new(TestFile {
             path: RelPath::empty().into(),
             root_name: String::new(),
             local_root: None,
-        };
+        });
         assert_eq!(path_for_file(&file, 0, false, cx), None);
     }
 
@@ -1977,20 +2019,6 @@ mod tests {
             })
             .await
             .unwrap()
-    }
-
-    fn rust_language() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
     }
 
     #[gpui::test]
@@ -2074,7 +2102,9 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
-            project.read_with(cx, |project, _| project.languages().add(rust_language()));
+            project.read_with(cx, |project, _| {
+                project.languages().add(languages::rust_lang())
+            });
 
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));

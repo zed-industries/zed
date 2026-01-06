@@ -22,7 +22,6 @@ pub mod project_repository_statuses;
 pub mod room;
 pub mod room_participant;
 pub mod server;
-pub mod signup;
 pub mod user;
 pub mod worktree;
 pub mod worktree_diagnostic_summary;

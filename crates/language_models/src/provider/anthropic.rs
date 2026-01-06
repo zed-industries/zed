@@ -1,6 +1,6 @@
 use anthropic::{
-    ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent,
-    ToolResultContent, ToolResultPart, Usage,
+    ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
+    ResponseContent, ToolResultContent, ToolResultPart, Usage,
 };
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
@@ -8,25 +8,21 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::B
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
+    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason, env_var,
 };
-use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
-
-use crate::api_key::ApiKeyState;
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -65,12 +61,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = AnthropicLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -79,17 +71,13 @@ impl AnthropicLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    &API_KEY_ENV_VAR,
-                    |this| &mut this.api_key_state,
-                    cx,
-                );
+                this.api_key_state
+                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
                 cx.notify();
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
             }
         });
 
@@ -137,8 +125,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiAnthropic
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiAnthropic)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -231,68 +219,215 @@ pub struct AnthropicModel {
     request_limiter: RateLimiter,
 }
 
-pub fn count_anthropic_tokens(
+/// Convert a LanguageModelRequest to an Anthropic CountTokensRequest.
+pub fn into_anthropic_count_tokens_request(
     request: LanguageModelRequest,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request.messages;
-        let mut tokens_from_images = 0;
-        let mut string_messages = Vec::with_capacity(messages.len());
+    model: String,
+    mode: AnthropicModelMode,
+) -> CountTokensRequest {
+    let mut new_messages: Vec<anthropic::Message> = Vec::new();
+    let mut system_message = String::new();
 
-        for message in messages {
-            use language_model::MessageContent;
+    for message in request.messages {
+        if message.contents_empty() {
+            continue;
+        }
 
-            let mut string_contents = String::new();
+        match message.role {
+            Role::User | Role::Assistant => {
+                let anthropic_message_content: Vec<anthropic::RequestContent> = message
+                    .content
+                    .into_iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Text(text) => {
+                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
+                                text.trim_end().to_string()
+                            } else {
+                                text
+                            };
+                            if !text.is_empty() {
+                                Some(anthropic::RequestContent::Text {
+                                    text,
+                                    cache_control: None,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Thinking {
+                            text: thinking,
+                            signature,
+                        } => {
+                            if !thinking.is_empty() {
+                                Some(anthropic::RequestContent::Thinking {
+                                    thinking,
+                                    signature: signature.unwrap_or_default(),
+                                    cache_control: None,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::RedactedThinking(data) => {
+                            if !data.is_empty() {
+                                Some(anthropic::RequestContent::RedactedThinking { data })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
+                            source: anthropic::ImageSource {
+                                source_type: "base64".to_string(),
+                                media_type: "image/png".to_string(),
+                                data: image.source.to_string(),
+                            },
+                            cache_control: None,
+                        }),
+                        MessageContent::ToolUse(tool_use) => {
+                            Some(anthropic::RequestContent::ToolUse {
+                                id: tool_use.id.to_string(),
+                                name: tool_use.name.to_string(),
+                                input: tool_use.input,
+                                cache_control: None,
+                            })
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            Some(anthropic::RequestContent::ToolResult {
+                                tool_use_id: tool_result.tool_use_id.to_string(),
+                                is_error: tool_result.is_error,
+                                content: match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        ToolResultContent::Plain(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                                            source: anthropic::ImageSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: "image/png".to_string(),
+                                                data: image.source.to_string(),
+                                            },
+                                        }])
+                                    }
+                                },
+                                cache_control: None,
+                            })
+                        }
+                    })
+                    .collect();
+                let anthropic_role = match message.role {
+                    Role::User => anthropic::Role::User,
+                    Role::Assistant => anthropic::Role::Assistant,
+                    Role::System => unreachable!("System role should never occur here"),
+                };
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == anthropic_role
+                {
+                    last_message.content.extend(anthropic_message_content);
+                    continue;
+                }
 
-            for content in message.content {
-                match content {
-                    MessageContent::Text(text) => {
-                        string_contents.push_str(&text);
+                new_messages.push(anthropic::Message {
+                    role: anthropic_role,
+                    content: anthropic_message_content,
+                });
+            }
+            Role::System => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.string_contents());
+            }
+        }
+    }
+
+    CountTokensRequest {
+        model,
+        messages: new_messages,
+        system: if system_message.is_empty() {
+            None
+        } else {
+            Some(anthropic::StringOrContents::String(system_message))
+        },
+        thinking: if request.thinking_allowed
+            && let AnthropicModelMode::Thinking { budget_tokens } = mode
+        {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| anthropic::Tool {
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            })
+            .collect(),
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,
+            LanguageModelToolChoice::None => anthropic::ToolChoice::None,
+        }),
+    }
+}
+
+/// Estimate tokens using tiktoken. Used as a fallback when the API is unavailable,
+/// or by providers (like Zed Cloud) that don't have direct Anthropic API access.
+pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Result<u64> {
+    let messages = request.messages;
+    let mut tokens_from_images = 0;
+    let mut string_messages = Vec::with_capacity(messages.len());
+
+    for message in messages {
+        let mut string_contents = String::new();
+
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) => {
+                    string_contents.push_str(&text);
+                }
+                MessageContent::Thinking { .. } => {
+                    // Thinking blocks are not included in the input token count.
+                }
+                MessageContent::RedactedThinking(_) => {
+                    // Thinking blocks are not included in the input token count.
+                }
+                MessageContent::Image(image) => {
+                    tokens_from_images += image.estimate_tokens();
+                }
+                MessageContent::ToolUse(_tool_use) => {
+                    // TODO: Estimate token usage from tool uses.
+                }
+                MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                    LanguageModelToolResultContent::Text(text) => {
+                        string_contents.push_str(text);
                     }
-                    MessageContent::Thinking { .. } => {
-                        // Thinking blocks are not included in the input token count.
-                    }
-                    MessageContent::RedactedThinking(_) => {
-                        // Thinking blocks are not included in the input token count.
-                    }
-                    MessageContent::Image(image) => {
+                    LanguageModelToolResultContent::Image(image) => {
                         tokens_from_images += image.estimate_tokens();
                     }
-                    MessageContent::ToolUse(_tool_use) => {
-                        // TODO: Estimate token usage from tool uses.
-                    }
-                    MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            string_contents.push_str(text);
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                    },
-                }
-            }
-
-            if !string_contents.is_empty() {
-                string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(string_contents),
-                    name: None,
-                    function_call: None,
-                });
+                },
             }
         }
 
-        // Tiktoken doesn't yet support these models, so we manually use the
-        // same tokenizer as GPT-4.
-        tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-            .map(|tokens| (tokens + tokens_from_images) as u64)
-    })
-    .boxed()
+        if !string_contents.is_empty() {
+            string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(string_contents),
+                name: None,
+                function_call: None,
+            });
+        }
+    }
+
+    // Tiktoken doesn't yet support these models, so we manually use the
+    // same tokenizer as GPT-4.
+    tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+        .map(|tokens| (tokens + tokens_from_images) as u64)
 }
 
 impl AnthropicModel {
@@ -362,6 +497,10 @@ impl LanguageModel for AnthropicModel {
         true
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -394,7 +533,40 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
-        count_anthropic_tokens(request, cx)
+        let http_client = self.http_client.clone();
+        let model_id = self.model.request_id().to_string();
+        let mode = self.model.mode();
+
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            (
+                state.api_key_state.key(&api_url).map(|k| k.to_string()),
+                api_url.to_string(),
+            )
+        });
+
+        async move {
+            // If no API key, fall back to tiktoken estimation
+            let Some(api_key) = api_key else {
+                return count_anthropic_tokens_with_tiktoken(request);
+            };
+
+            let count_request =
+                into_anthropic_count_tokens_request(request.clone(), model_id, mode);
+
+            match anthropic::count_tokens(http_client.as_ref(), &api_url, &api_key, count_request)
+                .await
+            {
+                Ok(response) => Ok(response.input_tokens),
+                Err(err) => {
+                    log::error!(
+                        "Anthropic count_tokens API failed, falling back to tiktoken: {err:?}"
+                    );
+                    count_anthropic_tokens_with_tiktoken(request)
+                }
+            }
+        }
+        .boxed()
     }
 
     fn stream_completion(
@@ -937,14 +1109,12 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(
-                            InstructionListItem::new(
-                                "Create one by visiting",
-                                Some("Anthropic's settings"),
-                                Some("https://console.anthropic.com/settings/keys")
-                            )
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Anthropic's settings", "https://console.anthropic.com/settings/keys"))
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
                         )
                 )
                 .child(self.api_key_editor.clone())
@@ -953,7 +1123,8 @@ impl Render for ConfigurationView {
                         format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    .color(Color::Muted)
+                    .mt_0p5(),
                 )
                 .into_any_element()
         } else {

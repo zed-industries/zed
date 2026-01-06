@@ -19,6 +19,7 @@ pub mod task_store;
 pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;
+pub mod trusted_worktrees;
 pub mod worktree_store;
 
 #[cfg(test)]
@@ -39,6 +40,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
 pub use git_store::{
@@ -46,11 +48,13 @@ pub use git_store::{
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 pub use manifest_tree::ManifestTree;
-pub use project_search::Search;
+pub use project_search::{Search, SearchResults};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
-use client::{Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore, proto};
+use client::{
+    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
+};
 use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
@@ -63,6 +67,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
+use encoding_rs;
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -80,7 +85,7 @@ use gpui::{
     Task, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
     LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
     ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
@@ -105,7 +110,6 @@ use rpc::{
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
-use smol::channel::Receiver;
 use snippet::Snippet;
 pub use snippet_provider;
 use snippet_provider::SnippetProvider;
@@ -327,7 +331,7 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromSshRemote,
+    DisconnectedFromRemote,
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -348,6 +352,7 @@ pub enum Event {
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
 }
 
@@ -827,6 +832,7 @@ enum EntitySubscription {
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
     DapStore(PendingEntitySubscription<DapStore>),
+    BreakpointStore(PendingEntitySubscription<BreakpointStore>),
 }
 
 #[derive(Debug, Clone)]
@@ -966,6 +972,14 @@ impl DirectoryLister {
             }
         }
     }
+
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        match self {
+            Self::Local(project, ..) | Self::Project(project, ..) => {
+                project.read(cx).path_style(cx)
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -984,6 +998,8 @@ pub enum LspPullDiagnostics {
         server_id: LanguageServerId,
         /// URI of the resource,
         uri: lsp::Uri,
+        /// The ID provided by the dynamic registration that produced diagnostics.
+        registration_id: Option<SharedString>,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -994,10 +1010,10 @@ pub enum PulledDiagnostics {
     Unchanged {
         /// An ID the current pulled batch for this file.
         /// If given, can be used to query workspace diagnostics partially.
-        result_id: String,
+        result_id: SharedString,
     },
     Changed {
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         diagnostics: Vec<lsp::Diagnostic>,
     },
 }
@@ -1059,6 +1075,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
+        init_worktree_trust: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1067,6 +1084,15 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+            if init_worktree_trust {
+                trusted_worktrees::track_worktree_trust(
+                    worktree_store.clone(),
+                    None,
+                    None,
+                    None,
+                    cx,
+                );
+            }
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1240,6 +1266,7 @@ impl Project {
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        init_worktree_trust: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1248,8 +1275,14 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
-            let (remote_proto, path_style) =
-                remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
+            let (remote_proto, path_style, connection_options) =
+                remote.read_with(cx, |remote, _| {
+                    (
+                        remote.proto_client(),
+                        remote.path_style(),
+                        remote.connection_options(),
+                    )
+                });
             let worktree_store = cx.new(|_| {
                 WorktreeStore::remote(
                     false,
@@ -1258,8 +1291,18 @@ impl Project {
                     path_style,
                 )
             });
+
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+            if init_worktree_trust {
+                trusted_worktrees::track_worktree_trust(
+                    worktree_store.clone(),
+                    Some(RemoteHostLocation::from(connection_options)),
+                    None,
+                    Some((remote_proto.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
+                    cx,
+                );
+            }
 
             let weak_self = cx.weak_entity();
             let context_server_store =
@@ -1284,7 +1327,12 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             let toolchain_store = cx.new(|cx| {
-                ToolchainStore::remote(REMOTE_SERVER_PROJECT_ID, remote.read(cx).proto_client(), cx)
+                ToolchainStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    worktree_store.clone(),
+                    remote.read(cx).proto_client(),
+                    cx,
+                )
             });
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
@@ -1331,8 +1379,14 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(REMOTE_SERVER_PROJECT_ID, remote_proto.clone()));
+            let breakpoint_store = cx.new(|_| {
+                BreakpointStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    remote_proto.clone(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                )
+            });
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_remote(
@@ -1428,6 +1482,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.worktree_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.lsp_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.breakpoint_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
@@ -1440,12 +1495,16 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
+            remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
+            remote_proto.add_entity_request_handler(Self::handle_restrict_worktrees);
+
             BufferStore::init(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
             TaskStore::init(Some(&remote_proto));
             ToolchainStore::init(&remote_proto);
             DapStore::init(&remote_proto, cx);
+            BreakpointStore::init(&remote_proto);
             GitStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
 
@@ -1475,6 +1534,9 @@ impl Project {
                 client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
             ),
             EntitySubscription::DapStore(client.subscribe_to_entity::<DapStore>(remote_id)?),
+            EntitySubscription::BreakpointStore(
+                client.subscribe_to_entity::<BreakpointStore>(remote_id)?,
+            ),
         ];
         let committer = get_git_committer(&cx).await;
         let response = client
@@ -1499,7 +1561,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 7],
+        subscriptions: [EntitySubscription; 8],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1533,8 +1595,14 @@ impl Project {
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
-        let breakpoint_store =
-            cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
+        let breakpoint_store = cx.new(|_| {
+            BreakpointStore::remote(
+                remote_id,
+                client.clone().into(),
+                buffer_store.clone(),
+                worktree_store.clone(),
+            )
+        })?;
         let dap_store = cx.new(|cx| {
             DapStore::new_collab(
                 remote_id,
@@ -1657,7 +1725,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                breakpoint_store,
+                breakpoint_store: breakpoint_store.clone(),
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
                 agent_server_store,
@@ -1715,6 +1783,9 @@ impl Project {
                 }
                 EntitySubscription::DapStore(subscription) => {
                     subscription.set_entity(&dap_store, &cx)
+                }
+                EntitySubscription::BreakpointStore(subscription) => {
+                    subscription.set_entity(&breakpoint_store, &cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1800,6 +1871,7 @@ impl Project {
                     Arc::new(languages),
                     fs,
                     None,
+                    false,
                     cx,
                 )
             })
@@ -1825,6 +1897,25 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> Entity<Project> {
+        Self::test_project(fs, root_paths, false, cx).await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn test_with_worktree_trust(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<Project> {
+        Self::test_project(fs, root_paths, true, cx).await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    async fn test_project(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        init_worktree_trust: bool,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
@@ -1840,6 +1931,7 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
+                init_worktree_trust,
                 cx,
             )
         });
@@ -2415,13 +2507,11 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            self.worktree_store.update(cx, |worktree_store, cx| {
-                for worktree in worktree_store.worktrees() {
-                    store
-                        .clear_local_settings(worktree.read(cx).id(), cx)
-                        .log_err();
-                }
-            });
+            for worktree_metadata in &message.worktrees {
+                store
+                    .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                    .log_err();
+            }
         });
 
         self.join_project_response_message_id = message_id;
@@ -2577,7 +2667,7 @@ impl Project {
 
     #[inline]
     pub fn is_read_only(&self, cx: &App) -> bool {
-        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
+        self.is_disconnected(cx) || !self.capability().editable()
     }
 
     #[inline]
@@ -2618,6 +2708,12 @@ impl Project {
             self.is_via_collab() || self.is_via_remote_server()
         );
         !self.is_local()
+    }
+
+    pub fn disable_worktree_scanner(&mut self, cx: &mut Context<Self>) {
+        self.worktree_store.update(cx, |worktree_store, _cx| {
+            worktree_store.disable_scanner();
+        });
     }
 
     #[inline]
@@ -3177,6 +3273,9 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
+            LspStoreEvent::WorkspaceEditApplied(transaction) => {
+                cx.emit(Event::WorkspaceEditApplied(transaction.clone()))
+            }
         }
     }
 
@@ -3197,7 +3296,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromSshRemote);
+                cx.emit(Event::DisconnectedFromRemote);
             }
         }
     }
@@ -4064,7 +4163,11 @@ impl Project {
         searcher.into_handle(query, cx)
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    pub fn search(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> SearchResults<SearchResult> {
         self.search_impl(query, cx).results(cx)
     }
 
@@ -4461,13 +4564,13 @@ impl Project {
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(path) = RelPath::new(path, path_style)
-                    && let Some(entry) = worktree.entry_for_path(&path)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: entry.path.clone(),
-                    });
+                if let Ok(rel_path) = RelPath::new(path, path_style) {
+                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
+                        return Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: entry.path.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -4498,11 +4601,9 @@ impl Project {
     }
 
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
-        self.find_worktree(abs_path, cx)
-            .map(|(worktree, relative_path)| ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: relative_path,
-            })
+        self.worktree_store
+            .read(cx)
+            .project_path_for_absolute_path(abs_path, cx)
     }
 
     pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
@@ -4655,6 +4756,14 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    for worktree_metadata in &envelope.payload.worktrees {
+                        store
+                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                            .log_err();
+                    }
+                });
+
                 this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
             }
             Ok(())
@@ -4741,9 +4850,14 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateWorktree>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |project, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(&project.worktree_store, worktree_id, cx)
+                });
+            }
+            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload);
@@ -4768,6 +4882,51 @@ impl Project {
             this.buffer_store.clone()
         })?;
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
+    }
+
+    async fn handle_trust_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrustWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            trusted_worktrees.trust(
+                &this.read(cx).worktree_store(),
+                envelope
+                    .payload
+                    .trusted_paths
+                    .into_iter()
+                    .filter_map(|proto_path| PathTrust::from_proto(proto_path))
+                    .collect(),
+                cx,
+            );
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_restrict_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestrictWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let worktree_store = this.read(cx).worktree_store().downgrade();
+            let restricted_paths = envelope
+                .payload
+                .worktree_ids
+                .into_iter()
+                .map(WorktreeId::from_proto)
+                .map(PathTrust::Worktree)
+                .collect::<HashSet<_>>();
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
+        })?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_update_buffer(
@@ -4891,7 +5050,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Ok(buffer) = results.recv().await {
+        while let Ok(buffer) = results.rx.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());
@@ -5182,7 +5341,7 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
+            this.running_language_servers_for_local_buffer(buffer, cx)
                 .next()
                 .is_some()
         })
@@ -5320,13 +5479,22 @@ impl Project {
                 .await
                 .context("Failed to load settings file")?;
 
+            let has_bom = file.has_bom;
+
             let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
                 store.new_text_for_update(file.text, move |settings| update(settings, cx))
             })?;
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        new_text.into(),
+                        line_ending,
+                        encoding_rs::UTF_8,
+                        has_bom,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;
@@ -5515,7 +5683,9 @@ impl ProjectItem for Buffer {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.file().map(|file| ProjectPath {
+        let file = self.file()?;
+
+        (!matches!(file.disk_state(), DiskState::Historic { .. })).then(|| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })

@@ -206,9 +206,14 @@ pub struct AcceptEditPredictionBody {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RejectEditPredictionsBody {
     pub rejections: Vec<EditPredictionRejection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectEditPredictionsBodyRef<'a> {
+    pub rejections: &'a [EditPredictionRejection],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -366,6 +371,8 @@ pub struct LanguageModel {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
+    #[serde(default)]
+    pub supports_streaming_tools: bool,
     // only used by OpenAI and xAI
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,

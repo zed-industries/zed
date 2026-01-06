@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use flume::Sender;
+use anyhow::Context;
 use util::ResultExt;
 use windows::{
     System::Threading::{
@@ -12,18 +12,23 @@ use windows::{
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
+        System::Threading::{
+            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
+            THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL,
+        },
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, RunnableVariant, SafeHwnd, THREAD_TIMINGS,
-    TaskLabel, TaskTiming, ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+    GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
+    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskLabel, TaskTiming,
+    ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
 };
 
 pub(crate) struct WindowsDispatcher {
     pub(crate) wake_posted: AtomicBool,
-    main_sender: Sender<RunnableVariant>,
+    main_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_id: ThreadId,
     pub(crate) platform_window_handle: SafeHwnd,
     validation_number: usize,
@@ -31,7 +36,7 @@ pub(crate) struct WindowsDispatcher {
 
 impl WindowsDispatcher {
     pub(crate) fn new(
-        main_sender: Sender<RunnableVariant>,
+        main_sender: PriorityQueueSender<RunnableVariant>,
         platform_window_handle: HWND,
         validation_number: usize,
     ) -> Self {
@@ -47,7 +52,7 @@ impl WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_threadpool(&self, runnable: RunnableVariant) {
+    fn dispatch_on_threadpool(&self, priority: WorkItemPriority, runnable: RunnableVariant) {
         let handler = {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
@@ -55,7 +60,8 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High).log_err();
+
+        ThreadPool::RunWithPriorityAsync(&handler, priority).log_err();
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
@@ -81,7 +87,7 @@ impl WindowsDispatcher {
                     start,
                     end: None,
                 };
-                Self::add_task_timing(timing);
+                profiler::add_task_timing(timing);
 
                 runnable.run();
 
@@ -93,7 +99,7 @@ impl WindowsDispatcher {
                     start,
                     end: None,
                 };
-                Self::add_task_timing(timing);
+                profiler::add_task_timing(timing);
 
                 runnable.run();
 
@@ -104,23 +110,7 @@ impl WindowsDispatcher {
         let end = Instant::now();
         timing.end = Some(end);
 
-        Self::add_task_timing(timing);
-    }
-
-    pub(crate) fn add_task_timing(timing: TaskTiming) {
-        THREAD_TIMINGS.with(|timings| {
-            let mut timings = timings.lock();
-            let timings = &mut timings.timings;
-
-            if let Some(last_timing) = timings.iter_mut().rev().next() {
-                if last_timing.location == timing.location {
-                    last_timing.end = timing.end;
-                    return;
-                }
-            }
-
-            timings.push_back(timing);
-        });
+        profiler::add_task_timing(timing);
     }
 }
 
@@ -148,15 +138,22 @@ impl PlatformDispatcher for WindowsDispatcher {
         current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>) {
-        self.dispatch_on_threadpool(runnable);
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority) {
+        let priority = match priority {
+            Priority::Realtime(_) => unreachable!(),
+            Priority::High => WorkItemPriority::High,
+            Priority::Medium => WorkItemPriority::Normal,
+            Priority::Low => WorkItemPriority::Low,
+        };
+        self.dispatch_on_threadpool(priority, runnable);
+
         if let Some(label) = label {
             log::debug!("TaskLabel: {label:?}");
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
-        match self.main_sender.send(runnable) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+        match self.main_sender.send(priority, runnable) {
             Ok(_) => {
                 if !self.wake_posted.swap(true, Ordering::AcqRel) {
                     unsafe {
@@ -186,5 +183,29 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
+    }
+
+    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            // SAFETY: always safe to call
+            let thread_handle = unsafe { GetCurrentThread() };
+
+            let thread_priority = match priority {
+                RealtimePriority::Audio => THREAD_PRIORITY_TIME_CRITICAL,
+                RealtimePriority::Other => THREAD_PRIORITY_HIGHEST,
+            };
+
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
+                .context("thread priority class")
+                .log_err();
+
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetThreadPriority(thread_handle, thread_priority) }
+                .context("thread priority")
+                .log_err();
+
+            f();
+        });
     }
 }

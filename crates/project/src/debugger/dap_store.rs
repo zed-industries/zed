@@ -692,7 +692,7 @@ impl DapStore {
                     }
                     VariableLookupKind::Expression => {
                         let Ok(eval_task) = session.read_with(cx, |session, _| {
-                            session.mode.request_dap(EvaluateCommand {
+                            session.state.request_dap(EvaluateCommand {
                                 expression: inline_value_location.variable_name.clone(),
                                 frame_id: Some(stack_frame_id),
                                 source: None,

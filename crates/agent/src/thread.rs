@@ -2,7 +2,8 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -107,7 +108,13 @@ impl Message {
 
     pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
         match self {
-            Message::User(message) => vec![message.to_request()],
+            Message::User(message) => {
+                if message.content.is_empty() {
+                    vec![]
+                } else {
+                    vec![message.to_request()]
+                }
+            }
             Message::Agent(message) => message.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
@@ -530,6 +537,7 @@ pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
+    fn kill(&self, cx: &AsyncApp) -> Result<()>;
 }
 
 pub trait ThreadEnvironment {
@@ -619,12 +627,9 @@ pub struct Thread {
 impl Thread {
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
-        acp::PromptCapabilities {
-            meta: None,
-            image,
-            audio: false,
-            embedded_context: true,
-        }
+        acp::PromptCapabilities::new()
+            .image(image)
+            .embedded_context(true)
     }
 
     pub fn new(
@@ -640,7 +645,7 @@ impl Thread {
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
-            id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
+            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
@@ -737,17 +742,11 @@ impl Thread {
         let Some(tool) = tool else {
             stream
                 .0
-                .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
-                    meta: None,
-                    id: acp::ToolCallId(tool_use.id.to_string().into()),
-                    title: tool_use.name.to_string(),
-                    kind: acp::ToolKind::Other,
-                    status: acp::ToolCallStatus::Failed,
-                    content: Vec::new(),
-                    locations: Vec::new(),
-                    raw_input: Some(tool_use.input.clone()),
-                    raw_output: None,
-                })))
+                .unbounded_send(Ok(ThreadEvent::ToolCall(
+                    acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
+                        .status(acp::ToolCallStatus::Failed)
+                        .raw_input(tool_use.input.clone()),
+                )))
                 .ok();
             return;
         };
@@ -777,8 +776,8 @@ impl Thread {
 
         stream.update_tool_call_fields(
             &tool_use.id,
-            acp::ToolCallUpdateFields {
-                status: Some(
+            acp::ToolCallUpdateFields::new()
+                .status(
                     tool_result
                         .as_ref()
                         .map_or(acp::ToolCallStatus::Failed, |result| {
@@ -788,10 +787,8 @@ impl Thread {
                                 acp::ToolCallStatus::Completed
                             }
                         }),
-                ),
-                raw_output: output,
-                ..Default::default()
-            },
+                )
+                .raw_output(output),
         );
     }
 
@@ -1012,6 +1009,8 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
+        self.add_tool(SaveFileTool::new(self.project.clone()));
+        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
@@ -1096,6 +1095,28 @@ impl Thread {
         })
     }
 
+    /// Get the total input token count as of the message before the given message.
+    ///
+    /// Returns `None` if:
+    /// - `target_id` is the first message (no previous message)
+    /// - The previous message hasn't received a response yet (no usage data)
+    /// - `target_id` is not found in the messages
+    pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
+        let mut previous_user_message_id: Option<&UserMessageId> = None;
+
+        for message in &self.messages {
+            if let Message::User(user_msg) = message {
+                if &user_msg.id == target_id {
+                    let prev_id = previous_user_message_id?;
+                    let usage = self.request_token_usage.get(prev_id)?;
+                    return Some(usage.input_tokens);
+                }
+                previous_user_message_id = Some(&user_msg.id);
+            }
+        }
+        None
+    }
+
     /// Look up the active profile and resolve its preferred model if one is configured.
     fn resolve_profile_model(
         profile_id: &AgentProfileId,
@@ -1148,11 +1169,6 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let model = self.model().context("No language model configured")?;
-
-        log::info!("Thread::send called with model: {}", model.name().0);
-        self.advance_prompt_id();
-
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
@@ -1160,8 +1176,57 @@ impl Thread {
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
+        self.send_existing(cx)
+    }
+
+    pub fn send_existing(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let model = self.model().context("No language model configured")?;
+
+        log::info!("Thread::send called with model: {}", model.name().0);
+        self.advance_prompt_id();
+
         log::debug!("Total messages in thread: {}", self.messages.len());
         self.run_turn(cx)
+    }
+
+    pub fn push_acp_user_block(
+        &mut self,
+        id: UserMessageId,
+        blocks: impl IntoIterator<Item = acp::ContentBlock>,
+        path_style: PathStyle,
+        cx: &mut Context<Self>,
+    ) {
+        let content = blocks
+            .into_iter()
+            .map(|block| UserMessageContent::from_content_block(block, path_style))
+            .collect::<Vec<_>>();
+        self.messages
+            .push(Message::User(UserMessage { id, content }));
+        cx.notify();
+    }
+
+    pub fn push_acp_agent_block(&mut self, block: acp::ContentBlock, cx: &mut Context<Self>) {
+        let text = match block {
+            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Image(_) => "[image]".to_string(),
+            acp::ContentBlock::Audio(_) => "[audio]".to_string(),
+            acp::ContentBlock::ResourceLink(resource_link) => resource_link.uri,
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => resource.uri,
+                acp::EmbeddedResourceResource::BlobResourceContents(resource) => resource.uri,
+                _ => "[resource]".to_string(),
+            },
+            _ => "[unknown]".to_string(),
+        };
+
+        self.messages.push(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text)],
+            ..Default::default()
+        }));
+        cx.notify();
     }
 
     #[cfg(feature = "eval")]
@@ -1274,15 +1339,13 @@ impl Thread {
 
                 event_stream.update_tool_call_fields(
                     &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields {
-                        status: Some(if tool_result.is_error {
+                    acp::ToolCallUpdateFields::new()
+                        .status(if tool_result.is_error {
                             acp::ToolCallStatus::Failed
                         } else {
                             acp::ToolCallStatus::Completed
-                        }),
-                        raw_output: tool_result.output.clone(),
-                        ..Default::default()
-                    },
+                        })
+                        .raw_output(tool_result.output.clone()),
                 );
                 this.update(cx, |this, _cx| {
                     this.pending_message()
@@ -1560,12 +1623,10 @@ impl Thread {
         } else {
             event_stream.update_tool_call_fields(
                 &tool_use.id,
-                acp::ToolCallUpdateFields {
-                    title: Some(title.into()),
-                    kind: Some(kind),
-                    raw_input: Some(tool_use.input.clone()),
-                    ..Default::default()
-                },
+                acp::ToolCallUpdateFields::new()
+                    .title(title.as_str())
+                    .kind(kind)
+                    .raw_input(tool_use.input.clone()),
             );
         }
 
@@ -1587,10 +1648,9 @@ impl Thread {
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream =
             ToolCallEventStream::new(tool_use.id.clone(), event_stream.clone(), Some(fs));
-        tool_event_stream.update_fields(acp::ToolCallUpdateFields {
-            status: Some(acp::ToolCallStatus::InProgress),
-            ..Default::default()
-        });
+        tool_event_stream.update_fields(
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+        );
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::debug!("Running tool {}", tool_use.name);
@@ -1665,6 +1725,10 @@ impl Thread {
         self.pending_summary_generation.is_some()
     }
 
+    pub fn is_generating_title(&self) -> bool {
+        self.pending_title_generation.is_some()
+    }
+
     pub fn summary(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<SharedString>>> {
         if let Some(summary) = self.summary.as_ref() {
             return Task::ready(Some(summary.clone())).shared();
@@ -1732,7 +1796,7 @@ impl Thread {
         task
     }
 
-    fn generate_title(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_title(&mut self, cx: &mut Context<Self>) {
         let Some(model) = self.summarization_model.clone() else {
             return;
         };
@@ -1979,6 +2043,12 @@ impl Thread {
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
         self.running_turn.as_ref()?.tools.get(name).cloned()
+    }
+
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.running_turn
+            .as_ref()
+            .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
     fn build_request_messages(
@@ -2381,19 +2451,13 @@ impl ThreadEventStream {
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) -> acp::ToolCall {
-        acp::ToolCall {
-            meta: Some(serde_json::json!({
-                "tool_name": tool_name
-            })),
-            id: acp::ToolCallId(id.to_string().into()),
-            title,
-            kind,
-            status: acp::ToolCallStatus::Pending,
-            content: vec![],
-            locations: vec![],
-            raw_input: Some(input),
-            raw_output: None,
-        }
+        acp::ToolCall::new(id.to_string(), title)
+            .kind(kind)
+            .raw_input(input)
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                tool_name.into(),
+            )]))
     }
 
     fn update_tool_call_fields(
@@ -2403,12 +2467,7 @@ impl ThreadEventStream {
     ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate {
-                    meta: None,
-                    id: acp::ToolCallId(tool_use_id.to_string().into()),
-                    fields,
-                }
-                .into(),
+                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields).into(),
             )))
             .ok();
     }
@@ -2471,7 +2530,7 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp_thread::ToolCallUpdateDiff {
-                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
                     diff,
                 }
                 .into(),
@@ -2489,33 +2548,26 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
-                    tool_call: acp::ToolCallUpdate {
-                        meta: None,
-                        id: acp::ToolCallId(self.tool_use_id.to_string().into()),
-                        fields: acp::ToolCallUpdateFields {
-                            title: Some(title.into()),
-                            ..Default::default()
-                        },
-                    },
+                    tool_call: acp::ToolCallUpdate::new(
+                        self.tool_use_id.to_string(),
+                        acp::ToolCallUpdateFields::new().title(title.into()),
+                    ),
                     options: vec![
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("always_allow".into()),
-                            name: "Always Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowAlways,
-                            meta: None,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("allow".into()),
-                            name: "Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowOnce,
-                            meta: None,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("deny".into()),
-                            name: "Deny".into(),
-                            kind: acp::PermissionOptionKind::RejectOnce,
-                            meta: None,
-                        },
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("always_allow"),
+                            "Always Allow",
+                            acp::PermissionOptionKind::AllowAlways,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("deny"),
+                            "Deny",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
                     ],
                     response: response_tx,
                 },
@@ -2660,7 +2712,15 @@ impl UserMessageContent {
                     // TODO
                     Self::Text("[blob]".to_string())
                 }
+                other => {
+                    log::warn!("Unexpected content type: {:?}", other);
+                    Self::Text("[unknown]".to_string())
+                }
             },
+            other => {
+                log::warn!("Unexpected content type: {:?}", other);
+                Self::Text("[unknown]".to_string())
+            }
         }
     }
 }
@@ -2668,32 +2728,15 @@ impl UserMessageContent {
 impl From<UserMessageContent> for acp::ContentBlock {
     fn from(content: UserMessageContent) -> Self {
         match content {
-            UserMessageContent::Text(text) => acp::ContentBlock::Text(acp::TextContent {
-                text,
-                annotations: None,
-                meta: None,
-            }),
-            UserMessageContent::Image(image) => acp::ContentBlock::Image(acp::ImageContent {
-                data: image.source.to_string(),
-                mime_type: "image/png".to_string(),
-                meta: None,
-                annotations: None,
-                uri: None,
-            }),
-            UserMessageContent::Mention { uri, content } => {
-                acp::ContentBlock::Resource(acp::EmbeddedResource {
-                    meta: None,
-                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents {
-                            meta: None,
-                            mime_type: None,
-                            text: content,
-                            uri: uri.to_uri().to_string(),
-                        },
-                    ),
-                    annotations: None,
-                })
+            UserMessageContent::Text(text) => text.into(),
+            UserMessageContent::Image(image) => {
+                acp::ContentBlock::Image(acp::ImageContent::new(image.source, "image/png"))
             }
+            UserMessageContent::Mention { uri, content } => acp::ContentBlock::Resource(
+                acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(content, uri.to_uri().to_string()),
+                )),
+            ),
         }
     }
 }
@@ -2701,7 +2744,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        // TODO: make this optional?
-        size: gpui::Size::new(0.into(), 0.into()),
+        size: None,
     }
 }

@@ -13,7 +13,7 @@ Write-Host "Uploading nightly for target: $target"
 
 $bucketName = "zed-nightly-host"
 $releaseVersion = & "$PSScriptRoot\get-crate-version.ps1" zed
-$version = "$releaseVersion-$env:GITHUB_RUN_NUMBER+$env:GITHUB_SHA"
+$version = "$releaseVersion+nightly.$env:GITHUB_RUN_NUMBER.$env:GITHUB_SHA"
 
 # TODO:
 # Upload remote server files

@@ -905,7 +905,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 drop(project);
                 let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
-                    while let Ok(result) = search.recv().await {
+                    while let Ok(result) = search.rx.recv().await {
                         if let SearchResult::Buffer { buffer, ranges } = result {
                             results.entry(buffer).or_insert(ranges);
                         }
@@ -1377,7 +1377,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
-                            .base_text_string()
+                            .base_text_string(cx)
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
@@ -1386,7 +1386,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
-                            .base_text_string()
+                            .base_text_string(cx)
                     });
                     assert_eq!(
                         guest_diff_base, host_diff_base,

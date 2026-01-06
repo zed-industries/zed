@@ -1,3 +1,4 @@
+use crate::QueueMessage;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -21,8 +22,8 @@ use editor::{
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat, KeyContext,
-    SharedString, Subscription, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
+    KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, Language, language_settings::InlayHintKind};
 use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
@@ -31,15 +32,14 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{ContextMenu, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::agent::Chat;
+use zed_actions::agent::{Chat, PasteRaw};
 
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
-    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -51,6 +51,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
+    Queue,
     Cancel,
     Focus,
     LostFocus,
@@ -98,7 +99,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
 impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
+        project: WeakEntity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -124,6 +125,7 @@ impl MessageEditor {
             let mut editor = Editor::new(mode, buffer, None, window, cx);
             editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
             editor.set_context_menu_options(ContextMenuOptions {
@@ -132,15 +134,25 @@ impl MessageEditor {
                 placement: Some(ContextMenuPlacement::Above),
             });
             editor.register_addon(MessageEditorAddon::new());
+
+            editor.set_custom_context_menu(|editor, _point, window, cx| {
+                let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.action("Cut", Box::new(editor::actions::Cut))
+                        .action_disabled_when(
+                            !has_selection,
+                            "Copy",
+                            Box::new(editor::actions::Copy),
+                        )
+                        .action("Paste", Box::new(editor::actions::Paste))
+                }))
+            });
+
             editor
         });
-        let mention_set = cx.new(|_cx| {
-            MentionSet::new(
-                project.downgrade(),
-                history_store.clone(),
-                prompt_store.clone(),
-            )
-        });
+        let mention_set =
+            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             cx.entity(),
             editor.downgrade(),
@@ -198,7 +210,6 @@ impl MessageEditor {
 
         Self {
             editor,
-            project,
             mention_set,
             workspace,
             prompt_capabilities,
@@ -225,8 +236,13 @@ impl MessageEditor {
             .iter()
             .find(|command| command.name == command_name)?;
 
-        let acp::AvailableCommandInput::Unstructured { mut hint } =
-            available_command.input.clone()?;
+        let acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput {
+            mut hint,
+            ..
+        }) = available_command.input.clone()?
+        else {
+            return None;
+        };
 
         let mut hint_pos = MultiBufferOffset(parsed_command.source_range.end) + 1usize;
         if hint_pos > snapshot.len() {
@@ -403,34 +419,27 @@ impl MessageEditor {
                             } => {
                                 all_tracked_buffers.extend(tracked_buffers.iter().cloned());
                                 if supports_embedded_context {
-                                    acp::ContentBlock::Resource(acp::EmbeddedResource {
-                                        annotations: None,
-                                        resource:
-                                            acp::EmbeddedResourceResource::TextResourceContents(
-                                                acp::TextResourceContents {
-                                                    mime_type: None,
-                                                    text: content.clone(),
-                                                    uri: uri.to_uri().to_string(),
-                                                    meta: None,
-                                                },
+                                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                                        acp::EmbeddedResourceResource::TextResourceContents(
+                                            acp::TextResourceContents::new(
+                                                content.clone(),
+                                                uri.to_uri().to_string(),
                                             ),
-                                        meta: None,
-                                    })
+                                        ),
+                                    ))
                                 } else {
-                                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                        name: uri.name(),
-                                        uri: uri.to_uri().to_string(),
-                                        annotations: None,
-                                        description: None,
-                                        mime_type: None,
-                                        size: None,
-                                        title: None,
-                                        meta: None,
-                                    })
+                                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                        uri.name(),
+                                        uri.to_uri().to_string(),
+                                    ))
                                 }
                             }
-                            Mention::Image(mention_image) => {
-                                let uri = match uri {
+                            Mention::Image(mention_image) => acp::ContentBlock::Image(
+                                acp::ImageContent::new(
+                                    mention_image.data.clone(),
+                                    mention_image.format.mime_type(),
+                                )
+                                .uri(match uri {
                                     MentionUri::File { .. } => Some(uri.to_uri().to_string()),
                                     MentionUri::PastedImage => None,
                                     other => {
@@ -440,25 +449,11 @@ impl MessageEditor {
                                         );
                                         None
                                     }
-                                };
-                                acp::ContentBlock::Image(acp::ImageContent {
-                                    annotations: None,
-                                    data: mention_image.data.to_string(),
-                                    mime_type: mention_image.format.mime_type().into(),
-                                    uri,
-                                    meta: None,
-                                })
-                            }
-                            Mention::Link => acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                name: uri.name(),
-                                uri: uri.to_uri().to_string(),
-                                annotations: None,
-                                description: None,
-                                mime_type: None,
-                                size: None,
-                                title: None,
-                                meta: None,
-                            }),
+                                }),
+                            ),
+                            Mention::Link => acp::ContentBlock::ResourceLink(
+                                acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
+                            ),
                         };
                         chunks.push(chunk);
                         ix = crease_range.end.0;
@@ -500,6 +495,18 @@ impl MessageEditor {
             editor.clear_inlay_hints(cx);
         });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    pub fn queue(&mut self, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::Queue)
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -545,6 +552,10 @@ impl MessageEditor {
         self.send(cx);
     }
 
+    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
+        self.queue(cx);
+    }
+
     fn chat_with_follow(
         &mut self,
         _: &ChatWithFollow,
@@ -565,12 +576,155 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let editor_clipboard_selections = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| match entry {
+                ClipboardEntry::String(text) => {
+                    text.metadata_json::<Vec<editor::ClipboardSelection>>()
+                }
+                _ => None,
+            });
+
+        // Insert creases for pasted clipboard selections that:
+        // 1. Contain exactly one selection
+        // 2. Have an associated file path
+        // 3. Span multiple lines (not single-line selections)
+        // 4. Belong to a file that exists in the current project
+        let should_insert_creases = util::maybe!({
+            let selections = editor_clipboard_selections.as_ref()?;
+            if selections.len() > 1 {
+                return Some(false);
+            }
+            let selection = selections.first()?;
+            let file_path = selection.file_path.as_ref()?;
+            let line_range = selection.line_range.as_ref()?;
+
+            if line_range.start() == line_range.end() {
+                return Some(false);
+            }
+
+            Some(
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .project_path_for_absolute_path(file_path, cx)
+                    .is_some(),
+            )
+        })
+        .unwrap_or(false);
+
+        if should_insert_creases && let Some(selections) = editor_clipboard_selections {
+            cx.stop_propagation();
+            let insertion_target = self
+                .editor
+                .read(cx)
+                .selections
+                .newest_anchor()
+                .start
+                .text_anchor;
+
+            let project = workspace.read(cx).project().clone();
+            for selection in selections {
+                if let (Some(file_path), Some(line_range)) =
+                    (selection.file_path, selection.line_range)
+                {
+                    let crease_text =
+                        acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
+
+                    let mention_uri = MentionUri::Selection {
+                        abs_path: Some(file_path.clone()),
+                        line_range: line_range.clone(),
+                    };
+
+                    let mention_text = mention_uri.as_link().to_string();
+                    let (excerpt_id, text_anchor, content_len) =
+                        self.editor.update(cx, |editor, cx| {
+                            let buffer = editor.buffer().read(cx);
+                            let snapshot = buffer.snapshot(cx);
+                            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
+                            let text_anchor = insertion_target.bias_left(&buffer_snapshot);
+
+                            editor.insert(&mention_text, window, cx);
+                            editor.insert(" ", window, cx);
+
+                            (*excerpt_id, text_anchor, mention_text.len())
+                        });
+
+                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                        excerpt_id,
+                        text_anchor,
+                        content_len,
+                        crease_text.into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        self.editor.clone(),
+                        window,
+                        cx,
+                    ) else {
+                        continue;
+                    };
+                    drop(tx);
+
+                    let mention_task = cx
+                        .spawn({
+                            let project = project.clone();
+                            async move |_, cx| {
+                                let project_path = project
+                                    .update(cx, |project, cx| {
+                                        project.project_path_for_absolute_path(&file_path, cx)
+                                    })
+                                    .map_err(|e| e.to_string())?
+                                    .ok_or_else(|| "project path not found".to_string())?;
+
+                                let buffer = project
+                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                    .map_err(|e| e.to_string())?
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+
+                                buffer
+                                    .update(cx, |buffer, cx| {
+                                        let start = Point::new(*line_range.start(), 0)
+                                            .min(buffer.max_point());
+                                        let end = Point::new(*line_range.end() + 1, 0)
+                                            .min(buffer.max_point());
+                                        let content = buffer.text_for_range(start..end).collect();
+                                        Mention::Text {
+                                            content,
+                                            tracked_buffers: vec![cx.entity()],
+                                        }
+                                    })
+                                    .map_err(|e| e.to_string())
+                            }
+                        })
+                        .shared();
+
+                    self.mention_set.update(cx, |mention_set, _cx| {
+                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                    });
+                }
+            }
+            return;
+        }
+
         if self.prompt_capabilities.borrow().image
             && let Some(task) =
                 paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
         {
             task.detach();
         }
+    }
+
+    fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+        window.defer(cx, move |window, cx| {
+            editor.update(cx, |editor, cx| editor.paste(&Paste, window, cx));
+        });
     }
 
     pub fn insert_dragged_files(
@@ -583,17 +737,18 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let path_style = self.project.read(cx).path_style(cx);
+        let project = workspace.read(cx).project().clone();
+        let path_style = project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
         };
         let mut tasks = Vec::new();
         for path in paths {
-            let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
+            let Some(entry) = project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
+            let Some(worktree) = project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
             let abs_path = worktree.read(cx).absolutize(&path.path);
@@ -701,9 +856,13 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
         self.clear(window, cx);
 
-        let path_style = self.project.read(cx).path_style(cx);
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -746,8 +905,7 @@ impl MessageEditor {
                     uri,
                     data,
                     mime_type,
-                    annotations: _,
-                    meta: _,
+                    ..
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
                         MentionUri::parse(&uri, path_style)
@@ -773,7 +931,7 @@ impl MessageEditor {
                         }),
                     ));
                 }
-                acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => {}
+                _ => {}
             }
         }
 
@@ -844,8 +1002,10 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::queue_message))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::paste_raw))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
             .child({
@@ -947,7 +1107,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -1058,7 +1218,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle.clone(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1092,12 +1252,7 @@ mod tests {
         assert!(error_message.contains("Available commands: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
-        available_commands.replace(vec![acp::AvailableCommand {
-            name: "help".to_string(),
-            description: "Get help".to_string(),
-            input: None,
-            meta: None,
-        }]);
+        available_commands.replace(vec![acp::AvailableCommand::new("help", "Get help")]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
         editor.update_in(cx, |editor, window, cx| {
@@ -1211,20 +1366,12 @@ mod tests {
         let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
-            acp::AvailableCommand {
-                name: "quick-math".to_string(),
-                description: "2 + 2 = 4 - 1 = 3".to_string(),
-                input: None,
-                meta: None,
-            },
-            acp::AvailableCommand {
-                name: "say-hello".to_string(),
-                description: "Say hello to whoever you want".to_string(),
-                input: Some(acp::AvailableCommandInput::Unstructured {
-                    hint: "<name>".to_string(),
-                }),
-                meta: None,
-            },
+            acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
+            acp::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
+                acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
+                    "<name>",
+                )),
+            ),
         ]));
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1232,7 +1379,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1257,7 +1404,7 @@ mod tests {
                     cx,
                 );
             });
-            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
             message_editor.read(cx).editor().clone()
         });
 
@@ -1454,7 +1601,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1479,7 +1626,7 @@ mod tests {
                     cx,
                 );
             });
-            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
             let editor = message_editor.read(cx).editor().clone();
             (message_editor, editor)
         });
@@ -1504,12 +1651,12 @@ mod tests {
             editor.set_text("", window, cx);
         });
 
-        prompt_capabilities.replace(acp::PromptCapabilities {
-            image: true,
-            audio: true,
-            embedded_context: true,
-            meta: None,
-        });
+        prompt_capabilities.replace(
+            acp::PromptCapabilities::new()
+                .image(true)
+                .audio(true)
+                .embedded_context(true),
+        );
 
         cx.simulate_input("Lorem ");
 
@@ -1945,7 +2092,7 @@ mod tests {
             cx.new(|cx| {
                 let editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -1960,11 +2107,9 @@ mod tests {
                     cx,
                 );
                 // Enable embedded context so files are actually included
-                editor.prompt_capabilities.replace(acp::PromptCapabilities {
-                    embedded_context: true,
-                    meta: None,
-                    ..Default::default()
-                });
+                editor
+                    .prompt_capabilities
+                    .replace(acp::PromptCapabilities::new().embedded_context(true));
                 editor
             })
         });
@@ -2043,7 +2188,7 @@ mod tests {
 
         // Create a thread metadata to insert as summary
         let thread_metadata = agent::DbThreadMetadata {
-            id: acp::SessionId("thread-123".into()),
+            id: acp::SessionId::new("thread-123"),
             title: "Previous Conversation".into(),
             updated_at: chrono::Utc::now(),
         };
@@ -2052,7 +2197,7 @@ mod tests {
             cx.new(|cx| {
                 let mut editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2121,7 +2266,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2150,14 +2295,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            content,
-            vec![acp::ContentBlock::Text(acp::TextContent {
-                text: "してhello world".into(),
-                annotations: None,
-                meta: None
-            })]
-        );
+        assert_eq!(content, vec!["してhello world".into()]);
     }
 
     #[gpui::test]
@@ -2191,7 +2329,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2216,7 +2354,7 @@ mod tests {
                     cx,
                 );
             });
-            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
             let editor = message_editor.read(cx).editor().clone();
             (message_editor, editor)
         });
@@ -2236,38 +2374,24 @@ mod tests {
             .0;
 
         let main_rs_uri = if cfg!(windows) {
-            "file:///C:/project/src/main.rs".to_string()
+            "file:///C:/project/src/main.rs"
         } else {
-            "file:///project/src/main.rs".to_string()
+            "file:///project/src/main.rs"
         };
 
         // When embedded context is `false` we should get a resource link
         pretty_assertions::assert_eq!(
             content,
             vec![
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: "What is in ".to_string(),
-                    annotations: None,
-                    meta: None
-                }),
-                acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    uri: main_rs_uri.clone(),
-                    name: "main.rs".to_string(),
-                    annotations: None,
-                    meta: None,
-                    description: None,
-                    mime_type: None,
-                    size: None,
-                    title: None,
-                })
+                "What is in ".into(),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("main.rs", main_rs_uri))
             ]
         );
 
         message_editor.update(cx, |editor, _cx| {
-            editor.prompt_capabilities.replace(acp::PromptCapabilities {
-                embedded_context: true,
-                ..Default::default()
-            })
+            editor
+                .prompt_capabilities
+                .replace(acp::PromptCapabilities::new().embedded_context(true))
         });
 
         let content = message_editor
@@ -2280,23 +2404,12 @@ mod tests {
         pretty_assertions::assert_eq!(
             content,
             vec![
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: "What is in ".to_string(),
-                    annotations: None,
-                    meta: None
-                }),
-                acp::ContentBlock::Resource(acp::EmbeddedResource {
-                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents {
-                            text: file_content.to_string(),
-                            uri: main_rs_uri,
-                            mime_type: None,
-                            meta: None
-                        }
-                    ),
-                    annotations: None,
-                    meta: None
-                })
+                "What is in ".into(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(file_content, main_rs_uri)
+                    )
+                ))
             ]
         );
     }
@@ -2374,7 +2487,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),

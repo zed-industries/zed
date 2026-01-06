@@ -82,26 +82,9 @@ where
         .update(cx, |thread, cx| {
             thread.send(
                 vec![
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: "Read the file ".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                        uri: "foo.rs".into(),
-                        name: "foo.rs".into(),
-                        annotations: None,
-                        description: None,
-                        mime_type: None,
-                        size: None,
-                        title: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: " and tell me what the content of the println! is".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
+                    "Read the file ".into(),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new("foo.rs", "foo.rs")),
+                    " and tell me what the content of the println! is".into(),
                 ],
                 cx,
             )
@@ -429,7 +412,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
+                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -472,20 +455,12 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
             project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
                     path: Some("claude-code-acp".into()),
-                    args: None,
-                    env: None,
-                    ignore_system_version: None,
-                    default_mode: None,
-                    default_model: None,
+                    ..Default::default()
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 codex: Some(BuiltinAgentServerSettings {
                     path: Some("codex-acp".into()),
-                    args: None,
-                    env: None,
-                    ignore_system_version: None,
-                    default_mode: None,
-                    default_model: None,
+                    ..Default::default()
                 }),
                 custom: collections::HashMap::default(),
             },

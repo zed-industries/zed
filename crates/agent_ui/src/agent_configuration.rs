@@ -22,7 +22,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -34,9 +35,9 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
-    Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
-    PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
+    ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
+    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -117,7 +118,7 @@ impl AgentConfiguration {
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);
         }
@@ -261,9 +262,12 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(provider.icon())
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                        match provider.icon() {
+                                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                                            IconOrSvg::Icon(name) => Icon::new(name),
+                                        }
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
                                     )
                                     .child(
                                         h_flex()
@@ -416,7 +420,7 @@ impl AgentConfiguration {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
 
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(
@@ -838,7 +842,7 @@ impl AgentConfiguration {
                             .min_w_0()
                             .child(
                                 h_flex()
-                                    .id(SharedString::from(format!("tooltip-{}", item_id)))
+                                    .id(format!("tooltip-{}", item_id))
                                     .h_full()
                                     .w_3()
                                     .mr_2()
@@ -879,7 +883,6 @@ impl AgentConfiguration {
                             .child(context_server_configuration_menu)
                             .child(
                             Switch::new("context-server-switch", is_running.into())
-                                .color(SwitchColor::Accent)
                                 .on_click({
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();
@@ -976,9 +979,12 @@ impl AgentConfiguration {
                 let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
                     AgentIcon::Path(icon_path)
                 } else {
-                    AgentIcon::Name(IconName::Ai)
+                    AgentIcon::Name(IconName::Sparkle)
                 };
-                (name, icon)
+                let display_name = agent_server_store
+                    .agent_display_name(&name)
+                    .unwrap_or_else(|| name.0.clone());
+                (name, icon, display_name)
             })
             .collect();
 
@@ -1085,12 +1091,14 @@ impl AgentConfiguration {
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiClaude),
                                 "Claude Code",
+                                "Claude Code",
                                 false,
                                 cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiOpenAi),
+                                "Codex CLI",
                                 "Codex CLI",
                                 false,
                                 cx,
@@ -1099,16 +1107,23 @@ impl AgentConfiguration {
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiGemini),
                                 "Gemini CLI",
+                                "Gemini CLI",
                                 false,
                                 cx,
                             ))
                             .map(|mut parent| {
-                                for (name, icon) in user_defined_agents {
+                                for (name, icon, display_name) in user_defined_agents {
                                     parent = parent
                                         .child(
                                             Divider::horizontal().color(DividerColor::BorderFaded),
                                         )
-                                        .child(self.render_agent_server(icon, name, true, cx));
+                                        .child(self.render_agent_server(
+                                            icon,
+                                            name,
+                                            display_name,
+                                            true,
+                                            cx,
+                                        ));
                                 }
                                 parent
                             }),
@@ -1119,11 +1134,14 @@ impl AgentConfiguration {
     fn render_agent_server(
         &self,
         icon: AgentIcon,
-        name: impl Into<SharedString>,
+        id: impl Into<SharedString>,
+        display_name: impl Into<SharedString>,
         external: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let name = name.into();
+        let id = id.into();
+        let display_name = display_name.into();
+
         let icon = match icon {
             AgentIcon::Name(icon_name) => Icon::new(icon_name)
                 .size(IconSize::Small)
@@ -1133,12 +1151,15 @@ impl AgentConfiguration {
                 .color(Color::Muted),
         };
 
-        let tooltip_id = SharedString::new(format!("agent-source-{}", name));
-        let tooltip_message = format!("The {} agent was installed from an extension.", name);
+        let tooltip_id = SharedString::new(format!("agent-source-{}", id));
+        let tooltip_message = format!(
+            "The {} agent was installed from an extension.",
+            display_name
+        );
 
-        let agent_server_name = ExternalAgentServerName(name.clone());
+        let agent_server_name = ExternalAgentServerName(id.clone());
 
-        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", name));
+        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", id));
         let uninstall_button = IconButton::new(uninstall_btn_id, IconName::Trash)
             .icon_color(Color::Muted)
             .icon_size(IconSize::Small)
@@ -1162,7 +1183,7 @@ impl AgentConfiguration {
                 h_flex()
                     .gap_1p5()
                     .child(icon)
-                    .child(Label::new(name))
+                    .child(Label::new(display_name))
                     .when(external, |this| {
                         this.child(
                             div()
@@ -1349,6 +1370,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 env: Some(HashMap::default()),
                                 default_mode: None,
                                 default_model: None,
+                                favorite_models: vec![],
+                                default_config_options: Default::default(),
+                                favorite_config_option_values: Default::default(),
                             },
                         );
                 }

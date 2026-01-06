@@ -96,6 +96,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -179,7 +180,13 @@ pub trait SearchableItemHandle: ItemHandle {
         handler: Box<dyn Fn(&SearchEvent, &mut Window, &mut App) + Send>,
     ) -> Subscription;
     fn clear_matches(&self, window: &mut Window, cx: &mut App);
-    fn update_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut App);
+    fn update_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        active_match_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    );
     fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String;
     fn activate_match(
         &self,
@@ -264,10 +271,16 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     fn clear_matches(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.clear_matches(window, cx));
     }
-    fn update_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut App) {
+    fn update_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        active_match_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.update_matches(matches.as_slice(), window, cx)
+            this.update_matches(matches.as_slice(), active_match_index, window, cx)
         });
     }
     fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String {

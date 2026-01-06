@@ -80,8 +80,18 @@ pub fn bundle_envs(platform: Platform) -> Env {
 }
 
 pub fn one_workflow_per_non_main_branch() -> Concurrency {
+    one_workflow_per_non_main_branch_and_token("")
+}
+
+pub fn one_workflow_per_non_main_branch_and_token<T: AsRef<str>>(token: T) -> Concurrency {
     Concurrency::default()
-        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+        .group(format!(
+            concat!(
+                "${{{{ github.workflow }}}}-${{{{ github.ref_name }}}}-",
+                "${{{{ github.ref_name == 'main' && github.sha || 'anysha' }}}}{}"
+            ),
+            token.as_ref()
+        ))
         .cancel_in_progress(true)
 }
 
@@ -208,6 +218,7 @@ pub struct WorkflowInput {
     pub input_type: &'static str,
     pub name: &'static str,
     pub default: Option<String>,
+    pub description: Option<String>,
 }
 
 impl WorkflowInput {
@@ -216,6 +227,7 @@ impl WorkflowInput {
             input_type: "string",
             name,
             default,
+            description: None,
         }
     }
 
@@ -224,12 +236,21 @@ impl WorkflowInput {
             input_type: "boolean",
             name,
             default: default.as_ref().map(ToString::to_string),
+            description: None,
         }
+    }
+
+    pub fn description(mut self, description: impl ToString) -> Self {
+        self.description = Some(description.to_string());
+        self
     }
 
     pub fn input(&self) -> WorkflowDispatchInput {
         WorkflowDispatchInput {
-            description: self.name.to_owned(),
+            description: self
+                .description
+                .clone()
+                .unwrap_or_else(|| self.name.to_owned()),
             required: self.default.is_none(),
             input_type: self.input_type.to_owned(),
             default: self.default.clone(),

@@ -1,29 +1,24 @@
 import os
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
 
+import requests
 import typer
-from github import Github
-from github.Issue import Issue
-from github.Repository import Repository
 from pytz import timezone
 from typer import Typer
 
 app: Typer = typer.Typer()
 
-DATETIME_FORMAT: str = "%m/%d/%Y %I:%M %p"
-ISSUES_PER_LABEL: int = 50
+AMERICA_NEW_YORK_TIMEZONE = "America/New_York"
+DATETIME_FORMAT: str = "%B %d, %Y %I:%M %p"
+ISSUES_PER_SECTION: int = 50
+ISSUES_TO_FETCH: int = 100
 
+REPO_OWNER = "zed-industries"
+REPO_NAME = "zed"
+GITHUB_API_BASE_URL = "https://api.github.com"
 
-class IssueData:
-    def __init__(self, issue: Issue) -> None:
-        self.title = issue.title
-        self.url: str = issue.html_url
-        self.like_count: int = issue._rawData["reactions"]["+1"]  # type: ignore [attr-defined]
-        self.creation_datetime: str = issue.created_at.strftime(DATETIME_FORMAT)
-        # TODO: Change script to support storing labels here, rather than directly in the script
-        self.labels: set[str] = {label["name"] for label in issue._rawData["labels"]}  # type: ignore [attr-defined]
-        self._issue = issue
+EXCLUDE_LABEL = "ignore top-ranking issues"
 
 
 @app.command()
@@ -32,181 +27,135 @@ def main(
     issue_reference_number: Optional[int] = None,
     query_day_interval: Optional[int] = None,
 ) -> None:
-    start_time: datetime = datetime.now()
-
-    start_date: datetime | None = None
+    script_start_time: datetime = datetime.now()
+    start_date: date | None = None
 
     if query_day_interval:
-        tz = timezone("america/new_york")
-        current_time = datetime.now(tz).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        start_date = current_time - timedelta(days=query_day_interval)
+        tz = timezone(AMERICA_NEW_YORK_TIMEZONE)
+        today = datetime.now(tz).date()
+        start_date = today - timedelta(days=query_day_interval)
 
-    # GitHub Workflow will pass in the token as an environment variable,
+    # GitHub Workflow will pass in the token as an argument,
     # but we can place it in our env when running the script locally, for convenience
-    github_token = github_token or os.getenv("GITHUB_ACCESS_TOKEN")
-
-    with Github(github_token, per_page=100) as github:
-        remaining_requests_before: int = github.rate_limiting[0]
-        print(f"Remaining requests before: {remaining_requests_before}")
-
-        repo_name: str = "zed-industries/zed"
-        repository: Repository = github.get_repo(repo_name)
-
-        label_to_issue_data: dict[str, list[IssueData]] = get_issue_maps(
-            github, repository, start_date
+    token = github_token or os.getenv("GITHUB_ACCESS_TOKEN")
+    if not token:
+        raise typer.BadParameter(
+            "GitHub token is required. Pass --github-token or set GITHUB_ACCESS_TOKEN env var."
         )
 
-        issue_text: str = get_issue_text(label_to_issue_data)
-
-        if issue_reference_number:
-            top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
-            top_ranking_issues_issue.edit(body=issue_text)
-        else:
-            print(issue_text)
-
-        remaining_requests_after: int = github.rate_limiting[0]
-        print(f"Remaining requests after: {remaining_requests_after}")
-        print(f"Requests used: {remaining_requests_before - remaining_requests_after}")
-
-    run_duration: timedelta = datetime.now() - start_time
-    print(run_duration)
-
-
-def get_issue_maps(
-    github: Github,
-    repository: Repository,
-    start_date: datetime | None = None,
-) -> dict[str, list[IssueData]]:
-    label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
-        github,
-        repository,
-        start_date,
-    )
-
-    # Create a new dictionary with labels ordered by the summation the of likes on the associated issues
-    labels = list(label_to_issue_data.keys())
-
-    labels.sort(
-        key=lambda label: sum(
-            issue_data.like_count for issue_data in label_to_issue_data[label]
-        ),
-        reverse=True,
-    )
-
-    label_to_issue_data = {label: label_to_issue_data[label] for label in labels}
-
-    return label_to_issue_data
-
-
-def get_label_to_issue_data(
-    github: Github,
-    repository: Repository,
-    start_date: datetime | None = None,
-) -> dict[str, list[IssueData]]:
-    common_queries = [
-        f"repo:{repository.full_name}",
-        "is:open",
-        "is:issue",
-        '-label:"ignore top-ranking issues"',
-        "sort:reactions-+1-desc",
-    ]
-
-    date_query: str | None = (
-        f"created:>={start_date.strftime('%Y-%m-%d')}" if start_date else None
-    )
-
-    if date_query:
-        common_queries.append(date_query)
-
-    common_query = " ".join(common_queries)
-
-    # Because PyGithub doesn't seem to support logical operators `AND` and `OR`
-    # that GitHub issue queries can use, we use lists as values, rather than
-    # using `(label:bug OR type:Bug)`. This is not as efficient, as we might
-    # query the same issue multiple times. Issues that are potentially queried
-    # multiple times are deduplicated in the `label_to_issues` dictionary. If
-    # PyGithub ever supports logical operators, we should definitely make the
-    # switch.
-    section_queries: dict[str, list[str]] = {
-        "bug": ["label:bug", "type:Bug"],
-        "crash": ["label:crash", "type:Crash"],
-        "feature": ["label:feature", "type:Feature"],
-        "meta": ["type:Meta"],
-        "windows": ["label:windows"],
-        "unlabeled": ["no:label no:type"],
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
     }
 
-    label_to_issue_data: dict[str, list[IssueData]] = {}
+    section_to_issues = get_section_to_issues(headers, start_date)
+    issue_text: str = create_issue_text(section_to_issues)
 
-    for section, queries in section_queries.items():
-        unique_issues = set()
+    if issue_reference_number:
+        update_reference_issue(headers, issue_reference_number, issue_text)
+    else:
+        print(issue_text)
 
-        for query in queries:
-            query: str = f"{common_query} {query}"
-            issues = github.search_issues(query)
+    run_duration: timedelta = datetime.now() - script_start_time
+    print(f"Ran for {run_duration}")
 
-            for issue in issues:
-                unique_issues.add(issue)
 
-        if len(unique_issues) <= 0:
+def get_section_to_issues(
+    headers: dict[str, str], start_date: date | None = None
+) -> dict[str, list[dict[str, Any]]]:
+    """Fetch top-ranked issues for each section from GitHub."""
+
+    section_filters = {
+        "Bugs": "type:Bug",
+        "Crashes": "type:Crash",
+        "Features": "type:Feature",
+        "Tracking issues": "type:Tracking",
+        "Meta issues": "type:Meta",
+        "Windows": 'label:"platform:windows"',
+    }
+
+    section_to_issues: dict[str, list[dict[str, Any]]] = {}
+    for section, search_qualifier in section_filters.items():
+        query_parts = [
+            f"repo:{REPO_OWNER}/{REPO_NAME}",
+            "is:issue",
+            "is:open",
+            f'-label:"{EXCLUDE_LABEL}"',
+            search_qualifier,
+        ]
+
+        if start_date:
+            query_parts.append(f"created:>={start_date.strftime('%Y-%m-%d')}")
+
+        query = " ".join(query_parts)
+        url = f"{GITHUB_API_BASE_URL}/search/issues"
+        params = {
+            "q": query,
+            "sort": "reactions-+1",
+            "order": "desc",
+            "per_page": ISSUES_TO_FETCH, # this will work as long as it's ≤ 100
+        }
+
+        # we are only fetching one page on purpose
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        items = response.json()["items"]
+
+        issues: list[dict[str, Any]] = []
+        for item in items:
+            reactions = item["reactions"]
+            score = reactions["+1"] - reactions["-1"]
+            if score > 0:
+                issues.append({
+                    "url": item["html_url"],
+                    "score": score,
+                    "created_at": item["created_at"],
+                })
+
+        if not issues:
             continue
 
-        issue_data: list[IssueData] = [IssueData(issue) for issue in unique_issues]
-        issue_data.sort(
-            key=lambda issue_data: (
-                -issue_data.like_count,
-                issue_data.creation_datetime,
-            )
+        issues.sort(key=lambda x: (-x["score"], x["created_at"]))
+        section_to_issues[section] = issues[:ISSUES_PER_SECTION]
+
+    # Sort sections by total score (highest total first)
+    section_to_issues = dict(
+        sorted(
+            section_to_issues.items(),
+            key=lambda item: sum(issue["score"] for issue in item[1]),
+            reverse=True,
         )
-
-        label_to_issue_data[section] = issue_data[0:ISSUES_PER_LABEL]
-
-    return label_to_issue_data
+    )
+    return section_to_issues
 
 
-def get_issue_text(
-    label_to_issue_data: dict[str, list[IssueData]],
-) -> str:
-    tz = timezone("america/new_york")
+def update_reference_issue(
+    headers: dict[str, str], issue_number: int, body: str
+) -> None:
+    url = f"{GITHUB_API_BASE_URL}/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}"
+    response = requests.patch(url, headers=headers, json={"body": body})
+    response.raise_for_status()
+
+
+def create_issue_text(section_to_issues: dict[str, list[dict[str, Any]]]) -> str:
+    tz = timezone(AMERICA_NEW_YORK_TIMEZONE)
     current_datetime: str = datetime.now(tz).strftime(f"{DATETIME_FORMAT} (%Z)")
 
-    highest_ranking_issues_lines: list[str] = get_highest_ranking_issues_lines(
-        label_to_issue_data
+    lines: list[str] = [f"*Updated on {current_datetime}*"]
+
+    for section, issues in section_to_issues.items():
+        lines.append(f"\n## {section}\n")
+        for i, issue in enumerate(issues):
+            lines.append(f"{i + 1}. {issue['url']} ({issue['score']} :thumbsup:)")
+
+    lines.append("\n---\n")
+    lines.append(
+        "*For details on how this issue is generated, "
+        "[see the script](https://github.com/zed-industries/zed/blob/main/script/update_top_ranking_issues/main.py)*"
     )
 
-    issue_text_lines: list[str] = [
-        f"*Updated on {current_datetime}*",
-        *highest_ranking_issues_lines,
-        "\n---\n",
-        "*For details on how this issue is generated, [see the script](https://github.com/zed-industries/zed/blob/main/script/update_top_ranking_issues/main.py)*",
-    ]
-
-    return "\n".join(issue_text_lines)
-
-
-def get_highest_ranking_issues_lines(
-    label_to_issue_data: dict[str, list[IssueData]],
-) -> list[str]:
-    highest_ranking_issues_lines: list[str] = []
-
-    if label_to_issue_data:
-        for label, issue_data in label_to_issue_data.items():
-            highest_ranking_issues_lines.append(f"\n## {label}\n")
-
-            for i, issue_data in enumerate(issue_data):
-                markdown_bullet_point: str = (
-                    f"{issue_data.url} ({issue_data.like_count} :thumbsup:)"
-                )
-
-                markdown_bullet_point = f"{i + 1}. {markdown_bullet_point}"
-                highest_ranking_issues_lines.append(markdown_bullet_point)
-
-    return highest_ranking_issues_lines
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
     app()
-
-# TODO: Sort label output into core and non core sections

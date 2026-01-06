@@ -78,7 +78,7 @@ impl EditorTestContext {
                 cx,
             );
 
-            window.focus(&editor.focus_handle(cx));
+            window.focus(&editor.focus_handle(cx), cx);
             editor
         });
         let editor_view = editor.root(cx).unwrap();
@@ -139,7 +139,7 @@ impl EditorTestContext {
 
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor(buffer, window, cx);
-            window.focus(&editor.focus_handle(cx));
+            window.focus(&editor.focus_handle(cx), cx);
 
             editor
         });
@@ -283,8 +283,7 @@ impl EditorTestContext {
                 .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
-                .style()
-                .unwrap()
+                .style(cx)
                 .text
                 .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);
@@ -304,6 +303,12 @@ impl EditorTestContext {
         let ranges = self.ranges(marked_text);
         let snapshot = self.buffer_snapshot();
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
+    }
+
+    pub async fn wait_for_autoindent_applied(&mut self) {
+        if let Some(fut) = self.update_buffer(|buffer, _| buffer.wait_for_autoindent_applied()) {
+            fut.await.ok();
+        }
     }
 
     pub fn set_head_text(&mut self, diff_base: &str) {
