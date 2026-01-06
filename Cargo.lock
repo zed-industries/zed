@@ -1401,7 +1401,6 @@ dependencies = [
  "client",
  "editor",
  "gpui",
- "http_client",
  "markdown_preview",
  "release_channel",
  "semver",
