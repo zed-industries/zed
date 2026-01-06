@@ -717,6 +717,9 @@ pub(crate) enum SpawnServerError {
 
     #[error("failed to launch and detach server process: {status}\n{paths}")]
     LaunchStatus { status: ExitStatus, paths: String },
+
+    #[error("failed to wait for server to be ready to accept connections")]
+    Timeout,
 }
 
 async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
@@ -769,6 +772,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
         log::debug!("waiting for server to be ready to accept connections...");
         std::thread::sleep(wait_duration);
         total_time_waited += wait_duration;
+        if total_time_waited > std::time::Duration::from_secs(10) {
+            return Err(SpawnServerError::Timeout);
+        }
     }
 
     log::info!(
