@@ -280,11 +280,15 @@ mod tests {
     fn test_regex_matches_anywhere_in_string() {
         let permissions = terminal_rules_with_deny(&["rm\\s+-rf", "/etc/passwd"]);
 
-        let decision =
-            decide_permission("terminal", "echo hello && rm -rf /", &permissions, true);
+        let decision = decide_permission("terminal", "echo hello && rm -rf /", &permissions, true);
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
 
-        let decision = decide_permission("terminal", "cat /etc/passwd | grep root", &permissions, true);
+        let decision = decide_permission(
+            "terminal",
+            "cat /etc/passwd | grep root",
+            &permissions,
+            true,
+        );
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
     }
 
