@@ -11,6 +11,10 @@ pub fn accent_colors_count(accents: &AccentColors) -> usize {
 const LANE_WIDTH: Pixels = px(16.0);
 const LINE_WIDTH: Pixels = px(1.5);
 
+fn lane_center_x(bounds: Bounds<Pixels>, left_padding: Pixels, lane: f32) -> Pixels {
+    bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0
+}
+
 pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     let top_row = graph.list_state.logical_scroll_top();
     let row_height = graph.row_height;
@@ -39,20 +43,12 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                     let row_y_center =
                         bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
                             - scroll_offset;
-                    let _row_x_coordinate =
-                        bounds.origin.x + row.lane * LANE_WIDTH + LANE_WIDTH / 2.0;
 
                     for line in row.lines.iter() {
                         let line_color = accent_colors.color_for_index(line.color_idx as u32);
 
-                        let from_x = bounds.origin.x
-                            + line.from_lane * LANE_WIDTH
-                            + LANE_WIDTH / 2.0
-                            + left_padding;
-                        let to_x = bounds.origin.x
-                            + line.to_lane * LANE_WIDTH
-                            + LANE_WIDTH / 2.0
-                            + left_padding;
+                        let from_x = lane_center_x(bounds, left_padding, line.from_lane as f32);
+                        let to_x = lane_center_x(bounds, left_padding, line.to_lane as f32);
 
                         match line.line_type {
                             LineType::Straight => {
@@ -85,10 +81,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                         }
                     }
 
-                    let commit_x = bounds.origin.x
-                        + left_padding
-                        + LANE_WIDTH * row.lane as f32
-                        + LANE_WIDTH / 2.0;
+                    let commit_x = lane_center_x(bounds, left_padding, row.lane as f32);
                     let dot_radius = px(4.5);
                     let stroke_width = px(1.5);
 
