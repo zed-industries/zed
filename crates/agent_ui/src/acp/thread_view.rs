@@ -8085,7 +8085,10 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread.read_with(cx, |thread, _| {
-            assert!(thread.entries().len() >= 2, "Should have at least 2 entries");
+            assert!(
+                thread.entries().len() >= 2,
+                "Should have at least 2 entries"
+            );
 
             let has_subagent_tool_call = thread.entries().iter().any(|entry| {
                 if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
@@ -8134,7 +8137,9 @@ pub(crate) mod tests {
             .unwrap();
 
         thread
-            .update(cx, |thread, cx| thread.send_raw("Analyze code patterns", cx))
+            .update(cx, |thread, cx| {
+                thread.send_raw("Analyze code patterns", cx)
+            })
             .await
             .unwrap();
         cx.run_until_parked();
