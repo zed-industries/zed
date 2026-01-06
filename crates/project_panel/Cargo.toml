@@ -45,7 +45,6 @@ workspace.workspace = true
 language.workspace = true
 zed_actions.workspace = true
 telemetry.workspace = true
-log.workspace = true
 notifications.workspace = true
 
 [dev-dependencies]
