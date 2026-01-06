@@ -28,6 +28,10 @@
 
 (enum_specifier
     "enum" @context
+    [
+        "class"
+        "struct"
+    ]? @context
     name: (_) @name) @item
 
 (union_specifier
