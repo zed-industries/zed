@@ -428,6 +428,15 @@ CREATE SEQUENCE public.servers_id_seq
 
 ALTER SEQUENCE public.servers_id_seq OWNED BY public.servers.id;
 
+CREATE TABLE public.shared_threads (
+    id uuid NOT NULL,
+    user_id integer NOT NULL,
+    title character varying(512) NOT NULL,
+    data bytea NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.user_features (
     user_id integer NOT NULL,
     feature_id integer NOT NULL
@@ -897,3 +906,11 @@ ALTER TABLE ONLY public.worktree_settings_files
 
 ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+CREATE INDEX index_shared_threads_user_id ON public.shared_threads USING btree (user_id);

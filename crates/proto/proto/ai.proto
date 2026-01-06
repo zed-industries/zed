@@ -219,18 +219,14 @@ message NewExternalAgentVersionAvailable {
     string version = 3;
 }
 
-// Agent thread sharing
 message ShareAgentThread {
-    string title = 1;
-    bytes thread_data = 2;
-}
-
-message ShareAgentThreadResponse {
-    uint64 share_id = 1;
+    string session_id = 1; // Client-generated UUID (acp::SessionId)
+    string title = 2;
+    bytes thread_data = 3;
 }
 
 message GetSharedAgentThread {
-    uint64 share_id = 1;
+    string session_id = 1; // UUID string
 }
 
 message GetSharedAgentThreadResponse {

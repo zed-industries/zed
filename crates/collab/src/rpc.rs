@@ -4026,15 +4026,16 @@ async fn share_agent_thread(
 ) -> Result<()> {
     let user_id = session.user_id();
 
-    let share_id = session
+    let share_id = SharedThreadId::from_proto(request.session_id.clone())
+        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
+
+    session
         .db()
         .await
-        .create_shared_thread(user_id, &request.title, request.thread_data)
+        .upsert_shared_thread(share_id, user_id, &request.title, request.thread_data)
         .await?;
 
-    response.send(proto::ShareAgentThreadResponse {
-        share_id: share_id.to_proto(),
-    })?;
+    response.send(proto::Ack {})?;
 
     Ok(())
 }
@@ -4044,7 +4045,8 @@ async fn get_shared_agent_thread(
     response: Response<proto::GetSharedAgentThread>,
     session: MessageContext,
 ) -> Result<()> {
-    let share_id = SharedThreadId::from_proto(request.share_id);
+    let share_id = SharedThreadId::from_proto(request.session_id)
+        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
 
     let result = session.db().await.get_shared_thread(share_id).await?;
 
@@ -4054,11 +4056,7 @@ async fn get_shared_agent_thread(
                 title: thread.title,
                 thread_data: thread.data,
                 sharer_username: username,
-                created_at: thread
-                    .created_at
-                    .assume_utc()
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
+                created_at: thread.created_at.and_utc().to_rfc3339(),
             })?;
         }
         None => {

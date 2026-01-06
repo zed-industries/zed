@@ -450,9 +450,8 @@ message Envelope {
         RestrictWorktrees restrict_worktrees = 405;
         
         ShareAgentThread share_agent_thread = 406;
-        ShareAgentThreadResponse share_agent_thread_response = 407;
-        GetSharedAgentThread get_shared_agent_thread = 408;
-        GetSharedAgentThreadResponse get_shared_agent_thread_response = 409; // current max
+        GetSharedAgentThread get_shared_agent_thread = 407;
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; // current max
     }
 
     reserved 87 to 88;

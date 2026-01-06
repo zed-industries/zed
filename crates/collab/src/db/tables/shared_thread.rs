@@ -10,6 +10,7 @@ pub struct Model {
     pub title: String,
     pub data: Vec<u8>,
     pub created_at: DateTime,
+    pub updated_at: DateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
