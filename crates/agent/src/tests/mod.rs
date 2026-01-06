@@ -2271,7 +2271,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             .meta(acp::Meta::from_iter([(
                 "tool_name".into(),
                 "thinking".into()
-            ),]))
+            )]))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
