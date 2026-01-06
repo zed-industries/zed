@@ -1822,7 +1822,122 @@ UPDATE_BASELINES=1 cargo test -p zed visual_tests::subagent_collapsed -- --ignor
 - [x] Unit test for subagent tool card rendering (`test_subagent_tool_call_renders_as_card`)
 - [x] Unit test for expand/collapse toggle (`test_subagent_tool_call_expand_collapse_toggle`)
 
-**STATUS: ✅ COMPLETED**
+**STATUS: ✅ COMPLETED** (unit tests done; visual tests deferred to PR 4)
+
+---
+
+### Subagent Visual Testing (Required for PR 4 & PR 5)
+
+> **⚠️ CRITICAL: The person implementing these tests MUST run them and LOOK AT THE SCREENSHOTS to verify they look correct. Do not commit baselines without visually inspecting them. If the screenshots don't look right, iterate on the test setup and rendering until they do.**
+
+#### Pattern to Follow
+
+The visual tests should follow the pattern established in `origin/agent-panel-images` (see `crates/zed/src/visual_test_runner.rs`):
+
+1. **Use `StubAgentServer` + `StubAgentConnection`** to inject mock responses
+2. **Create a focused window** (e.g., 500x900 for agent panel) to capture just the UI component
+3. **Use `AgentPanel::open_external_thread_with_server()`** to inject the stubbed server
+4. **Program the connection** with `set_next_prompt_updates()` containing subagent tool calls
+5. **Send a user message** to trigger the stubbed response
+6. **Capture and compare screenshots**
+
+#### Required Test Scenarios
+
+Add these tests to `crates/zed/src/visual_test_runner.rs`:
+
+| Test Name | Description | What to Verify in Screenshot |
+|-----------|-------------|------------------------------|
+| `subagent_collapsed` | Single subagent tool call, collapsed | Card visible with label, ZedAgent icon, chevron pointing down |
+| `subagent_expanded` | Single subagent tool call, expanded | Card expanded showing subagent thread content inside |
+| `subagent_in_progress` | Subagent currently running | Spinner/activity indicator visible, "Running..." or similar label |
+| `subagent_completed` | Subagent finished successfully | Completion indicator, summary visible |
+| `subagent_failed` | Subagent encountered an error | Error styling (red), error message visible |
+| `multiple_subagents_mixed_states` | 2-3 subagents in different states | All cards visible, correct states displayed |
+
+#### Implementation Steps
+
+```rust
+// In visual_test_runner.rs, add a function like:
+async fn run_subagent_visual_test(
+    test_name: &str,
+    subagent_tool_calls: Vec<acp::ToolCall>,
+    expand_tool_calls: bool,
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // 1. Create stub connection with subagent tool calls
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(
+        subagent_tool_calls.into_iter()
+            .map(acp::SessionUpdate::ToolCall)
+            .collect()
+    );
+    
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+    
+    // 2. Create workspace + AgentPanel (same as agent_thread_with_image test)
+    // ...
+    
+    // 3. Send message to trigger response
+    // ...
+    
+    // 4. Optionally expand tool calls
+    if expand_tool_calls {
+        // Iterate through tool calls and expand them
+    }
+    
+    // 5. Capture screenshot
+    run_visual_test(test_name, workspace_window.into(), cx, update_baseline).await
+}
+
+// Helper to create a subagent tool call
+fn create_subagent_tool_call(
+    id: &str,
+    label: &str,
+    status: acp::ToolCallStatus,
+) -> acp::ToolCall {
+    acp::ToolCall::new(id, label)
+        .kind(acp::ToolKind::Other)
+        .meta(acp::Meta::from_iter([("tool_name".into(), "subagent".into())]))
+        .status(status)
+}
+```
+
+#### Visual Verification Checklist
+
+When running the tests, open each screenshot in `target/visual_tests/` and verify:
+
+- [ ] **Collapsed card**: Label readable, icon correct (ZedAgent), chevron present
+- [ ] **Expanded card**: Thread content visible, proper scrolling if needed, nested messages formatted
+- [ ] **In-progress state**: Activity indicator visible, text indicates ongoing work
+- [ ] **Completed state**: Success indicator, summary text visible
+- [ ] **Failed state**: Error styling (red highlight), error message readable
+- [ ] **Multiple subagents**: All cards visible, no overlapping, states distinguishable
+- [ ] **Overall polish**: Consistent spacing, alignment matches other tool cards
+
+#### Running Visual Tests
+
+```bash
+# Generate all screenshots
+cargo run -p zed --bin visual_test_runner --features visual-tests
+
+# Update baselines (only after visually verifying!)
+UPDATE_BASELINE=1 cargo run -p zed --bin visual_test_runner --features visual-tests
+
+# Screenshots are saved to target/visual_tests/
+ls -la target/visual_tests/subagent*.png
+```
+
+#### When to Iterate
+
+If the screenshots don't look right:
+
+1. Check the mock data setup - is the tool call structured correctly?
+2. Check the timing - does the UI need more time to render?
+3. Check the window size - is the content being clipped?
+4. Modify the test and re-run until it looks correct
+5. Only then commit the baseline
 
 ---
 
@@ -1830,25 +1945,38 @@ UPDATE_BASELINES=1 cargo test -p zed visual_tests::subagent_collapsed -- --ignor
 
 **Goal:** Clicking the card expands to show the subagent's full conversation. You can see what the subagent did.
 
+> **⚠️ Visual tests are REQUIRED for this PR. See [Subagent Visual Testing](#subagent-visual-testing-required-for-pr-4--pr-5) section above. You MUST run the tests and visually inspect the screenshots before committing baselines.**
+
 **Estimated size:** ~300-400 lines
 
 **Files to create/modify:**
 
-| File                                      | Changes                                                                                                                |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `crates/agent_ui/src/acp/thread_view.rs`  | Add `render_subagent_thread()`, implement expand/collapse click handler, add max-height and scroll for embedded thread |
-| `crates/acp_thread/src/acp_thread.rs`     | Store weak reference to subagent thread for rendering                                                                  |
-| `crates/agent/src/tools/subagent_tool.rs` | Pass thread reference through to UI layer                                                                              |
-| `crates/zed/src/zed/visual_tests.rs`      | Add `test_subagent_tool_card_expanded`, `test_multiple_subagents_parallel`                                             |
+| File                                       | Changes                                                                                                                |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `crates/agent_ui/src/acp/thread_view.rs`   | Add `render_subagent_thread()`, implement expand/collapse click handler, add max-height and scroll for embedded thread |
+| `crates/acp_thread/src/acp_thread.rs`      | Store weak reference to subagent thread for rendering                                                                  |
+| `crates/agent/src/tools/subagent_tool.rs`  | Pass thread reference through to UI layer                                                                              |
+| `crates/zed/src/visual_test_runner.rs`     | Add `subagent_collapsed`, `subagent_expanded`, `subagent_in_progress` tests                                            |
 
 **Visual testing workflow:**
 
 ```bash
-# Test expanded state
-cargo test -p zed visual_tests::subagent_expanded -- --ignored --test-threads=1
+# Generate screenshots
+cargo run -p zed --bin visual_test_runner --features visual-tests
+
+# REQUIRED: Open and inspect screenshots
+open target/visual_tests/subagent_collapsed.png
 open target/visual_tests/subagent_expanded.png
-# Check: Does the thread render inside the card? Is there scrolling?
-# Can you see the subagent's tool calls?
+open target/visual_tests/subagent_in_progress.png
+
+# Ask yourself:
+# - Is the card visible with correct label and icon?
+# - Does the expanded view show thread content?
+# - Is the in-progress state clear (spinner/indicator)?
+# - Does the styling match other tool cards?
+
+# Only after visual verification passes:
+UPDATE_BASELINE=1 cargo run -p zed --bin visual_test_runner --features visual-tests
 ```
 
 **Visual verification:**
@@ -1861,8 +1989,9 @@ open target/visual_tests/subagent_expanded.png
 
 **Tests to include:**
 
-- Visual test: `test_subagent_tool_card_expanded`
-- Visual test: `test_multiple_subagents_parallel`
+- Visual test: `subagent_collapsed` (in visual_test_runner.rs)
+- Visual test: `subagent_expanded` (in visual_test_runner.rs)
+- Visual test: `subagent_in_progress` (in visual_test_runner.rs)
 - Unit test: Click toggles expand state
 - Unit test: Subagent thread renders all message types
 
@@ -1872,7 +2001,9 @@ open target/visual_tests/subagent_expanded.png
 - [ ] Subagent thread renders inside card
 - [ ] Scrolling works for long content
 - [ ] Multiple subagents display correctly
-- [ ] Visual test baselines committed
+- [ ] **Visual tests added to visual_test_runner.rs**
+- [ ] **Screenshots visually inspected and approved**
+- [ ] **Visual test baselines committed**
 - [ ] `./script/clippy` passes
 
 ---
@@ -1880,6 +2011,8 @@ open target/visual_tests/subagent_expanded.png
 ### PR 5: Polish – Token Display, Errors, Persistence, Cancellation
 
 **Goal:** Production-ready experience. Token usage updates live, errors display correctly, subagent threads persist correctly, cancellation propagates.
+
+> **⚠️ Visual tests are REQUIRED for this PR. See [Subagent Visual Testing](#subagent-visual-testing-required-for-pr-4--pr-5) section above. You MUST run the tests and visually inspect the screenshots before committing baselines.**
 
 **Estimated size:** ~350-450 lines
 
@@ -1892,15 +2025,26 @@ open target/visual_tests/subagent_expanded.png
 | `crates/agent_ui/src/acp/thread_view.rs` | Render live token usage (e.g., "120k/200k"), error states                     |
 | `crates/agent/src/db.rs`                 | Add `is_subagent`, `parent_thread_id` fields                                  |
 | `crates/agent/src/history_store.rs`      | Filter subagent threads from history list                                     |
-| `crates/zed/src/zed/visual_tests.rs`     | Add `test_subagent_token_usage_display`, `test_subagent_error_state`          |
+| `crates/zed/src/visual_test_runner.rs`   | Add `subagent_completed`, `subagent_failed`, `multiple_subagents_mixed_states` tests |
 
 **Visual testing workflow:**
 
 ```bash
-# Test token display
-cargo test -p zed visual_tests::subagent_tokens -- --ignored --test-threads=1
-# Test error state
-cargo test -p zed visual_tests::subagent_error -- --ignored --test-threads=1
+# Generate screenshots
+cargo run -p zed --bin visual_test_runner --features visual-tests
+
+# REQUIRED: Open and inspect screenshots
+open target/visual_tests/subagent_completed.png
+open target/visual_tests/subagent_failed.png
+open target/visual_tests/multiple_subagents_mixed_states.png
+
+# Ask yourself:
+# - Is the completed state clear (success indicator, summary visible)?
+# - Is the error state obvious (red styling, error message readable)?
+# - Are multiple subagents all visible with correct, distinguishable states?
+
+# Only after visual verification passes:
+UPDATE_BASELINE=1 cargo run -p zed --bin visual_test_runner --features visual-tests
 ```
 
 **Visual verification:**
@@ -1912,8 +2056,9 @@ cargo test -p zed visual_tests::subagent_error -- --ignored --test-threads=1
 
 **Tests to include:**
 
-- Visual test: `test_subagent_token_usage_display`
-- Visual test: `test_subagent_error_state`
+- Visual test: `subagent_completed` (in visual_test_runner.rs)
+- Visual test: `subagent_failed` (in visual_test_runner.rs)
+- Visual test: `multiple_subagents_mixed_states` (in visual_test_runner.rs)
 - Unit test: `test_parent_cancel_propagates_to_subagent`
 - Unit test: `test_token_usage_updates_sent_to_parent`
 - Unit test: `test_subagent_thread_hidden_from_history`
@@ -1926,7 +2071,9 @@ cargo test -p zed visual_tests::subagent_error -- --ignored --test-threads=1
 - [ ] Cancellation propagates to subagents
 - [ ] Subagent threads saved with `is_subagent` flag
 - [ ] Subagent threads hidden from history
-- [ ] All visual test baselines committed
+- [ ] **Visual tests added to visual_test_runner.rs**
+- [ ] **Screenshots visually inspected and approved**
+- [ ] **Visual test baselines committed**
 - [ ] All unit tests pass
 - [ ] `./script/clippy` passes
 
