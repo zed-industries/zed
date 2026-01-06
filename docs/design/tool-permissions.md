@@ -614,26 +614,35 @@ fn get_settings_for_worktree(
 
 ## Task Breakdown
 
-### PR 1: Settings Schema & Parsing
+### PR 1: Settings Schema & Parsing ✅ COMPLETE
+
+**Status**: Draft PR #46112 - CI green, awaiting review
 
 **Goal**: Settings can be written and parsed correctly
 
-- [ ] Add `ToolPermissionsFeatureFlag` to `crates/feature_flags/src/flags.rs`
-- [ ] Add settings schema types to `settings_content/agent.rs`:
+- [x] Add `ToolPermissionsFeatureFlag` to `crates/feature_flags/src/flags.rs`
+- [x] Add settings schema types to `settings_content/agent.rs`:
   - `ToolPermissionsContent`
   - `ToolRulesContent`
   - `ToolRegexRule`
   - `ToolPermissionMode`
-- [ ] Add runtime types to `agent_settings.rs`:
+- [x] Add runtime types to `agent_settings.rs`:
   - `ToolPermissions`
   - `ToolRules`
   - `CompiledRegex`
-- [ ] Implement regex compilation in `from_settings()`
-- [ ] Add default deny rules to `default.json`
-- [ ] Write unit tests for settings parsing
-- [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
+- [x] Implement regex compilation in `from_settings()`
+- [x] Add default deny rules to `default.json`
+- [x] Write unit tests for settings parsing (21 tests total)
+  - Regex compilation (case-sensitive/insensitive)
+  - Invalid regex handling (skipped gracefully)
+  - Parsing with multiple tools and rule types
+  - Default.json integration tests
+  - Dangerous command matching
+  - **Deny > confirm > allow precedence** (security-critical)
+  - **Regex matches mid-string** (not just anchored)
+  - **Fork bomb pattern** validation
 
-**Verification**:
+**Verification**: ✅
 
 - Settings can be added to `settings.json` without errors
 - Invalid regexes are logged and skipped
