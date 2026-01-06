@@ -30,6 +30,10 @@
     "enum" @context
     name: (_) @name) @item
 
+(union_specifier
+    "union" @context
+    name: (_) @name) @item
+
 (enumerator
     name: (_) @name) @item
 
