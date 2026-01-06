@@ -68,6 +68,7 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::capture_example::should_sample_edit_prediction_example_capture;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -135,6 +136,16 @@ pub struct Zeta2FeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
+pub struct EditPredictionExampleCaptureFeatureFlag;
+
+impl FeatureFlag for EditPredictionExampleCaptureFeatureFlag {
+    const NAME: &'static str = "edit-prediction-example-capture";
 
     fn enabled_for_staff() -> bool {
         true
@@ -688,12 +699,14 @@ impl EditPredictionStore {
     pub fn clear_history(&mut self) {
         for project_state in self.projects.values_mut() {
             project_state.events.clear();
+            project_state.last_event.take();
         }
     }
 
     pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.events.clear();
+            project_state.last_event.take();
         }
     }
 
@@ -1626,6 +1639,29 @@ impl EditPredictionStore {
             debug_tx,
         };
 
+        let can_collect_example = snapshot
+            .file()
+            .is_some_and(|file| self.can_collect_file(&project, file, cx))
+            && self.can_collect_events(&inputs.events);
+
+        if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
+            let events_for_capture =
+                self.edit_history_for_project_with_pause_split_last_event(&project, cx);
+            if let Some(example_task) = capture_example::capture_example(
+                project.clone(),
+                active_buffer.clone(),
+                position,
+                events_for_capture,
+                cx,
+            ) {
+                cx.spawn(async move |_this, _cx| {
+                    let example = example_task.await?;
+                    telemetry::event!("Edit Prediction Example Captured", example = example);
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
             EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
@@ -2044,7 +2080,9 @@ impl EditPredictionStore {
             "Edit Prediction Rated",
             rating,
             inputs = prediction.inputs,
-            output = prediction.edit_preview.as_unified_diff(&prediction.edits),
+            output = prediction
+                .edit_preview
+                .as_unified_diff(prediction.snapshot.file(), &prediction.edits),
             feedback
         );
         self.client.telemetry().flush_events().detach();

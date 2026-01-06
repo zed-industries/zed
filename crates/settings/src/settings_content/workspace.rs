@@ -15,6 +15,10 @@ use crate::{
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePaneModifiers>,
+    /// The text rendering mode to use.
+    ///
+    /// Default: platform_default
+    pub text_rendering_mode: Option<TextRenderingMode>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -543,6 +547,31 @@ pub enum OnLastWindowClosed {
     PlatformDefault,
     /// Quit the application the last window is closed
     QuitApp,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TextRenderingMode {
+    /// Use platform default behavior.
+    #[default]
+    PlatformDefault,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 impl OnLastWindowClosed {

@@ -116,7 +116,6 @@ pub struct UserStore {
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
-    invite_info: Option<InviteInfo>,
     client: Weak<Client>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
@@ -173,7 +172,6 @@ impl UserStore {
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
-            client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
 
@@ -193,7 +191,6 @@ impl UserStore {
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
             outgoing_contact_requests: Default::default(),
-            invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
             _maintain_contacts: cx.spawn(async move |this, cx| {
@@ -297,21 +294,6 @@ impl UserStore {
         self.by_github_login.clear();
     }
 
-    async fn handle_update_invite_info(
-        this: Entity<Self>,
-        message: TypedEnvelope<proto::UpdateInviteInfo>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            this.invite_info = Some(InviteInfo {
-                url: Arc::from(message.payload.url),
-                count: message.payload.count,
-            });
-            cx.notify();
-        })?;
-        Ok(())
-    }
-
     async fn handle_show_contacts(
         this: Entity<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
@@ -319,10 +301,6 @@ impl UserStore {
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
         Ok(())
-    }
-
-    pub fn invite_info(&self) -> Option<&InviteInfo> {
-        self.invite_info.as_ref()
     }
 
     async fn handle_update_contacts(

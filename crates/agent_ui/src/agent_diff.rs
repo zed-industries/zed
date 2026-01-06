@@ -32,7 +32,7 @@ use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 use zed_actions::assistant::ToggleFocus;
@@ -146,13 +146,13 @@ impl AgentDiffPane {
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
-            let diff = diff_handle.read(cx);
 
-            let diff_hunk_ranges = diff
+            let diff_hunk_ranges = diff_handle
+                .read(cx)
+                .snapshot(cx)
                 .hunks_intersecting_range(
                     language::Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
-                    cx,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
@@ -593,14 +593,6 @@ impl Item for AgentDiffPane {
         } else {
             None
         }
-    }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(
@@ -1682,7 +1674,7 @@ impl AgentDiff {
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let mut keys = changed_buffers.keys().cycle();
+            let mut keys = changed_buffers.keys();
             keys.find(|k| *k == &curr_buffer);
             let next_project_path = keys
                 .next()

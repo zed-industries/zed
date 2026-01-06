@@ -177,7 +177,7 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
-    gpu_context: BladeContext,
+    pub(crate) gpu_context: BladeContext,
 
     pub(crate) scale_factor: f32,
 
