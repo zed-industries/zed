@@ -250,26 +250,28 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
     }
 }
 
-pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
-    let auto_updater = AutoUpdater::get(cx)?;
+pub fn release_notes_url(cx: &mut App) -> Option<String> {
     let release_channel = ReleaseChannel::try_global(cx)?;
-
-    match release_channel {
+    let url = match release_channel {
         ReleaseChannel::Stable | ReleaseChannel::Preview => {
+            let auto_updater = AutoUpdater::get(cx)?;
             let auto_updater = auto_updater.read(cx);
-            let current_version = auto_updater.current_version.clone();
+            let current_version = &auto_updater.current_version;
             let release_channel = release_channel.dev_name();
             let path = format!("/releases/{release_channel}/{current_version}");
-            let url = &auto_updater.client.http_client().build_url(&path);
-            cx.open_url(url);
+            auto_updater.client.http_client().build_url(&path)
         }
         ReleaseChannel::Nightly => {
-            cx.open_url("https://github.com/zed-industries/zed/commits/nightly/");
+            "https://github.com/zed-industries/zed/commits/nightly/".to_string()
         }
-        ReleaseChannel::Dev => {
-            cx.open_url("https://github.com/zed-industries/zed/commits/main/");
-        }
-    }
+        ReleaseChannel::Dev => "https://github.com/zed-industries/zed/commits/main/".to_string(),
+    };
+    Some(url)
+}
+
+pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
+    let url = release_notes_url(cx)?;
+    cx.open_url(&url);
     None
 }
 
