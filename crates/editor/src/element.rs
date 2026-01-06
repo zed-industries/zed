@@ -3810,7 +3810,7 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .debug_bg_cyan()
+                .debug_bg_magenta()
                 .into_any(),
         };
 

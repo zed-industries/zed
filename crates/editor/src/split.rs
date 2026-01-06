@@ -244,30 +244,9 @@ impl SplittableEditor {
             has_latest_selection: false,
             _subscriptions: subscriptions,
         };
-        // Hook up both display maps as mutual companions before syncing excerpts
-        // Primary = RHS (current/modified text), Secondary = LHS (base/diff text)
         let primary_display_map = self.primary_editor.read(cx).display_map.clone();
         let secondary_display_map = secondary.editor.read(cx).display_map.clone();
         let rhs_display_map_id = primary_display_map.entity_id();
-
-        let companion = cx.new(|cx| {
-            Companion::new(
-                rhs_display_map_id,
-                convert_rhs_row_to_lhs,
-                convert_lhs_row_to_rhs,
-                cx,
-            )
-        });
-
-        primary_display_map.update(cx, |dm, cx| {
-            dm.set_companion(
-                Some((secondary_display_map.downgrade(), companion.clone())),
-                cx,
-            );
-        });
-        secondary_display_map.update(cx, |dm, cx| {
-            dm.set_companion(Some((primary_display_map.downgrade(), companion)), cx);
-        });
 
         self.primary_editor.update(cx, |editor, cx| {
             editor.set_delegate_expand_excerpts(true);
@@ -290,16 +269,42 @@ impl SplittableEditor {
                 .collect()
         };
 
+        let mut companion = Companion::new(
+            rhs_display_map_id,
+            convert_rhs_row_to_lhs,
+            convert_lhs_row_to_rhs,
+        );
+
         for (path, diff) in path_diffs {
-            secondary.sync_path_excerpts(
+            for mapping in secondary.update_path_excerpts_from_primary(
                 path,
                 &self.primary_multibuffer,
-                diff,
-                &primary_display_map,
-                &secondary_display_map,
+                diff.clone(),
                 cx,
+            ) {
+                companion.add_excerpt_mapping(mapping.left, mapping.right);
+            }
+            companion.add_buffer_mapping(
+                diff.read(cx).base_text(cx).remote_id(),
+                diff.read(cx).buffer_id,
             );
         }
+
+        let companion = cx.new(|_| companion);
+
+        // FIXME we need to put the initial excerpt and buffer id mappings into the companion before calling set_companion,
+        // so that syncing the display maps will work
+
+        primary_display_map.update(cx, |dm, cx| {
+            dm.set_companion(
+                Some((secondary_display_map.downgrade(), companion.clone())),
+                cx,
+            );
+        });
+        secondary_display_map.update(cx, |dm, cx| {
+            dm.set_companion(Some((primary_display_map.downgrade(), companion)), cx);
+        });
+
         self.secondary = Some(secondary);
 
         let primary_pane = self.panes.first_pane();
@@ -739,7 +744,100 @@ impl Render for SplittableEditor {
     }
 }
 
+struct ExcerptMapping {
+    left: ExcerptId,
+    right: ExcerptId,
+}
+
 impl SecondaryEditor {
+    fn update_path_excerpts_from_primary(
+        &mut self,
+        path_key: PathKey,
+        primary_multibuffer: &Entity<MultiBuffer>,
+        diff: Entity<BufferDiff>,
+        cx: &mut App,
+    ) -> Vec<ExcerptMapping> {
+        let primary_multibuffer_ref = primary_multibuffer.read(cx);
+        let primary_excerpt_ids: Vec<ExcerptId> = primary_multibuffer_ref
+            .excerpts_for_path(&path_key)
+            .collect();
+
+        let Some(excerpt_id) = primary_multibuffer_ref.excerpts_for_path(&path_key).next() else {
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.remove_excerpts_for_path(path_key, cx);
+            });
+            return Vec::new();
+        };
+
+        let primary_multibuffer_snapshot = primary_multibuffer_ref.snapshot(cx);
+        let main_buffer = primary_multibuffer_snapshot
+            .buffer_for_excerpt(excerpt_id)
+            .unwrap();
+        let base_text_buffer = diff.read(cx).base_text_buffer();
+        let diff_snapshot = diff.read(cx).snapshot(cx);
+        let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
+        let new = primary_multibuffer_ref
+            .excerpts_for_buffer(main_buffer.remote_id(), cx)
+            .into_iter()
+            .map(|(_, excerpt_range)| {
+                let point_range_to_base_text_point_range = |range: Range<Point>| {
+                    let start_row = diff_snapshot.row_to_base_text_row(
+                        range.start.row,
+                        Bias::Left,
+                        main_buffer,
+                    );
+                    let end_row =
+                        diff_snapshot.row_to_base_text_row(range.end.row, Bias::Right, main_buffer);
+                    let end_column = diff_snapshot.base_text().line_len(end_row);
+                    Point::new(start_row, 0)..Point::new(end_row, end_column)
+                };
+                let primary = excerpt_range.primary.to_point(main_buffer);
+                let context = excerpt_range.context.to_point(main_buffer);
+                ExcerptRange {
+                    primary: point_range_to_base_text_point_range(primary),
+                    context: point_range_to_base_text_point_range(context),
+                }
+            })
+            .collect();
+
+        let main_buffer = primary_multibuffer_ref
+            .buffer(main_buffer.remote_id())
+            .unwrap();
+
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                let (ids, _) = buffer.update_path_excerpts(
+                    path_key.clone(),
+                    base_text_buffer.clone(),
+                    &base_text_buffer_snapshot,
+                    new,
+                    cx,
+                );
+                if !ids.is_empty()
+                    && buffer
+                        .diff_for(base_text_buffer.read(cx).remote_id())
+                        .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
+                {
+                    buffer.add_inverted_diff(diff, main_buffer, cx);
+                }
+            })
+        });
+
+        let secondary_excerpt_ids: Vec<ExcerptId> = self
+            .multibuffer
+            .read(cx)
+            .excerpts_for_path(&path_key)
+            .collect();
+
+        debug_assert_eq!(primary_excerpt_ids.len(), secondary_excerpt_ids.len());
+
+        primary_excerpt_ids
+            .into_iter()
+            .zip(secondary_excerpt_ids)
+            .map(|(right, left)| ExcerptMapping { right, left })
+            .collect()
+    }
+
     fn sync_path_excerpts(
         &mut self,
         path_key: PathKey,
@@ -871,7 +969,6 @@ impl SecondaryEditor {
             .excerpts_for_path(path_key)
             .collect();
 
-        // Remove mappings from companion - it handles both directions
         if let Some(companion) = primary_display_map.read(cx).companion().cloned() {
             companion.update(cx, |c, _| {
                 c.remove_excerpt_mappings(secondary_excerpt_ids, primary_excerpt_ids);

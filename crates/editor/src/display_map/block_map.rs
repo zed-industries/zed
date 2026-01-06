@@ -619,13 +619,16 @@ impl BlockMap {
                             .row,
                     );
 
-                    let my_start_row = convert(
+                    let mut my_start_row = convert(
                         excerpt_map,
                         wrap_snapshot.buffer_snapshot(),
                         companion_new_snapshot.buffer_snapshot(),
                         companion_start_row,
                         Bias::Left,
                     );
+                    if my_start_row > MultiBufferRow(0) {
+                        my_start_row.0 -= 1;
+                    }
                     let my_end_row = convert(
                         excerpt_map,
                         wrap_snapshot.buffer_snapshot(),
@@ -774,7 +777,11 @@ impl BlockMap {
 
             // Discard below blocks at the end of the edit. They'll be reconstructed.
             while let Some(transform) = cursor.item() {
-                if transform.block.as_ref().is_some_and(|b| b.place_below()) {
+                if transform
+                    .block
+                    .as_ref()
+                    .is_some_and(|b| b.place_below() || matches!(b, Block::Spacer { .. }))
+                {
                     cursor.next();
                 } else {
                     break;
@@ -1118,27 +1125,18 @@ impl BlockMap {
 
         // Iterate through buffer rows, checking if each is a checkpoint
         for buffer_row in new_buffer_range.start.row..=new_buffer_range.end.row {
-            // Determine if this row is a checkpoint:
-            // - It's a checkpoint if it's NOT inside a diff hunk, OR
-            // - It's the last row of a diff hunk
-            let is_inside_hunk = diff_hunks.iter().any(|hunk| {
+            dbg!("--------------");
+            if diff_hunks.iter().any(|hunk| {
                 buffer_row >= hunk.row_range.start.0 && buffer_row < hunk.row_range.end.0
-            });
-            let is_last_row_of_hunk = diff_hunks.iter().any(|hunk| {
-                hunk.row_range.end.0 > 0 && buffer_row == hunk.row_range.end.0.saturating_sub(1)
-            });
-
-            if is_inside_hunk && !is_last_row_of_hunk {
+            }) {
                 dbg!("CONTINUE");
-                continue; // Skip rows inside hunks that aren't the last row
+                continue;
             }
 
-            // This is a checkpoint - proceed with alignment check
-
             // Get our wrap row at this checkpoint (at the start of the next row after the checkpoint)
-            let checkpoint_row = buffer_row + 1;
+            let checkpoint_row = buffer_row;
             let our_wrap_row = wrap_snapshot
-                .make_wrap_point(Point::new(checkpoint_row, 0), Bias::Right)
+                .make_wrap_point(Point::new(checkpoint_row, 0), Bias::Left)
                 .row();
 
             // Convert to companion's buffer row
@@ -1150,7 +1148,7 @@ impl BlockMap {
                 Bias::Right,
             );
             let companion_wrap_row = companion_snapshot
-                .make_wrap_point(Point::new(companion_buffer_row.0, 0), Bias::Right)
+                .make_wrap_point(Point::new(companion_buffer_row.0, 0), Bias::Left)
                 .row();
             dbg!(our_wrap_row, companion_wrap_row);
 
@@ -4157,7 +4155,6 @@ mod tests {
                 rhs_entity_id,
                 convert_rhs_row_to_lhs,
                 convert_lhs_row_to_rhs,
-                cx,
             );
             c.add_excerpt_mapping(lhs_excerpt_id, rhs_excerpt_id);
             c
@@ -4224,8 +4221,35 @@ mod tests {
         assert_eq!(
             lhs_snapshot.snapshot.text(),
             "aaa\nbbb\nccc\nddd\nddd\nddd\n\n\n\neee\n",
-            "LHS should have 3 spacer lines after 'ddd' to align with RHS's inserted lines"
+            "LHS should have 3 spacer lines in place of RHS's inserted lines"
         );
+
+        // LHS:
+        //   aaa
+        // - bbb
+        // - ccc
+        //   ddd
+        //   *ddd
+        //   ddd
+        //   <extra line>
+        //   <extra line>
+        //   <extra line>
+        //   eee
+        //
+        // RHS:
+        //   aaa
+        //   <extra line>
+        //   <extra line>
+        //   ddd
+        //   foo
+        //   foo
+        //   foo
+        //   *ddd
+        //   ddd
+        // + XXX
+        // + YYY
+        // + ZZZ
+        //   eee
 
         let rhs_buffer_snapshot = rhs_multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.edit(
@@ -4236,6 +4260,7 @@ mod tests {
             multibuffer.snapshot(cx)
         });
 
+        dbg!(">>>>>>>>>>> RHS");
         let (rhs_inlay_snapshot, rhs_inlay_edits) = rhs_inlay_map.sync(
             rhs_buffer_snapshot.clone(),
             dbg!(subscription.consume().into_inner()),
@@ -4256,7 +4281,9 @@ mod tests {
                 Some((companion, rhs_entity_id)),
             )
         });
+        dbg!("<<<<<<<<<<< RHS");
 
+        dbg!(">>>>>>>>>>> LHS");
         let lhs_snapshot = companion.read_with(cx, |companion, _cx| {
             lhs_block_map.read(
                 lhs_wrap_snapshot.clone(),
@@ -4265,6 +4292,7 @@ mod tests {
                 Some((companion, lhs_entity_id)),
             )
         });
+        dbg!("<<<<<<<<<<< LHS");
 
         assert_eq!(
             rhs_snapshot.snapshot.text(),

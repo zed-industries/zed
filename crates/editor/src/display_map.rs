@@ -281,7 +281,6 @@ impl Companion {
         rhs_display_map_id: EntityId,
         rhs_row_to_lhs_row: ConvertMultiBufferRow,
         lhs_row_to_rhs_row: ConvertMultiBufferRow,
-        _cx: &mut Context<Self>,
     ) -> Self {
         Self {
             rhs_display_map_id,
