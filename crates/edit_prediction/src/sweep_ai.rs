@@ -564,8 +564,11 @@ fn compute_edit_metrics(
     let mut deletions = 0u32;
 
     for (range, new_text) in edits {
-        let old_text: String = snapshot.text_for_range(range.clone()).collect();
-        deletions += old_text.lines().count().max(1) as u32;
+        let old_text = snapshot.text_for_range(range.clone());
+        deletions += old_text
+            .map(|chunk| chunk.lines().count())
+            .sum::<usize>()
+            .max(1) as u32;
         additions += new_text.lines().count().max(1) as u32;
     }
 
