@@ -2724,10 +2724,12 @@ impl AcpThreadView {
         let is_terminal_tool = matches!(tool_call.kind, acp::ToolKind::Execute);
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let is_subagent = tool_call.is_subagent();
 
-        let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
+        let use_card_layout = needs_confirmation || is_edit || is_terminal_tool || is_subagent;
 
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+        let is_collapsible =
+            (!tool_call.content.is_empty() || is_subagent) && !needs_confirmation;
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
         let input_output_header = |label: SharedString| {
@@ -2941,10 +2943,14 @@ impl AcpThreadView {
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
 
+        let is_subagent = tool_call.is_subagent();
+
         let tool_icon = if tool_call.kind == acp::ToolKind::Edit && has_location {
             FileIcons::get_icon(&tool_call.locations[0].path, cx)
                 .map(Icon::from_path)
                 .unwrap_or(Icon::new(IconName::ToolPencil))
+        } else if is_subagent {
+            Icon::new(IconName::ZedAgent)
         } else {
             Icon::new(match tool_call.kind {
                 acp::ToolKind::Read => IconName::ToolSearch,

@@ -195,6 +195,7 @@ pub struct ToolCall {
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    pub tool_name: Option<SharedString>,
 }
 
 impl ToolCall {
@@ -229,6 +230,13 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
+        let tool_name = tool_call
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("tool_name"))
+            .and_then(|v| v.as_str())
+            .map(|s| SharedString::from(s.to_owned()));
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -241,6 +249,7 @@ impl ToolCall {
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            tool_name,
         };
         Ok(result)
     }
@@ -347,6 +356,15 @@ impl ToolCall {
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Diff(_) => None,
         })
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.kind, acp::ToolKind::Other)
+            && self
+                .tool_name
+                .as_ref()
+                .map(|n| n.as_ref() == "subagent")
+                .unwrap_or(false)
     }
 
     fn to_markdown(&self, cx: &App) -> String {
@@ -1371,6 +1389,7 @@ impl AcpThread {
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    tool_name: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -4141,5 +4160,68 @@ mod tests {
             "send should succeed even when new message added during update_last_checkpoint: {:?}",
             result.err()
         );
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_is_subagent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let tool_id = acp::ToolCallId::new("test-subagent");
+        let language_registry = project.read_with(cx, |p, _cx| p.languages().clone());
+
+        let subagent_tool_call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new(tool_id.clone(), "Researching alternatives")
+                    .kind(acp::ToolKind::Other)
+                    .meta(acp::Meta::from_iter([(
+                        "tool_name".into(),
+                        "subagent".into(),
+                    )])),
+                ToolCallStatus::InProgress,
+                language_registry.clone(),
+                PathStyle::Posix,
+                &HashMap::default(),
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert!(subagent_tool_call.is_subagent());
+
+        let non_subagent_tool_call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new(acp::ToolCallId::new("test-other"), "Some other tool")
+                    .kind(acp::ToolKind::Other)
+                    .meta(acp::Meta::from_iter([(
+                        "tool_name".into(),
+                        "some_other_tool".into(),
+                    )])),
+                ToolCallStatus::InProgress,
+                language_registry.clone(),
+                PathStyle::Posix,
+                &HashMap::default(),
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert!(!non_subagent_tool_call.is_subagent());
+
+        let tool_without_meta = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new(acp::ToolCallId::new("test-no-meta"), "No meta tool")
+                    .kind(acp::ToolKind::Other),
+                ToolCallStatus::InProgress,
+                language_registry,
+                PathStyle::Posix,
+                &HashMap::default(),
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert!(!tool_without_meta.is_subagent());
     }
 }
