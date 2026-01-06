@@ -66,17 +66,22 @@ pub async fn apply_diff(
                 hunk,
                 is_new_file,
             } => {
-                let project_path = project
-                    .update(cx, |project, cx| {
-                        project.find_project_path(path.as_ref(), cx)
-                    })?
-                    .context("no such path")?;
-
                 let buffer = match current_file {
                     None => {
-                        let buffer = project
-                            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                            .await?;
+                        let buffer = if is_new_file {
+                            project
+                                .update(cx, |project, cx| project.create_buffer(true, cx))?
+                                .await?
+                        } else {
+                            let project_path = project
+                                .update(cx, |project, cx| {
+                                    project.find_project_path(path.as_ref(), cx)
+                                })?
+                                .with_context(|| format!("no such path: {}", path))?;
+                            project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                                .await?
+                        };
                         included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()
