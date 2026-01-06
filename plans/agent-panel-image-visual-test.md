@@ -409,3 +409,134 @@ If you need to test the complete AgentPanel chrome (history panel, model selecto
 3. Use `AgentPanel::load()` with the custom factory
 
 This approach is significantly more complex and requires modifying production code. Only pursue if the simpler `AcpThreadView` approach doesn't meet requirements.
+
+---
+
+## Phase 5: Production Image Support (Remaining Work)
+
+The visual test above uses a stubbed response that directly provides image content. However, in production, the `read_file` tool does NOT correctly render images in the agent panel. There are two issues to fix:
+
+### Issue 1: `read_file` Tool Description is Misleading
+
+**Current state:** The `read_file` tool's doc comment says it's for reading file content, but doesn't mention image support. The model (Claude) incorrectly states it only works with "text-based files like code, configuration files, and documentation."
+
+**Location:** `crates/agent/src/tools/read_file_tool.rs` lines 17-22
+
+```rust
+/// Reads the content of the given file in the project.
+///
+/// - Never attempt to read a path that hasn't been previously mentioned.
+/// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
+///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
+///   Do NOT retry reading the same file without line numbers if you receive an outline.
+```
+
+**Fix needed:** Update the doc comment to explain:
+1. The tool supports both text and image files
+2. Supported image formats (from `Img::extensions()` minus SVG):
+   - avif, jpg, jpeg, png, gif, webp, tif, tiff, tga, dds, bmp, ico, hdr, exr, pbm, pam, ppm, pgm, ff, farbfeld, qoi
+3. Image files are returned as base64-encoded image data that the model can analyze
+4. The extension-to-mime-type mapping used:
+   - `.png` → `image/png`
+   - `.jpg`, `.jpeg` → `image/jpeg`
+   - `.webp` → `image/webp`
+   - `.gif` → `image/gif`
+   - `.bmp` → `image/bmp`
+   - `.tiff`, `.tif` → `image/tiff`
+   - `.ico` → `image/ico`
+
+### Issue 2: Image Output Not Rendered in UI
+
+**Current state:** When `read_file` reads an image file, the tool output shows JSON with base64 data instead of rendering the actual image. This is because the tool only sends `acp::ToolCallContent::Content` for text results, not for images.
+
+**Location:** `crates/agent/src/tools/read_file_tool.rs` lines 282-291
+
+```rust
+if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
+    let markdown = MarkdownCodeBlock {
+        tag: &input.path,
+        text,
+    }
+    .to_string();
+    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+        acp::ToolCallContent::Content(acp::Content::new(markdown)),
+    ]));
+}
+```
+
+**The problem:** This code only handles `LanguageModelToolResultContent::Text`. When the result is `LanguageModelToolResultContent::Image`, no content is sent to the event stream, so the UI falls back to showing the `raw_output` JSON.
+
+**Fix needed:** Add a branch to handle images:
+
+```rust
+match &result {
+    Ok(LanguageModelToolResultContent::Text(text)) => {
+        let markdown = MarkdownCodeBlock {
+            tag: &input.path,
+            text,
+        }
+        .to_string();
+        event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+            acp::ToolCallContent::Content(acp::Content::new(markdown)),
+        ]));
+    }
+    Ok(LanguageModelToolResultContent::Image(image)) => {
+        // Send the image as content so the UI can render it
+        event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+            acp::ToolCallContent::Content(acp::Content::new(
+                acp::ContentBlock::Image(acp::ImageContent::new(
+                    image.source.clone(),
+                    "image/png", // The image is always converted to PNG format
+                )),
+            )),
+        ]));
+    }
+    Err(_) => {}
+}
+```
+
+**Note on mime type:** The `LanguageModelImage` struct doesn't store the original mime type. Images are processed through `LanguageModelImage::from_image()` which re-encodes them. Check what format this outputs - it may always be PNG, or it may preserve the original format. The mime type passed to `ImageContent::new()` must match the actual encoding.
+
+### UI Rendering (Already Implemented)
+
+The UI already has code to render images in tool call output:
+
+**Location:** `crates/agent_ui/src/acp/thread_view.rs` lines 3064-3065, 3124-3148
+
+```rust
+} else if let Some(image) = content.image() {
+    self.render_image_output(image.clone(), card_layout, cx)
+```
+
+And the `render_image_output` function properly renders the image using:
+
+```rust
+img(image)
+    .max_w_96()
+    .max_h_96()
+    .object_fit(ObjectFit::ScaleDown)
+```
+
+This code path is exercised by the visual test (which uses stubbed data), but is never reached in production because the `read_file` tool doesn't send image content blocks.
+
+### Implementation Checklist for Production Image Support
+
+1. [ ] Update `read_file` tool description to mention image support and list supported formats
+2. [ ] Modify `read_file_tool.rs` to send `acp::ToolCallContent::Content` with image data when result is `LanguageModelToolResultContent::Image`
+3. [ ] Verify the mime type matches the actual image encoding (check `LanguageModelImage::from_image()`)
+4. [ ] Test with actual image files in the agent panel
+5. [ ] Consider adding a unit test that verifies image content is sent correctly
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `crates/agent/src/tools/read_file_tool.rs` | Update doc comment; add image handling in `run()` |
+
+### Estimated Time
+
+- Doc comment update: 15 minutes
+- Image content sending fix: 30 minutes  
+- Testing and verification: 30 minutes
+
+**Total: ~1-1.5 hours**
