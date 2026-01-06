@@ -4354,11 +4354,8 @@ async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppCon
     );
 }
 
-/// Regression test for issue #45555:
-/// When a parent folder and its child are both selected and dragged,
-/// only the parent folder should be moved (not the child file separately).
 #[gpui::test]
-async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
+async fn test_drag_multiple_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -4373,7 +4370,8 @@ async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
                     "mod.rs": "// folder2 mod"
                 },
                 "folder3": {
-                    "mod.rs": "// folder3 mod"
+                    "mod.rs": "// folder3 mod",
+                    "helper.rs": "// helper"
                 },
                 "main.rs": ""
             }
@@ -4387,40 +4385,19 @@ async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
     cx.run_until_parked();
 
-    // Expand src directory
     toggle_expand_dir(&panel, "root/src", cx);
     toggle_expand_dir(&panel, "root/src/folder1", cx);
     toggle_expand_dir(&panel, "root/src/folder2", cx);
+    toggle_expand_dir(&panel, "root/src/folder3", cx);
     cx.run_until_parked();
 
-    // Verify initial structure
-    assert!(
-        find_project_entry(&panel, "root/src/folder1/mod.rs", cx).is_some(),
-        "folder1/mod.rs should exist initially"
-    );
-    assert!(
-        find_project_entry(&panel, "root/src/folder2/mod.rs", cx).is_some(),
-        "folder2/mod.rs should exist initially"
-    );
-
-    // Select folder1 (the parent directory)
+    // Case 1: Dragging a folder and a file from a sibling folder together.
     panel.update(cx, |panel, _| panel.marked_entries.clear());
     select_path_with_mark(&panel, "root/src/folder1", cx);
-    // Also select folder2/mod.rs (a file from a different sibling folder)
     select_path_with_mark(&panel, "root/src/folder2/mod.rs", cx);
 
-    // Drag both selections to root
     drag_selection_to(&panel, "root", false, cx);
 
-    // The expected behavior (matching VSCode):
-    // - folder1 should move to root (with its mod.rs intact inside)
-    // - folder2/mod.rs should move to root (since folder2 was not selected, just its child)
-    //
-    // The bug behavior was:
-    // - Empty folder1 moves to root
-    // - mod.rs from folder1 gets lost due to name collision with mod.rs from folder2
-
-    // Verify folder1 moved intact with its contents
     assert!(
         find_project_entry(&panel, "root/folder1", cx).is_some(),
         "folder1 should be at root after drag"
@@ -4429,74 +4406,34 @@ async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
         find_project_entry(&panel, "root/folder1/mod.rs", cx).is_some(),
         "folder1/mod.rs should still be inside folder1 after drag"
     );
-
-    // folder1 should no longer be in src
     assert_eq!(
         find_project_entry(&panel, "root/src/folder1", cx),
         None,
         "folder1 should no longer be in src"
     );
-
-    // folder2/mod.rs should have moved to root level
     assert!(
         find_project_entry(&panel, "root/mod.rs", cx).is_some(),
         "mod.rs from folder2 should be at root"
     );
 
-    // folder3 should be unaffected
-    assert!(
-        find_project_entry(&panel, "root/src/folder3/mod.rs", cx).is_some(),
-        "folder3 should be unaffected"
-    );
-}
-
-#[gpui::test]
-async fn test_drag_parent_folder_with_explicitly_selected_child(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "src": {
-                "folder1": {
-                    "mod.rs": "// folder1 mod",
-                    "helper.rs": "// helper",
-                },
-            }
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-    cx.run_until_parked();
-
-    toggle_expand_dir(&panel, "root/src", cx);
-    toggle_expand_dir(&panel, "root/src/folder1", cx);
-
-    // Select both folder1 (parent) and folder1/mod.rs (child)
+    // Case 2: Dragging a folder and its own child together.
     panel.update(cx, |panel, _| panel.marked_entries.clear());
-    select_path_with_mark(&panel, "root/src/folder1", cx);
-    select_path_with_mark(&panel, "root/src/folder1/mod.rs", cx);
+    select_path_with_mark(&panel, "root/src/folder3", cx);
+    select_path_with_mark(&panel, "root/src/folder3/mod.rs", cx);
 
-    // Drag to root
     drag_selection_to(&panel, "root", false, cx);
 
-    // Only folder1 should move (mod.rs should NOT be moved separately)
     assert!(
-        find_project_entry(&panel, "root/folder1", cx).is_some(),
-        "folder1 should be at root after drag"
+        find_project_entry(&panel, "root/folder3", cx).is_some(),
+        "folder3 should be at root after drag"
     );
     assert!(
-        find_project_entry(&panel, "root/folder1/mod.rs", cx).is_some(),
-        "folder1/mod.rs should still be inside folder1"
+        find_project_entry(&panel, "root/folder3/mod.rs", cx).is_some(),
+        "folder3/mod.rs should still be inside folder3"
     );
     assert!(
-        find_project_entry(&panel, "root/mod.rs", cx).is_none(),
-        "mod.rs should NOT exist at root level (not moved separately)"
+        find_project_entry(&panel, "root/folder3/helper.rs", cx).is_some(),
+        "folder3/helper.rs should still be inside folder3"
     );
 }
 
