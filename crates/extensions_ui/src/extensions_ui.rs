@@ -13,7 +13,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Flatten, Focusable,
+    Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
@@ -132,7 +132,7 @@ pub fn init(cx: &mut App) {
                 window
                     .spawn(cx, async move |cx| {
                         let extension_path =
-                            match Flatten::flatten(prompt.await.map_err(|e| e.into())) {
+                            match prompt.await.map_err(anyhow::Error::from) {
                                 Ok(Some(mut paths)) => paths.pop()?,
                                 Ok(None) => return None,
                                 Err(err) => {
@@ -148,8 +148,7 @@ pub fn init(cx: &mut App) {
                         let install_task = store
                             .update(cx, |store, cx| {
                                 store.install_dev_extension(extension_path, cx)
-                            })
-                            .ok()?;
+                            });
 
                         match install_task.await {
                             Ok(_) => {}

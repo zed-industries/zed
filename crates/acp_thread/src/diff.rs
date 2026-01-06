@@ -35,7 +35,7 @@ impl Diff {
                     .await
                     .log_err();
 
-                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx))?;
+                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
 
                 let diff = build_buffer_diff(
                     old_text.unwrap_or("".into()).into(),
@@ -66,10 +66,20 @@ impl Diff {
                             hunk_ranges,
                             multibuffer_context_lines(cx),
                             cx,
-                        );
-                        multibuffer.add_diff(diff, cx);
-                    })
-                    .log_err();
+                        )
+                        .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                        .collect::<Vec<_>>()
+                    };
+
+                    multibuffer.set_excerpts_for_path(
+                        PathKey::for_buffer(&buffer, cx),
+                        buffer.clone(),
+                        hunk_ranges,
+                        multibuffer_context_lines(cx),
+                        cx,
+                    );
+                    multibuffer.add_diff(diff, cx);
+                });
 
                 anyhow::Ok(())
             }
@@ -388,7 +398,7 @@ async fn build_buffer_diff(
                 language.clone(),
                 cx,
             )
-        })?
+        })
         .await;
 
     secondary_diff

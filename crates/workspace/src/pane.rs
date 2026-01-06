@@ -2099,7 +2099,7 @@ impl Pane {
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
-        let path_style = project.read_with(cx, |project, cx| project.path_style(cx))?;
+        let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         };

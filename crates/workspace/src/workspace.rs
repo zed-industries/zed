@@ -1705,7 +1705,7 @@ impl Workspace {
                 project_handle
                     .update(cx, |this, cx| {
                         this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
-                    })?
+                    })
                     .await;
             }
             if let Some(workspace) = serialized_workspace.as_ref() {

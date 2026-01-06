@@ -202,9 +202,7 @@ impl ActiveToolchain {
                         .read_with(cx, |this, cx| {
                             this.worktree_for_id(worktree_id, cx)
                                 .map(|worktree| worktree.read(cx).abs_path())
-                        })
-                        .ok()
-                        .flatten()?;
+                        })?;
                     workspace::WORKSPACE_DB
                         .set_toolchain(
                             workspace_id,
@@ -225,7 +223,6 @@ impl ActiveToolchain {
                                 cx,
                             )
                         })
-                        .ok()?
                         .await;
                 }
 
