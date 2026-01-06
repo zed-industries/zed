@@ -64,7 +64,7 @@ pub async fn run_load_project(
             },
             language_name,
         )
-    })?;
+    });
 
     progress.set_info(language_name, InfoStyle::Normal);
 
@@ -84,7 +84,7 @@ async fn cursor_position(
     open_buffers: &OpenedBuffers,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Buffer>, Anchor)> {
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     let result = language_registry
         .load_language_for_file_path(&example.spec.cursor_path)
         .await;
@@ -139,11 +139,11 @@ async fn cursor_position(
             &example.spec.name
         );
         Ok(excerpt_offset)
-    })??;
+    })?;
 
     let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
     let cursor_anchor =
-        cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
+        cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset));
 
     Ok((cursor_buffer, cursor_anchor))
 }
@@ -155,7 +155,7 @@ async fn setup_project(
     cx: &mut AsyncApp,
 ) -> Result<Entity<Project>> {
     let ep_store = cx
-        .update(|cx| EditPredictionStore::try_global(cx))?
+        .update(|cx| EditPredictionStore::try_global(cx))
         .context("Store should be initialized at init")?;
 
     let worktree_path = setup_worktree(example, step_progress).await?;
@@ -163,16 +163,13 @@ async fn setup_project(
     if let Some(project) = app_state.project_cache.get(&example.spec.repository_url) {
         ep_store.update(cx, |ep_store, _| {
             ep_store.clear_history_for_project(&project);
-        })?;
-        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+        });
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
         let buffers = buffer_store.read_with(cx, |buffer_store, _| {
             buffer_store.buffers().collect::<Vec<_>>()
-        })?;
+        });
         for buffer in buffers {
-            buffer
-                .update(cx, |buffer, cx| buffer.reload(cx))?
-                .await
-                .ok();
+            buffer.update(cx, |buffer, cx| buffer.reload(cx)).await.ok();
         }
         return Ok(project);
     }
@@ -188,20 +185,20 @@ async fn setup_project(
             false,
             cx,
         )
-    })?;
+    });
 
     project
         .update(cx, |project, cx| {
             project.disable_worktree_scanner(cx);
             project.create_worktree(&worktree_path, true, cx)
-        })?
+        })
         .await?;
 
     app_state
         .project_cache
         .insert(example.spec.repository_url.clone(), project.clone());
 
-    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
+    let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
     cx.subscribe(&buffer_store, {
         let project = project.clone();
         move |_, event, cx| match event {
@@ -210,7 +207,7 @@ async fn setup_project(
             }
             _ => {}
         }
-    })?
+    })
     .detach();
 
     Ok(project)

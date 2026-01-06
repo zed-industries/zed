@@ -51,7 +51,7 @@ pub async fn run_format_prompt(
             })??;
 
             let state = example.state.as_ref().context("state must be set")?;
-            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot());
             let project = state.project.clone();
             let (_, input) = ep_store.update(&mut cx, |ep_store, cx| {
                 let events = ep_store
@@ -75,7 +75,7 @@ pub async fn run_format_prompt(
                         .context("buffer must be set")?
                         .cursor_offset,
                 ))
-            })??;
+            })?;
             let prompt = format_zeta_prompt(&input);
             let expected_output = zeta2_output_for_patch(
                 &input,
