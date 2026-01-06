@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -182,17 +183,20 @@ async fn devcontainer_up(
                     DevContainerError::DevContainerParseFailed
                 })
             } else {
-                log::error!(
+                let message = format!(
                     "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 );
-                Err(DevContainerError::DevContainerUpFailed)
+
+                log::error!("{}", &message);
+                Err(DevContainerError::DevContainerUpFailed(message))
             }
         }
         Err(e) => {
-            log::error!("Error running devcontainer up: {:?}", e);
-            Err(DevContainerError::DevContainerUpFailed)
+            let message = format!("Error running devcontainer up: {:?}", e);
+            log::error!("{}", &message);
+            Err(DevContainerError::DevContainerUpFailed(message))
         }
     }
 }
@@ -217,17 +221,19 @@ async fn devcontainer_read_configuration(
                     DevContainerError::DevContainerParseFailed
                 })
             } else {
-                log::error!(
+                let message = format!(
                     "Non-success status running devcontainer read-configuration for workspace: out: {:?}, err: {:?}",
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 );
-                Err(DevContainerError::DevContainerUpFailed)
+                log::error!("{}", &message);
+                Err(DevContainerError::DevContainerUpFailed(message))
             }
         }
         Err(e) => {
-            log::error!("Error running devcontainer read-configuration: {:?}", e);
-            Err(DevContainerError::DevContainerUpFailed)
+            let message = format!("Error running devcontainer read-configuration: {:?}", e);
+            log::error!("{}", &message);
+            Err(DevContainerError::DevContainerUpFailed(message))
         }
     }
 }
@@ -284,11 +290,7 @@ pub(crate) async fn start_dev_container(
         return Err(DevContainerError::DevContainerNotFound);
     };
 
-    if let Ok(DevContainerUp {
-        container_id,
-        remote_workspace_folder,
-        ..
-    }) = devcontainer_up(
+    match devcontainer_up(
         &path_to_devcontainer_cli,
         found_in_path,
         &node_runtime,
@@ -296,22 +298,30 @@ pub(crate) async fn start_dev_container(
     )
     .await
     {
-        let project_name = get_project_name(
-            &path_to_devcontainer_cli,
-            directory,
-            remote_workspace_folder.clone(),
-            container_id.clone(),
-        )
-        .await?;
+        Ok(DevContainerUp {
+            container_id,
+            remote_workspace_folder,
+            ..
+        }) => {
+            let project_name = get_project_name(
+                &path_to_devcontainer_cli,
+                directory,
+                remote_workspace_folder.clone(),
+                container_id.clone(),
+            )
+            .await?;
 
-        let connection = Connection::DevContainer(DevContainerConnection {
-            name: project_name.into(),
-            container_id: container_id.into(),
-        });
+            let connection = Connection::DevContainer(DevContainerConnection {
+                name: project_name.into(),
+                container_id: container_id.into(),
+            });
 
-        Ok((connection, remote_workspace_folder))
-    } else {
-        Err(DevContainerError::DevContainerUpFailed)
+            Ok((connection, remote_workspace_folder))
+        }
+        Err(err) => {
+            let message = format!("Failed with nested error: {}", err);
+            Err(DevContainerError::DevContainerUpFailed(message))
+        }
     }
 }
 
@@ -319,10 +329,33 @@ pub(crate) async fn start_dev_container(
 pub(crate) enum DevContainerError {
     DockerNotAvailable,
     DevContainerCliNotAvailable,
-    DevContainerUpFailed,
+    DevContainerUpFailed(String),
     DevContainerNotFound,
     DevContainerParseFailed,
     NodeRuntimeNotAvailable,
+}
+
+impl Display for DevContainerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                DevContainerError::DockerNotAvailable =>
+                    "Docker CLI not found on $PATH".to_string(),
+                DevContainerError::DevContainerCliNotAvailable =>
+                    "Docker not found on path".to_string(),
+                DevContainerError::DevContainerUpFailed(message) => {
+                    format!("DevContainer creation failed with error: {}", message)
+                }
+                DevContainerError::DevContainerNotFound => "TODO what".to_string(),
+                DevContainerError::DevContainerParseFailed =>
+                    "Failed to parse file .devcontainer/devcontainer.json".to_string(),
+                DevContainerError::NodeRuntimeNotAvailable =>
+                    "Cannot find a valid node runtime".to_string(),
+            }
+        )
+    }
 }
 
 #[cfg(test)]
