@@ -4173,6 +4173,88 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {}
+                }
+            },
+            "e": {
+                "f": {
+                    "g": {}
+                }
+            },
+            "target": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b/c", "    > e/f/g", "    > target"]
+    );
+
+    select_folded_path_with_mark(&panel, "root/a/b/c", "root/a/b", cx);
+    select_folded_path_with_mark(&panel, "root/e/f/g", "root/e/f", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: *panel.state.selection.as_ref().unwrap(),
+            marked_selections: panel.marked_entries.clone().into(),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path(rel_path("target"))
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // After dragging 'b/c' and 'f/g' should be moved to target
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > e",
+            "    v target",
+            "        > b/c",
+            "        > f/g  <== selected  <== marked"
+        ],
+        "Should move 'b/c' and 'f/g' to target, leaving 'a' and 'e'"
+    );
+}
+
+#[gpui::test]
 async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -7918,6 +8000,40 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
             }
         }
         panic!("no worktree for path {:?}", path);
+    });
+}
+
+/// `leaf_path` is the full path to the leaf entry (e.g., "root/a/b/c")
+/// `active_ancestor_path` is the path to the ancestor that should be "active" (e.g., "root/a/b")
+fn select_folded_path_with_mark(
+    panel: &Entity<ProjectPanel>,
+    leaf_path: &str,
+    active_ancestor_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    select_path_with_mark(panel, leaf_path, cx);
+    let active_ancestor_path = rel_path(active_ancestor_path);
+    panel.update(cx, |panel, cx| {
+        let leaf_entry_id = panel.state.selection.unwrap().entry_id;
+        if let Some(folded_ancestors) = panel.state.ancestors.get_mut(&leaf_entry_id) {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(active_relative_path) =
+                    active_ancestor_path.strip_prefix(worktree.root_name())
+                {
+                    let active_entry_id = worktree.entry_for_path(active_relative_path).unwrap().id;
+                    if let Some(index) = folded_ancestors
+                        .ancestors
+                        .iter()
+                        .position(|&id| id == active_entry_id)
+                    {
+                        folded_ancestors.current_ancestor_depth =
+                            folded_ancestors.ancestors.len() - 1 - index;
+                    }
+                    return;
+                }
+            }
+        }
     });
 }
 
