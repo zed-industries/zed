@@ -2,7 +2,6 @@ use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     git,
     headless::EpAppState,
-    paths::WORKTREES_DIR,
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
@@ -187,15 +186,13 @@ async fn setup_project(
 }
 
 async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Result<PathBuf> {
-    let (repo_owner, repo_name) = example.repo_name().context("failed to get repo name")?;
+    let repo_name = example.repo_name().context("failed to get repo name")?;
     let repo_dir = git::repo_path_for_url(&example.spec.repository_url)?;
-    let worktree_path = WORKTREES_DIR
-        .join(repo_owner.as_ref())
-        .join(repo_name.as_ref());
+    let worktree_path = repo_name.worktree_path();
     let repo_lock = git::lock_repo(&repo_dir).await;
 
     if !repo_dir.is_dir() {
-        step_progress.set_substatus(format!("cloning {}", repo_name));
+        step_progress.set_substatus(format!("cloning {}", repo_name.name));
         fs::create_dir_all(&repo_dir)?;
         git::run_git(&repo_dir, &["init"]).await?;
         git::run_git(

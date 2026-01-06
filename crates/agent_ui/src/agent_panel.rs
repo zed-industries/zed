@@ -720,8 +720,23 @@ impl AgentPanel {
         &self.prompt_store
     }
 
-    pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
+    pub fn thread_store(&self) -> &Entity<HistoryStore> {
         &self.history_store
+    }
+
+    pub fn open_thread(
+        &mut self,
+        thread: DbThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_thread(
+            Some(crate::ExternalAgent::NativeAgent),
+            Some(thread),
+            None,
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
