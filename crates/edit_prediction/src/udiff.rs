@@ -12,7 +12,7 @@ use collections::HashMap;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_diff};
 use postage::stream::Stream as _;
-use project::{Project, ProjectPath};
+use project::Project;
 use util::{paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -58,36 +58,20 @@ pub async fn apply_diff(
             } => {
                 let buffer = match current_file {
                     None => {
-                        if is_new_file {
-                            let rel_path = RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)
-                                .unwrap()
-                                .into_arc();
-
+                        let buffer = if is_new_file {
                             project
+                                .update(cx, |project, cx| project.create_buffer(true, cx))?
+                                .await?
+                        } else {
+                            let project_path = project
                                 .update(cx, |project, cx| {
-                                    project.create_entry(
-                                        ProjectPath {
-                                            worktree_id: worktree.read(cx).id(),
-                                            path: rel_path,
-                                        },
-                                        false,
-                                        cx,
-                                    )
+                                    project.find_project_path(path.as_ref(), cx)
                                 })?
-                                .await?;
-                        }
-
-                        let project_path = project
-                            .update(cx, |project, cx| {
-                                project.find_project_path(path.as_ref(), cx)
-                            })?
-                            .with_context(|| {
-                                format!("Failed to find project path in diff: {}", path)
-                            })?;
-
-                        let buffer = project
-                            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                            .await?;
+                                .with_context(|| format!("no such path: {}", path))?;
+                            project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                                .await?
+                        };
                         included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()

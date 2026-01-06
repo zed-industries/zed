@@ -125,12 +125,6 @@ async fn wait_for_language_servers_to_start(
 
     drop(added_subscription);
 
-    if !language_server_ids.is_empty() {
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-            .detach();
-    }
-
     let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let subscriptions = [
         cx.subscribe(&lsp_store, {
@@ -153,6 +147,7 @@ async fn wait_for_language_servers_to_start(
         }),
         cx.subscribe(project, {
             let step_progress = step_progress.clone();
+            let lsp_store = lsp_store.clone();
             move |_, event, cx| match event {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     let lsp_store = lsp_store.read(cx);
@@ -172,7 +167,18 @@ async fn wait_for_language_servers_to_start(
         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
         .await?;
 
-    let mut pending_language_server_ids = HashSet::from_iter(language_server_ids.into_iter());
+    let mut pending_language_server_ids = lsp_store.read_with(cx, |lsp_store, _| {
+        language_server_ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                lsp_store
+                    .language_server_statuses
+                    .get(id)
+                    .is_some_and(|status| status.has_pending_diagnostic_updates)
+            })
+            .collect::<HashSet<_>>()
+    })?;
     while !pending_language_server_ids.is_empty() {
         futures::select! {
             language_server_id = rx.next() => {
