@@ -256,6 +256,11 @@ impl AudioStack {
         sample_rate: u32,
         num_channels: u32,
     ) -> Result<()> {
+        // Prevent App Nap from throttling audio playback on macOS.
+        // This guard is held for the entire duration of audio output.
+        #[cfg(target_os = "macos")]
+        let _prevent_app_nap = PreventAppNapGuard::new();
+
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
             let (output_device, output_config) = crate::default_device(false)?;
@@ -802,7 +807,10 @@ trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
 
 #[cfg(target_os = "macos")]
 mod macos {
-
+    use cocoa::{
+        base::{id, nil},
+        foundation::{NSProcessInfo, NSString},
+    };
     use coreaudio::sys::{
         AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
         AudioObjectRemovePropertyListener, OSStatus, kAudioHardwarePropertyDefaultInputDevice,
@@ -810,6 +818,50 @@ mod macos {
         kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     };
     use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
+    use objc::{msg_send, sel, sel_impl};
+
+    /// A guard that prevents App Nap while held.
+    ///
+    /// On macOS, App Nap can throttle background apps to save power. This can cause
+    /// audio artifacts when the app is not in the foreground. This guard tells macOS
+    /// that we're doing latency-sensitive work and should not be throttled.
+    ///
+    /// See Apple's documentation on prioritizing work at the app level:
+    /// https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/PrioritizeWorkAtTheAppLevel.html
+    pub struct PreventAppNapGuard {
+        activity: id,
+    }
+
+    // The activity token returned by NSProcessInfo is thread-safe
+    unsafe impl Send for PreventAppNapGuard {}
+
+    // From NSProcessInfo.h
+    const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+    const NS_ACTIVITY_USER_INITIATED: u64 = 0x00FFFFFF | NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+    const NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 =
+        NS_ACTIVITY_USER_INITIATED & !NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+
+    impl PreventAppNapGuard {
+        pub fn new() -> Self {
+            unsafe {
+                let process_info = NSProcessInfo::processInfo(nil);
+                let reason = NSString::alloc(nil).init_str("Audio playback in progress");
+                let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
+                let _: () = msg_send![activity, retain];
+                Self { activity }
+            }
+        }
+    }
+
+    impl Drop for PreventAppNapGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let process_info = NSProcessInfo::processInfo(nil);
+                let _: () = msg_send![process_info, endActivity:self.activity];
+                let _: () = msg_send![self.activity, release];
+            }
+        }
+    }
 
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
@@ -990,6 +1042,8 @@ mod macos {
 
 #[cfg(target_os = "macos")]
 type DeviceChangeListener = macos::CoreAudioDefaultDeviceChangeListener;
+#[cfg(target_os = "macos")]
+use macos::PreventAppNapGuard;
 
 #[cfg(not(target_os = "macos"))]
 mod noop_change_listener {
