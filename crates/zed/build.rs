@@ -199,26 +199,28 @@ fn main() {
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        use image::{DynamicImage, ImageReader, ImageResult, imageops};
-        use std::env;
-        use std::path::Path;
+    prepare_app_icon_x11();
+}
 
-        let out_dir = env::var("OUT_DIR").unwrap();
+fn prepare_app_icon_x11() {
+    use image::{DynamicImage, ImageReader, ImageResult, imageops};
+    use std::env;
+    use std::path::Path;
 
-        let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
-        let icon = match release_channel {
-            "stable" => "resources/app-icon.png",
-            "preview" => "resources/app-icon-preview.png",
-            "nightly" => "resources/app-icon-nightly.png",
-            "dev" | _ => "resources/app-icon-dev.png",
-        };
+    let out_dir = env::var("OUT_DIR").unwrap();
 
-        let icon_src = Path::new(icon);
+    let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
+    let icon = match release_channel {
+        "stable" => "resources/app-icon.png",
+        "preview" => "resources/app-icon-preview.png",
+        "nightly" => "resources/app-icon-nightly.png",
+        "dev" | _ => "resources/app-icon-dev.png",
+    };
 
-        let resized_image = match || -> ImageResult<DynamicImage> {
-            Ok(ImageReader::open(icon_src)?.decode()?)
-        }() {
+    let icon_src = Path::new(icon);
+
+    let resized_image =
+        match || -> ImageResult<DynamicImage> { Ok(ImageReader::open(icon_src)?.decode()?) }() {
             Err(msg) => {
                 eprintln!("failed to read or decode {}: {msg}", icon_src.display());
                 std::process::exit(1);
@@ -226,20 +228,19 @@ fn main() {
             Ok(image) => imageops::resize(&image, 256, 256, imageops::FilterType::Lanczos3),
         };
 
-        // name should match include_bytes! call in src/zed.rs
-        let icon_out_path = Path::new(&out_dir).join("app_icon.png");
-        resized_image.save(&icon_out_path).expect("saving app icon");
+    // name should match include_bytes! call in src/zed.rs
+    let icon_out_path = Path::new(&out_dir).join("app_icon.png");
+    resized_image.save(&icon_out_path).expect("saving app icon");
 
-        // verify icon can be read and decoded
-        if let Err(msg) = ImageReader::open(&icon_out_path).unwrap().decode() {
-            eprintln!(
-                "error verifying {}: {msg} (resized from {icon})",
-                icon_out_path.display(),
-            );
-            std::process::exit(1);
-        }
-
-        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
-        println!("cargo:rerun-if-changed={}", icon_src.to_string_lossy());
+    // verify icon can be read and decoded
+    if let Err(msg) = ImageReader::open(&icon_out_path).unwrap().decode() {
+        eprintln!(
+            "error verifying {}: {msg} (resized from {icon})",
+            icon_out_path.display(),
+        );
+        std::process::exit(1);
     }
+
+    println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+    println!("cargo:rerun-if-changed={}", icon_src.to_string_lossy());
 }
