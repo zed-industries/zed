@@ -1355,7 +1355,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn is_opaque(&self) -> bool {
-        self.borrow().renderer.layer().is_opaque()
+        self.0.as_ref().lock().renderer.layer().is_opaque()
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

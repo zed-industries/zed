@@ -1,6 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
