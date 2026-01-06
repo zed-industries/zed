@@ -4,6 +4,20 @@
 
 This document provides a detailed implementation plan for the subagents feature in Zed's agent system. The goal is to allow agents to delegate tasks to subagents with their own isolated context windows.
 
+## Current Status (2026-01-06)
+
+| PR  | Status       | Description                              |
+| --- | ------------ | ---------------------------------------- |
+| 1   | ✅ Completed | Feature flag + basic tool skeleton       |
+| 2   | ✅ Completed | Thread spawning + basic execution        |
+| 3   | 🔜 Next      | UI card rendering (collapsed state)      |
+| 4   | ⏳ Pending   | UI expansion + embedded thread view      |
+| 5   | ⏳ Pending   | Polish: token display, errors, persistence |
+
+**Next step:** Start PR 3 - implement collapsed card rendering for subagent tool calls. See [PR 3 details](#pr-3-ui-card-rendering-collapsed-state) below.
+
+---
+
 ## Table of Contents
 
 1. [Background: Zed's Agent Architecture](#background-zeds-agent-architecture)
@@ -1732,6 +1746,12 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 - [x] `test_subagent_model_error_returned_as_tool_error`
 - [x] `test_context_low_check_returns_true_when_usage_high` (tests the context low detection)
 - [x] `test_subagent_timeout_triggers_early_summary`
+- [x] `test_allowed_tools_rejects_unknown_tool` (validates error when requesting invalid tool)
+- [x] `test_subagent_empty_response_handled` (graceful handling of empty model responses)
+- [x] `test_nested_subagent_at_depth_2_succeeds` (verifies depth-2 subagents work)
+- [x] `test_subagent_uses_tool_and_returns_result` (confirms subagent can invoke tools)
+- [x] `test_max_parallel_subagents_enforced` (validates 8-subagent limit)
+- [x] `test_subagent_tool_end_to_end` (full integration: spawn → task → summary → return)
 
 **Definition of Done:**
 
@@ -1743,6 +1763,7 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 - [x] `timeout_ms` is implemented and triggers early summary
 - [x] `allowed_tools` filtering is implemented
 - [x] Cancellation propagates from parent to subagent
+- [x] `MAX_PARALLEL_SUBAGENTS` (8) limit is enforced
 - [x] `./script/clippy` passes
 - [x] All tests listed above pass
 
