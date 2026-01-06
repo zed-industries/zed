@@ -74,8 +74,6 @@ use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
-const PROMPT_REPLACE: &str = "Replace";
-const PROMPT_CANCEL: &str = "Cancel";
 
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
@@ -3335,58 +3333,6 @@ impl ProjectPanel {
         sanitized_entries
     }
 
-    fn detect_move_conflicts(
-        &self,
-        selections: &BTreeSet<SelectedEntry>,
-        destination_entry: ProjectEntryId,
-        destination_is_file: bool,
-        cx: &App,
-    ) -> Vec<String> {
-        let project = self.project.read(cx);
-        let Some(destination_path) = project.path_for_entry(destination_entry, cx) else {
-            return Vec::new();
-        };
-        let Some(worktree) = project.worktree_for_id(destination_path.worktree_id, cx) else {
-            return Vec::new();
-        };
-        let worktree = worktree.read(cx);
-
-        let mut destination_dir = destination_path.path.as_ref();
-        if destination_is_file {
-            destination_dir = match destination_dir.parent() {
-                Some(parent) => parent,
-                None => return Vec::new(),
-            };
-        }
-
-        let mut conflicts = Vec::new();
-        let mut proposed_paths: HashSet<String> = HashSet::default();
-
-        for selection in selections {
-            if let Some(source_path) = project.path_for_entry(selection.entry_id, cx) {
-                if let Some(file_name) = source_path.path.file_name() {
-                    let mut new_path = destination_dir.to_rel_path_buf();
-                    if let Ok(rel_path) = RelPath::unix(file_name) {
-                        new_path.push(rel_path);
-                        let new_path_str = new_path.as_unix_str().to_string();
-
-                        // Ensure we aren't moving a file onto itself or conflict with itself
-                        // (though we filtered disjoint selections, so we are moving source to dest/source_name)
-                        // If source_path.path == new_path, it's a no-op, not a conflict.
-                        if (worktree.entry_for_path(&new_path).is_some()
-                            || proposed_paths.contains(&new_path_str))
-                            && source_path.path.as_ref() != new_path.as_rel_path()
-                        {
-                            conflicts.push(file_name.to_string());
-                        }
-                        proposed_paths.insert(new_path_str);
-                    }
-                }
-            }
-        }
-        conflicts
-    }
-
     fn effective_entries(&self) -> BTreeSet<SelectedEntry> {
         if let Some(selection) = self.state.selection {
             let selection = SelectedEntry {
@@ -4035,59 +3981,8 @@ impl ProjectPanel {
                 Some(())
             });
         } else {
-            let conflicts = self.detect_move_conflicts(&entries, target_entry_id, is_file, cx);
-
-            if !conflicts.is_empty() {
-                let message = format!(
-                    "The following files already exist:\n\n{}\n\nDo you want to replace them?",
-                    conflicts.join("\n")
-                );
-                let prompt = window.prompt(
-                    PromptLevel::Warning,
-                    &message,
-                    None,
-                    &[PROMPT_REPLACE, PROMPT_CANCEL],
-                    cx,
-                );
-
-                cx.spawn_in(
-                    window,
-                    move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
-                        let mut cx = cx.clone();
-                        async move {
-                            if let Ok(0) = prompt.await {
-                                this.update(&mut cx, |this: &mut Self, cx: &mut Context<Self>| {
-                                    let mut errors = Vec::new();
-                                    for selection in entries {
-                                        if let Err(err) = std::panic::catch_unwind(
-                                            std::panic::AssertUnwindSafe(|| {
-                                                this.move_entry(
-                                                    selection.entry_id,
-                                                    target_entry_id,
-                                                    is_file,
-                                                    cx,
-                                                );
-                                            }),
-                                        ) {
-                                            errors.push(format!("{:?}", err));
-                                        }
-                                    }
-                                    if !errors.is_empty() {
-                                        log::error!("Errors moving entries: {:?}", errors);
-                                        cx.notify();
-                                    }
-                                })
-                                .log_err();
-                            }
-                            anyhow::Ok(())
-                        }
-                    },
-                )
-                .detach_and_log_err(cx);
-            } else {
-                for selection in entries {
-                    self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
-                }
+            for entry in entries {
+                self.move_entry(entry.entry_id, target_entry_id, is_file, cx);
             }
         }
     }
