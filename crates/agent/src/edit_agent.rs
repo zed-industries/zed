@@ -18,7 +18,7 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{AppContext, AsyncApp, Entity, Task};
-use language::{Anchor, Buffer, BufferSnapshot, LineIndent, Point, TextBufferSnapshot};
+use language::{Anchor, Buffer, BufferSnapshot, LineIndent, Point, TextBufferSnapshot, text_diff};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, MessageContent, Role,
@@ -100,6 +100,40 @@ impl EditAgent {
         }
     }
 
+    pub fn create(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_description: String,
+        conversation: &LanguageModelRequest,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let this = self.clone();
+        let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
+        let output = cx.spawn(async move |cx| {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
+            let prompt = CreateFilePromptTemplate {
+                path,
+                edit_description,
+            }
+            .render(&this.templates)?;
+            let new_chunks = this
+                .request(conversation, CompletionIntent::CreateFile, prompt, cx)
+                .await?;
+
+            let (output, mut inner_events) = this.create_with_chunks(buffer, new_chunks, cx);
+            while let Some(event) = inner_events.next().await {
+                events_tx.unbounded_send(event).ok();
+            }
+            output.await
+        });
+        (output, events_rx)
+    }
+
     pub fn overwrite(
         &self,
         buffer: Entity<Buffer>,
@@ -134,7 +168,7 @@ impl EditAgent {
         (output, events_rx)
     }
 
-    fn overwrite_with_chunks(
+    fn create_with_chunks(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
@@ -149,6 +183,28 @@ impl EditAgent {
         let task = cx.spawn(async move |cx| {
             this.action_log
                 .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
+            this.create_with_chunks_internal(buffer, parse_rx, output_events_tx, cx)
+                .await?;
+            parse_task.await
+        });
+        (task, output_events_rx)
+    }
+
+    fn overwrite_with_chunks(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let (output_events_tx, output_events_rx) = mpsc::unbounded();
+        let (parse_task, parse_rx) = Self::parse_create_file_chunks(edit_chunks, cx);
+        let this = self.clone();
+        let task = cx.spawn(async move |cx| {
+            this.action_log
+                .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
             this.overwrite_with_chunks_internal(buffer, parse_rx, output_events_tx, cx)
                 .await?;
             parse_task.await
@@ -156,7 +212,7 @@ impl EditAgent {
         (task, output_events_rx)
     }
 
-    async fn overwrite_with_chunks_internal(
+    async fn create_with_chunks_internal(
         &self,
         buffer: Entity<Buffer>,
         mut parse_rx: UnboundedReceiver<Result<CreateFileParserEvent>>,
@@ -212,6 +268,81 @@ impl EditAgent {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    async fn overwrite_with_chunks_internal(
+        &self,
+        buffer: Entity<Buffer>,
+        mut parse_rx: UnboundedReceiver<Result<CreateFileParserEvent>>,
+        output_events_tx: mpsc::UnboundedSender<EditAgentOutputEvent>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let old_text = buffer.read_with(cx, |buffer, _| buffer.text())?;
+
+        let mut new_text = String::new();
+        while let Some(event) = parse_rx.next().await {
+            match event? {
+                CreateFileParserEvent::NewTextChunk { chunk } => {
+                    new_text.push_str(&chunk);
+                }
+            }
+        }
+
+        let edits = text_diff(&old_text, &new_text);
+
+        if edits.is_empty() {
+            return Ok(());
+        }
+
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+        let anchored_edits: Vec<(Range<Anchor>, Arc<str>)> = edits
+            .into_iter()
+            .map(|(range, replacement)| {
+                let start = snapshot.anchor_after(range.start);
+                let end = snapshot.anchor_before(range.end);
+                (start..end, replacement)
+            })
+            .collect();
+
+        let (min_edit_start, max_edit_end) = cx.update(|cx| {
+            let (min_edit_start, max_edit_end) = buffer.update(cx, |buffer, cx| {
+                buffer.edit(anchored_edits.iter().cloned(), None, cx);
+                let max_edit_end = buffer
+                    .summaries_for_anchors::<Point, _>(
+                        anchored_edits.iter().map(|(range, _)| &range.end),
+                    )
+                    .max()
+                    .unwrap_or_default();
+                let min_edit_start = buffer
+                    .summaries_for_anchors::<Point, _>(
+                        anchored_edits.iter().map(|(range, _)| &range.start),
+                    )
+                    .min()
+                    .unwrap_or_default();
+                (
+                    buffer.anchor_after(min_edit_start),
+                    buffer.anchor_before(max_edit_end),
+                )
+            });
+            self.action_log
+                .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: max_edit_end,
+                    }),
+                    cx,
+                );
+            });
+            (min_edit_start, max_edit_end)
+        })?;
+
+        output_events_tx
+            .unbounded_send(EditAgentOutputEvent::Edited(min_edit_start..max_edit_end))
+            .ok();
 
         Ok(())
     }
@@ -1177,14 +1308,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_overwrite_events(cx: &mut TestAppContext) {
+    async fn test_create_events(cx: &mut TestAppContext) {
         let agent = init_test(cx).await;
         let project = agent
             .action_log
             .read_with(cx, |log, _| log.project().clone());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        let (apply, mut events) = agent.overwrite_with_chunks(
+        let (apply, mut events) = agent.create_with_chunks(
             buffer.clone(),
             chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
             &mut cx.to_async(),
@@ -1284,6 +1415,77 @@ mod tests {
                     cx.update(|cx| buffer.read(cx).remote_id())
                 ),
             })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_overwrite_events(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let project = agent
+            .action_log
+            .read_with(cx, |log, _| log.project().clone());
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        let (apply, mut events) = agent.overwrite_with_chunks(
+            buffer.clone(),
+            chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        // No events yet - overwrite waits for all chunks before diffing
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\ndef\nghi"
+        );
+
+        // Send new content that only differs in the middle line
+        chunks_tx.unbounded_send("```\nabc\nDEF\nghi\n```").unwrap();
+        drop(chunks_tx);
+
+        apply.await.unwrap();
+
+        // Should have one edit event for the changed region
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\nDEF\nghi"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 3)))
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_overwrite_no_changes(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        let (apply, mut events) = agent.overwrite_with_chunks(
+            buffer.clone(),
+            chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        // Send identical content
+        chunks_tx.unbounded_send("```\nabc\ndef\nghi\n```").unwrap();
+        drop(chunks_tx);
+
+        apply.await.unwrap();
+
+        // No edit events when content is identical
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\ndef\nghi"
         );
     }
 

@@ -376,20 +376,25 @@ impl AgentTool for EditFileTool {
                 .await;
 
 
-            let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
-                edit_agent.edit(
+            let (output, mut events) = match input.mode {
+                EditFileMode::Edit => edit_agent.edit(
                     buffer.clone(),
                     input.display_description.clone(),
                     &request,
                     cx,
-                )
-            } else {
-                edit_agent.overwrite(
+                ),
+                EditFileMode::Create => edit_agent.create(
                     buffer.clone(),
                     input.display_description.clone(),
                     &request,
                     cx,
-                )
+                ),
+                EditFileMode::Overwrite => edit_agent.overwrite(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    &request,
+                    cx,
+                ),
             };
 
             let mut hallucinated_old_text = false;
