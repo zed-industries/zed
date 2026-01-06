@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Read};
 
 /// `ep split-commit` CLI args.
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub struct SplitCommitArgs {
     /// Path to the commit file (use "-" for stdin)
     #[arg(long, short = 'c')]
