@@ -436,6 +436,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::TextRenderingMode>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         .add_basic_renderer::<settings::BaseKeymapContent>(render_dropdown)
         .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
