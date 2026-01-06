@@ -14,7 +14,161 @@ This document provides a detailed implementation plan for the subagents feature 
 | 4   | ✅ Completed | UI expansion + embedded thread view      |
 | 5   | 🔜 Next      | Polish: token display, errors, persistence |
 
-**Next step:** Start PR 5 - Polish: token display, errors, persistence. See [PR 5 details](#pr-5-polish--token-display-errors-persistence-cancellation) below.
+**⚠️ ISSUE:** All PRs 1-4 are currently on a single `subagents` branch. They need to be split into separate stacked PRs. See [PR Split Plan](#pr-split-plan) below.
+
+**Next step:** Split the existing `subagents` branch into separate stacked PRs, then continue with PR 5.
+
+---
+
+## PR Split Plan
+
+The current `subagents` branch contains all work for PRs 1-4 in a single branch. This needs to be split into separate PRs that stack on top of each other:
+
+```
+origin/main
+    └── PR 1: Feature flag + tool skeleton (subagents-pr1)
+            └── PR 2: Thread spawning + execution (subagents-pr2)
+                    └── PR 3: UI card rendering (subagents-pr3)
+                            └── PR 4: UI expansion (subagents-pr4)
+```
+
+### Step-by-Step Split Process
+
+#### 1. Identify commits for each PR
+
+First, review the git history to identify which commits belong to which PR:
+
+```bash
+git log --oneline origin/main..subagents
+```
+
+Group commits by their logical PR:
+- **PR 1 commits:** Feature flag addition, SubagentTool skeleton, basic tests
+- **PR 2 commits:** Thread spawning, run_subagent implementation, timeout/context-low handling
+- **PR 3 commits:** UI card detection (is_subagent), collapsed card rendering, expand/collapse state
+- **PR 4 commits:** SubagentThread content type, AcpThread forwarding, expanded thread rendering
+
+#### 2. Create PR 1 branch
+
+```bash
+# Start fresh from origin/main
+git checkout origin/main
+git checkout -b subagents-pr1
+
+# Cherry-pick PR 1 commits (adjust SHAs as needed)
+git cherry-pick <pr1-commit-sha-1>
+git cherry-pick <pr1-commit-sha-2>
+# ... etc
+
+# Verify it builds
+./script/clippy -p agent -p feature_flags
+
+# Push and create PR
+git push origin subagents-pr1
+gh pr create --title "Subagents PR 1: Feature flag + tool skeleton" --base main --head subagents-pr1
+```
+
+#### 3. Create PR 2 branch (stacked on PR 1)
+
+```bash
+git checkout subagents-pr1
+git checkout -b subagents-pr2
+
+# Cherry-pick PR 2 commits
+git cherry-pick <pr2-commit-sha-1>
+git cherry-pick <pr2-commit-sha-2>
+# ... etc
+
+# Verify it builds
+./script/clippy -p agent
+
+# Push and create PR targeting PR 1's branch
+git push origin subagents-pr2
+gh pr create --title "Subagents PR 2: Thread spawning + execution" --base subagents-pr1 --head subagents-pr2
+```
+
+#### 4. Create PR 3 branch (stacked on PR 2)
+
+```bash
+git checkout subagents-pr2
+git checkout -b subagents-pr3
+
+# Cherry-pick PR 3 commits
+git cherry-pick <pr3-commit-sha-1>
+# ... etc
+
+# Verify it builds  
+./script/clippy -p agent_ui -p acp_thread
+
+# Push and create PR
+git push origin subagents-pr3
+gh pr create --title "Subagents PR 3: UI card rendering" --base subagents-pr2 --head subagents-pr3
+```
+
+#### 5. Create PR 4 branch (stacked on PR 3)
+
+```bash
+git checkout subagents-pr3
+git checkout -b subagents-pr4
+
+# Cherry-pick PR 4 commits
+git cherry-pick <pr4-commit-sha-1>
+# ... etc
+
+# Verify it builds
+./script/clippy -p agent -p agent_ui -p acp_thread
+
+# Push and create PR
+git push origin subagents-pr4
+gh pr create --title "Subagents PR 4: UI expansion + embedded thread view" --base subagents-pr3 --head subagents-pr4
+```
+
+#### 6. Close the monolithic PR
+
+After all stacked PRs are created:
+
+```bash
+gh pr close 46109 --comment "Split into stacked PRs: #<pr1>, #<pr2>, #<pr3>, #<pr4>"
+```
+
+### Alternative: Interactive Rebase Approach
+
+If commits are interleaved and cherry-picking is complex, use interactive rebase to reorder:
+
+```bash
+# Create a working branch
+git checkout subagents
+git checkout -b subagents-reorder
+
+# Interactive rebase to reorder commits by PR
+git rebase -i origin/main
+
+# In the editor, reorder commits so all PR1 commits come first,
+# then PR2, then PR3, then PR4
+# Save and exit
+
+# Now create branches at each PR boundary
+git checkout -b subagents-pr1 <last-pr1-commit>
+git checkout -b subagents-pr2 <last-pr2-commit>
+git checkout -b subagents-pr3 <last-pr3-commit>
+git checkout -b subagents-pr4 <last-pr4-commit>
+```
+
+### Maintaining the Stack
+
+When PR 1 is merged:
+
+```bash
+# Rebase PR 2 onto main
+git checkout subagents-pr2
+git rebase origin/main
+git push --force-with-lease origin subagents-pr2
+
+# Update PR 2's base branch to main
+gh pr edit <pr2-number> --base main
+
+# Then rebase PR 3 onto the updated PR 2, etc.
+```
 
 ---
 
