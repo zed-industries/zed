@@ -3614,9 +3614,7 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
     });
 
     subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message("Do work", cx)
-        })
+        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
         .unwrap();
     cx.run_until_parked();
 
@@ -3628,9 +3626,8 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
         cache_read_input_tokens: 0,
     };
 
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
-        high_usage,
-    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(high_usage));
     fake_model.send_last_completion_stream_text_chunk("Working...");
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
