@@ -470,7 +470,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 #[derive(Debug)]
 #[cfg_attr(
     all(
-        any(target_os = "linux", target_os = "freebsd", target_os = "macos"),
+        any(target_os = "linux", target_os = "freebsd"),
         not(any(feature = "x11", feature = "wayland"))
     ),
     allow(dead_code)
@@ -484,6 +484,7 @@ pub(crate) enum PrimitiveBatch<'a> {
         texture_id: AtlasTextureId,
         sprites: &'a [MonochromeSprite],
     },
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     SubpixelSprites {
         texture_id: AtlasTextureId,
         sprites: &'a [SubpixelSprite],
