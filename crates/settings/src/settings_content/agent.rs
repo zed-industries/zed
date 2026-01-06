@@ -210,6 +210,21 @@ impl AgentSettingsContent {
             .or_default();
         tool_rules.default_mode = Some(mode);
     }
+
+    pub fn add_tool_allow_pattern(&mut self, tool_name: &str, pattern: String) {
+        let tool_permissions = self.tool_permissions.get_or_insert_default();
+        let tool_rules = tool_permissions
+            .tools
+            .entry(Arc::from(tool_name))
+            .or_default();
+        let always_allow = tool_rules.always_allow.get_or_insert_default();
+        if !always_allow.0.iter().any(|r| r.pattern == pattern) {
+            always_allow.0.push(ToolRegexRule {
+                pattern,
+                case_sensitive: None,
+            });
+        }
+    }
 }
 
 #[with_fallible_options]
@@ -522,9 +537,10 @@ pub struct ToolRulesContent {
 }
 
 #[with_fallible_options]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolRegexRule {
     /// The regex pattern to match.
+    #[serde(default)]
     pub pattern: String,
 
     /// Whether the regex is case-sensitive.
