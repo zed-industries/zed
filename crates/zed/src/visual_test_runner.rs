@@ -340,8 +340,8 @@ fn main() {
                         }
                     }
 
-                    // Run Test 3: Agent Thread View with Image
-                    println!("\n--- Test 3: agent_thread_with_image ---");
+                    // Run Test 3: Agent Thread View with Image (collapsed and expanded)
+                    println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
                     let test_result = run_agent_thread_view_test(
                         app_state_for_tests.clone(),
                         &mut cx,
@@ -351,13 +351,12 @@ fn main() {
 
                     match test_result {
                         Ok(TestResult::Passed) => {
-                            println!("✓ agent_thread_with_image: PASSED");
+                            println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
                             passed += 1;
                         }
-                        Ok(TestResult::BaselineUpdated(path)) => {
+                        Ok(TestResult::BaselineUpdated(_)) => {
                             println!(
-                                "✓ agent_thread_with_image: Baseline updated at {}",
-                                path.display()
+                                "✓ agent_thread_with_image: Baselines updated (collapsed + expanded)"
                             );
                             updated += 1;
                         }
@@ -980,7 +979,7 @@ async fn run_agent_thread_view_test(
         .timer(std::time::Duration::from_millis(500))
         .await;
 
-    // Expand the tool call so its content (the image) is visible
+    // Get the tool call ID for expanding later
     let tool_call_id = thread
         .update(cx, |thread, _cx| {
             thread.entries().iter().find_map(|entry| {
@@ -993,16 +992,7 @@ async fn run_agent_thread_view_test(
         })?
         .ok_or_else(|| anyhow::anyhow!("Expected a ToolCall entry in thread for visual test"))?;
 
-    thread_view.update(cx, |view, cx| {
-        view.expand_tool_call(tool_call_id, cx);
-    })?;
-
-    // Wait for UI to update
-    cx.background_executor()
-        .timer(std::time::Duration::from_millis(300))
-        .await;
-
-    // Refresh window
+    // Refresh window for collapsed state
     cx.update_window(
         workspace_window.into(),
         |_view, window: &mut Window, _cx| {
@@ -1014,12 +1004,57 @@ async fn run_agent_thread_view_test(
         .timer(std::time::Duration::from_millis(300))
         .await;
 
-    // Capture and compare screenshot of the full workspace window with AgentPanel chrome
-    run_visual_test(
-        "agent_thread_with_image",
+    // First, capture the COLLAPSED state (image tool call not expanded)
+    let collapsed_result = run_visual_test(
+        "agent_thread_with_image_collapsed",
         workspace_window.into(),
         cx,
         update_baseline,
     )
-    .await
+    .await?;
+
+    // Now expand the tool call so its content (the image) is visible
+    thread_view.update(cx, |view, cx| {
+        view.expand_tool_call(tool_call_id, cx);
+    })?;
+
+    // Wait for UI to update
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    // Refresh window for expanded state
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    // Capture the EXPANDED state (image visible)
+    let expanded_result = run_visual_test(
+        "agent_thread_with_image_expanded",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await?;
+
+    // Return pass only if both tests passed
+    match (&collapsed_result, &expanded_result) {
+        (TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p1), TestResult::BaselineUpdated(_)) => {
+            Ok(TestResult::BaselineUpdated(p1.clone()))
+        }
+        (TestResult::Passed, TestResult::BaselineUpdated(p)) => {
+            Ok(TestResult::BaselineUpdated(p.clone()))
+        }
+        (TestResult::BaselineUpdated(p), TestResult::Passed) => {
+            Ok(TestResult::BaselineUpdated(p.clone()))
+        }
+    }
 }

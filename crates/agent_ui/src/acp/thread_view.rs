@@ -286,7 +286,6 @@ pub struct AcpThreadView {
     list_state: ListState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
-    collapsed_image_tool_calls: HashSet<acp::ToolCallId>,
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
@@ -456,7 +455,6 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
-            collapsed_image_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
@@ -2733,10 +2731,7 @@ impl AcpThreadView {
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let is_image_collapsed = self.collapsed_image_tool_calls.contains(&tool_call.id);
-        let is_open = needs_confirmation
-            || (has_image_content && !is_image_collapsed)
-            || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
         let should_show_raw_input = !is_terminal_tool && !is_edit;
 
@@ -2982,13 +2977,7 @@ impl AcpThreadView {
                                                 .on_click(cx.listener({
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                        if has_image_content {
-                                                            if is_open {
-                                                                this.collapsed_image_tool_calls.insert(id.clone());
-                                                            } else {
-                                                                this.collapsed_image_tool_calls.remove(&id);
-                                                            }
-                                                        } else if is_open {
+                                                        if is_open {
                                                             this.expanded_tool_calls.remove(&id);
                                                         } else {
                                                             this.expanded_tool_calls.insert(id.clone());
