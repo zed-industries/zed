@@ -487,6 +487,11 @@ pub fn into_open_ai(
         model: model_id.into(),
         messages,
         stream,
+        stream_options: if stream {
+            Some(open_ai::StreamOptions::default())
+        } else {
+            None
+        },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,

@@ -291,10 +291,23 @@ impl Model {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
+}
+
+impl Default for StreamOptions {
+    fn default() -> Self {
+        Self { include_usage: true }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_completion_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
