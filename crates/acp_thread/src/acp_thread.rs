@@ -375,18 +375,16 @@ impl ToolCall {
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;
-        let position = buffer
-            .update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                if let Some(row) = location.line {
-                    let column = snapshot.indent_size_for_line(row).len;
-                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
-                    snapshot.anchor_before(point)
-                } else {
-                    Anchor::min_for_buffer(snapshot.remote_id())
-                }
-            })
-            .ok()?;
+        let position = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            if let Some(row) = location.line {
+                let column = snapshot.indent_size_for_line(row).len;
+                let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                snapshot.anchor_before(point)
+            } else {
+                Anchor::min_for_buffer(snapshot.remote_id())
+            }
+        });
 
         Some(ResolvedLocation { buffer, position })
     }
@@ -1803,7 +1801,7 @@ impl AcpThread {
             .ok();
 
             let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))?
+                .update(cx, |git, cx| git.checkpoint(cx))
                 .await
                 .context("failed to get old checkpoint")
                 .log_err();
@@ -1983,7 +1981,7 @@ impl AcpThread {
             rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
                     .await?;
             }
 
@@ -2001,7 +1999,7 @@ impl AcpThread {
 
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
+            cx.update(|cx| truncate.run(id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     // Collect all terminals from entries that will be removed
@@ -2060,7 +2058,7 @@ impl AcpThread {
             let equal = git_store
                 .update(cx, |git, cx| {
                     git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                })?
+                })
                 .await
                 .unwrap_or(true);
 
@@ -2119,17 +2117,14 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project
-                .update(cx, |project, cx| {
-                    let path = project
-                        .project_path_for_absolute_path(&path, cx)
-                        .ok_or_else(|| {
-                            acp::Error::resource_not_found(Some(path.display().to_string()))
-                        })?;
-                    Ok(project.open_buffer(path, cx))
-                })
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))
-                .flatten()?;
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .ok_or_else(|| {
+                        acp::Error::resource_not_found(Some(path.display().to_string()))
+                    })?;
+                Ok::<_, acp::Error>(project.open_buffer(path, cx))
+            })?;
 
             let buffer = load.await?;
 
@@ -2148,9 +2143,9 @@ impl AcpThread {
             } else {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
                     this.shared_buffers.insert(buffer.clone(), snapshot.clone());
                 })?;
@@ -2179,7 +2174,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2200,7 +2195,7 @@ impl AcpThread {
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
-            let buffer = load??.await?;
+            let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
                     .get(&buffer)
@@ -2235,7 +2230,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
@@ -2257,7 +2252,7 @@ impl AcpThread {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
                 format_on_save
-            })?;
+            });
 
             if format_on_save {
                 let format_task = project.update(cx, |project, cx| {
@@ -2268,16 +2263,16 @@ impl AcpThread {
                         FormatTrigger::Save,
                         cx,
                     )
-                })?;
+                });
                 format_task.await.log_err();
 
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
-                })?;
+                });
             }
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))
                 .await
         })
     }
@@ -2323,7 +2318,7 @@ impl AcpThread {
                         project
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
-                    })?
+                    })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
@@ -2341,10 +2336,10 @@ impl AcpThread {
                             },
                             cx,
                         )
-                    })?
+                    })
                     .await?;
 
-                cx.new(|cx| {
+                anyhow::Ok(cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
                         &format!("{} {}", command, args.join(" ")),
@@ -2354,7 +2349,7 @@ impl AcpThread {
                         language_registry,
                         cx,
                     )
-                })
+                }))
             }
         });
 

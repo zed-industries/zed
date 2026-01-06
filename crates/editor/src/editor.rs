@@ -21193,7 +21193,8 @@ impl Editor {
             Ok(permalink) => {
                 cx.update(|_, cx| {
                     cx.open_url(permalink.as_ref());
-                });
+                })
+                .ok();
             }
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");

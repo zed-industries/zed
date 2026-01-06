@@ -259,7 +259,7 @@ async fn update_diff_buffer(
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
     let language = source_buffer_snapshot.language().cloned();
 
-    let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let base_text = base_buffer_snapshot.text();
 
     let update = diff
@@ -271,7 +271,7 @@ async fn update_diff_buffer(
                 language,
                 cx,
             )
-        })?
+        })
         .await;
 
     diff.update(cx, |diff, cx| {
