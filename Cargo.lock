@@ -20676,7 +20676,6 @@ dependencies = [
  "ashpd 0.11.0",
  "askpass",
  "assets",
- "assistant_text_thread",
  "audio",
  "auto_update",
  "auto_update_ui",
