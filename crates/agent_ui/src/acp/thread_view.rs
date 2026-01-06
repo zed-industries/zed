@@ -3290,6 +3290,11 @@ impl AcpThreadView {
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
+            ToolCallContent::SubagentThread(_thread) => {
+                // Subagent threads are rendered inline as part of the tool call
+                // The thread content is shown via the thread's own rendering
+                Empty.into_any_element()
+            }
         }
     }
 
