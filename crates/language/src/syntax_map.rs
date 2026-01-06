@@ -776,16 +776,26 @@ impl SyntaxSnapshot {
                         grammar.injection_config.as_ref().zip(registry.as_ref()),
                         changed_ranges.is_empty(),
                     ) {
-                        for range in &changed_ranges {
-                            let start_row = range.start.to_point(text).row.saturating_sub(1);
-                            let end_row = range.end.to_point(text).row.saturating_add(2);
-                            let start = text.point_to_offset(Point::new(start_row, 0));
-                            let end = text.point_to_offset(Point::new(end_row, 0)).min(text.len());
 
+                        // Handle invalidation and reactivation of injections on comment update
+                        let expanded_ranges: Vec<Range<usize>> = changed_ranges
+                            .iter()
+                            .map(|range| {
+                                let start_row = range.start.to_point(text).row.saturating_sub(1);
+                                let end_row = range.end.to_point(text).row.saturating_add(2);
+                                let start = text.point_to_offset(Point::new(start_row, 0));
+                                let end =
+                                    text.point_to_offset(Point::new(end_row, 0)).min(text.len());
+                                start..end
+                            })
+                            .collect();
+
+                        for range in &expanded_ranges {
                             changed_regions.insert(
                                 ChangedRegion {
                                     depth: step.depth + 1,
-                                    range: text.anchor_before(start)..text.anchor_after(end),
+                                    range: text.anchor_before(range.start)
+                                        ..text.anchor_after(range.end),
                                 },
                                 text,
                             );
@@ -800,7 +810,7 @@ impl SyntaxSnapshot {
                             ),
                             registry,
                             step.depth + 1,
-                            &changed_ranges,
+                            &expanded_ranges,
                             &mut combined_injection_ranges,
                             &mut queue,
                         );
