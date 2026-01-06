@@ -75,7 +75,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             let completions = copilot
                 .update(cx, |copilot, cx| {
                     copilot.completions(&buffer, cursor_position, cx)
-                })?
+                })
                 .await?;
 
             if let Some(mut completion) = completions.into_iter().next()

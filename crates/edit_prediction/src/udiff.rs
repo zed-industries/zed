@@ -111,7 +111,7 @@ pub async fn apply_diff(
                             .with_context(|| format!("Diff:\n{diff_str}"))?,
                     );
                     anyhow::Ok(())
-                })??;
+                })?;
             }
             DiffEvent::FileEnd { renamed_to } => {
                 let buffer = current_file
@@ -135,14 +135,14 @@ pub async fn apply_diff(
                                 new_project_path,
                                 cx,
                             ))
-                        })??
+                        })?
                         .await?;
                 }
 
                 let edits = mem::take(&mut edits);
                 buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
-                })?;
+                });
             }
         }
     }

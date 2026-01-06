@@ -199,7 +199,7 @@ pub async fn resolve_schema_request_inner(
             let mut generator = settings::KeymapFile::action_schema_generator();
             let schema = cx
                 // PERF: cx.action_schema_by_name(action_name, &mut generator)
-                .update(|cx| cx.action_schemas(&mut generator))?
+                .update(|cx| cx.action_schemas(&mut generator))
                 .into_iter()
                 .find_map(|(name, schema)| (name == action_name).then_some(schema))
                 .flatten();
@@ -209,7 +209,7 @@ pub async fn resolve_schema_request_inner(
         "debug_tasks" => {
             let adapter_schemas = cx.read_global::<dap::DapRegistry, _>(|dap_registry, _| {
                 dap_registry.adapters_schema()
-            })?;
+            });
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
         "package_json" => package_json_schema(),

@@ -100,8 +100,7 @@ pub(super) fn refresh_linked_ranges(
                     let highlights = async move {
                         let edits = linked_edits_task.await.log_err()?;
                         let snapshot = cx
-                            .read_entity(&buffer, |buffer, _| buffer.snapshot())
-                            .ok()?;
+                            .read_entity(&buffer, |buffer, _| buffer.snapshot());
                         let buffer_id = snapshot.remote_id();
 
                         // Find the range containing our current selection.
