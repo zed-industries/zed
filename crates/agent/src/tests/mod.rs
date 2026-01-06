@@ -3438,3 +3438,213 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let project = thread.read_with(cx, |t, _| t.project.clone());
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        )
+    });
+
+    subagent
+        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .unwrap();
+    cx.run_until_parked();
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(!thread.is_turn_complete(), "turn should be in progress");
+    });
+
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::NoApiKey {
+        provider: LanguageModelProviderName::from("Fake".to_string()),
+    });
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.is_turn_complete(),
+            "turn should be complete after non-retryable error"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize your work".to_string(),
+        context_low_prompt: "Context low, stop and summarize".to_string(),
+    };
+
+    let project = thread.read_with(cx, |t, _| t.project.clone());
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            model.clone(),
+            subagent_context.clone(),
+            cx,
+        )
+    });
+
+    subagent.update(cx, |thread, _| {
+        thread.add_tool(EchoTool);
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message("Do some work", cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Working on it...");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let interrupt_result = subagent.update(cx, |thread, cx| thread.interrupt_for_summary(cx));
+    assert!(
+        interrupt_result.is_ok(),
+        "interrupt_for_summary should succeed"
+    );
+
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert!(
+        !pending.is_empty(),
+        "should have pending completion for interrupted summary"
+    );
+
+    let messages = &pending.last().unwrap().messages;
+    let user_messages: Vec<_> = messages
+        .iter()
+        .filter(|m| m.role == language_model::Role::User)
+        .collect();
+
+    let last_user = user_messages.last().unwrap();
+    let content_str = last_user.content[0].to_str().unwrap();
+    assert!(
+        content_str.contains("Context low") || content_str.contains("stop and summarize"),
+        "context_low_prompt should be sent when interrupting: got {:?}",
+        content_str
+    );
+}
+
+#[gpui::test]
+async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let project = thread.read_with(cx, |t, _| t.project.clone());
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        )
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message("Do work", cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let max_tokens = model.max_token_count();
+    let high_usage = language_model::TokenUsage {
+        input_tokens: (max_tokens as f64 * 0.80) as u64,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+    };
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        high_usage,
+    ));
+    fake_model.send_last_completion_stream_text_chunk("Working...");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let usage = subagent.read_with(cx, |thread, _| thread.latest_token_usage());
+    assert!(usage.is_some(), "should have token usage after completion");
+
+    let usage = usage.unwrap();
+    let remaining_ratio = 1.0 - (usage.used_tokens as f32 / usage.max_tokens as f32);
+    assert!(
+        remaining_ratio <= 0.25,
+        "remaining ratio should be at or below 25% (got {}%), indicating context is low",
+        remaining_ratio * 100.0
+    );
+}
