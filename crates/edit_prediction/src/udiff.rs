@@ -62,36 +62,26 @@ pub async fn apply_diff(
                 hunk,
                 is_new_file,
             } => {
+                let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
+                let rel_path = RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?;
+                let project_path = project::ProjectPath {
+                    worktree_id,
+                    path: rel_path.into_arc(),
+                };
+
                 let buffer = match current_file {
                     None => {
-                        let buffer = if is_new_file {
+                        if is_new_file {
                             // New file - create it first, then open the buffer
-                            let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
-                            let rel_path =
-                                RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?;
-                            let project_path = project::ProjectPath {
-                                worktree_id,
-                                path: rel_path.into_arc(),
-                            };
                             project
                                 .update(cx, |project, cx| {
                                     project.create_entry(project_path.clone(), false, cx)
                                 })?
                                 .await?;
-                            project
-                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                                .await?
-                        } else {
-                            // Existing file - find and open it
-                            let project_path = project
-                                .update(cx, |project, cx| {
-                                    project.find_project_path(path.as_ref(), cx)
-                                })?
-                                .context("no such path")?;
-                            project
-                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                                .await?
-                        };
+                        }
+                        let buffer = project
+                            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                            .await?;
                         included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()
@@ -191,7 +181,8 @@ pub fn strip_diff_metadata(diff: &str) -> String {
             | DiffLine::HunkHeader(_)
             | DiffLine::Context(_)
             | DiffLine::Deletion(_)
-            | DiffLine::Addition(_) => {
+            | DiffLine::Addition(_)
+            | DiffLine::NoNewlineAtEOF => {
                 result.push_str(line);
                 result.push('\n');
             }
@@ -426,6 +417,23 @@ impl<'a> DiffParser<'a> {
                             }
                         }
                     }
+                    DiffLine::NoNewlineAtEOF => {
+                        if let Some(last_edit) = self.hunk.edits.last_mut() {
+                            if last_edit.text.ends_with('\n') {
+                                // Previous line was an addition (has trailing newline in text)
+                                last_edit.text.pop();
+                            } else if !last_edit.range.is_empty()
+                                && last_edit.range.end == self.hunk.context.len()
+                            {
+                                // Previous line was a deletion (non-empty range at end of context)
+                                self.hunk.context.pop();
+                                last_edit.range.end -= 1;
+                            }
+                        } else {
+                            // Previous line was context (no edits)
+                            self.hunk.context.pop();
+                        }
+                    }
                     DiffLine::Garbage(_) => {}
                 }
 
@@ -460,7 +468,13 @@ fn resolve_hunk_edits_in_buffer(
                 offset = Some(range.start + ix);
             }
         }
-        offset.ok_or_else(|| anyhow!("Failed to match context:\n{}", hunk.context))
+        offset.ok_or_else(|| {
+            anyhow!(
+                "Failed to match context:\n\n```\n{}```\n\nBuffer contents:\n\n```\n{}```",
+                hunk.context,
+                buffer.text()
+            )
+        })
     }?;
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer
@@ -488,6 +502,7 @@ pub enum DiffLine<'a> {
     Context(&'a str),
     Deletion(&'a str),
     Addition(&'a str),
+    NoNewlineAtEOF,
     Garbage(&'a str),
 }
 
@@ -505,6 +520,9 @@ impl<'a> DiffLine<'a> {
     }
 
     fn try_parse(line: &'a str) -> Option<Self> {
+        if line.starts_with("\\ No newline") {
+            return Some(Self::NoNewlineAtEOF);
+        }
         if let Some(header) = line.strip_prefix("---").and_then(eat_required_whitespace) {
             let path = parse_header_path("a/", header);
             Some(Self::OldPath { path })
@@ -561,6 +579,7 @@ impl<'a> Display for DiffLine<'a> {
             DiffLine::Context(content) => write!(f, " {content}"),
             DiffLine::Deletion(content) => write!(f, "-{content}"),
             DiffLine::Addition(content) => write!(f, "+{content}"),
+            DiffLine::NoNewlineAtEOF => write!(f, "\\ No newline at end of file"),
             DiffLine::Garbage(line) => write!(f, "{line}"),
         }
     }
@@ -829,6 +848,93 @@ mod tests {
                 DiffEvent::FileEnd { renamed_to: None }
             ],
         )
+    }
+
+    #[test]
+    fn test_no_newline_at_eof() {
+        let diff = indoc! {"
+            --- a/file.py
+            +++ b/file.py
+            @@ -55,7 +55,3 @@ class CustomDataset(Dataset):
+                         torch.set_rng_state(state)
+                         mask = self.transform(mask)
+
+            -        if self.mode == 'Training':
+            -            return (img, mask, name)
+            -        else:
+            -            return (img, mask, name)
+            \\ No newline at end of file
+        "};
+
+        let mut events = Vec::new();
+        let mut parser = DiffParser::new(diff);
+        while let Some(event) = parser.next().unwrap() {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events,
+            &[
+                DiffEvent::Hunk {
+                    path: "file.py".into(),
+                    hunk: Hunk {
+                        context: concat!(
+                            "            torch.set_rng_state(state)\n",
+                            "            mask = self.transform(mask)\n",
+                            "\n",
+                            "        if self.mode == 'Training':\n",
+                            "            return (img, mask, name)\n",
+                            "        else:\n",
+                            "            return (img, mask, name)",
+                        )
+                        .into(),
+                        edits: vec![Edit {
+                            range: 80..203,
+                            text: "".into()
+                        }],
+                    },
+                    is_new_file: false,
+                },
+                DiffEvent::FileEnd { renamed_to: None }
+            ],
+        );
+    }
+
+    #[test]
+    fn test_no_newline_at_eof_addition() {
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             context
+            -deleted
+            +added line
+            \\ No newline at end of file
+        "};
+
+        let mut events = Vec::new();
+        let mut parser = DiffParser::new(diff);
+        while let Some(event) = parser.next().unwrap() {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events,
+            &[
+                DiffEvent::Hunk {
+                    path: "file.txt".into(),
+                    hunk: Hunk {
+                        context: "context\ndeleted\n".into(),
+                        edits: vec![Edit {
+                            range: 8..16,
+                            text: "added line".into()
+                        }],
+                    },
+                    is_new_file: false,
+                },
+                DiffEvent::FileEnd { renamed_to: None }
+            ],
+        );
     }
 
     #[gpui::test]
