@@ -915,10 +915,17 @@ impl DirectWriteState {
         for pixel_ix in (0..pixel_count).rev() {
             let src = pixel_ix * 3;
             let dst = pixel_ix * 4;
-            bitmap_data[dst] = bitmap_data[src];
-            bitmap_data[dst + 1] = bitmap_data[src + 1];
-            bitmap_data[dst + 2] = bitmap_data[src + 2];
-            bitmap_data[dst + 3] = 0;
+            (
+                bitmap_data[dst],
+                bitmap_data[dst + 1],
+                bitmap_data[dst + 2],
+                bitmap_data[dst + 3],
+            ) = (
+                bitmap_data[src],
+                bitmap_data[src + 1],
+                bitmap_data[src + 2],
+                0,
+            );
         }
 
         Ok(bitmap_data)
