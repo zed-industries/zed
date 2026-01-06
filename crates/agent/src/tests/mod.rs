@@ -3627,9 +3627,7 @@ async fn test_terminal_tool_deny_rule_blocks_command(cx: &mut TestAppContext) {
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Confirm,
                 always_allow: vec![],
-                always_deny: vec![
-                    agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap()
-                ],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap()],
                 always_confirm: vec![],
             },
         );
@@ -3680,9 +3678,7 @@ async fn test_terminal_tool_allow_rule_skips_confirmation(cx: &mut TestAppContex
             "terminal".into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Confirm,
-                always_allow: vec![
-                    agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap()
-                ],
+                always_allow: vec![agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
             },
@@ -3717,5 +3713,8 @@ async fn test_terminal_tool_allow_rule_skips_confirmation(cx: &mut TestAppContex
     );
 
     let result = task.await;
-    assert!(result.is_ok(), "expected command to succeed without confirmation");
+    assert!(
+        result.is_ok(),
+        "expected command to succeed without confirmation"
+    );
 }
