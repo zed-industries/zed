@@ -93,16 +93,14 @@ pub struct SplitCommit {
 /// The evaluation case structure that will be serialized to JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationCase {
+    pub name: String,
     pub repository_url: String,
-    pub commit: String,
-    pub edit_history: Vec<String>,
+    pub revision: String,
+    pub edit_history: String,
     pub cursor_position: String,
+    pub cursor_path: String,
     pub cursor_excerpt: String,
-    pub expected_hunks: Vec<String>,
     pub expected_patch: String,
-    pub allowed_patch: String,
-    pub expected_context_excerpts: Vec<String>,
-    pub extra: serde_json::Value,
 }
 
 /// Split point specification for evaluation generation.
@@ -177,6 +175,7 @@ pub fn run_split_commit(
                         &annotated.commit_sha,
                         None, // Use random split point for multi-sample mode
                         Some(sample_seed),
+                        Some(sample_idx),
                     )
                     .with_context(|| {
                         format!(
@@ -206,6 +205,7 @@ pub fn run_split_commit(
                     &annotated.commit_sha,
                     split_point.clone(),
                     args.seed,
+                    None,
                 )
                 .with_context(|| {
                     format!(
@@ -249,12 +249,14 @@ pub fn run_split_commit(
 /// * `commit_hash` - Hash of the commit
 /// * `split_point` - Point at which the commit will be split (None for random)
 /// * `seed` - Optional seed for randomness
+/// * `sample_num` - Optional sample number for generating unique names
 pub fn generate_evaluation_example_from_ordered_commit(
     commit: &str,
     repository_url: &str,
     commit_hash: &str,
     split_point: Option<SplitPoint>,
     seed: Option<u64>,
+    sample_num: Option<usize>,
 ) -> Result<EvaluationCase> {
     let mut rng: Box<dyn rand::RngCore> = match seed {
         Some(seed) => Box::new(rand::rngs::StdRng::seed_from_u64(seed)),
@@ -330,17 +332,26 @@ pub fn generate_evaluation_example_from_ordered_commit(
         split_commit.target_patch = String::new();
     }
 
+    let repo_name = repository_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("unknown");
+    let short_sha = &commit_hash[..commit_hash.len().min(8)];
+    let name = match sample_num {
+        Some(n) => format!("{}-{}-{}", repo_name, short_sha, n),
+        None => format!("{}-{}", repo_name, short_sha),
+    };
+
     Ok(EvaluationCase {
+        name,
         repository_url: repository_url.to_string(),
-        commit: format!("{}~1", commit_hash),
-        edit_history: vec![split_commit.source_patch.clone()],
+        revision: format!("{}~1", commit_hash),
+        edit_history: split_commit.source_patch.clone(),
         cursor_position: cursor.to_string(),
+        cursor_path: cursor.file.clone(),
         cursor_excerpt,
-        expected_hunks: vec![split_commit.target_patch.clone()],
         expected_patch: split_commit.target_patch.clone(),
-        allowed_patch: split_commit.target_patch,
-        expected_context_excerpts: vec![],
-        extra: serde_json::json!({}),
     })
 }
 
@@ -1172,12 +1183,13 @@ Date: Mon Jan 1 00:00:00 2024
             "abc123",
             Some(SplitPoint::Fraction(0.5)),
             Some(42),
+            None,
         );
 
         assert!(result.is_ok());
         let case = result.unwrap();
         assert_eq!(case.repository_url, "https://github.com/test/repo");
-        assert_eq!(case.commit, "abc123~1");
+        assert_eq!(case.revision, "abc123~1");
         assert!(!case.edit_history.is_empty());
     }
 
@@ -1202,6 +1214,7 @@ Date: Mon Jan 1 00:00:00 2024
             "abc123",
             Some(SplitPoint::Fraction(0.5)),
             Some(12345),
+            None,
         )
         .unwrap();
 
@@ -1211,6 +1224,7 @@ Date: Mon Jan 1 00:00:00 2024
             "abc123",
             Some(SplitPoint::Fraction(0.5)),
             Some(12345),
+            None,
         )
         .unwrap();
 
@@ -1278,13 +1292,14 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Fraction(0.2)),
             Some(1),
+            None,
         );
 
         assert!(result.is_ok());
         let case = result.unwrap();
 
         // Source should have some edits
-        let src_patch = Patch::parse_unified_diff(&case.edit_history[0]);
+        let src_patch = Patch::parse_unified_diff(&case.edit_history);
         assert!(src_patch.stats().added > 0);
     }
 
@@ -1311,12 +1326,13 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Index(2)),
             Some(1),
+            None,
         );
 
         assert!(result.is_ok());
         let case = result.unwrap();
 
-        let src_patch = Patch::parse_unified_diff(&case.edit_history[0]);
+        let src_patch = Patch::parse_unified_diff(&case.edit_history);
         // Pure insertion adds a partial line, so we expect 3 (2 original + 1 partial)
         assert_eq!(src_patch.stats().added, 3);
     }
@@ -1341,6 +1357,7 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Fraction(0.5)),
             Some(42),
+            None,
         )
         .unwrap();
 
@@ -1355,23 +1372,20 @@ Date: Mon Jan 1 00:00:00 2024
     #[test]
     fn test_evaluation_case_json_serialization() {
         let case = EvaluationCase {
+            name: "test-abc123".to_string(),
             repository_url: "https://github.com/test/repo".to_string(),
-            commit: "abc123~1".to_string(),
-            edit_history: vec!["patch1".to_string()],
+            revision: "abc123~1".to_string(),
+            edit_history: "patch1".to_string(),
             cursor_position: "file.rs:10:5".to_string(),
             cursor_excerpt: "some code<|user_cursor|>".to_string(),
-            expected_hunks: vec!["hunk1".to_string()],
             expected_patch: "patch".to_string(),
-            allowed_patch: "patch".to_string(),
-            expected_context_excerpts: vec![],
-            extra: serde_json::json!({}),
         };
 
         let json = serde_json::to_string(&case).unwrap();
         let deserialized: EvaluationCase = serde_json::from_str(&json).unwrap();
 
         assert_eq!(case.repository_url, deserialized.repository_url);
-        assert_eq!(case.commit, deserialized.commit);
+        assert_eq!(case.revision, deserialized.revision);
         assert_eq!(case.cursor_position, deserialized.cursor_position);
     }
 
@@ -1385,6 +1399,7 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Fraction(0.5)),
             Some(1),
+            None,
         );
 
         assert!(result.is_err());
@@ -1417,6 +1432,7 @@ index 123..456 789
             "hash",
             Some(SplitPoint::Index(1)),
             Some(1),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1424,8 +1440,8 @@ index 123..456 789
 
         // The edit history should contain the group header (// lines)
         // but not the commit metadata
-        assert!(!case.edit_history[0].contains("Author:"));
-        assert!(!case.edit_history[0].contains("Date:"));
+        assert!(!case.edit_history.contains("Author:"));
+        assert!(!case.edit_history.contains("Date:"));
     }
 
     #[test]
