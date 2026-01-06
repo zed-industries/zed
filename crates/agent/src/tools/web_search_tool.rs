@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::WebSearchResponse;
 use gpui::{App, AppContext, Task};
@@ -10,6 +13,7 @@ use language_model::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::prelude::*;
 use web_search::WebSearchRegistry;
 
@@ -67,12 +71,29 @@ impl AgentTool for WebSearchTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings("web_search", &input.query, settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                Some(event_stream.authorize("Searching the Web", cx))
+            }
+        };
+
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
             return Task::ready(Err(anyhow!("Web search is not available.")));
         };
 
         let search_task = provider.search(input.query, cx);
         cx.background_spawn(async move {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
             let response = match search_task.await {
                 Ok(response) => response,
                 Err(err) => {
