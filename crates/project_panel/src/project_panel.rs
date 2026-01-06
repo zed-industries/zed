@@ -369,6 +369,19 @@ impl FoldedAncestors {
             .saturating_sub(self.current_ancestor_depth)
     }
 
+    fn set_active_index(&mut self, index: usize) -> bool {
+        let new_depth = self
+            .max_ancestor_depth()
+            .saturating_sub(1)
+            .saturating_sub(index);
+        if self.current_ancestor_depth != new_depth {
+            self.current_ancestor_depth = new_depth;
+            true
+        } else {
+            false
+        }
+    }
+
     fn active_component(&self, file_name: &str) -> Option<String> {
         Path::new(file_name)
             .components()
@@ -5101,6 +5114,9 @@ impl ProjectPanel {
                                         ));
                                         let label = div()
                                             .id(id)
+                                            .px_0p5()
+                                            .rounded_xs()
+                                            .hover(|style| style.bg(cx.theme().colors().element_active))
                                             .when(!is_sticky,| div| {
                                                 div
                                                 .when(index != components_len - 1, |div|{
@@ -5150,14 +5166,21 @@ impl ProjectPanel {
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(move |this, _, _, cx| {
-                                                    if index != active_index
-                                                        && let Some(folds) =
-                                                            this.state.ancestors.get_mut(&entry_id)
-                                                        {
-                                                            folds.current_ancestor_depth =
-                                                                components_len - 1 - index;
+                                                    if let Some(folds) = this.state.ancestors.get_mut(&entry_id) {
+                                                        if folds.set_active_index(index) {
                                                             cx.notify();
                                                         }
+                                                    }
+                                                }),
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Right,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    if let Some(folds) = this.state.ancestors.get_mut(&entry_id) {
+                                                        if folds.set_active_index(index) {
+                                                            cx.notify();
+                                                        }
+                                                    }
                                                 }),
                                             )
                                             .child(
