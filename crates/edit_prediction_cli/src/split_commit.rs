@@ -22,6 +22,7 @@ fn floor_char_boundary(s: &str, index: usize) -> usize {
 }
 use anyhow::{Context as _, Result};
 use clap::Args;
+use edit_prediction::example_spec::ExampleSpec;
 use rand::Rng;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,7 @@ use similar::{DiffTag, TextDiff};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::path::PathBuf;
 
 /// `ep split-commit` CLI args.
@@ -88,19 +90,6 @@ impl std::fmt::Display for CursorPosition {
 pub struct SplitCommit {
     pub source_patch: String,
     pub target_patch: String,
-}
-
-/// The evaluation case structure that will be serialized to JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationCase {
-    pub name: String,
-    pub repository_url: String,
-    pub revision: String,
-    pub edit_history: String,
-    pub cursor_position: String,
-    pub cursor_path: String,
-    pub cursor_excerpt: String,
-    pub expected_patch: String,
 }
 
 /// Split point specification for evaluation generation.
@@ -257,7 +246,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
     split_point: Option<SplitPoint>,
     seed: Option<u64>,
     sample_num: Option<usize>,
-) -> Result<EvaluationCase> {
+) -> Result<ExampleSpec> {
     let mut rng: Box<dyn rand::RngCore> = match seed {
         Some(seed) => Box::new(rand::rngs::StdRng::seed_from_u64(seed)),
         None => Box::new(rand::rngs::ThreadRng::default()),
@@ -343,15 +332,18 @@ pub fn generate_evaluation_example_from_ordered_commit(
         None => format!("{}-{}", repo_name, short_sha),
     };
 
-    Ok(EvaluationCase {
+    Ok(ExampleSpec {
         name,
         repository_url: repository_url.to_string(),
         revision: format!("{}~1", commit_hash),
         edit_history: split_commit.source_patch.clone(),
-        cursor_position: cursor.to_string(),
-        cursor_path: cursor.file.clone(),
-        cursor_excerpt,
-        expected_patch: split_commit.target_patch.clone(),
+        // cursor_position: cursor.to_string(),
+        cursor_path: Path::new(&cursor.file).into(),
+        cursor_position: cursor_excerpt,
+        expected_patches: vec![split_commit.target_patch.clone()],
+        tags: vec![],
+        reasoning: None,
+        uncommitted_diff: String::new(),
     })
 }
 
@@ -1075,6 +1067,10 @@ pub fn get_cursor_excerpt(
 
 #[cfg(test)]
 mod tests {
+    use std::{path::Path, sync::Arc};
+
+    use edit_prediction::example_spec::ExampleSpec;
+
     use super::*;
 
     #[test]
@@ -1371,18 +1367,22 @@ Date: Mon Jan 1 00:00:00 2024
 
     #[test]
     fn test_evaluation_case_json_serialization() {
-        let case = EvaluationCase {
+        let case = ExampleSpec {
             name: "test-abc123".to_string(),
             repository_url: "https://github.com/test/repo".to_string(),
             revision: "abc123~1".to_string(),
             edit_history: "patch1".to_string(),
-            cursor_position: "file.rs:10:5".to_string(),
-            cursor_excerpt: "some code<|user_cursor|>".to_string(),
-            expected_patch: "patch".to_string(),
+            // cursor_position: "file.rs:10:5".to_string(),
+            cursor_path: Path::new("file.rs").into(),
+            cursor_position: "some code<|user_cursor|>".to_string(),
+            expected_patches: vec!["patch".to_string()],
+            tags: vec![],
+            reasoning: None,
+            uncommitted_diff: String::new(),
         };
 
         let json = serde_json::to_string(&case).unwrap();
-        let deserialized: EvaluationCase = serde_json::from_str(&json).unwrap();
+        let deserialized: ExampleSpec = serde_json::from_str(&json).unwrap();
 
         assert_eq!(case.repository_url, deserialized.repository_url);
         assert_eq!(case.revision, deserialized.revision);
