@@ -644,6 +644,8 @@ pub struct Thread {
     pub(crate) action_log: Entity<ActionLog>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
+    /// True if this thread was imported from a shared thread and can be synced.
+    imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
     /// Weak references to running subagent threads for cancellation propagation
@@ -704,6 +706,7 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            imported: false,
             subagent_context: None,
             running_subagents: Vec::new(),
         }
@@ -751,6 +754,7 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            imported: false,
             subagent_context: Some(subagent_context),
             running_subagents: Vec::new(),
         }
@@ -946,6 +950,7 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
+            imported: db_thread.imported,
             subagent_context: None,
             running_subagents: Vec::new(),
         }
