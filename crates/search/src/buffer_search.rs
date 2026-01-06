@@ -438,7 +438,7 @@ impl Render for BufferSearchBar {
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .child(alignment_element())
+                    .when(has_collapse_button, |this| this.child(alignment_element()))
                     .child(replace_column)
                     .child(replace_actions)
             });
