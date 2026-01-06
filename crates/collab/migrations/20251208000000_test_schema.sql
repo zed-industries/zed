@@ -449,9 +449,6 @@ CREATE TABLE public.users (
     github_login character varying,
     admin boolean NOT NULL,
     email_address character varying(255) DEFAULT NULL::character varying,
-    invite_code character varying(64),
-    invite_count integer DEFAULT 0 NOT NULL,
-    inviter_id integer,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
     github_user_id integer NOT NULL,
@@ -700,8 +697,6 @@ CREATE UNIQUE INDEX index_followers_on_project_id_and_leader_connection_server_i
 
 CREATE INDEX index_followers_on_room_id ON public.followers USING btree (room_id);
 
-CREATE UNIQUE INDEX index_invite_code_users ON public.users USING btree (invite_code);
-
 CREATE INDEX index_language_servers_on_project_id ON public.language_servers USING btree (project_id);
 
 CREATE UNIQUE INDEX index_notification_kinds_on_name ON public.notification_kinds USING btree (name);
@@ -901,9 +896,6 @@ ALTER TABLE ONLY public.user_features
 
 ALTER TABLE ONLY public.user_features
     ADD CONSTRAINT user_features_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.users
-    ADD CONSTRAINT users_inviter_id_fkey FOREIGN KEY (inviter_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;
