@@ -85,10 +85,9 @@ impl AgentTool for DeletePathTool {
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => Some(event_stream.authorize(
-                format!("Delete {}", MarkdownInlineCode(&path)),
-                cx,
-            )),
+            ToolPermissionDecision::Confirm => {
+                Some(event_stream.authorize(format!("Delete {}", MarkdownInlineCode(&path)), cx))
+            }
         };
 
         let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
