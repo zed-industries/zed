@@ -822,9 +822,8 @@ async fn run_agent_thread_view_test(
 
     // Create the necessary entities for the ReadFileTool
     let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()))?;
-    let context_server_registry = cx.new(|cx| {
-        agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx)
-    })?;
+    let context_server_registry = cx
+        .new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx))?;
     let fake_model = Arc::new(language_model::fake_provider::FakeLanguageModel::default());
     let project_context = cx.new(|_| prompt_store::ProjectContext::default())?;
 
