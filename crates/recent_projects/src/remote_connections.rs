@@ -34,14 +34,14 @@ use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(RegisterSetting)]
-pub struct SshSettings {
+pub struct RemoteSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
 
-impl SshSettings {
+impl RemoteSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().0.into_iter()
     }
@@ -117,7 +117,7 @@ impl From<WslConnection> for Connection {
     }
 }
 
-impl Settings for SshSettings {
+impl Settings for RemoteSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let remote = &content.remote;
         Self {
@@ -633,7 +633,7 @@ pub async fn open_remote_project(
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
             })?
             .await
-            .context("fetching ssh workspace position from db")?;
+            .context("fetching remote workspace position from db")?;
 
         let mut options =
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
