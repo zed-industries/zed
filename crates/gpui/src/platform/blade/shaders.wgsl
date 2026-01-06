@@ -87,6 +87,7 @@ struct GlobalParams {
 var<uniform> globals: GlobalParams;
 var<uniform> gamma_ratios: vec4<f32>;
 var<uniform> grayscale_enhanced_contrast: f32;
+var<uniform> subpixel_enhanced_contrast: f32;
 var t_sprite: texture_2d<f32>;
 var s_sprite: sampler;
 
@@ -1336,8 +1337,8 @@ struct SubpixelSpriteOutput {
 }
 
 struct SubpixelSpriteFragmentOutput {
-    @location(0) @blend_src(0) color0: vec4<f32>,
-    @location(0) @blend_src(1) color1: vec4<f32>,
+    @location(0) @blend_src(0) foreground: vec4<f32>,
+    @location(0) @blend_src(1) alpha: vec4<f32>,
 }
 
 @vertex
@@ -1356,7 +1357,7 @@ fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_i
 @fragment
 fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutput {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).rgb;
-    let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, subpixel_enhanced_contrast, gamma_ratios);
 
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
@@ -1364,7 +1365,7 @@ fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutp
     }
 
     var out = SubpixelSpriteFragmentOutput();
-    out.color0 = vec4<f32>(input.color.rgb, 1.0);
-    out.color1 = vec4<f32>(input.color.a * alpha_corrected, 1.0);
+    out.foreground = vec4<f32>(input.color.rgb, 1.0);
+    out.alpha = vec4<f32>(input.color.a * alpha_corrected, 1.0);
     return out;
 }

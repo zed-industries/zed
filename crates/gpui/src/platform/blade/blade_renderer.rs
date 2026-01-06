@@ -95,7 +95,7 @@ struct ShaderMonoSpritesData {
 struct ShaderSubpixelSpritesData {
     globals: GlobalParams,
     gamma_ratios: [f32; 4],
-    grayscale_enhanced_contrast: f32,
+    subpixel_enhanced_contrast: f32,
     t_sprite: gpu::TextureView,
     s_sprite: gpu::Sampler,
     b_subpixel_sprites: gpu::BufferPiece,
@@ -868,9 +868,9 @@ impl BladeRenderer {
                         &ShaderSubpixelSpritesData {
                             globals,
                             gamma_ratios: self.rendering_parameters.gamma_ratios,
-                            grayscale_enhanced_contrast: self
+                            subpixel_enhanced_contrast: self
                                 .rendering_parameters
-                                .grayscale_enhanced_contrast,
+                                .subpixel_enhanced_contrast,
                             t_sprite: tex_info.raw_view,
                             s_sprite: self.atlas_sampler,
                             b_subpixel_sprites: instance_buf,
@@ -1068,6 +1068,10 @@ struct RenderingParameters {
     // Allowed range: [0.0, ..), other values are clipped
     // Default: 1.0
     grayscale_enhanced_contrast: f32,
+    // Env var: ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST
+    // Allowed range: [0.0, ..), other values are clipped
+    // Default: 0.5
+    subpixel_enhanced_contrast: f32,
 }
 
 impl RenderingParameters {
@@ -1094,11 +1098,17 @@ impl RenderingParameters {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0_f32)
             .max(0.0);
+        let subpixel_enhanced_contrast = env::var("ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5_f32)
+            .max(0.0);
 
         Self {
             path_sample_count,
             gamma_ratios,
             grayscale_enhanced_contrast,
+            subpixel_enhanced_contrast,
         }
     }
 }

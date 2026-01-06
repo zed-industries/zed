@@ -34,6 +34,7 @@ const PATH_MULTISAMPLE_COUNT: u32 = 4;
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
     pub grayscale_enhanced_contrast: f32,
+    pub subpixel_enhanced_contrast: f32,
 }
 
 pub(crate) struct DirectXRenderer {
@@ -196,7 +197,7 @@ impl DirectXRenderer {
                 gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
                 grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
-                _pad: 0,
+                subpixel_enhanced_contrast: self.font_info.subpixel_enhanced_contrast,
             }],
         )?;
         unsafe {
@@ -708,6 +709,7 @@ impl DirectXRenderer {
             FontInfo {
                 gamma_ratios: get_gamma_correction_ratios(render_params.GetGamma()),
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
+                subpixel_enhanced_contrast: render_params.GetEnhancedContrast(),
             }
         })
     }
@@ -927,7 +929,7 @@ struct GlobalParams {
     gamma_ratios: [f32; 4],
     viewport_size: [f32; 2],
     grayscale_enhanced_contrast: f32,
-    _pad: u32,
+    subpixel_enhanced_contrast: f32,
 }
 
 struct PipelineState<T> {
@@ -1311,7 +1313,8 @@ fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID
     // It does not make sense to draw transparent subpixel-rendered text, since it cannot be meaningfully alpha-blended onto anything else.
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8 & !D3D11_COLOR_WRITE_ENABLE_ALPHA.0 as u8;
+    desc.RenderTarget[0].RenderTargetWriteMask =
+        D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8 & !D3D11_COLOR_WRITE_ENABLE_ALPHA.0 as u8;
 
     unsafe {
         let mut state = None;

@@ -1141,6 +1141,7 @@ impl DirectWriteState {
         let crate::FontInfo {
             gamma_ratios,
             grayscale_enhanced_contrast,
+            ..
         } = DirectXRenderer::get_font_info();
 
         for layer in glyph_layers {
