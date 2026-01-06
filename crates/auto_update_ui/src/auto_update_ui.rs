@@ -1,7 +1,6 @@
-use auto_update::AutoUpdater;
+use auto_update::{AutoUpdater, release_notes_url};
 use editor::{Editor, MultiBuffer};
 use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
-use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
@@ -40,9 +39,9 @@ struct ReleaseNotesBody {
     release_notes: String,
 }
 
-fn show_view_release_notes_locally_error(
+fn notify_release_notes_failed_to_show_locally(
     workspace: &mut Workspace,
-    _: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     struct ViewReleaseNotesLocallyError;
@@ -51,24 +50,12 @@ fn show_view_release_notes_locally_error(
         cx,
         |cx| {
             cx.new(move |cx| {
-                let release_channel = ReleaseChannel::global(cx);
-                let url = match release_channel {
-                    ReleaseChannel::Stable | ReleaseChannel::Preview => {
-                        let version = AppVersion::global(cx).to_string();
-                        let client = client::Client::global(cx).http_client();
-                        let release_channel = release_channel.dev_name();
-                        client.build_url(&format!("/releases/{release_channel}/{version}"))
-                    }
-                    ReleaseChannel::Nightly => {
-                        "https://github.com/zed-industries/zed/commits/nightly/".to_string()
-                    }
-                    ReleaseChannel::Dev => {
-                        "https://github.com/zed-industries/zed/commits/main/".to_string()
-                    }
-                };
-                let label = String::from("View It Online");
-                ErrorMessagePrompt::new(format!("Failed to view release notes locally"), cx)
-                    .with_link_button(&label, &url)
+                let url = release_notes_url(cx);
+                let mut prompt = ErrorMessagePrompt::new("Couldn't load release notes", cx);
+                if let Some(url) = url {
+                    prompt = prompt.with_link_button("View in Browser".to_string(), url);
+                }
+                prompt
             })
         },
     );
@@ -81,14 +68,13 @@ fn view_release_notes_locally(
 ) {
     let release_channel = ReleaseChannel::global(cx);
 
-    let url = match release_channel {
-        ReleaseChannel::Nightly => Some("https://github.com/zed-industries/zed/commits/nightly/"),
-        ReleaseChannel::Dev => Some("https://github.com/zed-industries/zed/commits/main/"),
-        _ => None,
-    };
-
-    if let Some(url) = url {
-        cx.open_url(url);
+    if matches!(
+        release_channel,
+        ReleaseChannel::Nightly | ReleaseChannel::Dev
+    ) {
+        if let Some(url) = release_notes_url(cx) {
+            cx.open_url(&url);
+        }
         return;
     }
 
@@ -113,7 +99,7 @@ fn view_release_notes_locally(
                 let response = client.get(&url, Default::default(), true).await;
                 let Some(mut response) = response.log_err() else {
                     workspace
-                        .update_in(cx, show_view_release_notes_locally_error)
+                        .update_in(cx, notify_release_notes_failed_to_show_locally)
                         .log_err();
                     return;
                 };
@@ -163,7 +149,7 @@ fn view_release_notes_locally(
                         .log_err();
                 } else {
                     workspace
-                        .update_in(cx, show_view_release_notes_locally_error)
+                        .update_in(cx, notify_release_notes_failed_to_show_locally)
                         .log_err();
                 }
             })
