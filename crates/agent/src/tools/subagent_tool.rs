@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    AgentTool, ContextServerRegistry, MAX_SUBAGENT_DEPTH, SubagentContext, Templates, Thread,
-    ThreadEvent, ToolCallEventStream,
+    AgentTool, ContextServerRegistry, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext,
+    Templates, Thread, ThreadEvent, ToolCallEventStream,
 };
 
 /// When a subagent's remaining context window falls below this fraction (25%),
@@ -107,7 +107,7 @@ impl SubagentTool {
         }
     }
 
-    fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
+    pub fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
         if let Some(tools) = allowed_tools {
             for tool in tools {
                 if !self.parent_tool_names.contains(tool.as_str()) {
@@ -163,8 +163,19 @@ impl AgentTool for SubagentTool {
         }
 
         let Some(parent_thread) = self.parent_thread.upgrade() else {
-            return Task::ready(Err(anyhow!("Parent thread no longer exists")));
+            return Task::ready(Err(anyhow!(
+                "Parent thread no longer exists (subagent depth={})",
+                self.current_depth + 1
+            )));
         };
+
+        let running_count = parent_thread.read(cx).running_subagent_count();
+        if running_count >= MAX_PARALLEL_SUBAGENTS {
+            return Task::ready(Err(anyhow!(
+                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
+                MAX_PARALLEL_SUBAGENTS
+            )));
+        }
 
         let parent_thread_id = parent_thread.read(cx).id().clone();
         let parent_model = parent_thread.read(cx).model().cloned();
@@ -253,6 +264,9 @@ async fn run_subagent(
         false
     };
 
+    // Check context usage after turn completes. Note: A future improvement could
+    // check context periodically during multi-turn execution, but this requires
+    // architectural changes to the event processing loop.
     let should_interrupt =
         timed_out || check_context_low(subagent_thread, CONTEXT_LOW_THRESHOLD, cx)?;
 

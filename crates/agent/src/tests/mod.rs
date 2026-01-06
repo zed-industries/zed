@@ -277,7 +277,7 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
         "expected tool call update to include terminal content"
     );
 
-    smol::Timer::after(Duration::from_millis(25)).await;
+    cx.background_executor.timer(Duration::from_millis(25)).await;
 
     assert!(
         !handle.was_killed(),
@@ -3643,5 +3643,499 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
         remaining_ratio <= 0.25,
         "remaining ratio should be at or below 25% (got {}%), indicating context is low",
         remaining_ratio * 100.0
+    );
+}
+
+#[gpui::test]
+async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(EchoTool);
+        thread
+    });
+
+    let parent_tool_names: Vec<gpui::SharedString> = vec!["echo".into()];
+
+    let tool = Arc::new(SubagentTool::new(
+        parent.downgrade(),
+        project,
+        project_context,
+        context_server_registry,
+        Templates::new(),
+        0,
+        parent_tool_names,
+    ));
+
+    let result = tool.validate_allowed_tools(&Some(vec!["nonexistent_tool".to_string()]));
+    assert!(result.is_err(), "should reject unknown tool");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("nonexistent_tool"),
+        "error should mention the invalid tool name: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("not available"),
+        "error should explain the tool is not available: {}",
+        err_msg
+    );
+}
+
+#[gpui::test]
+async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let project = thread.read_with(cx, |t, _| t.project.clone());
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        )
+    });
+
+    subagent
+        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.is_turn_complete(),
+            "turn should complete even with empty response"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let depth_1_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("root-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-1"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let depth_1_subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            model.clone(),
+            depth_1_context,
+            cx,
+        )
+    });
+
+    depth_1_subagent.read_with(cx, |thread, _| {
+        assert_eq!(thread.depth(), 1);
+        assert!(thread.is_subagent());
+    });
+
+    let depth_2_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("depth-1-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-2"),
+        depth: 2,
+        summary_prompt: "Summarize depth 2".to_string(),
+        context_low_prompt: "Context low depth 2".to_string(),
+    };
+
+    let depth_2_subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            model.clone(),
+            depth_2_context,
+            cx,
+        )
+    });
+
+    depth_2_subagent.read_with(cx, |thread, _| {
+        assert_eq!(thread.depth(), 2);
+        assert!(thread.is_subagent());
+    });
+
+    depth_2_subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message("Nested task", cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let pending = model.as_fake().pending_completions();
+    assert!(!pending.is_empty(), "depth-2 subagent should be able to submit messages");
+}
+
+#[gpui::test]
+async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let fake_model = model.as_fake();
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize what you did".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let subagent = cx.new(|cx| {
+        let mut thread = Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            cx,
+        );
+        thread.add_tool(EchoTool);
+        thread
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(thread.has_registered_tool("echo"), "subagent should have echo tool");
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.submit_user_message("Use the echo tool to echo 'hello world'", cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_call_1".into(),
+        name: EchoTool::name().into(),
+        raw_input: json!({"text": "hello world"}).to_string(),
+        input: json!({"text": "hello world"}),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert!(
+        !pending.is_empty(),
+        "should have pending completion after tool use"
+    );
+
+    let last_completion = pending.last().unwrap();
+    let has_tool_result = last_completion.messages.iter().any(|m| {
+        m.content.iter().any(|c| matches!(c, MessageContent::ToolResult(_)))
+    });
+    assert!(
+        has_tool_result,
+        "tool result should be in the messages sent back to the model"
+    );
+}
+
+#[gpui::test]
+async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let mut subagents = Vec::new();
+    for i in 0..MAX_PARALLEL_SUBAGENTS {
+        let subagent_context = SubagentContext {
+            parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+            tool_use_id: language_model::LanguageModelToolUseId::from(format!("tool-use-{}", i)),
+            depth: 1,
+            summary_prompt: "Summarize".to_string(),
+            context_low_prompt: "Context low".to_string(),
+        };
+
+        let subagent = cx.new(|cx| {
+            Thread::new_subagent(
+                project.clone(),
+                project_context.clone(),
+                context_server_registry.clone(),
+                Templates::new(),
+                model.clone(),
+                subagent_context,
+                cx,
+            )
+        });
+
+        parent.update(cx, |thread, _cx| {
+            thread.register_running_subagent(subagent.downgrade());
+        });
+        subagents.push(subagent);
+    }
+
+    parent.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.running_subagent_count(),
+            MAX_PARALLEL_SUBAGENTS,
+            "should have MAX_PARALLEL_SUBAGENTS registered"
+        );
+    });
+
+    let parent_tool_names: Vec<gpui::SharedString> = vec![];
+
+    let tool = Arc::new(SubagentTool::new(
+        parent.downgrade(),
+        project.clone(),
+        project_context,
+        context_server_registry,
+        Templates::new(),
+        0,
+        parent_tool_names,
+    ));
+
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let result = cx.update(|cx| {
+        tool.run(
+            SubagentToolInput {
+                label: "Test".to_string(),
+                task_prompt: "Do something".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let err = result.await.unwrap_err();
+    assert!(
+        err.to_string().contains("Maximum parallel subagents"),
+        "should reject when max parallel subagents reached: {}",
+        err
+    );
+
+    drop(subagents);
+}
+
+#[gpui::test]
+async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let fake_model = model.as_fake();
+
+    let parent = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(EchoTool);
+        thread
+    });
+
+    let parent_tool_names: Vec<gpui::SharedString> = vec!["echo".into()];
+
+    let tool = Arc::new(SubagentTool::new(
+        parent.downgrade(),
+        project.clone(),
+        project_context,
+        context_server_registry,
+        Templates::new(),
+        0,
+        parent_tool_names,
+    ));
+
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            SubagentToolInput {
+                label: "Research task".to_string(),
+                task_prompt: "Find all TODOs in the codebase".to_string(),
+                summary_prompt: "Summarize what you found".to_string(),
+                context_low_prompt: "Context low, wrap up".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert!(
+        !pending.is_empty(),
+        "subagent should have started and sent a completion request"
+    );
+
+    let first_completion = &pending[0];
+    let has_task_prompt = first_completion.messages.iter().any(|m| {
+        m.role == language_model::Role::User
+            && m.content.iter().any(|c| {
+                c.to_str()
+                    .map(|s| s.contains("TODO"))
+                    .unwrap_or(false)
+            })
+    });
+    assert!(has_task_prompt, "task prompt should be sent to subagent");
+
+    fake_model.send_last_completion_stream_text_chunk("I found 5 TODOs in the codebase.");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert!(
+        !pending.is_empty(),
+        "should have pending completion for summary request"
+    );
+
+    let last_completion = pending.last().unwrap();
+    let has_summary_prompt = last_completion.messages.iter().any(|m| {
+        m.role == language_model::Role::User
+            && m.content.iter().any(|c| {
+                c.to_str()
+                    .map(|s| s.contains("Summarize") || s.contains("summarize"))
+                    .unwrap_or(false)
+            })
+    });
+    assert!(
+        has_summary_prompt,
+        "summary prompt should be sent after task completion"
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("Summary: Found 5 TODOs across 3 files.");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let result = task.await;
+    assert!(result.is_ok(), "subagent tool should complete successfully");
+
+    let summary = result.unwrap();
+    assert!(
+        summary.contains("Summary") || summary.contains("TODO") || summary.contains("5"),
+        "summary should contain subagent's response: {}",
+        summary
     );
 }
