@@ -90,7 +90,6 @@ id_type!(ReplicaId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
 id_type!(ServerId);
-
 id_type!(SignupId);
 id_type!(UserId);
 
