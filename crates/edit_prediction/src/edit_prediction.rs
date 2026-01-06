@@ -331,6 +331,7 @@ struct CurrentEditPrediction {
     pub prediction: EditPrediction,
     pub was_shown: bool,
     pub shown_at: Option<Instant>,
+    pub shown_with: Option<edit_prediction_types::SuggestionDisplayType>,
 }
 
 impl CurrentEditPrediction {
@@ -1193,7 +1194,12 @@ impl EditPredictionStore {
         };
     }
 
-    fn did_show_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
+    fn did_show_current_prediction(
+        &mut self,
+        project: &Entity<Project>,
+        display_type: edit_prediction_types::SuggestionDisplayType,
+        cx: &mut Context<Self>,
+    ) {
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
@@ -1201,19 +1207,39 @@ impl EditPredictionStore {
         let Some(current_prediction) = project_state.current_prediction.as_mut() else {
             return;
         };
-        if !current_prediction.was_shown {
+
+        let is_jump = display_type == edit_prediction_types::SuggestionDisplayType::Jump;
+        let previous_shown_with = current_prediction.shown_with;
+
+        // Track the display type for acceptance metrics
+        // Update to non-jump type if we're showing the actual edit (overwrite jump with ghost/popup)
+        if previous_shown_with.is_none() || !is_jump {
+            current_prediction.shown_with = Some(display_type);
+        }
+
+        let is_first_non_jump_show = !current_prediction.was_shown && !is_jump;
+
+        if is_first_non_jump_show {
             current_prediction.was_shown = true;
             current_prediction.shown_at = Some(Instant::now());
+        }
 
-            if self.edit_prediction_model == EditPredictionModel::Sweep {
-                sweep_ai::edit_prediction_shown(
-                    &self.sweep_ai,
-                    self.client.clone(),
-                    &current_prediction.prediction,
-                    cx,
-                );
-            }
+        // Send metrics - Sweep gets display-type-aware notifications
+        // Only send when the display type changes (e.g., jump -> edit, or first show)
+        let display_type_changed = previous_shown_with != Some(display_type);
 
+        if self.edit_prediction_model == EditPredictionModel::Sweep && display_type_changed {
+            sweep_ai::edit_prediction_shown(
+                &self.sweep_ai,
+                self.client.clone(),
+                &current_prediction.prediction,
+                display_type,
+                cx,
+            );
+        }
+
+        // Only track in shown_predictions on first non-jump show
+        if is_first_non_jump_show {
             self.shown_predictions
                 .push_front(current_prediction.prediction.clone());
             if self.shown_predictions.len() > 50 {
@@ -1480,6 +1506,7 @@ impl EditPredictionStore {
                                 prediction,
                                 was_shown: false,
                                 shown_at: None,
+                                shown_with: None,
                             };
 
                             if let Some(current_prediction) =

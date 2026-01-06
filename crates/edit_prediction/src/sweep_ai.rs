@@ -21,6 +21,7 @@ use crate::{
     CurrentEditPrediction, EditPrediction, EditPredictionId, EditPredictionModelInput,
     EditPredictionStore, prediction::EditPredictionResult,
 };
+use edit_prediction_types::SuggestionDisplayType;
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
@@ -507,10 +508,15 @@ pub(crate) fn edit_prediction_accepted(
         .map(ToString::to_string)
         .unwrap_or_default();
 
+    let suggestion_type = match current_prediction.shown_with {
+        Some(SuggestionDisplayType::DiffPopover) => SweepSuggestionType::Popup,
+        Some(SuggestionDisplayType::Jump) => return, // should'nt happen
+        Some(SuggestionDisplayType::GhostText) | None => SweepSuggestionType::GhostText,
+    };
+
     let request_body = AutocompleteMetricsRequest {
         event_type: SweepEventType::AutocompleteSuggestionAccepted,
-        // todo! identify the suggestion type
-        suggestion_type: SweepSuggestionType::GhostText,
+        suggestion_type,
         additions,
         deletions,
         autocomplete_id,
@@ -529,6 +535,7 @@ pub fn edit_prediction_shown(
     sweep_ai: &SweepAi,
     client: Arc<Client>,
     prediction: &EditPrediction,
+    display_type: SuggestionDisplayType,
     cx: &App,
 ) {
     let Some(api_token) = sweep_ai.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
@@ -539,9 +546,15 @@ pub fn edit_prediction_shown(
     let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
     let autocomplete_id = prediction.id.to_string();
 
+    let suggestion_type = match display_type {
+        SuggestionDisplayType::GhostText => SweepSuggestionType::GhostText,
+        SuggestionDisplayType::DiffPopover => SweepSuggestionType::Popup,
+        SuggestionDisplayType::Jump => SweepSuggestionType::JumpToEdit,
+    };
+
     let request_body = AutocompleteMetricsRequest {
         event_type: SweepEventType::AutocompleteSuggestionShown,
-        suggestion_type: SweepSuggestionType::GhostText,
+        suggestion_type,
         additions,
         deletions,
         autocomplete_id,
