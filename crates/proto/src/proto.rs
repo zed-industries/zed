@@ -342,7 +342,11 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (ShareAgentThread, Foreground),
+    (ShareAgentThreadResponse, Foreground),
+    (GetSharedAgentThread, Foreground),
+    (GetSharedAgentThreadResponse, Foreground)
 );
 
 request_messages!(
@@ -441,6 +445,8 @@ request_messages!(
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
+    (ShareAgentThread, ShareAgentThreadResponse),
+    (GetSharedAgentThread, GetSharedAgentThreadResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),

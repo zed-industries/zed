@@ -218,3 +218,24 @@ message NewExternalAgentVersionAvailable {
     string name = 2;
     string version = 3;
 }
+
+// Agent thread sharing
+message ShareAgentThread {
+    string title = 1;
+    bytes thread_data = 2;
+}
+
+message ShareAgentThreadResponse {
+    uint64 share_id = 1;
+}
+
+message GetSharedAgentThread {
+    uint64 share_id = 1;
+}
+
+message GetSharedAgentThreadResponse {
+    string title = 1;
+    bytes thread_data = 2;
+    string sharer_username = 3;
+    string created_at = 4;
+}
