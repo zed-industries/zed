@@ -27,10 +27,10 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, CursorStyle,
+    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
+    ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
     ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
@@ -2847,11 +2847,12 @@ impl AcpThreadView {
         let is_terminal_tool = matches!(tool_call.kind, acp::ToolKind::Execute);
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let is_subagent = tool_call.is_subagent();
 
-        let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
+        let use_card_layout = needs_confirmation || is_edit || is_terminal_tool || is_subagent;
 
-        let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+        let is_collapsible = (!tool_call.content.is_empty() || is_subagent) && !needs_confirmation;
+
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
         let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
@@ -3134,10 +3135,14 @@ impl AcpThreadView {
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
 
+        let is_subagent = tool_call.is_subagent();
+
         let tool_icon = if tool_call.kind == acp::ToolKind::Edit && has_location {
             FileIcons::get_icon(&tool_call.locations[0].path, cx)
                 .map(Icon::from_path)
                 .unwrap_or(Icon::new(IconName::ToolPencil))
+        } else if is_subagent {
+            Icon::new(IconName::ZedAgent)
         } else {
             Icon::new(match tool_call.kind {
                 acp::ToolKind::Read => IconName::ToolSearch,
@@ -3256,15 +3261,7 @@ impl AcpThreadView {
                         cx,
                     )
                 } else if let Some(image) = content.image() {
-                    let location = tool_call.locations.first().cloned();
-                    self.render_image_output(
-                        entry_ix,
-                        image.clone(),
-                        location,
-                        card_layout,
-                        is_image_tool_call,
-                        cx,
-                    )
+                    self.render_image_output(image.clone(), card_layout, cx)
                 } else {
                     Empty.into_any_element()
                 }
@@ -3411,33 +3408,10 @@ impl AcpThreadView {
 
     fn render_image_output(
         &self,
-        entry_ix: usize,
         image: Arc<gpui::Image>,
-        location: Option<acp::ToolCallLocation>,
         card_layout: bool,
-        show_dimensions: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let dimensions_label = if show_dimensions {
-            let format_name = match image.format() {
-                gpui::ImageFormat::Png => "PNG",
-                gpui::ImageFormat::Jpeg => "JPEG",
-                gpui::ImageFormat::Webp => "WebP",
-                gpui::ImageFormat::Gif => "GIF",
-                gpui::ImageFormat::Svg => "SVG",
-                gpui::ImageFormat::Bmp => "BMP",
-                gpui::ImageFormat::Tiff => "TIFF",
-                gpui::ImageFormat::Ico => "ICO",
-            };
-            let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
-                .with_guessed_format()
-                .ok()
-                .and_then(|reader| reader.into_dimensions().ok());
-            dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
-        } else {
-            None
-        };
-
         v_flex()
             .gap_2()
             .map(|this| {
@@ -3449,29 +3423,6 @@ impl AcpThreadView {
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
                 }
-            })
-            .when(dimensions_label.is_some() || location.is_some(), |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .items_center()
-                        .children(dimensions_label.map(|label| {
-                            Label::new(label)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx)
-                        }))
-                        .when_some(location, |this, _loc| {
-                            this.child(
-                                Button::new(("go-to-file", entry_ix), "Go to File")
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_tool_call_location(entry_ix, 0, window, cx);
-                                    })),
-                            )
-                        }),
-                )
             })
             .child(
                 img(image)
@@ -8461,5 +8412,130 @@ pub(crate) mod tests {
 
             assert_eq!(text, expected_txt);
         })
+    }
+
+    #[gpui::test]
+    async fn test_subagent_tool_call_renders_as_card(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let subagent_tool_call = acp::ToolCall::new("subagent-1", "Researching alternatives")
+            .kind(acp::ToolKind::Other)
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "subagent".into(),
+            )]))
+            .status(acp::ToolCallStatus::InProgress);
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(subagent_tool_call)]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Use a subagent to research alternatives", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.entries().len() >= 2,
+                "Should have at least 2 entries"
+            );
+
+            let has_subagent_tool_call = thread.entries().iter().any(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
+                    tool_call.is_subagent()
+                } else {
+                    false
+                }
+            });
+
+            assert!(
+                has_subagent_tool_call,
+                "Should have a subagent tool call entry"
+            );
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            let tool_call_id = acp::ToolCallId::new("subagent-1");
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_call_id),
+                "Subagent tool call should be collapsed by default"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_subagent_tool_call_expand_collapse_toggle(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let subagent_tool_call = acp::ToolCall::new("subagent-toggle", "Analyzing code patterns")
+            .kind(acp::ToolKind::Other)
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "subagent".into(),
+            )]))
+            .status(acp::ToolCallStatus::Completed);
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(subagent_tool_call)]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Analyze code patterns", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let tool_call_id = acp::ToolCallId::new("subagent-toggle");
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_call_id),
+                "Should start collapsed"
+            );
+        });
+
+        thread_view.update(cx, |view, cx| {
+            view.expanded_tool_calls.insert(tool_call_id.clone());
+            cx.notify();
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                view.expanded_tool_calls.contains(&tool_call_id),
+                "Should be expanded after insert"
+            );
+        });
+
+        thread_view.update(cx, |view, cx| {
+            view.expanded_tool_calls.remove(&tool_call_id);
+            cx.notify();
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_call_id),
+                "Should be collapsed after remove"
+            );
+        });
     }
 }
