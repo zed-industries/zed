@@ -520,7 +520,7 @@ impl Prettier {
                         }
                         None => panic!("Should not format buffer without a language with prettier"),
                     }
-                })??
+                })?
                 .await),
         }
     }

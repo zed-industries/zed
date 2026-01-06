@@ -268,7 +268,7 @@ impl WorktreeStore {
                                 None,
                                 cx,
                             )
-                        })?
+                        })
                         .await
                 })
             }
@@ -293,7 +293,7 @@ impl WorktreeStore {
                                     response.worktree_scan_id as usize,
                                     cx,
                                 )
-                            })?
+                            })
                             .await
                             .map(Some),
                         None => Ok(None),
@@ -419,7 +419,7 @@ impl WorktreeStore {
                                     cx,
                                 )
                             }
-                        })?
+                        })
                         .await?
                         .map(CreatedEntry::Included)
                         .unwrap_or_else(|| CreatedEntry::Excluded {
@@ -448,13 +448,13 @@ impl WorktreeStore {
                                     response.worktree_scan_id as usize,
                                     cx,
                                 )
-                            })?
+                            })
                             .await
                             .map(CreatedEntry::Included),
                         None => {
                             let abs_path = new_worktree.read_with(cx, |worktree, _| {
                                 worktree.absolutize(&new_project_path.path)
-                            })?;
+                            });
                             Ok(CreatedEntry::Excluded { abs_path })
                         }
                     }
@@ -559,7 +559,7 @@ impl WorktreeStore {
 
             if let Some(existing_worktree) = this.read_with(cx, |this, cx| {
                 this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
-            })? {
+            }) {
                 return Ok(existing_worktree);
             }
 
@@ -583,11 +583,11 @@ impl WorktreeStore {
                     path_style,
                     cx,
                 )
-            })?;
+            });
 
             this.update(cx, |this, cx| {
                 this.add(&worktree, cx);
-            })?;
+            });
             Ok(worktree)
         })
     }
@@ -620,8 +620,7 @@ impl WorktreeStore {
             if visible {
                 cx.update(|cx| {
                     cx.add_recent_document(abs_path.as_path());
-                })
-                .log_err();
+                });
             }
 
             Ok(worktree)
@@ -948,7 +947,7 @@ impl WorktreeStore {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             this.worktree_for_id(worktree_id, cx)
                 .context("worktree not found")
-        })??;
+        })?;
         Worktree::handle_create_entry(worktree, envelope.payload, cx).await
     }
 
@@ -982,7 +981,7 @@ impl WorktreeStore {
                 scan_id,
                 this.copy_entry(entry_id, new_project_path.into(), cx),
             ))
-        })??;
+        })?;
         let entry = entry.await?;
         Ok(proto::ProjectEntryResponse {
             entry: entry.as_ref().map(|entry| entry.into()),
@@ -1008,7 +1007,7 @@ impl WorktreeStore {
             }
             this.worktree_for_entry(entry_id, cx)
                 .context("worktree not found")
-        })??;
+        })?;
         Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
     }
 
@@ -1043,7 +1042,7 @@ impl WorktreeStore {
                 scan_id,
                 this.rename_entry(entry_id, (new_worktree_id, rel_path).into(), cx),
             ))
-        })??;
+        })?;
         Ok(proto::ProjectEntryResponse {
             entry: match &task.await? {
                 CreatedEntry::Included(entry) => Some(entry.into()),
@@ -1060,7 +1059,7 @@ impl WorktreeStore {
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
-            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
+            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))
             .context("invalid request")?;
         Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
     }
@@ -1072,7 +1071,7 @@ impl WorktreeStore {
     ) -> Result<proto::ExpandAllForProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
-            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
+            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))
             .context("invalid request")?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
     }

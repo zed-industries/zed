@@ -137,9 +137,7 @@ impl ContextServerConfiguration {
                 settings,
             } => {
                 let descriptor = cx
-                    .update(|cx| registry.read(cx).context_server_descriptor(&id.0))
-                    .ok()
-                    .flatten()?;
+                    .update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
 
                 match descriptor.command(worktree_store, cx).await {
                     Ok(command) => {
@@ -346,21 +344,18 @@ impl ContextServerStore {
     pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Context server store dropped")?;
-            let settings = this
-                .update(cx, |this, _| {
-                    this.context_server_settings.get(&server.id().0).cloned()
-                })
-                .ok()
-                .flatten()
+            let settings = this.update(cx, |this, _| {
+                this.context_server_settings.get(&server.id().0).cloned()
+            })
                 .context("Failed to get context server settings")?;
 
             if !settings.enabled() {
-                return Ok(());
+                return anyhow::Ok(());
             }
 
             let (registry, worktree_store) = this.update(cx, |this, _| {
                 (this.registry.clone(), this.worktree_store.clone())
-            })?;
+            });
             let configuration = ContextServerConfiguration::from_settings(
                 settings,
                 server.id(),
@@ -373,7 +368,8 @@ impl ContextServerStore {
 
             this.update(cx, |this, cx| {
                 this.run_server(server, Arc::new(configuration), cx)
-            })
+            });
+            Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -612,7 +608,7 @@ impl ContextServerStore {
         })?;
 
         for (id, _) in
-            registry.read_with(cx, |registry, _| registry.context_server_descriptors())?
+            registry.read_with(cx, |registry, _| registry.context_server_descriptors())
         {
             configured_servers
                 .entry(id)

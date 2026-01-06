@@ -223,8 +223,6 @@ impl BreakpointStore {
                         .update(cx, |this, cx| this.open_buffer(path, cx)),
                 )
             })
-            .ok()
-            .flatten()
             .context("Invalid project path")?
             .await?;
 
@@ -263,7 +261,7 @@ impl BreakpointStore {
                 .collect();
 
             cx.notify();
-        })?;
+        });
 
         Ok(())
     }
@@ -309,7 +307,7 @@ impl BreakpointStore {
                 BreakpointEditAction::Toggle,
                 cx,
             );
-        })?;
+        });
         Ok(proto::Ack {})
     }
 
@@ -794,7 +792,7 @@ impl BreakpointStore {
                     let (worktree, relative_path) = worktree_store
                         .update(cx, |this, cx| {
                             this.find_or_create_worktree(&path, false, cx)
-                        })?
+                        })
                         .await?;
                     let buffer = buffer_store
                         .update(cx, |this, cx| {
@@ -803,13 +801,13 @@ impl BreakpointStore {
                                 path: relative_path,
                             };
                             this.open_buffer(path, cx)
-                        })?
+                        })
                         .await;
                     let Ok(buffer) = buffer else {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
-                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
                     let mut breakpoints_for_file =
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;

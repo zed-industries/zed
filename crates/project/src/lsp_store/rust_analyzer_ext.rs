@@ -124,7 +124,7 @@ pub fn cancel_flycheck(
                         Ok(())
                     }
                 })
-                .context("lsp ext cancel flycheck")??;
+                .context("lsp ext cancel flycheck")?;
         };
         anyhow::Ok(())
     })
@@ -156,9 +156,8 @@ pub fn run_flycheck(
         };
 
         if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer
-                .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto()))
-                .transpose()?;
+            let buffer_id =
+                buffer.map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto()));
             let request = proto::LspExtRunFlycheck {
                 project_id,
                 buffer_id,
@@ -182,7 +181,7 @@ pub fn run_flycheck(
                         Ok(())
                     }
                 })
-                .context("lsp ext run flycheck")??;
+                .context("lsp ext run flycheck")?;
         };
         anyhow::Ok(())
     })
@@ -231,7 +230,7 @@ pub fn clear_flycheck(
                         Ok(())
                     }
                 })
-                .context("lsp ext clear flycheck")??;
+                .context("lsp ext clear flycheck")?;
         };
         anyhow::Ok(())
     })
@@ -271,5 +270,4 @@ fn find_rust_analyzer_server(
                     }
                 })
         })
-        .ok()?
 }
