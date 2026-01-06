@@ -436,7 +436,7 @@ struct AutocompleteMetricsRequest {
     autocomplete_id: String,
     edit_tracking: String,
     edit_tracking_line: Option<u32>,
-    lifespan: u64,
+    lifespan: Option<u64>,
     debug_info: Arc<str>,
     device_id: String,
     privacy_mode_enabled: bool,
@@ -491,11 +491,6 @@ pub(crate) fn edit_prediction_accepted(
     };
     let debug_info = store.sweep_ai.debug_info.clone();
 
-    let lifespan_ms = current_prediction
-        .shown_at
-        .map(|t| t.elapsed().as_millis() as u64)
-        .unwrap_or(0);
-
     let prediction = current_prediction.prediction;
 
     let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
@@ -522,7 +517,7 @@ pub(crate) fn edit_prediction_accepted(
         autocomplete_id,
         edit_tracking: String::new(),
         edit_tracking_line: None,
-        lifespan: lifespan_ms,
+        lifespan: None,
         debug_info,
         device_id,
         privacy_mode_enabled: false,
@@ -560,7 +555,7 @@ pub fn edit_prediction_shown(
         autocomplete_id,
         edit_tracking: String::new(),
         edit_tracking_line: None,
-        lifespan: 0,
+        lifespan: None,
         debug_info,
         device_id: String::new(),
         privacy_mode_enabled: false,
