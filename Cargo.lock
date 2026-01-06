@@ -4873,6 +4873,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
+name = "dev_container"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "gpui",
+ "http 1.3.1",
+ "http_client",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -13275,6 +13287,7 @@ dependencies = [
  "auto_update",
  "dap",
  "db",
+ "dev_container",
  "editor",
  "extension_host",
  "file_finder",

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::dev_container::get_templates;
 use gpui::http_client::AsyncBody;
 use gpui::{
     Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
@@ -20,6 +21,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
+use crate::dev_container;
 use crate::remote_connections::Connection;
 
 #[derive(Debug, Deserialize)]
@@ -319,73 +321,6 @@ impl Debug for TemplateEntry {
             .finish()
     }
 }
-// Things we still need:
-// 1. An HTTP layer to query for templates
-// 2. The user-options specified so far in the devcontainer state
-// 3. A template rendering process (can possibly use the CLI for this)
-//
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TemplateResponse {
-    // _outcome: String,
-    // container_id: String,
-    // _remote_user: String,
-    // remote_workspace_folder: String,
-}
-// Ok, time to generalize this a bit more:
-// - Need the initial token call (https://ghcr.io/token?service=ghcr.io&scope=repository:devcontainers/templates:pull)
-// - Need the tags list response (maybe? Or just go to latest): https://ghcr.io/v2/devcontainers/templates/tags/list
-// - Need the manifest: https://ghcr.io/v2/devcontainers/templates/manifests/latest
-// - Need the digest from the layers: https://ghcr.io/v2/devcontainers/templates/blobs/sha256:035e9c9fd9bd61f6d3965fa4bf11f3ddfd2490a8cf324f152c13cc3724d67d09
-// - SO we probably need a basic GetFromAStructuredResponse type thing
-// - Maybe look at github.rs (line 49 or so) for some example code
-
-pub async fn fetch_templates(cx: &mut App) -> Result<Vec<TemplateEntry>, String> {
-    let client = cx.http_client();
-
-    let Ok(response) = client
-        .get("https://todo", AsyncBody::default(), false)
-        .await
-    else {
-        return Err("Failed to fetch templates".to_string());
-    };
-
-    let mut output = String::new();
-    response
-        .into_body()
-        .read_to_string(&mut output)
-        .await
-        .unwrap(); // TODO
-
-    let structured_response: TemplateResponse = serde_json::from_str(&output).unwrap();
-
-    Err("todo".to_string())
-}
-
-/**
-*
-let latest_release = delegate
-    .http_client()
-    .get(
-        "https://pypi.org/pypi/debugpy/json",
-        AsyncBody::empty(),
-        false,
-    )
-    .await
-    .log_err();
-let response = latest_release
-    .filter(|response| response.status().is_success())
-    .context("getting latest release")?;
-
-let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
-std::fs::create_dir_all(&download_dir)?;
-
-let mut output = String::new();
-response.into_body().read_to_string(&mut output).await?;
-let as_json = serde_json::Value::from_str(&output)?;
-let latest_version = as_json
-*
-*/
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevContainerState {
@@ -605,12 +540,15 @@ impl ElmLikeModalV2 for DevContainerModal {
                 // Test for now, but basically demonstrating that a call must be made from the render side of things
                 dbg!("spawning");
                 cx.spawn_in(window, async move |this, cx| {
-                    let timer = smol::Timer::after(Duration::from_millis(5000));
-                    timer.await;
-                    let message = DevContainerMessage::TemplatesRetrieved(vec![
-                        "Template1".to_string(),
-                        "Template2".to_string(),
-                    ]);
+                    // let timer = smol::Timer::after(Duration::from_millis(5000));
+                    // timer.await;
+                    let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                    let Some(templates) = get_templates(client).await.log_err() else {
+                        return;
+                    };
+                    let message = DevContainerMessage::TemplatesRetrieved(
+                        templates.templates.iter().map(|t| t.name.clone()).collect(),
+                    );
                     this.update_in(cx, |this, window, cx| {
                         this.accept_message(message, window, cx);
                     })
