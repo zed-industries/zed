@@ -465,7 +465,8 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
+            .add_request_handler(forward_project_search_chunk);
 
         Arc::new(server)
     }
@@ -2420,6 +2421,20 @@ async fn update_context(message: proto::UpdateContext, session: MessageContext) 
         },
     );
 
+    Ok(())
+}
+
+async fn forward_project_search_chunk(
+    message: proto::FindSearchCandidatesChunk,
+    response: Response<proto::FindSearchCandidatesChunk>,
+    session: MessageContext,
+) -> Result<()> {
+    let peer_id = message.peer_id.clone().context("missing peer_id")?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, peer_id.into(), message)
+        .await?;
+    response.send(payload)?;
     Ok(())
 }
 

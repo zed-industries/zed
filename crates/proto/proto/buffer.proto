@@ -320,11 +320,12 @@ message FindSearchCandidatesMatches {
 
 message FindSearchCandidatesChunk {
   uint64 project_id = 1;
-  uint64 handle = 2;
+  PeerId peer_id = 2;
+  uint64 handle = 3;
 
   oneof variant {
-    FindSearchCandidatesMatches matches = 3;
-    FindSearchCandidatesDone done = 4;
+    FindSearchCandidatesMatches matches = 4;
+    FindSearchCandidatesDone done = 5;
   }
 }
 

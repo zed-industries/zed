@@ -1055,6 +1055,7 @@ impl Project {
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
         client.add_entity_message_handler(Self::handle_toggle_lsp_logs);
         client.add_entity_message_handler(Self::handle_create_image_for_peer);
+        client.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -5047,7 +5048,7 @@ impl Project {
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let peer_id = envelope.original_sender_id()?;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
         let project_id = message.project_id;
         let path_style = this.read_with(&cx, |this, cx| this.path_style(cx))?;
@@ -5070,6 +5071,7 @@ impl Project {
                     let response = client
                         .request(proto::FindSearchCandidatesChunk {
                             handle,
+                            peer_id: Some(peer_id),
                             project_id,
                             variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                                 proto::FindSearchCandidatesMatches { buffer_ids },
@@ -5090,6 +5092,7 @@ impl Project {
                 let response = client
                     .request(proto::FindSearchCandidatesChunk {
                         handle,
+                        peer_id: Some(peer_id),
                         project_id,
                         variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                             proto::FindSearchCandidatesMatches { buffer_ids },
@@ -5106,6 +5109,7 @@ impl Project {
             let _ = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
+                    peer_id: Some(peer_id),
                     project_id,
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},

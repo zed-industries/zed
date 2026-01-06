@@ -778,6 +778,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
             message.query.context("missing query field")?,
@@ -813,6 +814,7 @@ impl HeadlessProject {
                     let response = client
                         .request(proto::FindSearchCandidatesChunk {
                             handle,
+                            peer_id: Some(peer_id),
                             project_id,
                             variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                                 proto::FindSearchCandidatesMatches { buffer_ids },
@@ -833,6 +835,7 @@ impl HeadlessProject {
                 let response = client
                     .request(proto::FindSearchCandidatesChunk {
                         handle,
+                        peer_id: Some(peer_id),
                         project_id,
                         variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                             proto::FindSearchCandidatesMatches { buffer_ids },
@@ -849,6 +852,7 @@ impl HeadlessProject {
             let _ = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
+                    peer_id: Some(peer_id),
                     project_id,
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},

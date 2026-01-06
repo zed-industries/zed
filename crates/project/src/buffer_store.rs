@@ -39,8 +39,10 @@ pub struct BufferStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
     non_searchable_buffers: HashSet<BufferId>,
+    // List of ongoing project search chunks from our remote host.
     project_search_chunks: HashMap<u64, smol::channel::Sender<BufferId>>,
-    pub next_project_search_id: u64,
+    // Monotonously-increasing handle to hand out to remote host in order to identify the project search result chunk.
+    next_project_search_id: u64,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
