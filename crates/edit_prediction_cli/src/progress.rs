@@ -396,7 +396,7 @@ impl Progress {
 
         // Print summary if there were failures
         if inner.failed_examples > 0 {
-            let total_processed = inner.completed.len() + inner.failed_examples;
+            let total_processed = inner.completed.len();
             let percentage = if total_processed > 0 {
                 inner.failed_examples as f64 / total_processed as f64 * 100.0
             } else {
