@@ -2718,6 +2718,19 @@ impl ToolCallEventStream {
             .ok();
     }
 
+    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateSubagentThread {
+                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
+                    thread,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
     pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));

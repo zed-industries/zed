@@ -347,6 +347,7 @@ impl ToolCall {
             ToolCallContent::Diff(diff) => Some(diff),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Terminal(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
     }
 
@@ -355,6 +356,14 @@ impl ToolCall {
             ToolCallContent::Terminal(terminal) => Some(terminal),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Diff(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
+        })
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        self.content.iter().find_map(|content| match content {
+            ToolCallContent::SubagentThread(thread) => Some(thread),
+            _ => None,
         })
     }
 
@@ -662,6 +671,7 @@ pub enum ToolCallContent {
     ContentBlock(ContentBlock),
     Diff(Entity<Diff>),
     Terminal(Entity<Terminal>),
+    SubagentThread(Entity<AcpThread>),
 }
 
 impl ToolCallContent {
@@ -733,6 +743,14 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+            Self::SubagentThread(thread) => thread.read(cx).to_markdown(cx),
+        }
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        match self {
+            Self::SubagentThread(thread) => Some(thread),
+            _ => None,
         }
     }
 }
@@ -742,6 +760,7 @@ pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
+    UpdateSubagentThread(ToolCallUpdateSubagentThread),
 }
 
 impl ToolCallUpdate {
@@ -750,6 +769,7 @@ impl ToolCallUpdate {
             Self::UpdateFields(update) => &update.tool_call_id,
             Self::UpdateDiff(diff) => &diff.id,
             Self::UpdateTerminal(terminal) => &terminal.id,
+            Self::UpdateSubagentThread(subagent) => &subagent.id,
         }
     }
 }
@@ -782,6 +802,18 @@ impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
 pub struct ToolCallUpdateTerminal {
     pub id: acp::ToolCallId,
     pub terminal: Entity<Terminal>,
+}
+
+impl From<ToolCallUpdateSubagentThread> for ToolCallUpdate {
+    fn from(subagent: ToolCallUpdateSubagentThread) -> Self {
+        Self::UpdateSubagentThread(subagent)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateSubagentThread {
+    pub id: acp::ToolCallId,
+    pub thread: Entity<AcpThread>,
 }
 
 #[derive(Debug, Default)]
@@ -1446,6 +1478,11 @@ impl AcpThread {
                 call.content.clear();
                 call.content
                     .push(ToolCallContent::Terminal(update.terminal));
+            }
+            ToolCallUpdate::UpdateSubagentThread(update) => {
+                call.content.clear();
+                call.content
+                    .push(ToolCallContent::SubagentThread(update.thread));
             }
         }
 

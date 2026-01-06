@@ -3076,7 +3076,93 @@ impl AcpThreadView {
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
+            ToolCallContent::SubagentThread(subagent_thread) => {
+                self.render_subagent_thread(entry_ix, subagent_thread, window, cx)
+            }
         }
+    }
+
+    fn render_subagent_thread(
+        &self,
+        entry_ix: usize,
+        subagent_thread: &Entity<acp_thread::AcpThread>,
+        _window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let thread = subagent_thread.read(cx);
+        let text_color = cx.theme().colors().text;
+
+        let mut rendered_entries: Vec<AnyElement> = Vec::new();
+
+        for (idx, entry) in thread.entries().iter().enumerate() {
+            let combined_ix = entry_ix * 1000 + idx;
+            let element = match entry {
+                AgentThreadEntry::UserMessage(message) => {
+                    let content = String::from(message.content.to_markdown(cx));
+                    v_flex()
+                        .id(("subagent-user-message", combined_ix))
+                        .gap_1()
+                        .child(
+                            Label::new("User")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(div().text_sm().text_color(text_color).child(content))
+                        .into_any_element()
+                }
+                AgentThreadEntry::AssistantMessage(message) => {
+                    let content = message.to_markdown(cx);
+                    v_flex()
+                        .id(("subagent-assistant-message", combined_ix))
+                        .gap_1()
+                        .child(
+                            Label::new("Subagent")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(div().text_sm().text_color(text_color).child(content))
+                        .into_any_element()
+                }
+                AgentThreadEntry::ToolCall(tool_call) => {
+                    let label = String::from(tool_call.label.read(cx).source());
+                    let status_text = match tool_call.status {
+                        ToolCallStatus::Pending => "Pending...",
+                        ToolCallStatus::InProgress => "Running...",
+                        ToolCallStatus::Completed => "Completed",
+                        ToolCallStatus::Failed => "Failed",
+                        ToolCallStatus::Canceled => "Canceled",
+                        ToolCallStatus::Rejected => "Rejected",
+                        ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
+                    };
+                    h_flex()
+                        .id(("subagent-tool-call", combined_ix))
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            Icon::new(IconName::ToolHammer)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(label).size(LabelSize::Small).color(Color::Default))
+                        .child(
+                            Label::new(status_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .into_any_element()
+                }
+            };
+            rendered_entries.push(element);
+        }
+
+        v_flex()
+            .id(("subagent-thread", entry_ix))
+            .gap_2()
+            .p_2()
+            .max_h(px(400.0))
+            .overflow_y_scroll()
+            .children(rendered_entries)
+            .into_any_element()
     }
 
     fn render_markdown_output(

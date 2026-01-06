@@ -1,3 +1,5 @@
+use action_log::ActionLog;
+use acp_thread::{AcpThread, AgentConnection, UserMessageId};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::HashSet;
@@ -8,12 +10,17 @@ use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
+use std::any::Any;
+use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use util::ResultExt;
+use watch;
 
 use crate::{
     AgentTool, ContextServerRegistry, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext,
-    Templates, Thread, ThreadEvent, ToolCallEventStream,
+    Templates, Thread, ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
 };
 
 /// When a subagent's remaining context window falls below this fraction (25%),
@@ -220,14 +227,38 @@ impl AgentTool for SubagentTool {
 
             let subagent_weak = subagent_thread.downgrade();
 
+            let acp_thread = cx.new(|cx| {
+                let session_id = subagent_thread.read(cx).id().clone();
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                let connection: Rc<dyn AgentConnection> = Rc::new(SubagentDisplayConnection);
+                AcpThread::new(
+                    "Subagent",
+                    connection,
+                    project.clone(),
+                    action_log,
+                    session_id,
+                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    cx,
+                )
+            })?;
+
+            event_stream.update_subagent_thread(acp_thread.clone());
+
             if let Some(parent) = parent_thread.upgrade() {
                 parent.update(cx, |thread, _cx| {
                     thread.register_running_subagent(subagent_weak.clone());
                 })?;
             }
 
-            let result =
-                run_subagent(&subagent_thread, allowed_tools, task_prompt, timeout_ms, cx).await;
+            let result = run_subagent(
+                &subagent_thread,
+                &acp_thread,
+                allowed_tools,
+                task_prompt,
+                timeout_ms,
+                cx,
+            )
+            .await;
 
             if let Some(parent) = parent_thread.upgrade() {
                 let _ = parent.update(cx, |thread, _cx| {
@@ -242,6 +273,7 @@ impl AgentTool for SubagentTool {
 
 async fn run_subagent(
     subagent_thread: &Entity<Thread>,
+    acp_thread: &Entity<AcpThread>,
     allowed_tools: Option<HashSet<SharedString>>,
     task_prompt: String,
     timeout_ms: Option<u64>,
@@ -256,47 +288,53 @@ async fn run_subagent(
     let mut events_rx =
         subagent_thread.update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
 
+    let acp_thread_weak = acp_thread.downgrade();
+
     let timed_out = if let Some(timeout) = timeout_ms {
-        wait_for_turn_completion_with_timeout(&mut events_rx, Duration::from_millis(timeout), cx)
+        forward_events_with_timeout(&mut events_rx, &acp_thread_weak, Duration::from_millis(timeout), cx)
             .await
     } else {
-        wait_for_turn_completion(&mut events_rx).await;
+        forward_events_until_stop(&mut events_rx, &acp_thread_weak, cx).await;
         false
     };
 
-    // Check context usage after turn completes. Note: A future improvement could
-    // check context periodically during multi-turn execution, but this requires
-    // architectural changes to the event processing loop.
     let should_interrupt =
         timed_out || check_context_low(subagent_thread, CONTEXT_LOW_THRESHOLD, cx)?;
 
     if should_interrupt {
         let mut summary_rx =
             subagent_thread.update(cx, |thread, cx| thread.interrupt_for_summary(cx))??;
-        wait_for_turn_completion(&mut summary_rx).await;
+        forward_events_until_stop(&mut summary_rx, &acp_thread_weak, cx).await;
     } else {
         let mut summary_rx =
             subagent_thread.update(cx, |thread, cx| thread.request_final_summary(cx))??;
-        wait_for_turn_completion(&mut summary_rx).await;
+        forward_events_until_stop(&mut summary_rx, &acp_thread_weak, cx).await;
     }
 
     extract_last_message(subagent_thread, cx)
 }
 
-async fn wait_for_turn_completion(events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>) {
+async fn forward_events_until_stop(
+    events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    acp_thread: &WeakEntity<AcpThread>,
+    cx: &mut AsyncApp,
+) {
     while let Some(event) = events_rx.next().await {
         match event {
             Ok(ThreadEvent::Stop(_)) => break,
+            Ok(event) => {
+                forward_event_to_acp_thread(event, acp_thread, cx);
+            }
             Err(_) => break,
-            _ => continue,
         }
     }
 }
 
-async fn wait_for_turn_completion_with_timeout(
+async fn forward_events_with_timeout(
     events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    acp_thread: &WeakEntity<AcpThread>,
     timeout: Duration,
-    cx: &AsyncApp,
+    cx: &mut AsyncApp,
 ) -> bool {
     use futures::future::{self, Either};
 
@@ -314,12 +352,86 @@ async fn wait_for_turn_completion_with_timeout(
         match future::select(event_future, timeout_future).await {
             Either::Left((event, _)) => match event {
                 Some(Ok(ThreadEvent::Stop(_))) => return false,
+                Some(Ok(event)) => {
+                    forward_event_to_acp_thread(event, acp_thread, cx);
+                }
                 Some(Err(_)) => return false,
                 None => return false,
-                Some(_) => continue,
             },
             Either::Right((_, _)) => return true,
         }
+    }
+}
+
+fn forward_event_to_acp_thread(
+    event: ThreadEvent,
+    acp_thread: &WeakEntity<AcpThread>,
+    cx: &mut AsyncApp,
+) {
+    match event {
+        ThreadEvent::UserMessage(message) => {
+            acp_thread
+                .update(cx, |thread, cx| {
+                    for content in message.content {
+                        thread.push_user_content_block(
+                            Some(message.id.clone()),
+                            content.into(),
+                            cx,
+                        );
+                    }
+                })
+                .log_err();
+        }
+        ThreadEvent::AgentText(text) => {
+            acp_thread
+                .update(cx, |thread, cx| {
+                    thread.push_assistant_content_block(text.into(), false, cx)
+                })
+                .log_err();
+        }
+        ThreadEvent::AgentThinking(text) => {
+            acp_thread
+                .update(cx, |thread, cx| {
+                    thread.push_assistant_content_block(text.into(), true, cx)
+                })
+                .log_err();
+        }
+        ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
+            tool_call,
+            options,
+            response,
+        }) => {
+            let outcome_task = acp_thread.update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(tool_call, options, true, cx)
+            });
+            if let Ok(Ok(task)) = outcome_task {
+                cx.background_spawn(async move {
+                    if let acp::RequestPermissionOutcome::Selected(
+                        acp::SelectedPermissionOutcome { option_id, .. },
+                    ) = task.await
+                    {
+                        response.send(option_id).ok();
+                    }
+                })
+                .detach();
+            }
+        }
+        ThreadEvent::ToolCall(tool_call) => {
+            acp_thread
+                .update(cx, |thread, cx| thread.upsert_tool_call(tool_call, cx))
+                .log_err();
+        }
+        ThreadEvent::ToolCallUpdate(update) => {
+            acp_thread
+                .update(cx, |thread, cx| thread.update_tool_call(update, cx))
+                .log_err();
+        }
+        ThreadEvent::Retry(status) => {
+            acp_thread
+                .update(cx, |thread, cx| thread.update_retry_status(status, cx))
+                .log_err();
+        }
+        ThreadEvent::Stop(_) => {}
     }
 }
 
@@ -390,5 +502,45 @@ mod tests {
     #[test]
     fn test_subagent_tool_kind() {
         assert_eq!(SubagentTool::kind(), acp::ToolKind::Other);
+    }
+}
+
+struct SubagentDisplayConnection;
+
+impl AgentConnection for SubagentDisplayConnection {
+    fn telemetry_id(&self) -> SharedString {
+        "subagent".into()
+    }
+
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
+    }
+
+    fn new_thread(
+        self: Rc<Self>,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        unimplemented!("SubagentDisplayConnection does not support new_thread")
+    }
+
+    fn authenticate(&self, _method_id: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+        unimplemented!("SubagentDisplayConnection does not support authenticate")
+    }
+
+    fn prompt(
+        &self,
+        _id: Option<UserMessageId>,
+        _params: acp::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        unimplemented!("SubagentDisplayConnection does not support prompt")
+    }
+
+    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
