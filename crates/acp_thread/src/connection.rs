@@ -284,6 +284,13 @@ impl AgentModelList {
 
 #[cfg(feature = "test-support")]
 mod test_support {
+    //! Test-only stubs and helpers for acp_thread.
+    //!
+    //! This module is gated by the `test-support` feature and is not included
+    //! in production builds. It provides:
+    //! - `StubAgentConnection` for mocking agent connections in tests
+    //! - `create_test_png_base64` for generating test images
+
     use std::sync::Arc;
 
     use action_log::ActionLog;
@@ -293,6 +300,32 @@ mod test_support {
     use parking_lot::Mutex;
 
     use super::*;
+
+    /// Creates a PNG image encoded as base64 for testing.
+    ///
+    /// Generates a solid-color PNG of the specified dimensions and returns
+    /// it as a base64-encoded string suitable for use in `ImageContent`.
+    pub fn create_test_png_base64(width: u32, height: u32, color: [u8; 4]) -> String {
+        use image::ImageEncoder as _;
+
+        let mut png_data = Vec::new();
+        {
+            let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+            for _ in 0..(width * height) {
+                pixels.extend_from_slice(&color);
+            }
+            encoder
+                .write_image(&pixels, width, height, image::ExtendedColorType::Rgba8)
+                .expect("Failed to encode PNG");
+        }
+
+        use image::EncodableLayout as _;
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            png_data.as_bytes(),
+        )
+    }
 
     #[derive(Clone, Default)]
     pub struct StubAgentConnection {
@@ -513,14 +546,13 @@ mod test_support {
         }
     }
 
-    /// A stub model selector for visual tests that provides a static model list.
     #[derive(Clone)]
-    pub struct StubModelSelector {
+    struct StubModelSelector {
         selected_model: Arc<Mutex<AgentModelInfo>>,
     }
 
     impl StubModelSelector {
-        pub fn new() -> Self {
+        fn new() -> Self {
             Self {
                 selected_model: Arc::new(Mutex::new(AgentModelInfo {
                     id: acp::ModelId::new("visual-test-model"),
