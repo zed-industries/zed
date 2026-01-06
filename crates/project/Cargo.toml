@@ -65,6 +65,7 @@ postage.workspace = true
 prettier.workspace = true
 rand.workspace = true
 regex.workspace = true
+release_channel.workspace = true
 remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
@@ -110,7 +111,6 @@ language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 snippet_provider = { workspace = true, features = ["test-support"] }

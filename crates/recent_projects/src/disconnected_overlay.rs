@@ -57,16 +57,15 @@ impl DisconnectedOverlay {
             |workspace, project, event, window, cx| {
                 if !matches!(
                     event,
-                    project::Event::DisconnectedFromHost
-                        | project::Event::DisconnectedFromSshRemote
+                    project::Event::DisconnectedFromHost | project::Event::DisconnectedFromRemote
                 ) {
                     return;
                 }
                 let handle = cx.entity().downgrade();
 
                 let remote_connection_options = project.read(cx).remote_connection_options(cx);
-                let host = if let Some(ssh_connection_options) = remote_connection_options {
-                    Host::RemoteServerProject(ssh_connection_options)
+                let host = if let Some(remote_connection_options) = remote_connection_options {
+                    Host::RemoteServerProject(remote_connection_options)
                 } else {
                     Host::CollabGuestProject
                 };
@@ -86,8 +85,8 @@ impl DisconnectedOverlay {
         self.finished = true;
         cx.emit(DismissEvent);
 
-        if let Host::RemoteServerProject(ssh_connection_options) = &self.host {
-            self.reconnect_to_remote_project(ssh_connection_options.clone(), window, cx);
+        if let Host::RemoteServerProject(remote_connection_options) = &self.host {
+            self.reconnect_to_remote_project(remote_connection_options.clone(), window, cx);
         }
     }
 

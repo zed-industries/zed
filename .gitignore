@@ -44,3 +44,8 @@ crates/docs_preprocessor/actions.json
 
 # `nix build` output
 /result
+
+# Visual test baseline images (these will be stored outside
+# the repo in the future, but we don't haven't decided exactly
+# where yet, so for now they get generated into a gitignored dir.)
+/crates/zed/test_fixtures/visual_tests/

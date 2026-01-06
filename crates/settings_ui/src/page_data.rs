@@ -890,6 +890,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Text Rendering"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Text Rendering Mode",
+                    description: "The text rendering mode to use.",
+                    field: Box::new(SettingField {
+                        json_path: Some("text_rendering_mode"),
+                        pick: |settings_content| {
+                            settings_content.workspace.text_rendering_mode.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.text_rendering_mode = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Multi Cursor Modifier",

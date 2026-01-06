@@ -136,4 +136,4 @@ Other entities can then register a callback to handle these events by doing `cx.
 ## Build guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
-- Always use `-q` when invoking `cargo`
+- Always invoke `cargo` commands with the `-q` flag

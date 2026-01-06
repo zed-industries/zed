@@ -1097,4 +1097,13 @@
       "ctrl-e": "markdown::ScrollDown",
     },
   },
+  {
+    "context": "FileHistoryView",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+    },
+  },
 ]

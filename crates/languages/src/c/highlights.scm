@@ -98,6 +98,8 @@
   (char_literal)
 ] @string
 
+(escape_sequence) @string.escape
+
 (comment) @comment
 
 (number_literal) @number

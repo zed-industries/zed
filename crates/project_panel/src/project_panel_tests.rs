@@ -4053,10 +4053,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a/b/c/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4086,10 +4083,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/target_destination/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4109,10 +4103,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a/b", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4138,10 +4129,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/target_destination/b", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4161,10 +4149,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4184,6 +4169,88 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &["v root", "    > target_destination/a/b/c/d"],
         "Moving first directory 'a' should move whole 'a/b/c/d' chain"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {}
+                }
+            },
+            "e": {
+                "f": {
+                    "g": {}
+                }
+            },
+            "target": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b/c", "    > e/f/g", "    > target"]
+    );
+
+    select_folded_path_with_mark(&panel, "root/a/b/c", "root/a/b", cx);
+    select_folded_path_with_mark(&panel, "root/e/f/g", "root/e/f", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: *panel.state.selection.as_ref().unwrap(),
+            marked_selections: panel.marked_entries.clone().into(),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path(rel_path("target"))
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // After dragging 'b/c' and 'f/g' should be moved to target
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > e",
+            "    v target",
+            "        > b/c",
+            "        > f/g  <== selected  <== marked"
+        ],
+        "Should move 'b/c' and 'f/g' to target, leaving 'a' and 'e'"
     );
 }
 
@@ -4284,6 +4351,89 @@ async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppCon
         find_project_entry(&panel, "root_a/multi/beta.txt", cx),
         None,
         "Marked entries should be removed from the origin worktree"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_multiple_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "folder1": {
+                    "mod.rs": "// folder1 mod"
+                },
+                "folder2": {
+                    "mod.rs": "// folder2 mod"
+                },
+                "folder3": {
+                    "mod.rs": "// folder3 mod",
+                    "helper.rs": "// helper"
+                },
+                "main.rs": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/folder1", cx);
+    toggle_expand_dir(&panel, "root/src/folder2", cx);
+    toggle_expand_dir(&panel, "root/src/folder3", cx);
+    cx.run_until_parked();
+
+    // Case 1: Dragging a folder and a file from a sibling folder together.
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/folder1", cx);
+    select_path_with_mark(&panel, "root/src/folder2/mod.rs", cx);
+
+    drag_selection_to(&panel, "root", false, cx);
+
+    assert!(
+        find_project_entry(&panel, "root/folder1", cx).is_some(),
+        "folder1 should be at root after drag"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should still be inside folder1 after drag"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root/src/folder1", cx),
+        None,
+        "folder1 should no longer be in src"
+    );
+    assert!(
+        find_project_entry(&panel, "root/mod.rs", cx).is_some(),
+        "mod.rs from folder2 should be at root"
+    );
+
+    // Case 2: Dragging a folder and its own child together.
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/folder3", cx);
+    select_path_with_mark(&panel, "root/src/folder3/mod.rs", cx);
+
+    drag_selection_to(&panel, "root", false, cx);
+
+    assert!(
+        find_project_entry(&panel, "root/folder3", cx).is_some(),
+        "folder3 should be at root after drag"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder3/mod.rs", cx).is_some(),
+        "folder3/mod.rs should still be inside folder3"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder3/helper.rs", cx).is_some(),
+        "folder3/helper.rs should still be inside folder3"
     );
 }
 
@@ -7675,6 +7825,40 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
             }
         }
         panic!("no worktree for path {:?}", path);
+    });
+}
+
+/// `leaf_path` is the full path to the leaf entry (e.g., "root/a/b/c")
+/// `active_ancestor_path` is the path to the ancestor that should be "active" (e.g., "root/a/b")
+fn select_folded_path_with_mark(
+    panel: &Entity<ProjectPanel>,
+    leaf_path: &str,
+    active_ancestor_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    select_path_with_mark(panel, leaf_path, cx);
+    let active_ancestor_path = rel_path(active_ancestor_path);
+    panel.update(cx, |panel, cx| {
+        let leaf_entry_id = panel.state.selection.unwrap().entry_id;
+        if let Some(folded_ancestors) = panel.state.ancestors.get_mut(&leaf_entry_id) {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(active_relative_path) =
+                    active_ancestor_path.strip_prefix(worktree.root_name())
+                {
+                    let active_entry_id = worktree.entry_for_path(active_relative_path).unwrap().id;
+                    if let Some(index) = folded_ancestors
+                        .ancestors
+                        .iter()
+                        .position(|&id| id == active_entry_id)
+                    {
+                        folded_ancestors.current_ancestor_depth =
+                            folded_ancestors.ancestors.len() - 1 - index;
+                    }
+                    return;
+                }
+            }
+        }
     });
 }
 

@@ -27,6 +27,7 @@ askpass.workspace = true
 clap.workspace = true
 client.workspace = true
 collections.workspace = true
+crashes.workspace = true
 dap_adapters.workspace = true
 debug_adapter_extension.workspace = true
 env_logger.workspace = true
@@ -71,7 +72,6 @@ thiserror.workspace = true
 rayon.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
-crashes.workspace = true
 crash-handler.workspace = true
 fork.workspace = true
 libc.workspace = true

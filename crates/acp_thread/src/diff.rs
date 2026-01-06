@@ -86,9 +86,16 @@ impl Diff {
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
         let buffer_text_snapshot = buffer.read(cx).text_snapshot();
+        let language = buffer.read(cx).language().cloned();
+        let language_registry = buffer.read(cx).language_registry();
         let buffer_diff = cx.new(|cx| {
             let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
-            let secondary_diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_text_snapshot, cx));
+            diff.language_changed(language.clone(), language_registry.clone(), cx);
+            let secondary_diff = cx.new(|cx| {
+                let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
+                diff.language_changed(language, language_registry, cx);
+                diff
+            });
             diff.set_secondary_diff(secondary_diff);
             diff
         });
