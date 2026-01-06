@@ -1,5 +1,6 @@
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream,
+    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
+    decide_permission_from_settings,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -149,7 +150,19 @@ impl EditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+        let path_str = input.path.to_string_lossy();
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings("edit_file", &path_str, settings);
+
+        match decision {
+            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {}
+        }
+
+        if settings.always_allow_tool_actions {
             return Task::ready(Ok(()));
         }
 

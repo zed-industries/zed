@@ -1,4 +1,5 @@
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::FxHashSet;
 use gpui::{App, Entity, SharedString, Task};
@@ -6,10 +7,13 @@ use language::Buffer;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 
 /// Saves files that have unsaved changes.
 ///
@@ -58,13 +62,45 @@ impl AgentTool for SaveFileTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
+        let settings = AgentSettings::get_global(cx);
+        let mut needs_confirmation = false;
+
+        for path in &input.paths {
+            let path_str = path.to_string_lossy();
+            let decision = decide_permission_from_settings("save_file", &path_str, settings);
+            match decision {
+                ToolPermissionDecision::Allow => {}
+                ToolPermissionDecision::Deny(reason) => {
+                    return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                }
+                ToolPermissionDecision::Confirm => {
+                    needs_confirmation = true;
+                }
+            }
+        }
+
+        let authorize = if needs_confirmation {
+            let title = if input.paths.len() == 1 {
+                "Save file".to_string()
+            } else {
+                format!("Save {} files", input.paths.len())
+            };
+            Some(event_stream.authorize(title, cx))
+        } else {
+            None
+        };
+
         let project = self.project.clone();
         let input_paths = input.paths;
 
         cx.spawn(async move |cx| {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
             let mut buffers_to_save: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
             let mut saved_paths: Vec<PathBuf> = Vec::new();
@@ -181,6 +217,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        });
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            AgentSettings::override_global(settings, cx);
         });
     }
 
