@@ -2728,8 +2728,7 @@ impl AcpThreadView {
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool || is_subagent;
 
-        let is_collapsible =
-            (!tool_call.content.is_empty() || is_subagent) && !needs_confirmation;
+        let is_collapsible = (!tool_call.content.is_empty() || is_subagent) && !needs_confirmation;
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
         let input_output_header = |label: SharedString| {
