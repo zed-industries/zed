@@ -673,12 +673,10 @@ async fn test_cannot_update_another_users_shared_thread(db: &Arc<Database>) {
 
     let thread_id = SharedThreadId(Uuid::new_v4());
 
-    // User 1 creates the thread.
     db.upsert_shared_thread(thread_id, user1_id, "User 1 Thread", b"user1 data".to_vec())
         .await
         .unwrap();
 
-    // User 2 tries to update it.
     let result = db
         .upsert_shared_thread(thread_id, user2_id, "User 2 Title", b"user2 data".to_vec())
         .await;

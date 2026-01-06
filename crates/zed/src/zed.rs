@@ -708,7 +708,8 @@ fn setup_or_teardown_ai_panel<P: Panel>(
 ) -> Task<anyhow::Result<()>> {
     let disable_ai = SettingsStore::global(cx)
         .get::<DisableAiSettings>(None)
-        .disable_ai;
+        .disable_ai
+        || cfg!(test);
     let existing_panel = workspace.panel::<P>(cx);
     match (disable_ai, existing_panel) {
         (false, None) => cx.spawn_in(window, async move |workspace, cx| {

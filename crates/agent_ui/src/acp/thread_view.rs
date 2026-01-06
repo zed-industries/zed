@@ -1006,7 +1006,6 @@ impl AcpThreadView {
         let session_id = thread.read(cx).id().clone();
 
         cx.spawn_in(window, async move |this, cx| {
-            // Fetch latest from server using the thread's session_id.
             let response = client
                 .request(proto::GetSharedAgentThread {
                     session_id: session_id.to_string(),
@@ -1015,24 +1014,20 @@ impl AcpThreadView {
 
             let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
 
-            // Convert to local format (imported flag is set to true by to_db_thread).
             let db_thread = shared_thread.to_db_thread();
 
-            // Save updated thread (same session_id, so it overwrites).
             history_store
                 .update(&mut cx.clone(), |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, cx)
                 })?
                 .await?;
 
-            // Update resume_thread_metadata so reset() knows which thread to reload.
             let thread_metadata = agent::DbThreadMetadata {
                 id: session_id,
                 title: format!("🔗 {}", response.title).into(),
                 updated_at: chrono::Utc::now(),
             };
 
-            // Reload the thread view to show the updated content.
             this.update_in(cx, |this, window, cx| {
                 this.resume_thread_metadata = Some(thread_metadata);
                 this.reset(window, cx);
@@ -4960,7 +4955,6 @@ impl AcpThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
-    /// Returns true if this thread was imported from a shared thread and can be synced.
     fn is_imported_thread(&self, cx: &App) -> bool {
         let Some(thread) = self.as_native_thread(cx) else {
             return false;
@@ -5883,7 +5877,6 @@ impl AcpThreadView {
                 );
         }
 
-        // Add sync button for imported threads (if connected to collab).
         if cx.has_flag::<AgentSharingFeatureFlag>()
             && self.is_imported_thread(cx)
             && self
@@ -5906,7 +5899,6 @@ impl AcpThreadView {
             container = container.child(sync_button);
         }
 
-        // Add share button if feature flag is enabled (only for non-imported threads).
         if cx.has_flag::<AgentSharingFeatureFlag>() && !self.is_imported_thread(cx) {
             let share_button = IconButton::new("share-thread", IconName::ArrowUpRight)
                 .shape(ui::IconButtonShape::Square)

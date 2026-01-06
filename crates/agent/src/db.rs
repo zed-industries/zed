@@ -50,13 +50,10 @@ pub struct DbThread {
     pub completion_mode: Option<CompletionMode>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
-    /// True if this thread was imported from a shared thread and can be synced.
     #[serde(default)]
     pub imported: bool,
 }
 
-/// A thread format suitable for sharing across users/machines.
-/// Omits machine-specific data like project snapshots and user-specific data like profiles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedThread {
     pub title: SharedString,
@@ -72,7 +69,6 @@ pub struct SharedThread {
 impl SharedThread {
     pub const VERSION: &'static str = "1.0.0";
 
-    /// Convert from a DbThread, stripping machine-specific data
     pub fn from_db_thread(thread: &DbThread) -> Self {
         Self {
             title: thread.title.clone(),
@@ -100,7 +96,6 @@ impl SharedThread {
         }
     }
 
-    /// Serialize to JSON and compress with zstd
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         const COMPRESSION_LEVEL: i32 = 3;
         let json = serde_json::to_vec(self)?;
@@ -108,7 +103,6 @@ impl SharedThread {
         Ok(compressed)
     }
 
-    /// Decompress with zstd and deserialize from JSON
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let decompressed = zstd::decode_all(data)?;
         Ok(serde_json::from_slice(&decompressed)?)

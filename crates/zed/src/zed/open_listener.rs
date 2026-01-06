@@ -111,7 +111,6 @@ impl OpenRequest {
             } else if url == "zed://agent" {
                 this.kind = Some(OpenRequestKind::AgentPanel);
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
-                // Validate it looks like a UUID before accepting.
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {
                         session_id: session_id_str.to_string(),

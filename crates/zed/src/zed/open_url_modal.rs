@@ -63,7 +63,6 @@ impl OpenUrlModal {
             return;
         }
 
-        // For other URLs, validate and open in browser.
         match url::Url::parse(&url) {
             Ok(parsed_url) => {
                 cx.open_url(parsed_url.as_str());

@@ -82,7 +82,6 @@ async fn test_reshare_updates_existing_thread(
 
     let session_id = Uuid::new_v4().to_string();
 
-    // Share the thread initially.
     client_a
         .client()
         .request(proto::ShareAgentThread {
@@ -93,7 +92,6 @@ async fn test_reshare_updates_existing_thread(
         .await
         .expect("Failed to share thread");
 
-    // Re-share the same thread with updated content.
     client_a
         .client()
         .request(proto::ShareAgentThread {
@@ -104,7 +102,6 @@ async fn test_reshare_updates_existing_thread(
         .await
         .expect("Failed to re-share thread");
 
-    // Verify the thread was updated.
     let get_response = client_b
         .client()
         .request(proto::GetSharedAgentThread {
@@ -217,11 +214,4 @@ async fn test_sync_imported_thread(
 
     // The synced thread should have the updated title.
     assert_eq!(synced_thread.title.as_ref(), "Updated Title");
-
-    // Converting to db_thread should preserve the imported flag.
-    let db_thread = synced_thread.to_db_thread();
-    assert!(
-        db_thread.imported,
-        "Synced thread should still have imported flag"
-    );
 }

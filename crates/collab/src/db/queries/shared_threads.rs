@@ -4,9 +4,6 @@ use super::*;
 use crate::db::tables::shared_thread;
 
 impl Database {
-    /// Upsert a shared thread. If a thread with this ID already exists and belongs
-    /// to the same user, update it. Otherwise, create a new one.
-    /// Returns the SharedThreadId.
     pub async fn upsert_shared_thread(
         &self,
         id: SharedThreadId,
@@ -21,17 +18,14 @@ impl Database {
             async move {
                 let now = Utc::now().naive_utc();
 
-                // Check if thread already exists.
                 let existing = shared_thread::Entity::find_by_id(id).one(&*tx).await?;
 
                 match existing {
                     Some(existing) => {
-                        // Only allow update if same user owns it.
                         if existing.user_id != user_id {
                             Err(anyhow!("Cannot update shared thread owned by another user"))?;
                         }
 
-                        // Update existing record.
                         let mut active: shared_thread::ActiveModel = existing.into();
                         active.title = ActiveValue::Set(title);
                         active.data = ActiveValue::Set(data);
@@ -39,7 +33,6 @@ impl Database {
                         active.update(&*tx).await?;
                     }
                     None => {
-                        // Create new record.
                         shared_thread::ActiveModel {
                             id: ActiveValue::Set(id),
                             user_id: ActiveValue::Set(user_id),
@@ -59,7 +52,6 @@ impl Database {
         .await
     }
 
-    /// Get a shared thread by ID.
     pub async fn get_shared_thread(
         &self,
         share_id: SharedThreadId,
@@ -72,7 +64,6 @@ impl Database {
                 return Ok(None);
             };
 
-            // Get the sharer's username.
             let user = user::Entity::find_by_id(thread.user_id).one(&*tx).await?;
 
             let username = user

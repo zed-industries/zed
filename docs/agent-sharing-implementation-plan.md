@@ -268,9 +268,6 @@ use super::*;
 use crate::db::tables::shared_thread;
 
 impl Database {
-    /// Upsert a shared thread. If a thread with this ID already exists and belongs
-    /// to the same user, update it. Otherwise, create a new one.
-    /// Returns the SharedThreadId.
     pub async fn upsert_shared_thread(
         &self,
         id: SharedThreadId,
@@ -284,22 +281,19 @@ impl Database {
             let data = data.clone();
             async move {
                 let now = Utc::now().naive_utc();
-                
-                // Check if thread already exists
+
                 let existing = shared_thread::Entity::find_by_id(id)
                     .one(&*tx)
                     .await?;
 
                 match existing {
                     Some(existing) => {
-                        // Only allow update if same user owns it
                         if existing.user_id != user_id {
                             return Err(anyhow::anyhow!(
                                 "Cannot update shared thread owned by another user"
                             ));
                         }
 
-                        // Update existing record
                         let mut active: shared_thread::ActiveModel = existing.into();
                         active.title = ActiveValue::Set(title);
                         active.data = ActiveValue::Set(data);
@@ -307,7 +301,6 @@ impl Database {
                         active.update(&*tx).await?;
                     }
                     None => {
-                        // Create new record
                         shared_thread::ActiveModel {
                             id: ActiveValue::Set(id),
                             user_id: ActiveValue::Set(user_id),
@@ -861,7 +854,6 @@ Add helper to check if a thread is imported:
 
 ```rust
 impl AcpThreadView {
-    /// Returns true if this thread was imported from a shared thread and can be synced.
     fn is_imported_thread(&self, cx: &Context<Self>) -> bool {
         let Some(thread) = self.as_native_thread(cx) else {
             return false;
@@ -893,36 +885,36 @@ fn sync_thread(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
     if !self.is_imported_thread(cx) {
         return;
     }
-    
+
     let Some(thread) = self.as_native_thread(cx) else {
         return;
     };
-    
+
     let client = self.project.read(cx).client();
     let workspace = self.workspace.clone();
     let thread_entity = thread.clone();
     let history_store = self.history_store.clone();
     let session_id = thread.read(cx).id().clone();
-    
+
     cx.spawn(async move |_this, cx| {
         // Fetch latest from server using the thread's session_id
         let shared_thread = sync_imported_thread(&session_id.to_string(), client).await?;
-        
+
         // Update local thread with new content (imported flag preserved by to_db_thread)
         let db_thread = shared_thread.to_db_thread();
-        
+
         // Save updated thread (same session_id, so it overwrites)
         history_store
             .update(&mut cx.clone(), |store, cx| {
                 store.save_thread(session_id.clone(), db_thread, cx)
             })?
             .await?;
-        
+
         // Reload the thread view
         thread_entity.update(&mut cx.clone(), |thread, cx| {
             thread.reload(cx);
         })?;
-        
+
         cx.update(|cx| {
             if let Some(workspace) = workspace.upgrade() {
                 workspace.update(cx, |workspace, cx| {
@@ -938,7 +930,7 @@ fn sync_thread(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
                 });
             }
         })?;
-        
+
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
@@ -982,7 +974,6 @@ fn render_thread_controls(
         container = container.child(sync_button);
     }
 
-    // Add share button if feature flag is enabled (only for non-imported threads)
     if cx.has_flag::<AgentSharingFeatureFlag>() && !self.is_imported_thread(cx) {
         let share_button = IconButton::new("share-thread", IconName::Share)
             .shape(ui::IconButtonShape::Square)

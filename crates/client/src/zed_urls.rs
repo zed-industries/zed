@@ -68,8 +68,6 @@ pub fn edit_prediction_docs(cx: &App) -> String {
     )
 }
 
-/// Returns the URL for a shared agent thread.
-/// Takes the session_id (UUID) which is used as the share identifier.
 pub fn shared_agent_thread_url(session_id: &str) -> String {
     format!("zed://agent/shared/{}", session_id)
 }
