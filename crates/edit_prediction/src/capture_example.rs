@@ -1,23 +1,26 @@
 use crate::{
-    EditPredictionStore, StoredEvent,
+    EditPredictionExampleCaptureFeatureFlag, StoredEvent,
     cursor_excerpt::editable_and_context_ranges_for_cursor_position, example_spec::ExampleSpec,
 };
 use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{App, Entity, Task};
 use language::{Buffer, ToPoint as _};
 use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, path::Path, sync::Arc};
 use text::BufferSnapshot as TextBufferSnapshot;
 
+pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
+
 pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
+    mut events: Vec<StoredEvent>,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
-    let ep_store = EditPredictionStore::try_global(cx)?;
     let snapshot = buffer.read(cx).snapshot();
     let file = snapshot.file()?;
     let worktree_id = file.worktree_id(cx);
@@ -34,10 +37,6 @@ pub fn capture_example(
         .clone()
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
-
-    let mut events = ep_store.update(cx, |store, cx| {
-        store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-    });
 
     let git_store = project.read(cx).git_store().clone();
 
@@ -189,9 +188,19 @@ fn generate_timestamp_name() -> String {
     }
 }
 
+pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
+    let capture_rate = language::language_settings::all_language_settings(None, cx)
+        .edit_predictions
+        .example_capture_rate
+        .unwrap_or(DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS);
+    cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
+        && rand::random::<u16>() % 10_000 < capture_rate
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EditPredictionStore;
     use client::{Client, UserStore};
     use clock::FakeSystemClock;
     use gpui::{AppContext as _, TestAppContext, http_client::FakeHttpClient};
@@ -303,8 +312,13 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let events = ep_store.update(cx, |store, cx| {
+            store.edit_history_for_project_with_pause_split_last_event(&project, cx)
+        });
         let mut example = cx
-            .update(|cx| capture_example(project.clone(), buffer.clone(), Anchor::MIN, cx).unwrap())
+            .update(|cx| {
+                capture_example(project.clone(), buffer.clone(), Anchor::MIN, events, cx).unwrap()
+            })
             .await
             .unwrap();
         example.name = "test".to_string();

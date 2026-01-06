@@ -3053,6 +3053,14 @@ impl GitPanel {
             let push = repo.update(cx, |repo, cx| {
                 repo.push(
                     branch.name().to_owned().into(),
+                    branch
+                        .upstream
+                        .as_ref()
+                        .filter(|u| matches!(u.tracking, UpstreamTracking::Tracked(_)))
+                        .and_then(|u| u.branch_name())
+                        .unwrap_or_else(|| branch.name())
+                        .to_owned()
+                        .into(),
                     remote.name.clone(),
                     options,
                     askpass_delegate,
@@ -3074,6 +3082,68 @@ impl GitPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let result = (|| -> anyhow::Result<()> {
+            let repo = self
+                .active_repository
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("No active repository"))?;
+
+            let (branch, remote_origin, remote_upstream) = {
+                let repository = repo.read(cx);
+                (
+                    repository.branch.clone(),
+                    repository.remote_origin_url.clone(),
+                    repository.remote_upstream_url.clone(),
+                )
+            };
+
+            let branch = branch.ok_or_else(|| anyhow::anyhow!("No active branch"))?;
+            let source_branch = branch
+                .upstream
+                .as_ref()
+                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+                .and_then(|upstream| upstream.branch_name())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let source_branch = source_branch.to_string();
+
+            let remote_url = branch
+                .upstream
+                .as_ref()
+                .and_then(|upstream| match upstream.remote_name() {
+                    Some("upstream") => remote_upstream.as_deref(),
+                    Some(_) => remote_origin.as_deref(),
+                    None => None,
+                })
+                .or(remote_origin.as_deref())
+                .or(remote_upstream.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let remote_url = remote_url.to_string();
+
+            let provider_registry = GitHostingProviderRegistry::global(cx);
+            let Some((provider, parsed_remote)) =
+                git::parse_git_remote_url(provider_registry, &remote_url)
+            else {
+                return Err(anyhow::anyhow!("Unsupported remote URL: {}", remote_url));
+            };
+
+            let Some(url) = provider.build_create_pull_request_url(&parsed_remote, &source_branch)
+            else {
+                return Err(anyhow::anyhow!("Unable to construct pull request URL"));
+            };
+
+            cx.open_url(url.as_str());
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            log::error!("Error while creating pull request {:?}", err);
+            cx.defer_in(window, |panel, _window, cx| {
+                panel.show_error_toast("create pull request", err, cx);
+            });
+        }
     }
 
     fn askpass_delegate(
@@ -3706,7 +3776,12 @@ impl GitPanel {
         }
     }
 
-    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+    fn show_remote_output(
+        &mut self,
+        action: RemoteAction,
+        info: RemoteCommandOutput,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -4367,23 +4442,24 @@ impl GitPanel {
 
         Some(
             h_flex()
-                .py_1p5()
-                .px_2()
+                .p_1p5()
                 .gap_1p5()
                 .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
                     div()
+                        .id("commit-msg-hover")
+                        .px_1()
                         .cursor_pointer()
-                        .overflow_hidden()
                         .line_clamp(1)
+                        .rounded_sm()
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
                                 .truncate(),
                         )
-                        .id("commit-msg-hover")
                         .on_click({
                             let commit = commit.clone();
                             let repo = active_repository.downgrade();
@@ -4415,7 +4491,7 @@ impl GitPanel {
                 )
                 .when(commit.has_parent, |this| {
                     let has_unstaged = self.has_unstaged_changes();
-                    this.child(
+                    this.pr_2().child(
                         panel_icon_button("undo", IconName::Undo)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
@@ -5738,7 +5814,7 @@ impl RenderOnce for PanelRepoFooter {
             .menu(move |window, cx| {
                 let workspace = workspace.clone()?;
                 let repo = repo.clone().flatten();
-                Some(branch_picker::popover(workspace, repo, window, cx))
+                Some(branch_picker::popover(workspace, false, repo, window, cx))
             })
             .trigger_with_tooltip(
                 branch_selector_button,

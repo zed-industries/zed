@@ -3,10 +3,9 @@ use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, PromptFormat};
 use cloud_llm_client::{
-    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason,
-    EditPredictionRejection, MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST,
-    MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
-    ZED_VERSION_HEADER_NAME,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
+    MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+    PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
@@ -68,6 +67,7 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::capture_example::should_sample_edit_prediction_example_capture;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -135,6 +135,16 @@ pub struct Zeta2FeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
+pub struct EditPredictionExampleCaptureFeatureFlag;
+
+impl FeatureFlag for EditPredictionExampleCaptureFeatureFlag {
+    const NAME: &'static str = "edit-prediction-example-capture";
 
     fn enabled_for_staff() -> bool {
         true
@@ -320,6 +330,7 @@ struct CurrentEditPrediction {
     pub requested_by: PredictionRequestedBy,
     pub prediction: EditPrediction,
     pub was_shown: bool,
+    pub shown_with: Option<edit_prediction_types::SuggestionDisplayType>,
 }
 
 impl CurrentEditPrediction {
@@ -1087,65 +1098,27 @@ impl EditPredictionStore {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
-        match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                if self.custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
-                    return;
-                }
-            }
-            EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
-        }
-
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
 
-        let Some(prediction) = project_state.current_prediction.take() else {
+        let Some(current_prediction) = project_state.current_prediction.take() else {
             return;
         };
-        let request_id = prediction.prediction.id.to_string();
+
         for pending_prediction in mem::take(&mut project_state.pending_predictions) {
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
 
-        let client = self.client.clone();
-        let llm_token = self.llm_token.clone();
-        let app_version = AppVersion::global(cx);
-        cx.spawn(async move |this, cx| {
-            let (url, require_auth) = if let Some(accept_edits_url) = custom_accept_url {
-                (http_client::Url::parse(&accept_edits_url)?, false)
-            } else {
-                (
-                    client
-                        .http_client()
-                        .build_zed_llm_url("/predict_edits/accept", &[])?,
-                    true,
-                )
-            };
-
-            let response = cx
-                .background_spawn(Self::send_api_request::<()>(
-                    move |builder| {
-                        let req = builder.uri(url.as_ref()).body(
-                            serde_json::to_string(&AcceptEditPredictionBody {
-                                request_id: request_id.clone(),
-                            })?
-                            .into(),
-                        );
-                        Ok(req?)
-                    },
-                    client,
-                    llm_token,
-                    app_version,
-                    require_auth,
-                ))
-                .await;
-
-            Self::handle_api_response(&this, response, cx)?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        match self.edit_prediction_model {
+            EditPredictionModel::Sweep => {
+                sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
+            }
+            EditPredictionModel::Mercury => {}
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                zeta2::edit_prediction_accepted(self, current_prediction, cx)
+            }
+        }
     }
 
     async fn handle_rejected_predictions(
@@ -1220,18 +1193,51 @@ impl EditPredictionStore {
         };
     }
 
-    fn did_show_current_prediction(&mut self, project: &Entity<Project>, _cx: &mut Context<Self>) {
-        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
-            if let Some(current_prediction) = project_state.current_prediction.as_mut() {
-                if !current_prediction.was_shown {
-                    current_prediction.was_shown = true;
-                    self.shown_predictions
-                        .push_front(current_prediction.prediction.clone());
-                    if self.shown_predictions.len() > 50 {
-                        let completion = self.shown_predictions.pop_back().unwrap();
-                        self.rated_predictions.remove(&completion.id);
-                    }
-                }
+    fn did_show_current_prediction(
+        &mut self,
+        project: &Entity<Project>,
+        display_type: edit_prediction_types::SuggestionDisplayType,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
+            return;
+        };
+
+        let Some(current_prediction) = project_state.current_prediction.as_mut() else {
+            return;
+        };
+
+        let is_jump = display_type == edit_prediction_types::SuggestionDisplayType::Jump;
+        let previous_shown_with = current_prediction.shown_with;
+
+        if previous_shown_with.is_none() || !is_jump {
+            current_prediction.shown_with = Some(display_type);
+        }
+
+        let is_first_non_jump_show = !current_prediction.was_shown && !is_jump;
+
+        if is_first_non_jump_show {
+            current_prediction.was_shown = true;
+        }
+
+        let display_type_changed = previous_shown_with != Some(display_type);
+
+        if self.edit_prediction_model == EditPredictionModel::Sweep && display_type_changed {
+            sweep_ai::edit_prediction_shown(
+                &self.sweep_ai,
+                self.client.clone(),
+                &current_prediction.prediction,
+                display_type,
+                cx,
+            );
+        }
+
+        if is_first_non_jump_show {
+            self.shown_predictions
+                .push_front(current_prediction.prediction.clone());
+            if self.shown_predictions.len() > 50 {
+                let completion = self.shown_predictions.pop_back().unwrap();
+                self.rated_predictions.remove(&completion.id);
             }
         }
     }
@@ -1492,6 +1498,7 @@ impl EditPredictionStore {
                                 requested_by,
                                 prediction,
                                 was_shown: false,
+                                shown_with: None,
                             };
 
                             if let Some(current_prediction) =
@@ -1628,6 +1635,29 @@ impl EditPredictionStore {
             debug_tx,
         };
 
+        let can_collect_example = snapshot
+            .file()
+            .is_some_and(|file| self.can_collect_file(&project, file, cx))
+            && self.can_collect_events(&inputs.events, cx);
+
+        if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
+            let events_for_capture =
+                self.edit_history_for_project_with_pause_split_last_event(&project, cx);
+            if let Some(example_task) = capture_example::capture_example(
+                project.clone(),
+                active_buffer.clone(),
+                position,
+                events_for_capture,
+                cx,
+            ) {
+                cx.spawn(async move |_this, _cx| {
+                    let example = example_task.await?;
+                    telemetry::event!("Edit Prediction Example Captured", example = example);
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
             EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
@@ -1976,11 +2006,11 @@ impl EditPredictionStore {
     }
 
     fn can_collect_file(&self, project: &Entity<Project>, file: &Arc<dyn File>, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
+        self.data_collection_choice.is_enabled(cx) && self.is_file_open_source(project, file, cx)
     }
 
-    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>]) -> bool {
-        if !self.data_collection_choice.is_enabled() {
+    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>], cx: &App) -> bool {
+        if !self.data_collection_choice.is_enabled(cx) {
             return false;
         }
         events.iter().all(|event| {
@@ -2014,10 +2044,11 @@ impl EditPredictionStore {
     fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
         self.data_collection_choice = self.data_collection_choice.toggle();
         let new_choice = self.data_collection_choice;
+        let is_enabled = new_choice.is_enabled(cx);
         db::write_and_log(cx, move || {
             KEY_VALUE_STORE.write_kvp(
                 ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                new_choice.is_enabled().to_string(),
+                is_enabled.to_string(),
             )
         });
     }
@@ -2105,17 +2136,13 @@ pub enum DataCollectionChoice {
 }
 
 impl DataCollectionChoice {
-    pub fn is_enabled(self) -> bool {
+    pub fn is_enabled(self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return true;
+        }
         match self {
             Self::Enabled => true,
             Self::NotAnswered | Self::Disabled => false,
-        }
-    }
-
-    pub fn is_answered(self) -> bool {
-        match self {
-            Self::Enabled | Self::Disabled => true,
-            Self::NotAnswered => false,
         }
     }
 

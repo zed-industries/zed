@@ -331,7 +331,7 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromSshRemote,
+    DisconnectedFromRemote,
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -2667,7 +2667,7 @@ impl Project {
 
     #[inline]
     pub fn is_read_only(&self, cx: &App) -> bool {
-        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
+        self.is_disconnected(cx) || !self.capability().editable()
     }
 
     #[inline]
@@ -3296,7 +3296,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromSshRemote);
+                cx.emit(Event::DisconnectedFromRemote);
             }
         }
     }
@@ -4551,18 +4551,6 @@ impl Project {
             }
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
-                let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
-                    && let Ok(path) = RelPath::new(relative_path, path_style)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path: path.into_arc(),
-                    });
-                }
-            }
-
-            for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
                 if let Ok(rel_path) = RelPath::new(path, path_style) {
                     if let Some(entry) = worktree.entry_for_path(&rel_path) {
@@ -4571,6 +4559,18 @@ impl Project {
                             path: entry.path.clone(),
                         });
                     }
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_root_name = worktree.read(cx).root_name();
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: path.into_arc(),
+                    });
                 }
             }
         }

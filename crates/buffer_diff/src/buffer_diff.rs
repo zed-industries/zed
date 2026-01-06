@@ -1148,7 +1148,7 @@ impl BufferDiff {
             None,
             cx,
         ));
-        this.set_snapshot(inner, &buffer, cx);
+        this.set_snapshot(inner, &buffer, cx).detach();
         this
     }
 
@@ -1293,47 +1293,31 @@ impl BufferDiff {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut Context<Self>,
     ) {
-        let base_text = self.inner.base_text.downgrade();
+        let fut = self.inner.base_text.update(cx, |base_text, cx| {
+            if let Some(language_registry) = language_registry {
+                base_text.set_language_registry(language_registry);
+            }
+            base_text.set_language(language, cx);
+            base_text.parsing_idle()
+        });
         cx.spawn(async move |this, cx| {
-            let fut = base_text
-                .update(cx, |base_text, cx| {
-                    if let Some(language_registry) = language_registry {
-                        base_text.set_language_registry(language_registry);
-                    }
-                    base_text.set_language(language, cx);
-                    base_text.parsing_idle()
-                })
-                .ok()?;
-
             fut.await;
-
             this.update(cx, |_, cx| {
                 cx.emit(BufferDiffEvent::LanguageChanged);
             })
-            .ok()?;
-
-            Some(())
+            .ok();
         })
         .detach();
     }
 
-    pub fn set_snapshot(
-        &mut self,
-        new_state: BufferDiffUpdate,
-        buffer: &text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> Option<Range<Anchor>> {
-        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
-    }
-
-    pub fn set_snapshot_with_secondary(
+    fn set_snapshot_with_secondary_inner(
         &mut self,
         update: BufferDiffUpdate,
         buffer: &text::BufferSnapshot,
         secondary_diff_change: Option<Range<Anchor>>,
         clear_pending_hunks: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Range<Anchor>> {
+    ) -> impl Future<Output = (Option<Range<Anchor>>, Option<Range<usize>>)> + use<> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
         let old_snapshot = self.snapshot(cx);
@@ -1372,13 +1356,16 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
-        if update.base_text_changed {
+        let parsing_idle = if update.base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.set_text(new_state.base_text.clone(), cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
+                Some(base_text.parsing_idle())
             })
-        }
+        } else {
+            None
+        };
         state.hunks = new_state.hunks;
         if update.base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
@@ -1402,11 +1389,50 @@ impl BufferDiff {
             state.pending_hunks = SumTree::new(buffer);
         }
 
-        cx.emit(BufferDiffEvent::DiffChanged {
-            changed_range: changed_range.clone(),
-            base_text_changed_range,
-        });
-        changed_range
+        async move {
+            if let Some(parsing_idle) = parsing_idle {
+                parsing_idle.await;
+            }
+            (changed_range, base_text_changed_range)
+        }
+    }
+
+    pub fn set_snapshot(
+        &mut self,
+        new_state: BufferDiffUpdate,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Range<Anchor>>> {
+        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
+    }
+
+    pub fn set_snapshot_with_secondary(
+        &mut self,
+        update: BufferDiffUpdate,
+        buffer: &text::BufferSnapshot,
+        secondary_diff_change: Option<Range<Anchor>>,
+        clear_pending_hunks: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Range<Anchor>>> {
+        let fut = self.set_snapshot_with_secondary_inner(
+            update,
+            buffer,
+            secondary_diff_change,
+            clear_pending_hunks,
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let (changed_range, base_text_changed_range) = fut.await;
+            this.update(cx, |_, cx| {
+                cx.emit(BufferDiffEvent::DiffChanged {
+                    changed_range: changed_range.clone(),
+                    base_text_changed_range,
+                });
+            })
+            .ok();
+            changed_range
+        })
     }
 
     pub fn base_text(&self, cx: &App) -> language::BufferSnapshot {
@@ -1454,10 +1480,12 @@ impl BufferDiff {
                 return;
             };
             let state = state.await;
-            this.update(cx, |this, cx| {
-                this.set_snapshot(state, &buffer, cx);
-            })
-            .log_err();
+            if let Some(task) = this
+                .update(cx, |this, cx| this.set_snapshot(state, &buffer, cx))
+                .log_err()
+            {
+                task.await;
+            }
             drop(complete_on_drop)
         })
         .detach();
@@ -1475,8 +1503,14 @@ impl BufferDiff {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
-        let snapshot = cx.background_executor().block(fut);
-        self.set_snapshot(snapshot, &buffer, cx);
+        let executor = cx.background_executor().clone();
+        let snapshot = executor.block(fut);
+        let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
+        let (changed_range, base_text_changed_range) = executor.block(fut);
+        cx.emit(BufferDiffEvent::DiffChanged {
+            changed_range,
+            base_text_changed_range,
+        })
     }
 
     pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
@@ -2589,6 +2623,7 @@ mod tests {
         let diff = cx.new(|cx| {
             BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
         });
+        cx.run_until_parked();
         let (tx, rx) = mpsc::channel();
         let subscription =
             cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));
@@ -2619,7 +2654,8 @@ mod tests {
                 )
             })
             .await;
-        diff.update(cx, |diff, cx| diff.set_snapshot(update, &snapshot, cx));
+        diff.update(cx, |diff, cx| diff.set_snapshot(update, &snapshot, cx))
+            .await;
         cx.run_until_parked();
         drop(subscription);
         let events = rx.into_iter().collect::<Vec<_>>();

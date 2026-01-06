@@ -1,23 +1,30 @@
 use anyhow::Result;
+use client::Client;
 use futures::AsyncReadExt as _;
 use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Point, ToOffset as _};
+use language::{Anchor, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write as _},
+    ops::Range,
     path::Path,
     sync::Arc,
     time::Instant,
 };
 
-use crate::{EditPredictionId, EditPredictionModelInput, prediction::EditPredictionResult};
+use crate::{
+    CurrentEditPrediction, EditPrediction, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStore, prediction::EditPredictionResult,
+};
+use edit_prediction_types::SuggestionDisplayType;
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
 
 pub struct SweepAi {
     pub api_token: Entity<ApiKeyState>,
@@ -403,4 +410,175 @@ fn debug_info(cx: &gpui::App) -> Arc<str> {
         os = client::telemetry::os_name(),
     )
     .into()
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SweepEventType {
+    AutocompleteSuggestionShown,
+    AutocompleteSuggestionAccepted,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SweepSuggestionType {
+    GhostText,
+    Popup,
+    JumpToEdit,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AutocompleteMetricsRequest {
+    event_type: SweepEventType,
+    suggestion_type: SweepSuggestionType,
+    additions: u32,
+    deletions: u32,
+    autocomplete_id: String,
+    edit_tracking: String,
+    edit_tracking_line: Option<u32>,
+    lifespan: Option<u64>,
+    debug_info: Arc<str>,
+    device_id: String,
+    privacy_mode_enabled: bool,
+}
+
+fn send_autocomplete_metrics_request(
+    cx: &App,
+    client: Arc<Client>,
+    api_token: Arc<str>,
+    request_body: AutocompleteMetricsRequest,
+) {
+    let http_client = client.http_client();
+    cx.background_spawn(async move {
+        let body: AsyncBody = serde_json::to_string(&request_body)?.into();
+
+        let request = http_client::Request::builder()
+            .uri(SWEEP_METRICS_URL)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", api_token))
+            .method(Method::POST)
+            .body(body)?;
+
+        let mut response = http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            anyhow::bail!(
+                "Failed to send autocomplete metrics for sweep_ai: {:?}\nBody: {}",
+                response.status(),
+                body,
+            );
+        }
+
+        Ok(())
+    })
+    .detach_and_log_err(cx);
+}
+
+pub(crate) fn edit_prediction_accepted(
+    store: &EditPredictionStore,
+    current_prediction: CurrentEditPrediction,
+    cx: &App,
+) {
+    let Some(api_token) = store
+        .sweep_ai
+        .api_token
+        .read(cx)
+        .key(&SWEEP_CREDENTIALS_URL)
+    else {
+        return;
+    };
+    let debug_info = store.sweep_ai.debug_info.clone();
+
+    let prediction = current_prediction.prediction;
+
+    let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
+    let autocomplete_id = prediction.id.to_string();
+
+    let device_id = store
+        .client
+        .user_id()
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+
+    let suggestion_type = match current_prediction.shown_with {
+        Some(SuggestionDisplayType::DiffPopover) => SweepSuggestionType::Popup,
+        Some(SuggestionDisplayType::Jump) => return, // should'nt happen
+        Some(SuggestionDisplayType::GhostText) | None => SweepSuggestionType::GhostText,
+    };
+
+    let request_body = AutocompleteMetricsRequest {
+        event_type: SweepEventType::AutocompleteSuggestionAccepted,
+        suggestion_type,
+        additions,
+        deletions,
+        autocomplete_id,
+        edit_tracking: String::new(),
+        edit_tracking_line: None,
+        lifespan: None,
+        debug_info,
+        device_id,
+        privacy_mode_enabled: false,
+    };
+
+    send_autocomplete_metrics_request(cx, store.client.clone(), api_token, request_body);
+}
+
+pub fn edit_prediction_shown(
+    sweep_ai: &SweepAi,
+    client: Arc<Client>,
+    prediction: &EditPrediction,
+    display_type: SuggestionDisplayType,
+    cx: &App,
+) {
+    let Some(api_token) = sweep_ai.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
+        return;
+    };
+    let debug_info = sweep_ai.debug_info.clone();
+
+    let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
+    let autocomplete_id = prediction.id.to_string();
+
+    let suggestion_type = match display_type {
+        SuggestionDisplayType::GhostText => SweepSuggestionType::GhostText,
+        SuggestionDisplayType::DiffPopover => SweepSuggestionType::Popup,
+        SuggestionDisplayType::Jump => SweepSuggestionType::JumpToEdit,
+    };
+
+    let request_body = AutocompleteMetricsRequest {
+        event_type: SweepEventType::AutocompleteSuggestionShown,
+        suggestion_type,
+        additions,
+        deletions,
+        autocomplete_id,
+        edit_tracking: String::new(),
+        edit_tracking_line: None,
+        lifespan: None,
+        debug_info,
+        device_id: String::new(),
+        privacy_mode_enabled: false,
+    };
+
+    send_autocomplete_metrics_request(cx, client, api_token, request_body);
+}
+
+fn compute_edit_metrics(
+    edits: &[(Range<Anchor>, Arc<str>)],
+    snapshot: &BufferSnapshot,
+) -> (u32, u32) {
+    let mut additions = 0u32;
+    let mut deletions = 0u32;
+
+    for (range, new_text) in edits {
+        let old_text = snapshot.text_for_range(range.clone());
+        deletions += old_text
+            .map(|chunk| chunk.lines().count())
+            .sum::<usize>()
+            .max(1) as u32;
+        additions += new_text.lines().count().max(1) as u32;
+    }
+
+    (additions, deletions)
 }

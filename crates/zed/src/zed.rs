@@ -4,7 +4,10 @@ pub mod edit_prediction_registry;
 pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
+mod open_url_modal;
 mod quick_action_bar;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
@@ -139,6 +142,8 @@ actions!(
         /// audio system (including yourself) on the current call in a tar file
         /// in the current working directory.
         CaptureRecentAudio,
+        /// Opens a prompt to enter a URL to open.
+        OpenUrlPrompt,
     ]
 );
 
@@ -820,6 +825,11 @@ fn register_actions(
                 urls: vec![action.url.clone()],
                 ..Default::default()
             })
+        })
+        .register_action(|workspace, _: &OpenUrlPrompt, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                open_url_modal::OpenUrlModal::new(window, cx)
+            });
         })
         .register_action(|workspace, action: &OpenBrowser, _window, cx| {
             // Parse and validate the URL to ensure it's properly formatted

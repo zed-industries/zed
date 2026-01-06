@@ -6,7 +6,10 @@ use http_client::{self, AsyncBody, HttpClient, Request};
 use log::info;
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
-use reqwest::multipart::{Form, Part};
+use reqwest::{
+    Method,
+    multipart::{Form, Part},
+};
 use smol::stream::StreamExt;
 use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
 use util::ResultExt;
@@ -166,18 +169,24 @@ pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()
         }
         let mut json_path = child_path.clone();
         json_path.set_extension("json");
-        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
-            && upload_minidump(
-                client.clone(),
-                minidump_endpoint,
-                smol::fs::read(&child_path)
-                    .await
-                    .context("Failed to read minidump")?,
-                &metadata,
-            )
+        let Ok(metadata) = smol::fs::read(&json_path)
             .await
-            .log_err()
-            .is_some()
+            .map_err(|e| anyhow::anyhow!(e))
+            .and_then(|data| serde_json::from_slice(&data).map_err(|e| anyhow::anyhow!(e)))
+        else {
+            continue;
+        };
+        if upload_minidump(
+            client.clone(),
+            minidump_endpoint,
+            smol::fs::read(&child_path)
+                .await
+                .context("Failed to read minidump")?,
+            &metadata,
+        )
+        .await
+        .log_err()
+        .is_some()
         {
             fs::remove_file(child_path).ok();
             fs::remove_file(json_path).ok();
@@ -296,12 +305,18 @@ async fn upload_minidump(
 
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
-    let stream = form
+    let content_type = format!("multipart/form-data; boundary={}", form.boundary());
+    let mut body_bytes = Vec::new();
+    let mut stream = form
         .into_stream()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
         .into_async_read();
-    let body = AsyncBody::from_reader(stream);
-    let req = Request::builder().uri(endpoint).body(body)?;
+    stream.read_to_end(&mut body_bytes).await?;
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(endpoint)
+        .header("Content-Type", content_type)
+        .body(AsyncBody::from(body_bytes))?;
     let mut response_text = String::new();
     let mut response = client.http_client().send(req).await?;
     response
