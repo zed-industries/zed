@@ -570,10 +570,18 @@ impl NativeAgent {
         &mut self,
         _project: Entity<Project>,
         event: &project::Event,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                let threads: Vec<_> = self
+                    .sessions
+                    .values()
+                    .map(|session| session.thread.clone())
+                    .collect();
+                for thread in threads {
+                    self.save_thread(thread, cx);
+                }
                 self.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
