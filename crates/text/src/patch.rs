@@ -205,7 +205,7 @@ where
         composed
     }
 
-    pub fn old_to_new(&self, old: T) -> T {
+    pub fn old_to_new(&self, old: T, bias: Bias) -> T {
         let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
             Ok(ix) => ix,
             Err(ix) => {
@@ -220,7 +220,11 @@ where
             if old >= edit.old.end {
                 edit.new.end + (old - edit.old.end)
             } else {
-                edit.new.start
+                if bias == Bias::Left {
+                    edit.new.start
+                } else {
+                    edit.new.end
+                }
             }
         } else {
             old
@@ -509,16 +513,54 @@ mod tests {
                 new: 7..11,
             },
         ]);
-        assert_eq!(patch.old_to_new(0), 0);
-        assert_eq!(patch.old_to_new(1), 1);
-        assert_eq!(patch.old_to_new(2), 2);
-        assert_eq!(patch.old_to_new(3), 2);
-        assert_eq!(patch.old_to_new(4), 4);
-        assert_eq!(patch.old_to_new(5), 5);
-        assert_eq!(patch.old_to_new(6), 6);
-        assert_eq!(patch.old_to_new(7), 7);
-        assert_eq!(patch.old_to_new(8), 11);
-        assert_eq!(patch.old_to_new(9), 12);
+
+        assert_eq!(patch.old_to_new(0, Bias::Left), 0);
+        assert_eq!(patch.old_to_new(0, Bias::Right), 0);
+        assert_eq!(patch.old_to_new(1, Bias::Left), 1);
+        assert_eq!(patch.old_to_new(1, Bias::Right), 1);
+
+        assert_eq!(patch.old_to_new(2, Bias::Left), 2);
+        assert_eq!(patch.old_to_new(2, Bias::Right), 4);
+
+        assert_eq!(patch.old_to_new(3, Bias::Left), 2);
+        assert_eq!(patch.old_to_new(3, Bias::Right), 4);
+
+        assert_eq!(patch.old_to_new(4, Bias::Left), 4);
+        assert_eq!(patch.old_to_new(4, Bias::Right), 4);
+        assert_eq!(patch.old_to_new(5, Bias::Left), 5);
+        assert_eq!(patch.old_to_new(6, Bias::Left), 6);
+
+        assert_eq!(patch.old_to_new(7, Bias::Left), 7);
+        assert_eq!(patch.old_to_new(7, Bias::Right), 11);
+
+        assert_eq!(patch.old_to_new(8, Bias::Left), 11);
+        assert_eq!(patch.old_to_new(8, Bias::Right), 11);
+        assert_eq!(patch.old_to_new(9, Bias::Left), 12);
+        assert_eq!(patch.old_to_new(9, Bias::Right), 12);
+
+        let deletion_patch = Patch(vec![Edit {
+            old: 5..10,
+            new: 5..5,
+        }]);
+
+        assert_eq!(deletion_patch.old_to_new(4, Bias::Left), 4);
+        assert_eq!(deletion_patch.old_to_new(5, Bias::Left), 5);
+        assert_eq!(deletion_patch.old_to_new(5, Bias::Right), 5);
+        assert_eq!(deletion_patch.old_to_new(7, Bias::Left), 5);
+        assert_eq!(deletion_patch.old_to_new(7, Bias::Right), 5);
+        assert_eq!(deletion_patch.old_to_new(10, Bias::Left), 5);
+        assert_eq!(deletion_patch.old_to_new(10, Bias::Right), 5);
+        assert_eq!(deletion_patch.old_to_new(11, Bias::Left), 6);
+
+        let insertion_patch = Patch(vec![Edit {
+            old: 5..5,
+            new: 5..10,
+        }]);
+
+        assert_eq!(insertion_patch.old_to_new(4, Bias::Left), 4);
+        assert_eq!(insertion_patch.old_to_new(5, Bias::Left), 10);
+        assert_eq!(insertion_patch.old_to_new(5, Bias::Right), 10);
+        assert_eq!(insertion_patch.old_to_new(6, Bias::Left), 11);
     }
 
     #[gpui::test]

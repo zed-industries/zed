@@ -2470,8 +2470,8 @@ impl LocalLspStore {
                 // any unsaved edits.
                 // Do not alter the reused ones though, as their coordinates were stored as anchors
                 // and were properly adjusted on reuse.
-                start = Unclipped((*edits_since_save).old_to_new(entry.range.start.0));
-                end = Unclipped((*edits_since_save).old_to_new(entry.range.end.0));
+                start = Unclipped((*edits_since_save).old_to_new(entry.range.start.0, Bias::Left));
+                end = Unclipped((*edits_since_save).old_to_new(entry.range.end.0, Bias::Right));
             } else {
                 start = entry.range.start;
                 end = entry.range.end;

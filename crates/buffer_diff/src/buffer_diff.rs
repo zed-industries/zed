@@ -454,21 +454,32 @@ impl BufferDiffSnapshot {
             && hunk.diff_base_byte_range.start <= target
         {
             let hunk_buffer_end = cursor.end().buffer_range.end;
-            let unclipped_point = if target >= cursor.end().diff_base_byte_range.end {
-                let mut unclipped_point = hunk_buffer_end.to_point(buffer);
-                unclipped_point += Point::new(row, 0)
-                    - cursor
-                        .end()
-                        .diff_base_byte_range
-                        .end
-                        .to_point(self.base_text());
-                unclipped_point
+            let hunk_base_text_end = cursor.end().diff_base_byte_range.end;
+            let unclipped_point = if target >= hunk_base_text_end {
+                cursor.next();
+                let inter_hunk_range = hunk_buffer_end
+                    ..cursor
+                        .item()
+                        .map(|h| h.buffer_range.start)
+                        .unwrap_or(Anchor::MAX);
+
+                let edits: Vec<Edit<Point>> = buffer
+                    .edits_since_in_range::<Point>(self.buffer_version(), inter_hunk_range)
+                    .collect();
+                let patch = Patch::new(edits);
+
+                let range_start_point = hunk_buffer_end.to_point(buffer);
+                let row_delta = row - hunk_base_text_end.to_point(self.base_text()).row;
+                let query_old_point_relative = Point::new(row_delta, 0);
+                let query_new_point_relative = patch.old_to_new(query_old_point_relative, bias);
+                range_start_point + query_new_point_relative
             } else if bias == Bias::Right {
+                cursor.next();
                 hunk_buffer_end.to_point(buffer)
             } else {
+                cursor.next();
                 hunk.buffer_range.start.to_point(buffer)
             };
-            cursor.next();
             unclipped_point
         } else {
             debug_assert!(
@@ -477,7 +488,22 @@ impl BufferDiffSnapshot {
                     .first()
                     .is_none_or(|first_hunk| { target <= first_hunk.diff_base_byte_range.start })
             );
-            Point::new(row, 0)
+
+            let inter_hunk_range = Anchor::MIN
+                ..self
+                    .inner
+                    .hunks
+                    .first()
+                    .map(|h| h.buffer_range.start)
+                    .unwrap_or(Anchor::MAX);
+
+            let edits: Vec<Edit<Point>> = buffer
+                .edits_since_in_range::<Point>(self.buffer_version(), inter_hunk_range)
+                .collect();
+            let patch = Patch::new(edits);
+
+            let query_point = Point::new(row, 0);
+            patch.old_to_new(query_point, bias)
         };
 
         let max_point = if let Some(next_hunk) = cursor.item() {
@@ -2830,6 +2856,69 @@ mod tests {
                 diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
                 expected_left,
                 "row_to_base_text_row Bias::Left buffer_row={buffer_row}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_base_text_row_to_row_with_stale_diff(cx: &mut TestAppContext) {
+        let base_text = "
+            zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+        "
+        .unindent();
+
+        let buffer_text = "
+            zero
+            ONE
+            two
+            three
+            four
+            FIVE
+            six
+            seven
+            eight
+        "
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+
+        let insert_offset = buffer.point_to_offset(Point::new(3, 0));
+        buffer.edit([(insert_offset..insert_offset, "INSERTED_A\nINSERTED_B\n")]);
+        let buffer_snapshot = buffer.snapshot();
+
+        assert_eq!(buffer_snapshot.max_point().row, 11);
+
+        let expected_results = [
+            (0, 0, 0),
+            (1, 2, 1),
+            (2, 2, 2),
+            (3, 5, 5),
+            (4, 6, 6),
+            (5, 8, 7),
+            (6, 8, 8),
+            (7, 9, 9),
+            (8, 10, 10),
+        ];
+
+        for (base_text_row, expected_right, expected_left) in expected_results {
+            assert_eq!(
+                diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
+                expected_right,
+                "base_text_row_to_row Bias::Right base_text_row={base_text_row}"
+            );
+            assert_eq!(
+                diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "base_text_row_to_row Bias::Left base_text_row={base_text_row}"
             );
         }
     }

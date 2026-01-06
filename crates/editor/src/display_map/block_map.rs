@@ -385,7 +385,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
-            Block::Spacer { .. } => false,
+            Block::Spacer { .. } => true,
         }
     }
 
@@ -408,7 +408,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
-            Block::Spacer { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -602,26 +602,44 @@ impl BlockMap {
             && let Some((companion, display_map_id)) = companion
         {
             let excerpt_map = companion.companion_excerpt_to_excerpt(display_map_id);
-            let convert = companion.convert_wrap_row_from_companion(display_map_id);
+            let convert = companion.convert_row_from_companion(display_map_id);
             let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
                 .clone()
                 .into_inner()
                 .iter()
                 .map(|edit| {
-                    let my_start = convert(
+                    let companion_start_row = MultiBufferRow(
+                        companion_new_snapshot
+                            .to_point(WrapPoint::new(edit.new.start, 0), Bias::Left)
+                            .row,
+                    );
+                    let companion_end_row = MultiBufferRow(
+                        companion_new_snapshot
+                            .to_point(WrapPoint::new(edit.new.end, 0), Bias::Right)
+                            .row,
+                    );
+
+                    let my_start_row = convert(
                         excerpt_map,
-                        wrap_snapshot,
-                        companion_new_snapshot,
-                        edit.new.start,
+                        wrap_snapshot.buffer_snapshot(),
+                        companion_new_snapshot.buffer_snapshot(),
+                        companion_start_row,
                         Bias::Left,
                     );
-                    let my_end = convert(
+                    let my_end_row = convert(
                         excerpt_map,
-                        wrap_snapshot,
-                        companion_new_snapshot,
-                        edit.new.end,
+                        wrap_snapshot.buffer_snapshot(),
+                        companion_new_snapshot.buffer_snapshot(),
+                        companion_end_row,
                         Bias::Right,
                     );
+
+                    let my_start = wrap_snapshot
+                        .make_wrap_point(Point::new(my_start_row.0, 0), Bias::Left)
+                        .row();
+                    let my_end = wrap_snapshot
+                        .make_wrap_point(Point::new(my_end_row.0, 0), Bias::Right)
+                        .row();
 
                     WrapEdit {
                         old: my_start..my_end,
@@ -829,7 +847,7 @@ impl BlockMap {
                 },
             ));
 
-            if let Some((companion_snapshot, _)) = &companion_wrap_edits
+            if let Some((companion_snapshot, _)) = companion_wrap_edits
                 && let Some((companion, display_map_id)) = companion
             {
                 let new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
@@ -1009,32 +1027,54 @@ impl BlockMap {
 
     fn spacer_blocks(
         &self,
-        new_buffer_range: Range<MultiBufferPoint>,
-        new_wrap_row_range: Range<WrapRow>,
-        wrap_snapshot: &WrapSnapshot,
+        _new_buffer_range: Range<MultiBufferPoint>,
+        _new_wrap_row_range: Range<WrapRow>,
+        _wrap_snapshot: &WrapSnapshot,
         _companion_snapshot: &WrapSnapshot,
-        companion: &Companion,
-        display_map_id: EntityId,
+        _companion: &Companion,
+        _display_map_id: EntityId,
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
-        let _excerpts = companion.companion_excerpt_to_excerpt(display_map_id);
-        let _convert = companion.convert_wrap_row_from_companion(display_map_id);
-        // align before the hunk, if its start follows the start of the edit
-        // align after the hunk, if its end precedes the end of the edit
-        // align at the end of the edit
-        let blocks = Vec::new();
-        let last_companion_wrap_row: WrapRow = WrapRow(0);
-        for hunk in wrap_snapshot.diff_hunks_in_range(new_buffer_range.clone()) {
-            if hunk.row_range.start >= MultiBufferRow(new_buffer_range.start.row) {
-                // ...
-            }
-            if hunk.row_range.end <= MultiBufferRow(new_buffer_range.end.row) {
-                // ...
-            }
-        }
-        if last_companion_wrap_row > new_wrap_row_range.end {
-            // ...
-        }
-        blocks
+        // This function calculates which spacer blocks should appear for the
+        // given range of wrap rows. These spacer blocks are needed when viewing
+        // a diff side-by-side, to ensure that equivalent lines appear next to
+        // each other.
+        //
+        // Without spacers, equivalent lines may become unaligned due to either:
+        // - There is a diff that changed the number of lines in a hunk (for
+        //   example, deleting two lines and replacing it with four)
+        // - An unchanged line is soft-wrapped differently on each side (perhaps
+        //   because one side has a smaller viewport).
+        //
+        // We determine spacers by first computing a series of "checkpoints".
+        //
+        // A checkpoint is a buffer row boundary (the start of a MultiBufferRow) where we want to ensure that all the _preceding_ content
+        // occupies the same number of rows in the block map's output coordinates. The block map's output
+        // coordinates are the same as the wrap map's coordinates, except that we insert some blocks that
+        // can occupy a whole number of rows. When the content preceding a checkpoint does not occupy the
+        // same number of rows in the wrap map's coordinates (WrapRow), we insert a spacer on our side if
+        // we are the side with fewer wrap rows, to restore balance.
+        //
+        // We assume that before the start of the range passed to this function, the two sides are in balance.
+        //
+        // The locations of checkpoints are as follows:
+        // - After each diff hunk
+        // - After each buffer row that is not inside a diff hunk
+        //
+        // (These correspond to the reasons listed above for why two lines can get out of alignment).
+        //
+        // We collect the checkpoints by iterating over our side's snapshot. Then, for each checkpoint,
+        // we compute which wrap row it corresponds to on each side. (we translate the checkpoint to the coordinate
+        // space of the other side's multibuffer using the conversion function on the companion). We compute
+        // the difference between those wrap row values, and compare it to the difference in wrap row values
+        // for the start of the edit between the two sides (because we assume inductively that spacers
+        // have been inserted before this edit range to keep the two sides in balance, so any difference
+        // in wrap row numbers before the start of the edit will be cancelled out). if our side
+        // has fewer wrap rows at a checkpoint than the other side after accounting for the difference
+        // at the start of the edit, we insert a spacer block to restore the balance (to where it was
+        // at the start of the edit).
+        //
+        // Spacer blocks have Above placement.
+        Vec::new()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -2202,9 +2242,13 @@ fn offset_for_row(s: &str, target: RowDelta) -> (RowDelta, usize) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
+        display_map::{
+            Companion, convert_lhs_row_to_rhs, convert_rhs_row_to_lhs, fold_map::FoldMap,
+            inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+        },
         test::test_font,
     };
+    use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
     use language::{Buffer, Capability};
@@ -3940,6 +3984,183 @@ mod tests {
 
         let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None, None);
         assert_eq!(blocks_snapshot.text(), "");
+    }
+
+    #[gpui::test]
+    fn test_companion_spacer_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let base_text = "aaa\nbbb\nccc\nddd\nddd\nddd\neee\n";
+        let main_text = "aaa\nddd\nddd\nddd\nXXX\nYYY\nZZZ\neee\n";
+
+        let rhs_buffer = cx.new(|cx| Buffer::local(main_text, cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).text_snapshot(), cx)
+        });
+        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+
+        let lhs_multibuffer = cx.new(|cx| {
+            let mut mb = MultiBuffer::new(Capability::ReadWrite);
+            mb.push_excerpts(
+                lhs_buffer.clone(),
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                cx,
+            );
+            mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
+            mb
+        });
+        let rhs_multibuffer = cx.new(|cx| {
+            let mut mb = MultiBuffer::new(Capability::ReadWrite);
+            mb.push_excerpts(
+                rhs_buffer.clone(),
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                cx,
+            );
+            mb.add_diff(diff.clone(), cx);
+            mb
+        });
+
+        let lhs_excerpt_id =
+            lhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
+        let rhs_excerpt_id =
+            rhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
+
+        let lhs_buffer_snapshot = cx.update(|cx| lhs_multibuffer.read(cx).snapshot(cx));
+        let (mut _lhs_inlay_map, lhs_inlay_snapshot) = InlayMap::new(lhs_buffer_snapshot);
+        let (mut _lhs_fold_map, lhs_fold_snapshot) = FoldMap::new(lhs_inlay_snapshot);
+        let (mut _lhs_tab_map, lhs_tab_snapshot) =
+            TabMap::new(lhs_fold_snapshot, 4.try_into().unwrap());
+        let (_lhs_wrap_map, lhs_wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(lhs_tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let lhs_block_map = BlockMap::new(lhs_wrap_snapshot.clone(), 0, 0);
+
+        let rhs_buffer_snapshot = cx.update(|cx| rhs_multibuffer.read(cx).snapshot(cx));
+        let (mut _rhs_inlay_map, rhs_inlay_snapshot) = InlayMap::new(rhs_buffer_snapshot);
+        let (mut _rhs_fold_map, rhs_fold_snapshot) = FoldMap::new(rhs_inlay_snapshot);
+        let (mut _rhs_tab_map, rhs_tab_snapshot) =
+            TabMap::new(rhs_fold_snapshot, 4.try_into().unwrap());
+        let (_rhs_wrap_map, rhs_wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(rhs_tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let rhs_block_map = BlockMap::new(rhs_wrap_snapshot.clone(), 0, 0);
+
+        let rhs_entity_id = rhs_multibuffer.entity_id();
+
+        let companion = cx.new(|cx| {
+            let mut c = Companion::new(
+                rhs_entity_id,
+                convert_rhs_row_to_lhs,
+                convert_lhs_row_to_rhs,
+                cx,
+            );
+            c.add_excerpt_mapping(lhs_excerpt_id, rhs_excerpt_id);
+            c
+        });
+
+        let rhs_edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..rhs_wrap_snapshot.max_point().row(),
+            new: WrapRow(0)..rhs_wrap_snapshot.max_point().row(),
+        }]);
+        let lhs_edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..lhs_wrap_snapshot.max_point().row(),
+            new: WrapRow(0)..lhs_wrap_snapshot.max_point().row(),
+        }]);
+
+        let rhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            rhs_block_map.read(
+                rhs_wrap_snapshot.clone(),
+                rhs_edits.clone(),
+                Some((&lhs_wrap_snapshot, &lhs_edits)),
+                Some((companion, rhs_entity_id)),
+            )
+        });
+
+        let lhs_entity_id = lhs_multibuffer.entity_id();
+        let lhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            lhs_block_map.read(
+                lhs_wrap_snapshot.clone(),
+                lhs_edits.clone(),
+                Some((&rhs_wrap_snapshot, &rhs_edits)),
+                Some((companion, lhs_entity_id)),
+            )
+        });
+
+        // LHS:
+        //   aaa
+        // - bbb
+        // - ccc
+        //   ddd
+        //   ddd
+        //   ddd
+        //   <extra line>
+        //   <extra line>
+        //   <extra line>
+        //   *eee
+        //
+        // RHS:
+        //   aaa
+        //   <extra line>
+        //   <extra line>
+        //   *ddd
+        //   ddd
+        //   ddd
+        // + XXX
+        // + YYY
+        // + ZZZ
+        //   eee
+
+        // assert_eq!(
+        //     rhs_snapshot.snapshot.text(),
+        //     "aaa\n\n\nddd\nddd\nddd\nXXX\nYYY\nZZZ\neee\n",
+        //     "RHS should have 2 spacer lines after 'aaa' to align with LHS's deleted lines"
+        // );
+
+        // assert_eq!(
+        //     lhs_snapshot.snapshot.text(),
+        //     "aaa\nbbb\nccc\nddd\nddd\nddd\n\n\n\neee\n",
+        //     "LHS should have 3 spacer lines after 'ddd' to align with RHS's inserted lines"
+        // );
+
+        dbg!("-----------------");
+        let subscription =
+            rhs_multibuffer.update(cx, |rhs_multibuffer, _| rhs_multibuffer.subscribe());
+        rhs_buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(Point::new(3, 0)..Point::new(3, 0), "foo\nfoo\nfoo\n")],
+                None,
+                cx,
+            );
+        });
+
+        let rhs_buffer_snapshot = cx.update(|cx| rhs_multibuffer.read(cx).snapshot(cx));
+        let (rhs_inlay_snapshot, rhs_inlay_edits) = _rhs_inlay_map.sync(
+            rhs_buffer_snapshot.clone(),
+            subscription.consume().into_inner(),
+        );
+        let (rhs_fold_snapshot, rhs_fold_edits) =
+            _rhs_fold_map.read(rhs_inlay_snapshot, rhs_inlay_edits);
+        let (rhs_tab_snapshot, rhs_tab_edits) =
+            _rhs_tab_map.sync(rhs_fold_snapshot, rhs_fold_edits, 4.try_into().unwrap());
+        let (rhs_wrap_snapshot, rhs_wrap_edits) = _rhs_wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(rhs_tab_snapshot, rhs_tab_edits, cx)
+        });
+
+        let _rhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            rhs_block_map.read(
+                rhs_wrap_snapshot.clone(),
+                rhs_wrap_edits.clone(),
+                Some((&lhs_wrap_snapshot, &Default::default())),
+                Some((companion, rhs_entity_id)),
+            )
+        });
+
+        let _lhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            lhs_block_map.read(
+                lhs_wrap_snapshot.clone(),
+                Default::default(),
+                Some((&rhs_wrap_snapshot, &rhs_wrap_edits)),
+                Some((companion, lhs_entity_id)),
+            )
+        });
     }
 
     fn init_test(cx: &mut gpui::App) {

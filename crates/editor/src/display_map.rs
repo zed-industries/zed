@@ -106,7 +106,7 @@ use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent};
+use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -149,9 +149,87 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
-// source excerpt id->target excerpt id, target snapshot, source snapshot, source row, bias -> target row
-pub type ConvertWrapRow =
-    fn(&HashMap<ExcerptId, ExcerptId>, &WrapSnapshot, &WrapSnapshot, WrapRow, Bias) -> WrapRow;
+pub type AlignCheckpoint = MultiBufferRow;
+pub type ConvertMultiBufferRow = fn(
+    &HashMap<ExcerptId, ExcerptId>,
+    &MultiBufferSnapshot,
+    &MultiBufferSnapshot,
+    MultiBufferRow,
+    Bias,
+) -> MultiBufferRow;
+
+pub(crate) fn convert_lhs_row_to_rhs(
+    lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
+    rhs_snapshot: &MultiBufferSnapshot,
+    lhs_snapshot: &MultiBufferSnapshot,
+    lhs_row: MultiBufferRow,
+    bias: Bias,
+) -> MultiBufferRow {
+    let lhs_point = Point::new(lhs_row.0, 0);
+    let Some((_lhs_buffer_snapshot, lhs_buffer_point, lhs_excerpt_id)) =
+        lhs_snapshot.point_to_buffer_point(lhs_point)
+    else {
+        return MultiBufferRow(rhs_snapshot.max_point().row);
+    };
+    let rhs_excerpt_id = lhs_excerpt_to_rhs_excerpt
+        .get(&lhs_excerpt_id)
+        .copied()
+        .unwrap();
+    let rhs_buffer_snapshot = rhs_snapshot.buffer_for_excerpt(rhs_excerpt_id).unwrap();
+    let diff = rhs_snapshot
+        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
+        .unwrap();
+    // The diff's hunks always have anchors in rhs_buffer_snapshot (the primary/main buffer).
+    let rhs_row = diff.base_text_row_to_row(lhs_buffer_point.row, bias, &rhs_buffer_snapshot);
+    let rhs_point = Point::new(rhs_row, 0);
+    let text_anchor = rhs_buffer_snapshot.anchor_at(rhs_point, bias);
+    let ctx_range = rhs_snapshot
+        .context_range_for_excerpt(rhs_excerpt_id)
+        .unwrap();
+    let text_anchor = *text_anchor
+        .max(&ctx_range.start, &rhs_buffer_snapshot)
+        .min(&ctx_range.end, &rhs_buffer_snapshot);
+    let rhs_anchor = rhs_snapshot
+        .anchor_in_excerpt(rhs_excerpt_id, text_anchor)
+        .unwrap();
+    MultiBufferRow(rhs_anchor.to_point(rhs_snapshot).row)
+}
+
+pub(crate) fn convert_rhs_row_to_lhs(
+    rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
+    lhs_snapshot: &MultiBufferSnapshot,
+    rhs_snapshot: &MultiBufferSnapshot,
+    rhs_row: MultiBufferRow,
+    bias: Bias,
+) -> MultiBufferRow {
+    let rhs_point = Point::new(rhs_row.0, 0);
+    let Some((rhs_buffer_snapshot, rhs_buffer_point, rhs_excerpt_id)) =
+        rhs_snapshot.point_to_buffer_point(rhs_point)
+    else {
+        return MultiBufferRow(lhs_snapshot.max_point().row);
+    };
+    let lhs_excerpt_id = rhs_excerpt_to_lhs_excerpt
+        .get(&rhs_excerpt_id)
+        .copied()
+        .unwrap();
+    let lhs_buffer_snapshot = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id).unwrap();
+    let diff = rhs_snapshot
+        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
+        .unwrap();
+    let lhs_row = diff.row_to_base_text_row(rhs_buffer_point.row, bias, &rhs_buffer_snapshot);
+    let lhs_point = Point::new(lhs_row, 0);
+    let text_anchor = lhs_buffer_snapshot.anchor_at(lhs_point, bias);
+    let ctx_range = lhs_snapshot
+        .context_range_for_excerpt(lhs_excerpt_id)
+        .unwrap();
+    let text_anchor = *text_anchor
+        .max(&ctx_range.start, &lhs_buffer_snapshot)
+        .min(&ctx_range.end, &lhs_buffer_snapshot);
+    let lhs_anchor = lhs_snapshot
+        .anchor_in_excerpt(lhs_excerpt_id, text_anchor)
+        .unwrap();
+    MultiBufferRow(lhs_anchor.to_point(lhs_snapshot).row)
+}
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -194,15 +272,15 @@ pub(crate) struct Companion {
     // used for anchor conversion
     rhs_excerpt_to_lhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
-    rhs_wrap_row_to_lhs_wrap_row: ConvertWrapRow,
-    lhs_wrap_row_to_rhs_wrap_row: ConvertWrapRow,
+    rhs_row_to_lhs_row: ConvertMultiBufferRow,
+    lhs_row_to_rhs_row: ConvertMultiBufferRow,
 }
 
 impl Companion {
     pub(crate) fn new(
         rhs_display_map_id: EntityId,
-        rhs_wrap_row_to_lhs_wrap_row: ConvertWrapRow,
-        lhs_wrap_row_to_rhs_wrap_row: ConvertWrapRow,
+        rhs_row_to_lhs_row: ConvertMultiBufferRow,
+        lhs_row_to_rhs_row: ConvertMultiBufferRow,
         _cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -211,19 +289,19 @@ impl Companion {
             lhs_buffer_to_rhs_buffer: Default::default(),
             rhs_excerpt_to_lhs_excerpt: Default::default(),
             lhs_excerpt_to_rhs_excerpt: Default::default(),
-            rhs_wrap_row_to_lhs_wrap_row,
-            lhs_wrap_row_to_rhs_wrap_row,
+            rhs_row_to_lhs_row,
+            lhs_row_to_rhs_row,
         }
     }
 
-    pub(crate) fn convert_wrap_row_from_companion(
+    pub(crate) fn convert_row_from_companion(
         &self,
         display_map_id: EntityId,
-    ) -> ConvertWrapRow {
+    ) -> ConvertMultiBufferRow {
         if display_map_id == self.rhs_display_map_id {
-            self.lhs_wrap_row_to_rhs_wrap_row
+            self.lhs_row_to_rhs_row
         } else {
-            self.rhs_wrap_row_to_lhs_wrap_row
+            self.rhs_row_to_lhs_row
         }
     }
 
@@ -318,8 +396,58 @@ impl DisplayMap {
     pub(crate) fn set_companion(
         &mut self,
         companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
+        cx: &mut Context<Self>,
     ) {
         self.companion = companion;
+
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let edits = Patch::new(edits)
+            .compose([text::Edit {
+                old: MultiBufferOffset(0)..buffer_snapshot.len(),
+                new: MultiBufferOffset(0)..buffer_snapshot.len(),
+            }])
+            .into_inner();
+
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
+            companion_dm
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let companion_wrap_edits = companion_wrap_data
+            .as_ref()
+            .map(|(snapshot, edits)| (snapshot, edits));
+        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+
+        self.block_map.read(
+            snapshot.clone(),
+            edits.clone(),
+            companion_wrap_edits,
+            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+        );
+
+        if let Some((companion_dm, _)) = &self.companion {
+            let _ = companion_dm.update(cx, |dm, _cx| {
+                if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
+                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(_cx));
+                    dm.block_map.read(
+                        companion_snapshot,
+                        companion_edits,
+                        Some((&snapshot, &edits)),
+                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                    );
+                }
+            });
+        }
     }
 
     pub(crate) fn companion(&self) -> Option<&Entity<Companion>> {

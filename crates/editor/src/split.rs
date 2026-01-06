@@ -8,7 +8,8 @@ use gpui::{
 };
 use language::{Buffer, Capability};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey, ToPoint as _,
+    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferRow, PathKey,
+    ToPoint as _,
 };
 use project::Project;
 use rope::Point;
@@ -23,7 +24,7 @@ use workspace::{
 
 use crate::{
     DisplayMap, Editor, EditorEvent,
-    display_map::{Companion, WrapPoint, WrapRow, WrapSnapshot},
+    display_map::{Companion, convert_lhs_row_to_rhs, convert_rhs_row_to_lhs},
 };
 
 struct SplitDiffFeatureFlag;
@@ -252,17 +253,20 @@ impl SplittableEditor {
         let companion = cx.new(|cx| {
             Companion::new(
                 rhs_display_map_id,
-                convert_rhs_wrap_row_to_lhs,
-                convert_lhs_wrap_row_to_rhs,
+                convert_rhs_row_to_lhs,
+                convert_lhs_row_to_rhs,
                 cx,
             )
         });
 
-        primary_display_map.update(cx, |dm, _| {
-            dm.set_companion(Some((secondary_display_map.downgrade(), companion.clone())));
+        primary_display_map.update(cx, |dm, cx| {
+            dm.set_companion(
+                Some((secondary_display_map.downgrade(), companion.clone())),
+                cx,
+            );
         });
-        secondary_display_map.update(cx, |dm, _| {
-            dm.set_companion(Some((primary_display_map.downgrade(), companion)));
+        secondary_display_map.update(cx, |dm, cx| {
+            dm.set_companion(Some((primary_display_map.downgrade(), companion)), cx);
         });
 
         self.primary_editor.update(cx, |editor, cx| {
@@ -315,8 +319,8 @@ impl SplittableEditor {
             primary.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
             });
-            primary.display_map.update(cx, |dm, _| {
-                dm.set_companion(None);
+            primary.display_map.update(cx, |dm, cx| {
+                dm.set_companion(None, cx);
             });
         });
         cx.notify();
@@ -343,11 +347,11 @@ impl SplittableEditor {
         let source_display_map = source_editor.read(cx).display_map.clone();
         let target_display_map = target_editor.read(cx).display_map.clone();
 
-        let (source_wrap_row, source_snapshot) = source_display_map.update(cx, |dm, cx| {
+        let (source_row, source_buffer_snapshot) = source_display_map.update(cx, |dm, cx| {
             let snapshot = dm.snapshot(cx);
             let source_point = source_anchor.to_point(&snapshot);
-            let row = snapshot.make_wrap_point(source_point, Bias::Left).row();
-            (row, (*snapshot).clone())
+            let row = MultiBufferRow(source_point.row);
+            (row, snapshot.buffer_snapshot().clone())
         });
 
         let target_point = target_display_map.update(cx, |dm, cx| {
@@ -355,18 +359,17 @@ impl SplittableEditor {
             let entity_id = dm.entity_id();
             let companion = dm.companion()?.read(cx);
             let excerpt_mapping = companion.companion_excerpt_to_excerpt(entity_id);
-            let convert_wrap_row = companion.convert_wrap_row_from_companion(entity_id);
+            let convert_row = companion.convert_row_from_companion(entity_id);
 
-            let target_wrap_row = convert_wrap_row(
+            let target_row = convert_row(
                 excerpt_mapping,
-                &target_snapshot,
-                &source_snapshot,
-                source_wrap_row,
+                target_snapshot.buffer_snapshot(),
+                &source_buffer_snapshot,
+                source_row,
                 Bias::Left,
             );
 
-            let target_wrap_point = WrapPoint::new(target_wrap_row, 0);
-            Some(target_snapshot.to_point(target_wrap_point, Bias::Left))
+            Some(Point::new(target_row.0, 0))
         });
 
         let Some(target_point) = target_point else {
@@ -509,83 +512,6 @@ impl SplittableEditor {
                 .update(cx, |buffer, cx| buffer.remove_excerpts_for_path(path, cx))
         }
     }
-}
-
-fn convert_lhs_wrap_row_to_rhs(
-    lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
-    rhs_snapshot: &WrapSnapshot,
-    lhs_snapshot: &WrapSnapshot,
-    lhs_row: WrapRow,
-    bias: Bias,
-) -> WrapRow {
-    let lhs_point = lhs_snapshot.to_point(WrapPoint::new(lhs_row, 0), bias);
-    let Some((_lhs_buffer_snapshot, lhs_buffer_point, lhs_excerpt_id)) =
-        lhs_snapshot.point_to_buffer_point(lhs_point)
-    else {
-        return rhs_snapshot.max_point().row();
-    };
-    let rhs_excerpt_id = lhs_excerpt_to_rhs_excerpt
-        .get(&lhs_excerpt_id)
-        .copied()
-        .unwrap();
-    let rhs_buffer_snapshot = rhs_snapshot.buffer_for_excerpt(rhs_excerpt_id).unwrap();
-    let diff = rhs_snapshot
-        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
-        .unwrap();
-    // The diff's hunks always have anchors in rhs_buffer_snapshot (the primary/main buffer).
-    let rhs_row = diff.base_text_row_to_row(lhs_buffer_point.row, bias, &rhs_buffer_snapshot);
-    let rhs_point = Point::new(rhs_row, 0);
-    let text_anchor = rhs_buffer_snapshot.anchor_at(rhs_point, bias);
-    let ctx_range = rhs_snapshot
-        .context_range_for_excerpt(rhs_excerpt_id)
-        .unwrap();
-    let text_anchor = *text_anchor
-        .max(&ctx_range.start, &rhs_buffer_snapshot)
-        .min(&ctx_range.end, &rhs_buffer_snapshot);
-    let rhs_anchor = rhs_snapshot
-        .anchor_in_excerpt(rhs_excerpt_id, text_anchor)
-        .unwrap();
-    rhs_snapshot
-        .make_wrap_point(rhs_anchor.to_point(&rhs_snapshot), bias)
-        .row()
-}
-
-fn convert_rhs_wrap_row_to_lhs(
-    rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
-    lhs_snapshot: &WrapSnapshot,
-    rhs_snapshot: &WrapSnapshot,
-    rhs_row: WrapRow,
-    bias: Bias,
-) -> WrapRow {
-    let rhs_point = rhs_snapshot.to_point(WrapPoint::new(rhs_row, 0), bias);
-    let Some((rhs_buffer_snapshot, rhs_buffer_point, rhs_excerpt_id)) =
-        rhs_snapshot.point_to_buffer_point(rhs_point)
-    else {
-        return lhs_snapshot.max_point().row();
-    };
-    let lhs_excerpt_id = rhs_excerpt_to_lhs_excerpt
-        .get(&rhs_excerpt_id)
-        .copied()
-        .unwrap();
-    let lhs_buffer_snapshot = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id).unwrap();
-    let diff = rhs_snapshot
-        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
-        .unwrap();
-    let lhs_row = diff.row_to_base_text_row(rhs_buffer_point.row, bias, &rhs_buffer_snapshot);
-    let lhs_point = Point::new(lhs_row, 0);
-    let text_anchor = lhs_buffer_snapshot.anchor_at(lhs_point, bias);
-    let ctx_range = lhs_snapshot
-        .context_range_for_excerpt(lhs_excerpt_id)
-        .unwrap();
-    let text_anchor = *text_anchor
-        .max(&ctx_range.start, &lhs_buffer_snapshot)
-        .min(&ctx_range.end, &lhs_buffer_snapshot);
-    let lhs_anchor = lhs_snapshot
-        .anchor_in_excerpt(lhs_excerpt_id, text_anchor)
-        .unwrap();
-    lhs_snapshot
-        .make_wrap_point(lhs_anchor.to_point(&lhs_snapshot), bias)
-        .row()
 }
 
 #[cfg(test)]
@@ -1097,7 +1023,7 @@ mod tests {
         use language::Buffer;
         use text::Bias;
 
-        use crate::display_map::WrapRow;
+        use multi_buffer::MultiBufferRow;
         use rope::Point;
         use unindent::Unindent as _;
 
@@ -1209,19 +1135,22 @@ mod tests {
             // Get snapshots and closures
             // The closure on primary_display_map converts secondary (companion) rows -> primary rows
             // The closure on secondary_display_map converts primary (companion) rows -> secondary rows
-            let (primary_wrap, secondary_to_primary_excerpt_mapping, convert_secondary_to_primary) =
-                primary_display_map.update(cx, |dm, cx| {
-                    let snapshot = dm.snapshot(cx);
-                    let companion = dm.companion().unwrap().read(cx);
-                    let excerpt_mapping = companion
-                        .companion_excerpt_to_excerpt(dm.entity_id())
-                        .clone();
-                    let convert = companion.convert_wrap_row_from_companion(dm.entity_id());
-                    ((*snapshot).clone(), excerpt_mapping, convert)
-                });
+            let (
+                primary_buffer,
+                secondary_to_primary_excerpt_mapping,
+                convert_secondary_to_primary,
+            ) = primary_display_map.update(cx, |dm, cx| {
+                let snapshot = dm.snapshot(cx);
+                let companion = dm.companion().unwrap().read(cx);
+                let excerpt_mapping = companion
+                    .companion_excerpt_to_excerpt(dm.entity_id())
+                    .clone();
+                let convert = companion.convert_row_from_companion(dm.entity_id());
+                (snapshot.buffer_snapshot().clone(), excerpt_mapping, convert)
+            });
 
             let (
-                secondary_wrap,
+                secondary_buffer,
                 primary_to_secondary_excerpt_mapping,
                 convert_primary_to_secondary,
             ) = secondary_display_map.update(cx, |dm, cx| {
@@ -1230,8 +1159,8 @@ mod tests {
                 let excerpt_mapping = companion
                     .companion_excerpt_to_excerpt(dm.entity_id())
                     .clone();
-                let convert = companion.convert_wrap_row_from_companion(dm.entity_id());
-                ((*snapshot).clone(), excerpt_mapping, convert)
+                let convert = companion.convert_row_from_companion(dm.entity_id());
+                (snapshot.buffer_snapshot().clone(), excerpt_mapping, convert)
             });
 
             // Primary shows modified text: "one\nTWO\nINSERTED\nthree\nfour\n"
@@ -1242,12 +1171,12 @@ mod tests {
             assert_eq!(
                 convert_primary_to_secondary(
                     &primary_to_secondary_excerpt_mapping,
-                    &secondary_wrap,
-                    &primary_wrap,
-                    WrapRow(0),
+                    &secondary_buffer,
+                    &primary_buffer,
+                    MultiBufferRow(0),
                     Bias::Left
                 ),
-                WrapRow(0),
+                MultiBufferRow(0),
                 "primary row 0 (one) -> secondary row 0 (one)"
             );
 
@@ -1255,21 +1184,21 @@ mod tests {
             assert_eq!(
                 convert_primary_to_secondary(
                     &primary_to_secondary_excerpt_mapping,
-                    &secondary_wrap,
-                    &primary_wrap,
-                    WrapRow(1),
+                    &secondary_buffer,
+                    &primary_buffer,
+                    MultiBufferRow(1),
                     Bias::Left
                 ),
-                WrapRow(1),
+                MultiBufferRow(1),
                 "primary row 1 (TWO) -> secondary row 1 (two)"
             );
 
             // Primary row 2 ("INSERTED") is an inserted line, should map to row 1 or 2
             let inserted_row_left = convert_primary_to_secondary(
                 &primary_to_secondary_excerpt_mapping,
-                &secondary_wrap,
-                &primary_wrap,
-                WrapRow(2),
+                &secondary_buffer,
+                &primary_buffer,
+                MultiBufferRow(2),
                 Bias::Left,
             );
             assert!(
@@ -1279,9 +1208,9 @@ mod tests {
             );
             let inserted_row_right = convert_primary_to_secondary(
                 &primary_to_secondary_excerpt_mapping,
-                &secondary_wrap,
-                &primary_wrap,
-                WrapRow(2),
+                &secondary_buffer,
+                &primary_buffer,
+                MultiBufferRow(2),
                 Bias::Right,
             );
             assert!(
@@ -1294,12 +1223,12 @@ mod tests {
             assert_eq!(
                 convert_primary_to_secondary(
                     &primary_to_secondary_excerpt_mapping,
-                    &secondary_wrap,
-                    &primary_wrap,
-                    WrapRow(3),
+                    &secondary_buffer,
+                    &primary_buffer,
+                    MultiBufferRow(3),
                     Bias::Left
                 ),
-                WrapRow(2),
+                MultiBufferRow(2),
                 "primary row 3 (three) -> secondary row 2 (three)"
             );
 
@@ -1308,12 +1237,12 @@ mod tests {
             assert_eq!(
                 convert_secondary_to_primary(
                     &secondary_to_primary_excerpt_mapping,
-                    &primary_wrap,
-                    &secondary_wrap,
-                    WrapRow(0),
+                    &primary_buffer,
+                    &secondary_buffer,
+                    MultiBufferRow(0),
                     Bias::Left
                 ),
-                WrapRow(0),
+                MultiBufferRow(0),
                 "secondary row 0 (one) -> primary row 0 (one)"
             );
 
@@ -1321,12 +1250,12 @@ mod tests {
             assert_eq!(
                 convert_secondary_to_primary(
                     &secondary_to_primary_excerpt_mapping,
-                    &primary_wrap,
-                    &secondary_wrap,
-                    WrapRow(1),
+                    &primary_buffer,
+                    &secondary_buffer,
+                    MultiBufferRow(1),
                     Bias::Left
                 ),
-                WrapRow(1),
+                MultiBufferRow(1),
                 "secondary row 1 (two) -> primary row 1 (TWO)"
             );
 
@@ -1334,12 +1263,12 @@ mod tests {
             assert_eq!(
                 convert_secondary_to_primary(
                     &secondary_to_primary_excerpt_mapping,
-                    &primary_wrap,
-                    &secondary_wrap,
-                    WrapRow(2),
+                    &primary_buffer,
+                    &secondary_buffer,
+                    MultiBufferRow(2),
                     Bias::Left
                 ),
-                WrapRow(3),
+                MultiBufferRow(3),
                 "secondary row 2 (three) -> primary row 3 (three)"
             );
         });
