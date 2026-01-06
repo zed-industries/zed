@@ -1220,8 +1220,8 @@ impl PlatformWindow for WaylandWindow {
         update_window(state);
     }
 
-    fn is_opaque(&self) -> bool {
-        self.borrow().background_appearance == WindowBackgroundAppearance::Opaque
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.borrow().background_appearance
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

@@ -790,8 +790,8 @@ impl PlatformWindow for WindowsWindow {
         self.state.hovered.get()
     }
 
-    fn is_opaque(&self) -> bool {
-        self.state.background_appearance.get() == WindowBackgroundAppearance::Opaque
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.state.background_appearance.get()
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

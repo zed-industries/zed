@@ -199,8 +199,8 @@ impl PlatformWindow for TestWindow {
         false
     }
 
-    fn is_opaque(&self) -> bool {
-        true
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        WindowBackgroundAppearance::Opaque
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

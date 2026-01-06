@@ -1459,8 +1459,8 @@ impl PlatformWindow for X11Window {
         state.renderer.update_transparency(transparent);
     }
 
-    fn is_opaque(&self) -> bool {
-        self.0.state.borrow().background_appearance == WindowBackgroundAppearance::Opaque
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.0.state.borrow().background_appearance
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

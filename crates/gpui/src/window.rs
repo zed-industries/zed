@@ -3175,7 +3175,7 @@ impl Window {
     }
 
     fn should_use_subpixel_rendering(&self, font_id: FontId, font_size: Pixels) -> bool {
-        if !self.platform_window.is_opaque() {
+        if self.platform_window.background_appearance() != WindowBackgroundAppearance::Opaque {
             return false;
         }
 
