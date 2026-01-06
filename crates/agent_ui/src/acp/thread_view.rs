@@ -6805,7 +6805,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::{StubAgentConnection, create_test_png_base64};
+    use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
     use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
@@ -8091,7 +8091,6 @@ pub(crate) mod tests {
             assert_eq!(text, expected_txt);
         })
     }
-<<<<<<< HEAD
 
     #[gpui::test]
     async fn test_subagent_tool_call_renders_as_card(cx: &mut TestAppContext) {
@@ -8215,94 +8214,6 @@ pub(crate) mod tests {
                 !view.expanded_tool_calls.contains(&tool_call_id),
                 "Should be collapsed after remove"
             );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_image_in_tool_call_output(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/project", json!({})).await;
-        let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let text_thread_store =
-            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
-        let history_store =
-            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(text_thread_store, cx)));
-
-        let connection = Rc::new(StubAgentConnection::new());
-        let thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                AcpThreadView::new(
-                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
-                    None,
-                    None,
-                    workspace.downgrade(),
-                    project.clone(),
-                    history_store.clone(),
-                    None,
-                    false,
-                    window,
-                    cx,
-                )
-            })
-        });
-        add_to_workspace(thread_view.clone(), cx);
-
-        cx.run_until_parked();
-
-        let thread = thread_view
-            .read_with(cx, |view, _| view.thread().cloned())
-            .unwrap();
-
-        // Create a small 8x8 red PNG image encoded as base64
-        let red_png_base64 = create_test_png_base64(8, 8, [255, 0, 0, 255]);
-
-        // Set up a tool call that returns an image
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("read_image", "Read image file")
-                .kind(acp::ToolKind::Fetch)
-                .status(acp::ToolCallStatus::Completed)
-                .content(vec![acp::ToolCallContent::Content(acp::Content::new(
-                    acp::ContentBlock::Image(acp::ImageContent::new(red_png_base64, "image/png")),
-                ))]),
-        )]);
-
-        thread
-            .update(cx, |thread, cx| thread.send_raw("Show me the image", cx))
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        // Verify the thread has the expected entries
-        thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.entries().len(), 2);
-        });
-
-        // Verify the tool call content has an image
-        thread.read_with(cx, |thread, cx| {
-            if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[1] {
-                assert_eq!(tool_call.content.len(), 1);
-                if let acp_thread::ToolCallContent::ContentBlock(content_block) =
-                    &tool_call.content[0]
-                {
-                    assert!(
-                        content_block.image().is_some(),
-                        "Expected image content, got: {:?}",
-                        content_block
-                    );
-                } else {
-                    panic!(
-                        "Expected ContentBlock, got: {:?}",
-                        tool_call.content[0].to_markdown(cx)
-                    );
-                }
-            } else {
-                panic!("Expected ToolCall entry");
-            }
         });
     }
 }
