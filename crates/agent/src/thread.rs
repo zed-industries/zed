@@ -37,6 +37,8 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
+use language_models::AllLanguageModelSettings; // used to detect OpenAI-compatible providers
+
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
@@ -78,6 +80,21 @@ pub(crate) fn truncate_tool_description(description: &str) -> String {
     }
     result.push_str(ELLIPSIS);
     result
+}
+
+/// Returns true if descriptions should be truncated for the given provider.
+/// Applies to OpenAI itself and any user-configured OpenAI-compatible providers.
+pub(crate) fn provider_requires_truncate(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
+    // Direct OpenAI provider
+    if *provider_id == language_model::OPEN_AI_PROVIDER_ID {
+        return true;
+    }
+
+    // Any provider configured under `openai_compatible` settings is considered compatible
+    let provider_str: &str = provider_id.0.as_ref();
+    language_models::AllLanguageModelSettings::get_global(cx)
+        .openai_compatible
+        .contains_key(provider_str)
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -1949,20 +1966,25 @@ impl Thread {
     ) -> Result<LanguageModelRequest> {
         let model = self.model().context("No language model configured")?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
+            let requires_truncate = provider_requires_truncate(&model.provider_id(), cx);
             turn.tools
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
                     Some(LanguageModelRequestTool {
                         name: tool_name.to_string(),
-                        description: truncate_tool_description(&tool.description()),
+                        description: if requires_truncate {
+                            truncate_tool_description(&tool.description())
+                        } else {
+                            tool.description().to_string()
+                        },
                         input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
                     })
                 })
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
-        };
+        };  
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);

@@ -181,6 +181,24 @@ fn test_truncate_tool_description() {
     assert!(truncated_unicode.chars().count() < unicode.chars().count());
 }
 
+#[test]
+fn test_provider_requires_truncate_openai_and_non_openai() {
+    let mut cx = TestAppContext::single();
+    init_test(&mut cx);
+
+    cx.update(|cx| {
+        // OpenAI should require truncation
+        assert!(crate::thread::provider_requires_truncate(
+            &language_model::OPEN_AI_PROVIDER_ID,
+            cx
+        ));
+
+        // A non-OpenAI provider should not require truncation by default
+        let non_openai = language_model::LanguageModelProviderId::from("fake".to_string());
+        assert!(!crate::thread::provider_requires_truncate(&non_openai, cx));
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
