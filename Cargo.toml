@@ -39,6 +39,7 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
+    "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
     "crates/crashes",
@@ -275,6 +276,7 @@ collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
+component_preview  = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 crashes = { path = "crates/crashes" }
@@ -471,9 +473,9 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { version = "0.7.0" }
-blade-macros = { version = "0.3.0" }
-blade-util = { version = "0.3.0" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"

@@ -392,6 +392,8 @@ pub struct EditPredictionSettings {
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
+    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -699,6 +701,8 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
+                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

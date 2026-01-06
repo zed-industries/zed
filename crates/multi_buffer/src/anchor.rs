@@ -111,8 +111,8 @@ impl Anchor {
                     .get(&excerpt.buffer_id)
                     .map(|diff| diff.base_text())
             {
-                let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
-                let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
+                let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
+                let other_anchor = other.diff_base_anchor.filter(|a| a.is_valid(base_text));
                 return match (self_anchor, other_anchor) {
                     (Some(a), Some(b)) => a.cmp(&b, base_text),
                     (Some(_), None) => match other.text_anchor.bias {
@@ -146,7 +146,7 @@ impl Anchor {
                         .diffs
                         .get(&excerpt.buffer_id)
                         .map(|diff| diff.base_text())
-                        && a.buffer_id == Some(base_text.remote_id())
+                        && a.is_valid(&base_text)
                     {
                         return a.bias_left(base_text);
                     }
@@ -169,7 +169,7 @@ impl Anchor {
                         .diffs
                         .get(&excerpt.buffer_id)
                         .map(|diff| diff.base_text())
-                        && a.buffer_id == Some(base_text.remote_id())
+                        && a.is_valid(&base_text)
                     {
                         return a.bias_right(base_text);
                     }

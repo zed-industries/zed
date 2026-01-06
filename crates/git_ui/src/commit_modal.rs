@@ -380,6 +380,7 @@ impl CommitModal {
             .menu(move |window, cx| {
                 Some(branch_picker::popover(
                     workspace.clone(),
+                    false,
                     active_repo.clone(),
                     window,
                     cx,

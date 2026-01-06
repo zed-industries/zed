@@ -7,8 +7,8 @@ use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
 use settings::Settings as _;
 use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    Button, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 use crate::{CycleModeSelector, ToggleProfileSelector, ui::HoldForDefault};
@@ -105,7 +105,7 @@ impl ModeSelector {
                     .toggleable(IconPosition::End, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
-                    entry.documentation_aside(side, DocumentationEdge::Bottom, {
+                    entry.documentation_aside(side, {
                         let description = description.clone();
 
                         move |_| {

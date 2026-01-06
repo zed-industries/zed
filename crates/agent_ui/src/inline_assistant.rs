@@ -1259,28 +1259,26 @@ impl InlineAssistant {
                 let bottom = top + 1.0;
                 (top, bottom)
             });
-            let mut scroll_target_top = scroll_target_range.0;
-            let mut scroll_target_bottom = scroll_target_range.1;
-
-            scroll_target_top -= editor.vertical_scroll_margin() as ScrollOffset;
-            scroll_target_bottom += editor.vertical_scroll_margin() as ScrollOffset;
-
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
+            let vertical_scroll_margin = editor.vertical_scroll_margin() as ScrollOffset;
+            let scroll_target_top = (scroll_target_range.0 - vertical_scroll_margin)
+                // Don't scroll up too far in the case of a large vertical_scroll_margin.
+                .max(scroll_target_range.0 - height_in_lines / 2.0);
+            let scroll_target_bottom = (scroll_target_range.1 + vertical_scroll_margin)
+                // Don't scroll down past where the top would still be visible.
+                .min(scroll_target_top + height_in_lines);
+
             let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
 
             if scroll_target_top < scroll_top {
                 editor.set_scroll_position(point(0., scroll_target_top), window, cx);
             } else if scroll_target_bottom > scroll_bottom {
-                if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
-                    editor.set_scroll_position(
-                        point(0., scroll_target_bottom - height_in_lines),
-                        window,
-                        cx,
-                    );
-                } else {
-                    editor.set_scroll_position(point(0., scroll_target_top), window, cx);
-                }
+                editor.set_scroll_position(
+                    point(0., scroll_target_bottom - height_in_lines),
+                    window,
+                    cx,
+                );
             }
         });
     }

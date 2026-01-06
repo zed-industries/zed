@@ -1,6 +1,6 @@
 use std::{
     any::{TypeId, type_name},
-    cell::{BorrowMutError, Ref, RefCell, RefMut},
+    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -30,6 +30,8 @@ use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{ResultExt, debug_panic};
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
@@ -41,8 +43,8 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -52,6 +54,8 @@ mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
@@ -580,6 +584,7 @@ impl GpuiMode {
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
+    pub(crate) liveness: std::sync::Arc<()>,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
@@ -632,6 +637,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     quit_mode: QuitMode,
     quitting: bool,
 }
@@ -658,8 +664,10 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
+                liveness: std::sync::Arc::new(()),
                 platform: platform.clone(),
                 text_system,
+                text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -1077,11 +1085,19 @@ impl App {
         self.platform.window_appearance()
     }
 
-    /// Writes data to the primary selection buffer.
-    /// Only available on Linux.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn write_to_primary(&self, item: ClipboardItem) {
-        self.platform.write_to_primary(item)
+    /// Reads data from the platform clipboard.
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_clipboard()
+    }
+
+    /// Sets the text rendering mode for the application.
+    pub fn set_text_rendering_mode(&mut self, mode: TextRenderingMode) {
+        self.text_rendering_mode.set(mode);
+    }
+
+    /// Returns the current text rendering mode for the application.
+    pub fn text_rendering_mode(&self) -> TextRenderingMode {
+        self.text_rendering_mode.get()
     }
 
     /// Writes data to the platform clipboard.
@@ -1096,9 +1112,31 @@ impl App {
         self.platform.read_from_primary()
     }
 
-    /// Reads data from the platform clipboard.
-    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform.read_from_clipboard()
+    /// Writes data to the primary selection buffer.
+    /// Only available on Linux.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn write_to_primary(&self, item: ClipboardItem) {
+        self.platform.write_to_primary(item)
+    }
+
+    /// Reads data from macOS's "Find" pasteboard.
+    ///
+    /// Used to share the current search string between apps.
+    ///
+    /// https://developer.apple.com/documentation/appkit/nspasteboard/name-swift.struct/find
+    #[cfg(target_os = "macos")]
+    pub fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_find_pasteboard()
+    }
+
+    /// Writes data to macOS's "Find" pasteboard.
+    ///
+    /// Used to share the current search string between apps.
+    ///
+    /// https://developer.apple.com/documentation/appkit/nspasteboard/name-swift.struct/find
+    #[cfg(target_os = "macos")]
+    pub fn write_to_find_pasteboard(&self, item: ClipboardItem) {
+        self.platform.write_to_find_pasteboard(item)
     }
 
     /// Writes credentials to the platform keychain.
@@ -1456,6 +1494,7 @@ impl App {
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
             app: self.this.clone(),
+            liveness_token: std::sync::Arc::downgrade(&self.liveness),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }

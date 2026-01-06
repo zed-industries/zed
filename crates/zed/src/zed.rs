@@ -1,11 +1,12 @@
 mod app_menus;
-pub mod component_preview;
 pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
 mod quick_action_bar;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
@@ -3818,7 +3819,7 @@ mod tests {
             })
             .unwrap();
 
-        cx.dispatch_action(window.into(), pane::SplitRight);
+        cx.dispatch_action(window.into(), pane::SplitRight::default());
         let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);

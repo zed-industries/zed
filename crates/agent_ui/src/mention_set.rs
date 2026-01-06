@@ -12,8 +12,8 @@ use editor::{
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
-    Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Empty, Entity, EntityId,
-    Image, ImageFormat, Img, SharedString, Task, WeakEntity, pulsating_between,
+    AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
+    SharedString, Task, WeakEntity,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
@@ -32,12 +32,13 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::Duration,
 };
 use text::OffsetRangeExt;
-use ui::{ButtonLike, Disclosure, TintColor, Toggleable, prelude::*};
+use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
+
+use crate::ui::MentionCrease;
 
 pub type MentionTask = Shared<Task<Result<Mention, String>>>;
 
@@ -754,25 +755,8 @@ fn render_fold_icon_button(
                 .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
                 .unwrap_or_default();
 
-            ButtonLike::new(fold_id)
-                .style(ButtonStyle::Filled)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(is_in_text_selection)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::from_path(icon_path.clone())
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Label::new(label.clone())
-                                .size(LabelSize::Small)
-                                .buffer_font(cx)
-                                .single_line(),
-                        ),
-                )
+            MentionCrease::new(fold_id, icon_path.clone(), label.clone())
+                .is_toggled(is_in_text_selection)
                 .into_any_element()
         }
     })
@@ -947,12 +931,14 @@ impl Render for LoadingContext {
             .editor
             .update(cx, |editor, cx| editor.is_range_selected(&self.range, cx))
             .unwrap_or_default();
-        ButtonLike::new(("loading-context", self.id))
-            .style(ButtonStyle::Filled)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(is_in_text_selection)
-            .when_some(self.image.clone(), |el, image_task| {
-                el.hoverable_tooltip(move |_, cx| {
+
+        let id = ElementId::from(("loading_context", self.id));
+
+        MentionCrease::new(id, self.icon.clone(), self.label.clone())
+            .is_toggled(is_in_text_selection)
+            .is_loading(self.loading.is_some())
+            .when_some(self.image.clone(), |this, image_task| {
+                this.image_preview(move |_, cx| {
                     let image = image_task.peek().cloned().transpose().ok().flatten();
                     let image_task = image_task.clone();
                     cx.new::<ImageHover>(|cx| ImageHover {
@@ -971,35 +957,6 @@ impl Render for LoadingContext {
                     .into()
                 })
             })
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::from_path(self.icon.clone())
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(self.label.clone())
-                            .size(LabelSize::Small)
-                            .buffer_font(cx)
-                            .single_line(),
-                    )
-                    .map(|el| {
-                        if self.loading.is_some() {
-                            el.with_animation(
-                                "loading-context-crease",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.opacity(delta),
-                            )
-                            .into_any()
-                        } else {
-                            el.into_any()
-                        }
-                    }),
-            )
     }
 }
 

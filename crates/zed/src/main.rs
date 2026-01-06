@@ -33,7 +33,7 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
-use recent_projects::{SshSettings, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
@@ -413,14 +413,14 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees(None, None, cx) {
+        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
             Err(e) => {
                 log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
                 HashMap::default()
             }
         };
-        trusted_worktrees::init(trusted_paths, None, None, cx);
+        trusted_worktrees::init(db_trusted_paths, None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -678,6 +678,18 @@ fn main() {
                         .ok();
                 }
 
+                cx.set_text_rendering_mode(
+                    match WorkspaceSettings::get_global(cx).text_rendering_mode {
+                        settings::TextRenderingMode::PlatformDefault => {
+                            gpui::TextRenderingMode::PlatformDefault
+                        }
+                        settings::TextRenderingMode::Subpixel => gpui::TextRenderingMode::Subpixel,
+                        settings::TextRenderingMode::Grayscale => {
+                            gpui::TextRenderingMode::Grayscale
+                        }
+                    },
+                );
+
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);
@@ -774,7 +786,7 @@ fn main() {
 
         let app_state = app_state.clone();
 
-        crate::zed::component_preview::init(app_state.clone(), cx);
+        component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
@@ -833,12 +845,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     cx.spawn_in(window, async move |workspace, cx| {
                         let res = async move {
                             let json = app_state.languages.language_for_name("JSONC").await.ok();
+                            let lsp_store = workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .update(cx, |project, _| project.lsp_store())
+                            })?;
                             let json_schema_content =
                                 json_schema_store::resolve_schema_request_inner(
                                     &app_state.languages,
+                                    lsp_store,
                                     &schema_path,
                                     cx,
-                                )?;
+                                )
+                                .await?;
                             let json_schema_content =
                                 serde_json::to_string_pretty(&json_schema_content)
                                     .context("Failed to serialize JSON Schema as JSON")?;
@@ -1168,7 +1187,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
                         cx.update(|cx| {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
                         })?;
                     }
