@@ -9,8 +9,10 @@ mod metrics;
 mod paths;
 mod predict;
 mod progress;
+mod reorder_patch;
 mod retrieve_context;
 mod score;
+mod split_commit;
 mod synthesize;
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -30,6 +32,7 @@ use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
+use crate::split_commit::SplitCommitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
 
 #[derive(Parser, Debug)]
@@ -74,6 +77,8 @@ enum Command {
     Synthesize(SynthesizeArgs),
     /// Remove git repositories and worktrees
     Clean,
+    /// Generate an evaluation example by splitting a chronologically-ordered commit
+    SplitCommit(SplitCommitArgs),
 }
 
 impl Display for Command {
@@ -127,6 +132,7 @@ impl Display for Command {
                 write!(f, "synthesize --repo={}", args.repo)
             }
             Command::Clean => write!(f, "clean"),
+            Command::SplitCommit(_) => write!(f, "split-commit"),
         }
     }
 }
@@ -235,6 +241,13 @@ fn main() {
             });
             return;
         }
+        Command::SplitCommit(split_commit_args) => {
+            if let Err(error) = split_commit::run_split_commit(split_commit_args) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -302,7 +315,9 @@ fn main() {
                                         run_scoring(example, &args, app_state.clone(), cx.clone())
                                             .await?;
                                     }
-                                    Command::Clean | Command::Synthesize(_) => {
+                                    Command::Clean
+                                    | Command::Synthesize(_)
+                                    | Command::SplitCommit(_) => {
                                         unreachable!()
                                     }
                                 }
