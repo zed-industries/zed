@@ -571,7 +571,7 @@ impl NotebookEditor {
                     match cell {
                         Cell::Code(code_cell) => {
                             let editor = code_cell.read(cx).editor();
-                            window.focus(&editor.focus_handle(cx));
+                            window.focus(&editor.focus_handle(cx), cx);
                         }
                         Cell::Markdown(markdown_cell) => {
                             // Don't auto-enter edit mode for next markdown cell

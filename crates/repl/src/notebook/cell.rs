@@ -645,7 +645,7 @@ impl Render for MarkdownCell {
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _event, window, cx| {
                                 this.editing = true;
-                                window.focus(&this.editor.focus_handle(cx));
+                                window.focus(&this.editor.focus_handle(cx), cx);
                                 cx.notify();
                             }))
                             .children(parsed.children.iter().map(|child| {
