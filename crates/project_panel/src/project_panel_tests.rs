@@ -4053,10 +4053,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a/b/c/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4086,10 +4083,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/target_destination/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4109,10 +4103,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a/b", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4138,10 +4129,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/target_destination/b", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
@@ -4161,10 +4149,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
-            },
+            active_selection: *panel.state.selection.as_ref().unwrap(),
             marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel

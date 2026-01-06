@@ -3970,13 +3970,16 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.disjoint_entries(
-            selections
-                .items()
-                .cloned()
-                .collect::<BTreeSet<SelectedEntry>>(),
-            cx,
-        );
+        // Resolve entries at drop time to handle folded directories correctly
+        let resolved_selections = selections
+            .items()
+            .map(|entry| SelectedEntry {
+                entry_id: self.resolve_entry(entry.entry_id),
+                worktree_id: entry.worktree_id,
+            })
+            .collect::<BTreeSet<SelectedEntry>>();
+
+        let entries = self.disjoint_entries(resolved_selections, cx);
         if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -4709,7 +4712,7 @@ impl ProjectPanel {
         let dragged_selection = DraggedSelection {
             active_selection: SelectedEntry {
                 worktree_id: selection.worktree_id,
-                entry_id: self.resolve_entry(selection.entry_id),
+                entry_id: selection.entry_id,
             },
             marked_selections: Arc::from(self.marked_entries.clone()),
         };
