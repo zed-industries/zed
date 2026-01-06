@@ -43,6 +43,7 @@ visual-tests = [
     "clock/test-support",
     "acp_thread/test-support",
     "agent_ui/test-support",
+    "db/test-support",
 ]
 
 [[bin]]
