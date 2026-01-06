@@ -411,9 +411,9 @@ message Push {
     uint64 repository_id = 3;
     string remote_name = 4;
     string branch_name = 5;
-    string remote_branch_name = 6;
-    optional PushOptions options = 7;
-    uint64 askpass_id = 8;
+    optional PushOptions options = 6;
+    uint64 askpass_id = 7;
+    string remote_branch_name = 8;
 
     enum PushOptions {
         SET_UPSTREAM = 0;
