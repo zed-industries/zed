@@ -2733,7 +2733,7 @@ impl AcpThreadView {
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
-        let should_show_raw_input = !is_terminal_tool && !is_edit;
+        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
