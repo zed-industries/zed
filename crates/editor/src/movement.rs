@@ -500,8 +500,8 @@ pub fn next_subword_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -
         if left == '\n' {
             on_starting_row = false;
         }
-
-        (is_subword_end(left, right, &classifier)
+        ((classifier.kind(left) != classifier.kind(right)
+            || is_subword_boundary_end(left, right, &classifier))
             && ((on_starting_row && !left.is_whitespace())
                 || (!on_starting_row && !right.is_whitespace())))
             || right == '\n'
@@ -511,10 +511,13 @@ pub fn next_subword_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -
 pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> bool {
     let is_word_end =
         (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
-    let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+    is_word_end || is_subword_boundary_end(left, right, classifier)
+}
+
+fn is_subword_boundary_end(left: char, right: char, classifier: &CharClassifier) -> bool {
+    classifier.is_word('-') && left != '-' && right == '-'
         || left != '_' && right == '_'
-        || left.is_lowercase() && right.is_uppercase();
-    is_word_end || is_subword_end
+        || left.is_lowercase() && right.is_uppercase()
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
