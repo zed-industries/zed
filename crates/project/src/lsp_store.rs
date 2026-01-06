@@ -8693,10 +8693,16 @@ impl LspStore {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
             // Uri is immutable, so we can't modify the scheme
-
-            let abs_path = abs_path
-                .to_file_path()
-                .map_err(|()| anyhow!("can't convert URI to path"))?;
+            let abs_path = match abs_path.to_file_path() {
+                Ok(path) => path,
+                Err(_) => {
+                    if current_scheme == "file" {
+                        PathBuf::from(abs_path.path())
+                    } else {
+                        return Err(anyhow!("can't convert URI to path"));
+                    }
+                }
+            };
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
