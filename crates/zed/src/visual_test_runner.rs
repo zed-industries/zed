@@ -107,17 +107,6 @@ fn main() {
                 language_model::init(app_state.client.clone(), cx);
                 language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
 
-                // Dismiss onboarding banners so they don't appear in screenshots
-                cx.spawn(async |_| {
-                    db::kvp::KEY_VALUE_STORE
-                        .write_kvp(
-                            "acp_claude_code_onboarding_banner_dismissed_at".to_string(),
-                            chrono::Utc::now().to_rfc3339(),
-                        )
-                        .await
-                })
-                .detach();
-
                 // Open a real Zed workspace window
                 let window_size = size(px(1280.0), px(800.0));
                 // Window can be hidden since we use direct texture capture (reading pixels from
