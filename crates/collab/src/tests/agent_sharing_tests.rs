@@ -1,9 +1,5 @@
-use agent::{HistoryStore, SharedThread};
-use agent_client_protocol as acp;
-use assistant_text_thread::TextThreadStore;
-use fs::FakeFs;
-use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
-use project::Project;
+use agent::SharedThread;
+use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
 use uuid::Uuid;
 
@@ -138,4 +134,94 @@ async fn test_get_nonexistent_thread(executor: BackgroundExecutor, cx: &mut Test
         .await;
 
     assert!(result.is_err(), "Should fail for nonexistent thread");
+}
+
+#[gpui::test]
+async fn test_sync_imported_thread(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    executor.run_until_parked();
+
+    let session_id = Uuid::new_v4().to_string();
+
+    // User A shares a thread with initial content.
+    let initial_thread = SharedThread {
+        title: "Initial Title".into(),
+        messages: vec![],
+        updated_at: chrono::Utc::now(),
+        model: None,
+        completion_mode: None,
+        version: SharedThread::VERSION.to_string(),
+    };
+
+    client_a
+        .client()
+        .request(proto::ShareAgentThread {
+            session_id: session_id.clone(),
+            title: initial_thread.title.to_string(),
+            thread_data: initial_thread.to_bytes().expect("Failed to serialize"),
+        })
+        .await
+        .expect("Failed to share thread");
+
+    // User B imports the thread.
+    let initial_response = client_b
+        .client()
+        .request(proto::GetSharedAgentThread {
+            session_id: session_id.clone(),
+        })
+        .await
+        .expect("Failed to get shared thread");
+
+    let initial_imported =
+        SharedThread::from_bytes(&initial_response.thread_data).expect("Failed to deserialize");
+    assert_eq!(initial_imported.title.as_ref(), "Initial Title");
+
+    // User A updates the shared thread.
+    let updated_thread = SharedThread {
+        title: "Updated Title".into(),
+        messages: vec![],
+        updated_at: chrono::Utc::now(),
+        model: None,
+        completion_mode: None,
+        version: SharedThread::VERSION.to_string(),
+    };
+
+    client_a
+        .client()
+        .request(proto::ShareAgentThread {
+            session_id: session_id.clone(),
+            title: updated_thread.title.to_string(),
+            thread_data: updated_thread.to_bytes().expect("Failed to serialize"),
+        })
+        .await
+        .expect("Failed to re-share thread");
+
+    // User B syncs the imported thread (fetches the latest version).
+    let synced_response = client_b
+        .client()
+        .request(proto::GetSharedAgentThread {
+            session_id: session_id.clone(),
+        })
+        .await
+        .expect("Failed to sync shared thread");
+
+    let synced_thread =
+        SharedThread::from_bytes(&synced_response.thread_data).expect("Failed to deserialize");
+
+    // The synced thread should have the updated title.
+    assert_eq!(synced_thread.title.as_ref(), "Updated Title");
+
+    // Converting to db_thread should preserve the imported flag.
+    let db_thread = synced_thread.to_db_thread();
+    assert!(
+        db_thread.imported,
+        "Synced thread should still have imported flag"
+    );
 }

@@ -50,6 +50,9 @@ pub struct DbThread {
     pub completion_mode: Option<CompletionMode>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
+    /// True if this thread was imported from a shared thread and can be synced.
+    #[serde(default)]
+    pub imported: bool,
 }
 
 /// A thread format suitable for sharing across users/machines.
@@ -81,8 +84,6 @@ impl SharedThread {
         }
     }
 
-    /// Convert to a DbThread for local storage.
-    /// Prepends 🔗 to the title to indicate this is an imported shared thread.
     pub fn to_db_thread(self) -> DbThread {
         DbThread {
             title: format!("🔗 {}", self.title).into(),
@@ -95,6 +96,7 @@ impl SharedThread {
             model: self.model,
             completion_mode: self.completion_mode,
             profile: None,
+            imported: true,
         }
     }
 
@@ -270,6 +272,7 @@ impl DbThread {
             model: thread.model,
             completion_mode: thread.completion_mode,
             profile: thread.profile,
+            imported: false,
         })
     }
 }
@@ -525,5 +528,22 @@ mod tests {
         assert_eq!(restored.title, original.title);
         assert_eq!(restored.version, original.version);
         assert_eq!(restored.updated_at, original.updated_at);
+    }
+
+    #[test]
+    fn test_imported_flag_defaults_to_false() {
+        // Simulate deserializing a thread without the imported field (backwards compatibility).
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            !db_thread.imported,
+            "Legacy threads without imported field should default to false"
+        );
     }
 }

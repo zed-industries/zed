@@ -992,6 +992,73 @@ impl AcpThreadView {
         .detach_and_log_err(cx);
     }
 
+    fn sync_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_imported_thread(cx) {
+            return;
+        }
+
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let client = self.project.read(cx).client();
+        let history_store = self.history_store.clone();
+        let session_id = thread.read(cx).id().clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            // Fetch latest from server using the thread's session_id.
+            let response = client
+                .request(proto::GetSharedAgentThread {
+                    session_id: session_id.to_string(),
+                })
+                .await?;
+
+            let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
+
+            // Convert to local format (imported flag is set to true by to_db_thread).
+            let db_thread = shared_thread.to_db_thread();
+
+            // Save updated thread (same session_id, so it overwrites).
+            history_store
+                .update(&mut cx.clone(), |store, cx| {
+                    store.save_thread(session_id.clone(), db_thread, cx)
+                })?
+                .await?;
+
+            // Update resume_thread_metadata so reset() knows which thread to reload.
+            let thread_metadata = agent::DbThreadMetadata {
+                id: session_id,
+                title: format!("🔗 {}", response.title).into(),
+                updated_at: chrono::Utc::now(),
+            };
+
+            // Reload the thread view to show the updated content.
+            this.update_in(cx, |this, window, cx| {
+                this.resume_thread_metadata = Some(thread_metadata);
+                this.reset(window, cx);
+            })?;
+
+            this.update_in(cx, |this, _window, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadSyncedToast;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<ThreadSyncedToast>(),
+                                "Thread synced with latest version",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
@@ -4893,6 +4960,14 @@ impl AcpThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    /// Returns true if this thread was imported from a shared thread and can be synced.
+    fn is_imported_thread(&self, cx: &App) -> bool {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return false;
+        };
+        thread.read(cx).is_imported()
+    }
+
     fn is_using_zed_ai_models(&self, cx: &App) -> bool {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
@@ -5808,7 +5883,31 @@ impl AcpThreadView {
                 );
         }
 
-        if cx.has_flag::<AgentSharingFeatureFlag>() {
+        // Add sync button for imported threads (if connected to collab).
+        if cx.has_flag::<AgentSharingFeatureFlag>()
+            && self.is_imported_thread(cx)
+            && self
+                .project
+                .read(cx)
+                .client()
+                .status()
+                .borrow()
+                .is_connected()
+        {
+            let sync_button = IconButton::new("sync-thread", IconName::ArrowCircle)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Ignored)
+                .tooltip(Tooltip::text("Sync with source thread"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.sync_thread(window, cx);
+                }));
+
+            container = container.child(sync_button);
+        }
+
+        // Add share button if feature flag is enabled (only for non-imported threads).
+        if cx.has_flag::<AgentSharingFeatureFlag>() && !self.is_imported_thread(cx) {
             let share_button = IconButton::new("share-thread", IconName::ArrowUpRight)
                 .shape(ui::IconButtonShape::Square)
                 .icon_size(IconSize::Small)

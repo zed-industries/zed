@@ -107,6 +107,20 @@ impl SharedThreadId {
     }
 }
 
+impl sea_orm::TryFromU64 for SharedThreadId {
+    fn try_from_u64(_n: u64) -> std::result::Result<Self, DbErr> {
+        Err(DbErr::ConvertFromU64(
+            "SharedThreadId uses UUID and cannot be converted from u64",
+        ))
+    }
+}
+
+impl sea_orm::sea_query::Nullable for SharedThreadId {
+    fn null() -> Value {
+        Value::Uuid(None)
+    }
+}
+
 impl std::fmt::Display for SharedThreadId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         self.0.fmt(f)

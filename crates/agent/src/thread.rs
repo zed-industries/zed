@@ -622,6 +622,8 @@ pub struct Thread {
     pub(crate) action_log: Entity<ActionLog>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
+    /// True if this thread was imported from a shared thread and can be synced.
+    imported: bool,
 }
 
 impl Thread {
@@ -678,11 +680,17 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            imported: false,
         }
     }
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    /// Returns true if this thread was imported from a shared thread.
+    pub fn is_imported(&self) -> bool {
+        self.imported
     }
 
     pub fn replay(
@@ -866,6 +874,7 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
+            imported: db_thread.imported,
         }
     }
 
@@ -885,6 +894,7 @@ impl Thread {
             }),
             completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
+            imported: self.imported,
         };
 
         cx.background_spawn(async move {
