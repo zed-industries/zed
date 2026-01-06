@@ -59,9 +59,9 @@ pub async fn apply_diff(
                 let buffer = match current_file {
                     None => {
                         if is_new_file {
-                            let rel_path = RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)
-                                .unwrap()
-                                .into_arc();
+                            let rel_path =
+                                RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?
+                                    .into_arc();
 
                             project
                                 .update(cx, |project, cx| {
