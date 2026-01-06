@@ -271,21 +271,18 @@ fn integration_subagent_with_haiku() {
 When reviewing `target/visual_tests/` screenshots, check:
 
 1. **Collapsed state:**
-
    - Is the label visible and properly truncated if too long?
    - Is the expand chevron visible?
    - Does the loading indicator appear during execution?
    - Is token usage visible (e.g., "120k/200k")?
 
 2. **Expanded state:**
-
    - Does the embedded thread render correctly?
    - Is there appropriate max-height with scrolling?
    - Are tool calls within the subagent visible?
    - Does the visual hierarchy feel right?
 
 3. **Error states:**
-
    - Does a failed subagent show as a failed tool call?
    - Is the error message visible but not overwhelming?
 
@@ -1723,11 +1720,12 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 
 **Tests to include:**
 
-- `test_subagent_receives_task_prompt`
-- `test_subagent_returns_summary_on_completion`
-- `test_subagent_inherits_parent_model`
-- `test_max_depth_enforced`
-- `test_allowed_tools_validated`
+- [x] `test_subagent_receives_task_prompt`
+- [x] `test_subagent_returns_summary_on_completion`
+- [x] `test_subagent_inherits_parent_model` (named `test_subagent_thread_inherits_parent_model`)
+- [x] `test_max_depth_enforced` (named `test_max_subagent_depth_prevents_tool_registration`)
+- [x] `test_allowed_tools_validated` (named `test_allowed_tools_restricts_subagent_capabilities`)
+- [x] `test_parent_cancel_stops_subagent`
 
 **Definition of Done:**
 
@@ -1736,9 +1734,54 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 - [x] Subagent can use tools
 - [x] Summary prompt triggers final response
 - [x] Result returned to parent as tool result
+- [x] `timeout_ms` is implemented and triggers early summary
+- [x] `allowed_tools` filtering is implemented
+- [x] Cancellation propagates from parent to subagent
 - [x] `./script/clippy` passes
 
 **STATUS: ✅ COMPLETED**
+
+---
+
+### PR 2.5: Remaining Integration Tests (TODO)
+
+**Goal:** Add the remaining integration tests that require more complex mocking infrastructure.
+
+**Tests still needed:**
+
+These tests require setting up mock model responses that simulate specific conditions:
+
+1. **`test_subagent_model_error_returned_as_tool_error`**
+   - Setup: Configure FakeLanguageModel to return an error mid-execution
+   - Verify: Error appears as a failed tool call result, not a top-level panic
+   - Why complex: Need to make the model fail after the subagent starts
+
+2. **`test_context_low_triggers_interrupt_for_summary`**
+   - Setup: Configure FakeLanguageModel to report token usage near the 75% threshold
+   - Verify: `interrupt_for_summary()` is called instead of `request_final_summary()`
+   - Why complex: Need to mock `latest_token_usage()` to return high usage values
+
+3. **`test_subagent_timeout_triggers_early_summary`**
+   - Setup: Use a very short timeout (e.g., 5ms) and a model that takes longer to respond
+   - Verify: Timeout fires and triggers interrupt for summary
+   - Why complex: Need timing-sensitive test that doesn't flake
+
+**Implementation approach:**
+
+For these tests, consider:
+
+- Extending `FakeLanguageModel` to support configurable delays and token usage reporting
+- Adding a `set_token_usage` method to Thread for test purposes
+- Using `cx.background_executor().timer()` for controlled timing in tests
+
+**Definition of Done:**
+
+- [ ] `test_subagent_model_error_returned_as_tool_error`
+- [ ] `test_context_low_triggers_interrupt_for_summary`
+- [ ] `test_subagent_timeout_triggers_early_summary`
+- [ ] All tests pass consistently (no flakes)
+
+**STATUS: 🚧 TODO**
 
 ---
 
