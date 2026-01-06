@@ -1358,7 +1358,12 @@ impl ToolchainLister for PythonToolchainProvider {
                     activation_script.push(format!("{manager} activate base"));
                 }
             }
-            Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+            Some(
+                PythonEnvironmentKind::Venv
+                | PythonEnvironmentKind::VirtualEnv
+                | PythonEnvironmentKind::Uv
+                | PythonEnvironmentKind::UvWorkspace,
+            ) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
                         let activate_keyword = shell.activate_keyword();
@@ -1415,9 +1420,12 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
 
     let mut activation_scripts = HashMap::default();
     match venv.kind {
-        Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
-            resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await
-        }
+        Some(
+            PythonEnvironmentKind::Venv
+            | PythonEnvironmentKind::VirtualEnv
+            | PythonEnvironmentKind::Uv
+            | PythonEnvironmentKind::UvWorkspace,
+        ) => resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await,
         _ => {}
     }
     let data = PythonToolchainData {

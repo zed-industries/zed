@@ -313,9 +313,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     settings_content.theme.theme = None;
                                     return;
                                 };
-                                let settings_value = settings_content.theme.theme.get_or_insert_with(|| {
-                                    settings::ThemeSelection::Static(theme::ThemeName(theme::default_theme(theme::SystemAppearance::default().0).into()))
-                                });
+                                let settings_value = settings_content.theme.theme.get_or_insert_default();
                                 *settings_value = match value {
                                     settings::ThemeSelectionDiscriminants::Static => {
                                         let name = match settings_value {
@@ -371,8 +369,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Static(theme_name) => *theme_name = value,
                                                     _ => return
                                                 }
                                         },
@@ -399,8 +397,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Dynamic{ mode, ..}) => *mode = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Dynamic{ mode, ..} => *mode = value,
                                                     _ => return
                                                 }
                                         },
@@ -425,8 +423,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Dynamic{ light, ..}) => *light = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Dynamic{ light, ..} => *light = value,
                                                     _ => return
                                                 }
                                         },
@@ -451,8 +449,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             };
                                             match settings_content
                                                 .theme
-                                                .theme.as_mut() {
-                                                    Some(settings::ThemeSelection::Dynamic{ dark, ..}) => *dark = value,
+                                                .theme.get_or_insert_default() {
+                                                    settings::ThemeSelection::Dynamic{ dark, ..} => *dark = value,
                                                     _ => return
                                                 }
                                         },
@@ -887,6 +885,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         write: |settings_content, value| {
                             settings_content.theme.agent_buffer_font_size = value;
 
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Text Rendering"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Text Rendering Mode",
+                    description: "The text rendering mode to use.",
+                    field: Box::new(SettingField {
+                        json_path: Some("text_rendering_mode"),
+                        pick: |settings_content| {
+                            settings_content.workspace.text_rendering_mode.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.text_rendering_mode = value;
                         },
                     }),
                     metadata: None,
@@ -6225,6 +6239,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
+                    SettingsPageItem::SectionHeader("Context Servers"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Context Server Timeout",
+                        description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
+                        field: Box::new(SettingField {
+                            json_path: Some("context_server_timeout"),
+                            pick: |settings_content| {
+                                settings_content.project.context_server_timeout.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.context_server_timeout = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER | PROJECT,
+                    }),
                 ];
                 items.extend(edit_prediction_language_settings_section());
                 items.extend(
@@ -6268,20 +6298,16 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             title: "Network",
             items: vec![
                 SettingsPageItem::SectionHeader("Network"),
-                // todo(settings_ui): Proxy needs a default
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Proxy",
                     description: "The proxy to use for network requests.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("proxy"),
-                            pick: |settings_content| settings_content.proxy.as_ref(),
-                            write: |settings_content, value| {
-                                settings_content.proxy = value;
-                            },
-                        }
-                        .unimplemented(),
-                    ),
+                    field: Box::new(SettingField {
+                        json_path: Some("proxy"),
+                        pick: |settings_content| settings_content.proxy.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.proxy = value;
+                        },
+                    }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("socks5h://localhost:10808"),
                         ..Default::default()

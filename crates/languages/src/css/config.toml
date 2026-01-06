@@ -9,6 +9,6 @@ brackets = [
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
     { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
 ]
-completion_query_characters = ["-"]
+completion_query_characters = ["-", "@"]
 block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
 prettier_parser_name = "css"

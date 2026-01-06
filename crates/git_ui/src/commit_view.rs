@@ -30,7 +30,7 @@ use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{BreadcrumbText, ItemEvent, TabContentParams},
+    item::{ItemEvent, TabContentParams},
     notifications::NotifyTaskExt,
     pane::SaveIntent,
     searchable::SearchableItemHandle,
@@ -923,14 +923,6 @@ impl Item for CommitView {
     ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
-    }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::Hidden
-    }
-
-    fn breadcrumbs(&self, _theme: &theme::Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
-        None
     }
 
     fn added_to_workspace(

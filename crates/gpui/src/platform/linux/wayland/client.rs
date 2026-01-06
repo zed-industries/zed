@@ -204,7 +204,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    gpu_context: BladeContext,
+    pub gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -247,7 +247,7 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    common: LinuxCommon,
+    pub common: LinuxCommon,
 }
 
 pub struct DragState {

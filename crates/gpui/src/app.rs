@@ -1,6 +1,6 @@
 use std::{
     any::{TypeId, type_name},
-    cell::{BorrowMutError, Ref, RefCell, RefMut},
+    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -30,6 +30,8 @@ use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{ResultExt, debug_panic};
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
@@ -41,8 +43,8 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -52,6 +54,8 @@ mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
@@ -633,6 +637,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     quit_mode: QuitMode,
     quitting: bool,
 }
@@ -662,6 +667,7 @@ impl App {
                 liveness: std::sync::Arc::new(()),
                 platform: platform.clone(),
                 text_system,
+                text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -1082,6 +1088,16 @@ impl App {
     /// Reads data from the platform clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform.read_from_clipboard()
+    }
+
+    /// Sets the text rendering mode for the application.
+    pub fn set_text_rendering_mode(&mut self, mode: TextRenderingMode) {
+        self.text_rendering_mode.set(mode);
+    }
+
+    /// Returns the current text rendering mode for the application.
+    pub fn text_rendering_mode(&self) -> TextRenderingMode {
+        self.text_rendering_mode.get()
     }
 
     /// Writes data to the platform clipboard.

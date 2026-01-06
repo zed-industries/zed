@@ -33,7 +33,7 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
-use recent_projects::{SshSettings, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
@@ -678,6 +678,18 @@ fn main() {
                         .ok();
                 }
 
+                cx.set_text_rendering_mode(
+                    match WorkspaceSettings::get_global(cx).text_rendering_mode {
+                        settings::TextRenderingMode::PlatformDefault => {
+                            gpui::TextRenderingMode::PlatformDefault
+                        }
+                        settings::TextRenderingMode::Subpixel => gpui::TextRenderingMode::Subpixel,
+                        settings::TextRenderingMode::Grayscale => {
+                            gpui::TextRenderingMode::Grayscale
+                        }
+                    },
+                );
+
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);
@@ -1175,7 +1187,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
                         cx.update(|cx| {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
                         })?;
                     }

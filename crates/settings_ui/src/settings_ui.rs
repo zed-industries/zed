@@ -26,6 +26,7 @@ use std::{
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
+use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
@@ -436,6 +437,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::TextRenderingMode>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         .add_basic_renderer::<settings::BaseKeymapContent>(render_dropdown)
         .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
@@ -1378,8 +1380,22 @@ impl SettingsWindow {
         })
         .detach();
 
+        let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
+
+            // Whenever settings are changed, it's possible that the changed
+            // settings affects the rendering of the `SettingsWindow`, like is
+            // the case with `ui_font_size`. When that happens, we need to
+            // instruct the `ListState` to re-measure the list items, as the
+            // list item heights may have changed depending on the new font
+            // size.
+            let new_ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+            if new_ui_font_size != ui_font_size {
+                this.list_state.remeasure();
+                ui_font_size = new_ui_font_size;
+            }
+
             cx.notify();
         })
         .detach();
@@ -1489,7 +1505,6 @@ impl SettingsWindow {
             None
         };
 
-        // high overdraw value so the list scrollbar len doesn't change too much
         let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(0.0)).measure_all();
         list_state.set_scroll_handler(|_, _, _| {});
 
@@ -1982,7 +1997,6 @@ impl SettingsWindow {
     }
 
     fn reset_list_state(&mut self) {
-        // plus one for the title
         let mut visible_items_count = self.visible_page_items().count();
 
         if visible_items_count > 0 {

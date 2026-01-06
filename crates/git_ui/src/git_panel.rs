@@ -3076,6 +3076,68 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let result = (|| -> anyhow::Result<()> {
+            let repo = self
+                .active_repository
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("No active repository"))?;
+
+            let (branch, remote_origin, remote_upstream) = {
+                let repository = repo.read(cx);
+                (
+                    repository.branch.clone(),
+                    repository.remote_origin_url.clone(),
+                    repository.remote_upstream_url.clone(),
+                )
+            };
+
+            let branch = branch.ok_or_else(|| anyhow::anyhow!("No active branch"))?;
+            let source_branch = branch
+                .upstream
+                .as_ref()
+                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+                .and_then(|upstream| upstream.branch_name())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let source_branch = source_branch.to_string();
+
+            let remote_url = branch
+                .upstream
+                .as_ref()
+                .and_then(|upstream| match upstream.remote_name() {
+                    Some("upstream") => remote_upstream.as_deref(),
+                    Some(_) => remote_origin.as_deref(),
+                    None => None,
+                })
+                .or(remote_origin.as_deref())
+                .or(remote_upstream.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let remote_url = remote_url.to_string();
+
+            let provider_registry = GitHostingProviderRegistry::global(cx);
+            let Some((provider, parsed_remote)) =
+                git::parse_git_remote_url(provider_registry, &remote_url)
+            else {
+                return Err(anyhow::anyhow!("Unsupported remote URL: {}", remote_url));
+            };
+
+            let Some(url) = provider.build_create_pull_request_url(&parsed_remote, &source_branch)
+            else {
+                return Err(anyhow::anyhow!("Unable to construct pull request URL"));
+            };
+
+            cx.open_url(url.as_str());
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            log::error!("Error while creating pull request {:?}", err);
+            cx.defer_in(window, |panel, _window, cx| {
+                panel.show_error_toast("create pull request", err, cx);
+            });
+        }
+    }
+
     fn askpass_delegate(
         &self,
         operation: impl Into<SharedString>,
@@ -3706,7 +3768,12 @@ impl GitPanel {
         }
     }
 
-    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+    fn show_remote_output(
+        &mut self,
+        action: RemoteAction,
+        info: RemoteCommandOutput,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
