@@ -2429,7 +2429,7 @@ async fn forward_project_search_chunk(
     response: Response<proto::FindSearchCandidatesChunk>,
     session: MessageContext,
 ) -> Result<()> {
-    let peer_id = message.peer_id.clone().context("missing peer_id")?;
+    let peer_id = message.peer_idc.context("missing peer_id")?;
     let payload = session
         .peer
         .forward_request(session.connection_id, peer_id.into(), message)
