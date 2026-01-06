@@ -277,7 +277,9 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
         "expected tool call update to include terminal content"
     );
 
-    cx.background_executor.timer(Duration::from_millis(25)).await;
+    cx.background_executor
+        .timer(Duration::from_millis(25))
+        .await;
 
     assert!(
         !handle.was_killed(),
@@ -3831,7 +3833,10 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     let pending = model.as_fake().pending_completions();
-    assert!(!pending.is_empty(), "depth-2 subagent should be able to submit messages");
+    assert!(
+        !pending.is_empty(),
+        "depth-2 subagent should be able to submit messages"
+    );
 }
 
 #[gpui::test]
@@ -3876,7 +3881,10 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
     });
 
     subagent.read_with(cx, |thread, _| {
-        assert!(thread.has_registered_tool("echo"), "subagent should have echo tool");
+        assert!(
+            thread.has_registered_tool("echo"),
+            "subagent should have echo tool"
+        );
     });
 
     subagent
@@ -3906,7 +3914,9 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     let last_completion = pending.last().unwrap();
     let has_tool_result = last_completion.messages.iter().any(|m| {
-        m.content.iter().any(|c| matches!(c, MessageContent::ToolResult(_)))
+        m.content
+            .iter()
+            .any(|c| matches!(c, MessageContent::ToolResult(_)))
     });
     assert!(
         has_tool_result,
@@ -4089,11 +4099,9 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let first_completion = &pending[0];
     let has_task_prompt = first_completion.messages.iter().any(|m| {
         m.role == language_model::Role::User
-            && m.content.iter().any(|c| {
-                c.to_str()
-                    .map(|s| s.contains("TODO"))
-                    .unwrap_or(false)
-            })
+            && m.content
+                .iter()
+                .any(|c| c.to_str().map(|s| s.contains("TODO")).unwrap_or(false))
     });
     assert!(has_task_prompt, "task prompt should be sent to subagent");
 

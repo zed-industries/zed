@@ -2170,7 +2170,10 @@ impl Thread {
     }
 
     pub fn running_subagent_count(&self) -> usize {
-        self.running_subagents.iter().filter(|s| s.upgrade().is_some()).count()
+        self.running_subagents
+            .iter()
+            .filter(|s| s.upgrade().is_some())
+            .count()
     }
 
     pub fn is_subagent(&self) -> bool {
