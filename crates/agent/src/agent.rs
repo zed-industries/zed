@@ -4,6 +4,7 @@ mod history_store;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
+mod pattern_extraction;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -15,6 +16,7 @@ use context_server::ContextServerId;
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
+pub use pattern_extraction::*;
 pub use templates::*;
 pub use thread::*;
 pub use tool_permissions::*;
@@ -993,6 +995,7 @@ impl NativeAgentConnection {
                                 tool_call,
                                 options,
                                 response,
+                                context: _,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_authorization(

@@ -571,11 +571,18 @@ pub struct NewTerminal {
     pub response: oneshot::Sender<Result<Entity<acp_thread::Terminal>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolPermissionContext {
+    pub tool_name: String,
+    pub input_value: String,
+}
+
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
     pub options: Vec<acp::PermissionOption>,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
+    pub context: Option<ToolPermissionContext>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2636,6 +2643,7 @@ impl ToolCallEventStream {
                         ),
                     ],
                     response: response_tx,
+                    context: None,
                 },
             )))
             .ok();
@@ -2713,6 +2721,7 @@ impl ToolCallEventStream {
                         ),
                     ],
                     response: response_tx,
+                    context: None,
                 },
             )))
             .ok();
@@ -2731,6 +2740,154 @@ impl ToolCallEventStream {
                                 .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
                         });
                     })?;
+                }
+                return Ok(());
+            }
+
+            if response_str == "allow" {
+                return Ok(());
+            }
+
+            Err(anyhow!("Permission to run tool denied by user"))
+        })
+    }
+
+    pub fn authorize_with_context(
+        &self,
+        title: impl Into<String>,
+        context: ToolPermissionContext,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        use crate::pattern_extraction::*;
+        use settings::ToolPermissionMode;
+
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+            return Task::ready(Ok(()));
+        }
+
+        let tool_name = context.tool_name.clone();
+        let input_value = context.input_value.clone();
+
+        let (pattern, pattern_display) = match tool_name.as_str() {
+            "terminal" => (
+                extract_terminal_pattern(&input_value),
+                extract_terminal_pattern_display(&input_value),
+            ),
+            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+                extract_path_pattern(&input_value),
+                extract_path_pattern_display(&input_value),
+            ),
+            "fetch" => (
+                extract_url_pattern(&input_value),
+                extract_url_pattern_display(&input_value),
+            ),
+            _ => (None, None),
+        };
+
+        let mut options = vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow"),
+                "Always Allow",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(format!("always_allow_{}", tool_name)),
+                format!("Always allow {}", tool_name.replace('_', " ")),
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+        ];
+
+        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+            let button_text = match tool_name.as_str() {
+                "terminal" => format!("Always allow `{}` commands", display),
+                "fetch" => format!("Always allow fetching from `{}`", display),
+                _ => format!("Always allow in `{}`", display),
+            };
+            options.push(acp::PermissionOption::new(
+                acp::PermissionOptionId::new(format!(
+                    "always_allow_pattern:{}:{}",
+                    tool_name, pattern
+                )),
+                button_text,
+                acp::PermissionOptionKind::AllowAlways,
+            ));
+        }
+
+        options.push(acp::PermissionOption::new(
+            acp::PermissionOptionId::new("allow"),
+            "Allow",
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+        options.push(acp::PermissionOption::new(
+            acp::PermissionOptionId::new("deny"),
+            "Deny",
+            acp::PermissionOptionKind::RejectOnce,
+        ));
+
+        let (response_tx, response_rx) = oneshot::channel();
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                ToolCallAuthorization {
+                    tool_call: acp::ToolCallUpdate::new(
+                        self.tool_use_id.to_string(),
+                        acp::ToolCallUpdateFields::new().title(title.into()),
+                    ),
+                    options,
+                    response: response_tx,
+                    context: Some(context),
+                },
+            )))
+            .ok();
+
+        let fs = self.fs.clone();
+        cx.spawn(async move |cx| {
+            let response_str = response_rx.await?.0.to_string();
+
+            if response_str == "always_allow" {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_always_allow_tool_actions(true);
+                        });
+                    })?;
+                }
+                return Ok(());
+            }
+
+            if response_str == format!("always_allow_{}", tool_name) {
+                if let Some(fs) = fs.clone() {
+                    let tool_name = tool_name.clone();
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool_name, ToolPermissionMode::Allow);
+                        });
+                    })?;
+                }
+                return Ok(());
+            }
+
+            if response_str.starts_with("always_allow_pattern:") {
+                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
+                if parts.len() == 3 {
+                    let pattern_tool_name = parts[1].to_string();
+                    let pattern = parts[2].to_string();
+                    if let Some(fs) = fs.clone() {
+                        cx.update(|cx| {
+                            update_settings_file(fs, cx, move |settings, _| {
+                                settings
+                                    .agent
+                                    .get_or_insert_default()
+                                    .add_tool_allow_pattern(&pattern_tool_name, pattern);
+                            });
+                        })?;
+                    }
                 }
                 return Ok(());
             }
