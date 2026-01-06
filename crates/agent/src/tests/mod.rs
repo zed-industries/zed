@@ -3616,6 +3616,7 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
         );
     });
 }
+<<<<<<< HEAD
 
 #[gpui::test]
 async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
