@@ -292,9 +292,6 @@ impl SplittableEditor {
 
         let companion = cx.new(|_| companion);
 
-        // FIXME we need to put the initial excerpt and buffer id mappings into the companion before calling set_companion,
-        // so that syncing the display maps will work
-
         primary_display_map.update(cx, |dm, cx| {
             dm.set_companion(
                 Some((secondary_display_map.downgrade(), companion.clone())),
@@ -1115,6 +1112,190 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_split_editor_block_alignment(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        // Add excerpts covering the whole buffer
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+           § <no file>
+           § -----
+           aaa
+           bbb
+           ccc
+           ddd
+           eee
+           fff"
+            .unindent()
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(3, 0)..Point::new(3, 3), "FFF")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check state after edit
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            eee
+            FFF"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+
+        // Recalculate diff to include the new lines in the diff
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            eee
+            FFF"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+    }
+
     async fn test_split_row_translation(cx: &mut gpui::TestAppContext) {
         use buffer_diff::BufferDiff;
         use language::Buffer;

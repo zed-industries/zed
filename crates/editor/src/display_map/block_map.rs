@@ -52,7 +52,10 @@ pub struct BlockMapReader<'a> {
     pub snapshot: BlockSnapshot,
 }
 
-pub struct BlockMapWriter<'a>(&'a mut BlockMap);
+pub struct BlockMapWriter<'a> {
+    block_map: &'a mut BlockMap,
+    companion: Option<(&'a Companion, EntityId)>,
+}
 
 #[derive(Clone)]
 pub struct BlockSnapshot {
@@ -556,16 +559,19 @@ impl BlockMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub(crate) fn write(
-        &mut self,
+    pub(crate) fn write<'a>(
+        &'a mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion: Option<(&Companion, EntityId)>,
-    ) -> BlockMapWriter<'_> {
+        companion: Option<(&'a Companion, EntityId)>,
+    ) -> BlockMapWriter<'a> {
         self.sync(&wrap_snapshot, edits, companion_wrap_edits, companion);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
-        BlockMapWriter(self)
+        BlockMapWriter {
+            block_map: self,
+            companion,
+        }
     }
 
     #[ztracing::instrument(skip_all, fields(edits = ?edits))]
@@ -1086,8 +1092,6 @@ impl BlockMap {
             return Vec::new();
         }
 
-        dbg!("-----------------");
-
         let convert_row_to_companion = companion.convert_row_to_companion(display_map_id);
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
@@ -1125,11 +1129,9 @@ impl BlockMap {
 
         // Iterate through buffer rows, checking if each is a checkpoint
         for buffer_row in new_buffer_range.start.row..=new_buffer_range.end.row {
-            dbg!("--------------");
             if diff_hunks.iter().any(|hunk| {
                 buffer_row >= hunk.row_range.start.0 && buffer_row < hunk.row_range.end.0
             }) {
-                dbg!("CONTINUE");
                 continue;
             }
 
@@ -1365,7 +1367,7 @@ impl BlockMapWriter<'_> {
         let blocks = blocks.into_iter();
         let mut ids = Vec::with_capacity(blocks.size_hint().1.unwrap_or(0));
         let mut edits = Patch::default();
-        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         let mut previous_wrap_row_range: Option<Range<WrapRow>> = None;
@@ -1374,7 +1376,7 @@ impl BlockMapWriter<'_> {
                 debug_assert!(block.height.unwrap() > 0);
             }
 
-            let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
+            let id = CustomBlockId(self.block_map.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
             let start = block.placement.start().to_point(buffer);
@@ -1397,7 +1399,7 @@ impl BlockMapWriter<'_> {
                 (range.start, range.end)
             };
             let block_ix = match self
-                .0
+                .block_map
                 .custom_blocks
                 .binary_search_by(|probe| probe.placement.cmp(&block.placement, buffer))
             {
@@ -1411,8 +1413,10 @@ impl BlockMapWriter<'_> {
                 style: block.style,
                 priority: block.priority,
             });
-            self.0.custom_blocks.insert(block_ix, new_block.clone());
-            self.0.custom_blocks_by_id.insert(id, new_block);
+            self.block_map
+                .custom_blocks
+                .insert(block_ix, new_block.clone());
+            self.block_map.custom_blocks_by_id.insert(id, new_block);
 
             edits = edits.compose([Edit {
                 old: start_row..end_row,
@@ -1420,18 +1424,19 @@ impl BlockMapWriter<'_> {
             }]);
         }
 
-        self.0.sync(wrap_snapshot, edits, None, None);
+        self.block_map
+            .sync(wrap_snapshot, edits, None, self.companion);
         ids
     }
 
     #[ztracing::instrument(skip_all)]
     pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
-        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
 
-        for block in &mut self.0.custom_blocks {
+        for block in &mut self.block_map.custom_blocks {
             if let Some(new_height) = heights.remove(&block.id) {
                 if let BlockPlacement::Replace(_) = &block.placement {
                     debug_assert!(new_height > 0);
@@ -1448,7 +1453,9 @@ impl BlockMapWriter<'_> {
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
-                    self.0.custom_blocks_by_id.insert(block.id, new_block);
+                    self.block_map
+                        .custom_blocks_by_id
+                        .insert(block.id, new_block);
 
                     let start_row = block.placement.start().to_point(buffer).row;
                     let end_row = block.placement.end().to_point(buffer).row;
@@ -1474,17 +1481,18 @@ impl BlockMapWriter<'_> {
             }
         }
 
-        self.0.sync(wrap_snapshot, edits, None, None);
+        self.block_map
+            .sync(wrap_snapshot, edits, None, self.companion);
     }
 
     #[ztracing::instrument(skip_all)]
     pub fn remove(&mut self, block_ids: HashSet<CustomBlockId>) {
-        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
         let mut previous_wrap_row_range: Option<Range<WrapRow>> = None;
-        self.0.custom_blocks.retain(|block| {
+        self.block_map.custom_blocks.retain(|block| {
             if block_ids.contains(&block.id) {
                 let start = block.placement.start().to_point(buffer);
                 let end = block.placement.end().to_point(buffer);
@@ -1517,10 +1525,11 @@ impl BlockMapWriter<'_> {
                 true
             }
         });
-        self.0
+        self.block_map
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
-        self.0.sync(wrap_snapshot, edits, None, None);
+        self.block_map
+            .sync(wrap_snapshot, edits, None, self.companion);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1529,7 +1538,7 @@ impl BlockMapWriter<'_> {
         ranges: impl IntoIterator<Item = Range<MultiBufferOffset>>,
         inclusive: bool,
     ) {
-        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow();
         let mut blocks_to_remove = HashSet::default();
         for range in ranges {
             for block in self.blocks_intersecting_buffer_range(range, inclusive) {
@@ -1543,7 +1552,9 @@ impl BlockMapWriter<'_> {
     }
 
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId) {
-        self.0.buffers_with_disabled_headers.insert(buffer_id);
+        self.block_map
+            .buffers_with_disabled_headers
+            .insert(buffer_id);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1577,16 +1588,16 @@ impl BlockMapWriter<'_> {
         let mut ranges = Vec::new();
         for buffer_id in buffer_ids {
             if fold {
-                self.0.folded_buffers.insert(buffer_id);
+                self.block_map.folded_buffers.insert(buffer_id);
             } else {
-                self.0.folded_buffers.remove(&buffer_id);
+                self.block_map.folded_buffers.remove(&buffer_id);
             }
             ranges.extend(multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx));
         }
         ranges.sort_unstable_by_key(|range| range.start);
 
         let mut edits = Patch::default();
-        let wrap_snapshot = self.0.wrap_snapshot.borrow().clone();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow().clone();
         for range in ranges {
             let last_edit_row = cmp::min(
                 wrap_snapshot.make_wrap_point(range.end, Bias::Right).row() + WrapRow(1),
@@ -1598,8 +1609,16 @@ impl BlockMapWriter<'_> {
                 new: range,
             });
         }
+        
+        // FIXME
+        let companion_wrap_snapshot = if let Some((companion, _)) = self.companion {
+            companion.
+        } else {
+            None
+        }
 
-        self.0.sync(&wrap_snapshot, edits, None, None);
+        self.block_map
+            .sync(&wrap_snapshot, edits, Some((companion)), self.companion);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1611,27 +1630,28 @@ impl BlockMapWriter<'_> {
         if range.is_empty() && !inclusive {
             return &[];
         }
-        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
-        let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+        let start_block_ix = match self.block_map.custom_blocks.binary_search_by(|block| {
             let block_end = block.end().to_offset(buffer);
             block_end.cmp(&range.start).then(Ordering::Greater)
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks[start_block_ix..].binary_search_by(|block| {
-            let block_start = block.start().to_offset(buffer);
-            block_start.cmp(&range.end).then(if inclusive {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            })
-        }) {
-            Ok(ix) | Err(ix) => ix,
-        };
+        let end_block_ix =
+            match self.block_map.custom_blocks[start_block_ix..].binary_search_by(|block| {
+                let block_start = block.start().to_offset(buffer);
+                block_start.cmp(&range.end).then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+            }) {
+                Ok(ix) | Err(ix) => ix,
+            };
 
-        &self.0.custom_blocks[start_block_ix..][..end_block_ix]
+        &self.block_map.custom_blocks[start_block_ix..][..end_block_ix]
     }
 }
 
@@ -3498,18 +3518,15 @@ mod tests {
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None, None);
                     let (unfolded_buffers, folded_buffers) = buffer.read_with(cx, |buffer, _| {
-                        let folded_buffers = block_map
-                            .0
-                            .folded_buffers
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>();
+                        let folded_buffers: Vec<_> =
+                            block_map.block_map.folded_buffers.iter().cloned().collect();
                         let mut unfolded_buffers = buffer.excerpt_buffer_ids();
                         unfolded_buffers.dedup();
                         log::debug!("All buffers {unfolded_buffers:?}");
                         log::debug!("Folded buffers {folded_buffers:?}");
-                        unfolded_buffers
-                            .retain(|buffer_id| !block_map.0.folded_buffers.contains(buffer_id));
+                        unfolded_buffers.retain(|buffer_id| {
+                            !block_map.block_map.folded_buffers.contains(buffer_id)
+                        });
                         (unfolded_buffers, folded_buffers)
                     });
                     let mut folded_count = folded_buffers.len();
