@@ -429,7 +429,7 @@ fn main() {
                                     .join(format!("{}_err.txt", example.spec.name));
                                 app_state
                                     .fs
-                                    .write(&err_path, e.to_string().as_bytes())
+                                    .write(&err_path, format!("{e:?}").as_bytes())
                                     .await
                                     .unwrap();
 
