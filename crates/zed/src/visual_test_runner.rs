@@ -26,15 +26,23 @@
 
 use anyhow::{Context, Result};
 use gpui::{
-    AppContext as _, Application, Bounds, Window, WindowBounds, WindowHandle, WindowOptions, point,
-    px, size,
+    App, AppContext as _, Application, Bounds, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, Render, Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
 use image::RgbaImage;
 use project_panel::ProjectPanel;
 use settings::SettingsStore;
+use std::any::Any;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use workspace::{AppState, Workspace};
+
+use acp_thread::{AgentConnection, StubAgentConnection};
+use agent_client_protocol as acp;
+use agent_servers::{AgentServer, AgentServerDelegate};
+use agent_ui::acp::AcpThreadView;
+use gpui::SharedString;
 
 /// Baseline images are stored relative to this file
 const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
@@ -91,6 +99,7 @@ fn main() {
             terminal_view::init(cx);
             image_viewer::init(cx);
             search::init(cx);
+            prompt_store::init(cx);
 
             // Open a real Zed workspace window
             let window_size = size(px(1280.0), px(800.0));
@@ -137,6 +146,9 @@ fn main() {
                     })
                 })
                 .expect("Failed to update workspace");
+
+            // Clone app_state for the async block
+            let app_state_for_tests = app_state.clone();
 
             // Spawn async task to set up the UI and capture screenshot
             cx.spawn(async move |mut cx| {
@@ -317,6 +329,33 @@ fn main() {
                     }
                     Err(e) => {
                         eprintln!("✗ workspace_with_editor: FAILED - {}", e);
+                        failed += 1;
+                    }
+                }
+
+                // Run Test 3: Agent Thread View with Image
+                println!("\n--- Test 3: agent_thread_with_image ---");
+                let test_result = run_agent_thread_view_test(
+                    app_state_for_tests.clone(),
+                    &mut cx,
+                    update_baseline,
+                )
+                .await;
+
+                match test_result {
+                    Ok(TestResult::Passed) => {
+                        println!("✓ agent_thread_with_image: PASSED");
+                        passed += 1;
+                    }
+                    Ok(TestResult::BaselineUpdated(path)) => {
+                        println!(
+                            "✓ agent_thread_with_image: Baseline updated at {}",
+                            path.display()
+                        );
+                        updated += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
                         failed += 1;
                     }
                 }
@@ -692,4 +731,245 @@ fn init_app_state(cx: &mut gpui::App) -> Arc<AppState> {
         build_window_options: |_, _| Default::default(),
         session,
     })
+}
+
+/// A stub AgentServer for visual testing that returns a pre-programmed connection.
+#[derive(Clone)]
+struct StubAgentServer {
+    connection: StubAgentConnection,
+}
+
+impl StubAgentServer {
+    fn new(connection: StubAgentConnection) -> Self {
+        Self { connection }
+    }
+}
+
+impl AgentServer for StubAgentServer {
+    fn logo(&self) -> ui::IconName {
+        ui::IconName::ZedAssistant
+    }
+
+    fn name(&self) -> SharedString {
+        "Visual Test Agent".into()
+    }
+
+    fn connect(
+        &self,
+        _root_dir: Option<&Path>,
+        _delegate: AgentServerDelegate,
+        _cx: &mut App,
+    ) -> gpui::Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+        gpui::Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+/// Wrapper to render AcpThreadView as a standalone view in its own window.
+struct ThreadViewWindow {
+    thread_view: Entity<AcpThreadView>,
+}
+
+impl Render for ThreadViewWindow {
+    fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.thread_view.clone()
+    }
+}
+
+impl Focusable for ThreadViewWindow {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.thread_view.read(cx).focus_handle(cx)
+    }
+}
+
+impl EventEmitter<()> for ThreadViewWindow {}
+
+/// Runs the agent thread view visual test.
+async fn run_agent_thread_view_test(
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // Load the Zed app icon as the test image
+    let icon_path = get_workspace_root()?.join("crates/zed/resources/app-icon.png");
+    let icon_bytes = std::fs::read(&icon_path)
+        .with_context(|| format!("Failed to read app icon from {:?}", icon_path))?;
+    let icon_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &icon_bytes);
+
+    // Create stub connection with image response
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+        acp::ToolCall::new("read_image", "Reading Zed app icon")
+            .kind(acp::ToolKind::Fetch)
+            .status(acp::ToolCallStatus::Completed)
+            .content(vec![acp::ToolCallContent::Content(acp::Content::new(
+                acp::ContentBlock::Image(acp::ImageContent::new(icon_base64, "image/png")),
+            ))]),
+    )]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
+
+    // Create a project for the thread view
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    })?;
+
+    // Create TextThreadStore and HistoryStore
+    let text_thread_store = cx.update(|cx| {
+        cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx))
+    })?;
+
+    let history_store = cx.update(|cx| {
+        cx.new(|cx| agent::HistoryStore::new(text_thread_store.clone(), cx))
+    })?;
+
+    // Create a window sized for the thread view (400x1024)
+    let window_size = size(px(400.0), px(1024.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    // Create a minimal workspace for the thread view context
+    let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| {
+                    Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                })
+            },
+        )
+    })??;
+
+    // Wait for workspace to initialize
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    // Create the AcpThreadView inside the workspace window context
+    let thread_view: Entity<AcpThreadView> = workspace_window.update(cx, |workspace, window, cx| {
+        let weak_workspace = workspace.weak_handle();
+        cx.new(|cx| {
+            AcpThreadView::new(
+                stub_agent,
+                None,  // resume_thread
+                None,  // summarize_thread
+                weak_workspace,
+                project.clone(),
+                history_store.clone(),
+                None,  // prompt_store
+                false, // track_load_event
+                window,
+                cx,
+            )
+        })
+    })?;
+
+    // Wait for thread view to initialize
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(200))
+        .await;
+
+    // Get the thread and send a message to trigger the image response
+    let thread = thread_view
+        .update(cx, |view, _cx| view.thread().cloned())?
+        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
+
+    // Send the message
+    thread
+        .update(cx, |thread, cx| thread.send_raw("Show me the Zed logo", cx))?
+        .await?;
+
+    // Wait for response to be processed
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(500))
+        .await;
+
+    // Expand the tool call so its content (the image) is visible
+    // Find the tool call ID from the thread entries and expand it
+    let tool_call_id = thread.update(cx, |thread, _cx| {
+        thread
+            .entries()
+            .iter()
+            .find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
+                    Some(tool_call.id.clone())
+                } else {
+                    None
+                }
+            })
+    })?;
+
+    if let Some(tool_call_id) = tool_call_id {
+        thread_view.update(cx, |view, cx| {
+            view.expand_tool_call(tool_call_id, cx);
+        })?;
+    }
+
+    // Wait for UI to update
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(200))
+        .await;
+
+    // Now create a dedicated window that just renders the thread view
+    let thread_view_window: WindowHandle<ThreadViewWindow> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |_window, cx| {
+                cx.new(|_cx| ThreadViewWindow {
+                    thread_view: thread_view.clone(),
+                })
+            },
+        )
+    })??;
+
+    // Wait for render
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(500))
+        .await;
+
+    // Refresh window
+    cx.update_window(thread_view_window.into(), |_view, window: &mut Window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(500))
+        .await;
+
+    // Capture and compare screenshot
+    run_visual_test("agent_thread_with_image", thread_view_window.into(), cx, update_baseline).await
+}
+
+fn get_workspace_root() -> Result<PathBuf> {
+    let mut path = std::env::current_dir().expect("Failed to get current directory");
+    while !path.join("Cargo.toml").exists() || !path.join("crates").exists() {
+        if !path.pop() {
+            anyhow::bail!("Could not find workspace root");
+        }
+    }
+    Ok(path)
 }
