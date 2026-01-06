@@ -33,7 +33,9 @@ pub async fn apply_diff(
     let mut paths = Vec::new();
     for line in diff_str.lines() {
         if let DiffLine::OldPath { path } = DiffLine::parse(line) {
-            paths.push(RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc());
+            if path != "/dev/null" {
+                paths.push(RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc());
+            }
         }
     }
     worktree
@@ -55,17 +57,41 @@ pub async fn apply_diff(
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { path, hunk } => {
+            DiffEvent::Hunk {
+                path,
+                hunk,
+                is_new_file,
+            } => {
                 let buffer = match current_file {
                     None => {
-                        let buffer = project
-                            .update(cx, |project, cx| {
-                                let project_path = project
-                                    .find_project_path(path.as_ref(), cx)
-                                    .context("no such path")?;
-                                anyhow::Ok(project.open_buffer(project_path, cx))
-                            })??
-                            .await?;
+                        let buffer = if is_new_file {
+                            // New file - create it first, then open the buffer
+                            let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
+                            let rel_path =
+                                RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?;
+                            let project_path = project::ProjectPath {
+                                worktree_id,
+                                path: rel_path.into_arc(),
+                            };
+                            project
+                                .update(cx, |project, cx| {
+                                    project.create_entry(project_path.clone(), false, cx)
+                                })?
+                                .await?;
+                            project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                                .await?
+                        } else {
+                            // Existing file - find and open it
+                            let project_path = project
+                                .update(cx, |project, cx| {
+                                    project.find_project_path(path.as_ref(), cx)
+                                })?
+                                .context("no such path")?;
+                            project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                                .await?
+                        };
                         included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()
@@ -75,7 +101,7 @@ pub async fn apply_diff(
 
                 buffer.read_with(cx, |buffer, _| {
                     edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice())
+                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), is_new_file)
                             .with_context(|| format!("Diff:\n{diff_str}"))?,
                     );
                     anyhow::Ok(())
@@ -184,7 +210,11 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { hunk, .. } => {
+            DiffEvent::Hunk {
+                hunk,
+                path: _,
+                is_new_file: _,
+            } => {
                 let hunk_offset = text
                     .find(&hunk.context)
                     .ok_or_else(|| anyhow!("couldn't resolve hunk {:?}", hunk.context))?;
@@ -210,7 +240,11 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { hunk, .. } => {
+            DiffEvent::Hunk {
+                hunk,
+                path: _,
+                is_new_file: _,
+            } => {
                 if hunk.context.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -259,8 +293,14 @@ struct DiffParser<'a> {
 
 #[derive(Debug, PartialEq)]
 enum DiffEvent<'a> {
-    Hunk { path: Cow<'a, str>, hunk: Hunk },
-    FileEnd { renamed_to: Option<Cow<'a, str>> },
+    Hunk {
+        path: Cow<'a, str>,
+        hunk: Hunk,
+        is_new_file: bool,
+    },
+    FileEnd {
+        renamed_to: Option<Cow<'a, str>>,
+    },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -305,9 +345,16 @@ impl<'a> DiffParser<'a> {
                 if let Some(file) = &self.current_file
                     && !self.hunk.is_empty()
                 {
+                    let is_new_file = file.old_path == "/dev/null";
+                    let path = if is_new_file {
+                        file.new_path.clone()
+                    } else {
+                        file.old_path.clone()
+                    };
                     return Ok(Some(DiffEvent::Hunk {
-                        path: file.old_path.clone(),
+                        path,
                         hunk: mem::take(&mut self.hunk),
+                        is_new_file,
                     }));
                 }
             }
@@ -315,7 +362,7 @@ impl<'a> DiffParser<'a> {
             if file_done {
                 if let Some(PatchFile { old_path, new_path }) = self.current_file.take() {
                     return Ok(Some(DiffEvent::FileEnd {
-                        renamed_to: if old_path != new_path {
+                        renamed_to: if old_path != new_path && old_path != "/dev/null" {
                             Some(new_path)
                         } else {
                             None
@@ -397,8 +444,9 @@ fn resolve_hunk_edits_in_buffer(
     hunk: Hunk,
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
+    is_new_file: bool,
 ) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
-    let context_offset = if hunk.context.is_empty() {
+    let context_offset = if is_new_file || hunk.context.is_empty() {
         Ok(0)
     } else {
         let mut offset = None;
@@ -775,7 +823,8 @@ mod tests {
                             range: 4..4,
                             text: "AND\n".into()
                         }],
-                    }
+                    },
+                    is_new_file: false,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
