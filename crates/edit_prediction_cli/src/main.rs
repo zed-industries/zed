@@ -462,7 +462,7 @@ fn main() {
                                         Re-run this example with:
                                             cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
                                     "},
-                                    example_name,
+                                    example.spec.name,
                                     e,
                                     err_path.display(),
                                     failed_example_path.display(),
