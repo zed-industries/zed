@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
+    serialize_optional_f32_with_two_decimal_places, CenteredPaddingSettings, DelayMs, DockPosition,
+    DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides,
 };
 
 #[with_fallible_options]
@@ -437,8 +437,42 @@ pub struct StatusBarSettingsContent {
     pub line_endings_button: Option<bool>,
     /// Whether to show the active encoding button in the status bar.
     ///
-    /// Default: true
-    pub active_encoding_button: Option<bool>,
+    /// Default: non_utf8
+    pub active_encoding_button: Option<EncodingDisplayOptions>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantNames,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EncodingDisplayOptions {
+    Enabled,
+    Disabled,
+    #[default]
+    NonUtf8,
+}
+impl EncodingDisplayOptions {
+    pub fn should_show(&self, is_utf8: bool, has_bom: bool) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::Enabled => true,
+            Self::NonUtf8 => {
+                let is_standard_utf8 = is_utf8 && !has_bom;
+                !is_standard_utf8
+            }
+        }
+    }
 }
 
 #[derive(

@@ -14,7 +14,8 @@ doctest = false
 
 [dependencies]
 editor.workspace = true
+encoding_rs.workspace = true
 gpui.workspace = true
+settings.workspace = true
 ui.workspace = true
 workspace.workspace = true
-encoding_rs.workspace = true

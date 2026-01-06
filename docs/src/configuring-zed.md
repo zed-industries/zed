@@ -1616,7 +1616,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
   "active_language_button": true,
   "cursor_position_button": true,
   "line_endings_button": false,
-  "active_encoding_button": true
+  "active_encoding_button": "non_utf8"
 },
 ```
 
@@ -2910,7 +2910,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action

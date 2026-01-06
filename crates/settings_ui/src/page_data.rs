@@ -2837,7 +2837,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Active Encoding Button",
-                    description: "Show the active encoding button in the status bar.",
+                    description: "Control when to show the active encoding in the status bar.",
                     field: Box::new(SettingField {
                         json_path: Some("status_bar.active_encoding_button"),
                         pick: |settings_content| {

@@ -334,9 +334,9 @@ TBD: Centered layout related settings
     // Defaults to false.
     "line_endings_button": false,
     // Show/hide a button that displays the buffer's character encoding.
-    // Clicking the button brings up the encoding selector.
-    // Defaults to true.
-    "active_encoding_button": true
+    // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
+    // Defaults to "non_utf8".
+    "active_encoding_button": "non_utf8"
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.

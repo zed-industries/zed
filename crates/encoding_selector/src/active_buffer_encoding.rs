@@ -1,12 +1,12 @@
 use editor::Editor;
-use encoding_rs::Encoding;
+use encoding_rs::{Encoding, UTF_8};
 use gpui::{
-    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window, div,
+    div, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window,
 };
-use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
+use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{
-    StatusBarSettings, StatusItemView, Workspace,
     item::{ItemHandle, Settings},
+    StatusBarSettings, StatusItemView, Workspace,
 };
 
 pub struct ActiveBufferEncoding {
@@ -43,25 +43,29 @@ impl ActiveBufferEncoding {
 
 impl Render for ActiveBufferEncoding {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !StatusBarSettings::get_global(cx).active_encoding_button {
+        let Some(active_encoding) = self.active_encoding else {
+            return div().hidden();
+        };
+
+        let display_option = StatusBarSettings::get_global(cx).active_encoding_button;
+        let is_utf8 = active_encoding == UTF_8;
+        if !display_option.should_show(is_utf8, self.has_bom) {
             return div().hidden();
         }
 
-        div().when_some(self.active_encoding.as_ref(), |el, active_encoding| {
-            let mut text = active_encoding.name().to_string();
-            if self.has_bom {
-                text.push_str(" (BOM)");
-            }
+        let mut text = active_encoding.name().to_string();
+        if self.has_bom {
+            text.push_str(" (BOM)");
+        }
 
-            el.child(
-                Button::new("change-encoding", text)
-                    .label_size(LabelSize::Small)
-                    .on_click(|_, _, _cx| {
-                        // No-op
-                    })
-                    .tooltip(Tooltip::text("Current Encoding")),
-            )
-        })
+        div().child(
+            Button::new("change-encoding", text)
+                .label_size(LabelSize::Small)
+                .on_click(|_, _, _cx| {
+                    // No-op
+                })
+                .tooltip(Tooltip::text("Current Encoding")),
+        )
     }
 }
 
