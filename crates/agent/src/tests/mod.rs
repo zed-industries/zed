@@ -92,6 +92,21 @@ impl FakeTerminalHandle {
         }
     }
 
+    fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
+        let killed = Arc::new(AtomicBool::new(false));
+
+        let wait_for_exit = cx
+            .spawn(async move |_cx| acp::TerminalExitStatus::new().exit_code(exit_code))
+            .shared();
+
+        Self {
+            killed,
+            wait_for_exit,
+            output: acp::TerminalOutputResponse::new("command output".to_string(), false),
+            id: acp::TerminalId::new("fake_terminal".to_string()),
+        }
+    }
+
     fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
@@ -2990,4 +3005,116 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
             "First message still has no tokens before it"
         );
     });
+}
+
+#[gpui::test]
+async fn test_terminal_tool_deny_rule_blocks_command(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let environment = Rc::new(FakeThreadEnvironment {
+        handle: handle.clone(),
+    });
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "terminal".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Confirm,
+                always_allow: vec![],
+                always_deny: vec![
+                    agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap()
+                ],
+                always_confirm: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::TerminalTool::new(project, environment));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::TerminalToolInput {
+                command: "rm -rf /".to_string(),
+                cd: ".".to_string(),
+                timeout_ms: None,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected command to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the command was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_terminal_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({})).await;
+    let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+    let environment = Rc::new(FakeThreadEnvironment {
+        handle: handle.clone(),
+    });
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.always_allow_tool_actions = false;
+        settings.tool_permissions.tools.insert(
+            "terminal".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Confirm,
+                always_allow: vec![
+                    agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap()
+                ],
+                always_deny: vec![],
+                always_confirm: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::TerminalTool::new(project, environment));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::TerminalToolInput {
+                command: "echo hello".to_string(),
+                cd: ".".to_string(),
+                timeout_ms: None,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let update = rx.expect_update_fields().await;
+    assert!(
+        update.content.iter().any(|blocks| {
+            blocks
+                .iter()
+                .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+        }),
+        "expected tool call update to include terminal content (no authorization should be requested)"
+    );
+
+    let result = task.await;
+    assert!(result.is_ok(), "expected command to succeed without confirmation");
 }
