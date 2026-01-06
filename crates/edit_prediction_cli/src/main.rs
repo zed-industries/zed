@@ -44,6 +44,12 @@ struct EpArgs {
     max_parallelism: usize,
     #[clap(long, global = true)]
     limit: Option<usize>,
+    /// Filter examples by name
+    #[clap(long, global = true)]
+    name: Option<String>,
+    /// Filter examples by repository
+    #[clap(long, global = true)]
+    repo: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
     #[clap(global = true, help = INPUTS_HELP)]
@@ -249,6 +255,7 @@ async fn load_examples(
     }
 
     let mut examples = read_example_files(&file_inputs);
+
     let total_steps = examples.len() + captured_after_timestamps.len();
     Progress::global().set_total_steps(total_steps);
 
@@ -274,6 +281,13 @@ async fn load_examples(
     }
 
     crate::example::sort_examples_by_repo_and_rev(&mut examples);
+
+    if let Some(name_filter) = &args.name {
+        examples.retain(|example| example.spec.name.contains(name_filter));
+    }
+    if let Some(repo_filter) = &args.repo {
+        examples.retain(|example| example.spec.repository_url.contains(repo_filter));
+    }
 
     if let Some(limit) = args.limit {
         if examples.len() > limit {
@@ -415,8 +429,9 @@ fn main() {
 
                             if let Err(e) = result {
                                 Progress::global().increment_failed();
+                                let example_name = example.spec.filename();
                                 let failed_example_path =
-                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example.spec.name));
+                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
                                 app_state
                                     .fs
                                     .write(
@@ -425,8 +440,8 @@ fn main() {
                                     )
                                     .await
                                     .unwrap();
-                                let err_path = FAILED_EXAMPLES_DIR
-                                    .join(format!("{}_err.txt", example.spec.name));
+                                let err_path =
+                                    FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
                                 app_state
                                     .fs
                                     .write(&err_path, format!("{e:?}").as_bytes())
@@ -447,7 +462,7 @@ fn main() {
                                         Re-run this example with:
                                             cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
                                     "},
-                                    example.spec.name,
+                                    example_name,
                                     e,
                                     err_path.display(),
                                     failed_example_path.display(),
