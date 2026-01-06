@@ -271,18 +271,21 @@ fn integration_subagent_with_haiku() {
 When reviewing `target/visual_tests/` screenshots, check:
 
 1. **Collapsed state:**
+
    - Is the label visible and properly truncated if too long?
    - Is the expand chevron visible?
    - Does the loading indicator appear during execution?
    - Is token usage visible (e.g., "120k/200k")?
 
 2. **Expanded state:**
+
    - Does the embedded thread render correctly?
    - Is there appropriate max-height with scrolling?
    - Are tool calls within the subagent visible?
    - Does the visual hierarchy feel right?
 
 3. **Error states:**
+
    - Does a failed subagent show as a failed tool call?
    - Is the error message visible but not overwhelming?
 
@@ -1752,11 +1755,13 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 These tests require setting up mock model responses that simulate specific conditions:
 
 1. **`test_subagent_model_error_returned_as_tool_error`**
+
    - Setup: Configure FakeLanguageModel to return an error mid-execution
    - Verify: Error appears as a failed tool call result, not a top-level panic
    - Why complex: Need to make the model fail after the subagent starts
 
 2. **`test_context_low_triggers_interrupt_for_summary`**
+
    - Setup: Configure FakeLanguageModel to report token usage near the 75% threshold
    - Verify: `interrupt_for_summary()` is called instead of `request_final_summary()`
    - Why complex: Need to mock `latest_token_usage()` to return high usage values
