@@ -31,7 +31,6 @@ visual-tests = [
     "dep:semver",
     "dep:tempfile",
     "dep:acp_thread",
-    "dep:assistant_text_thread",
     "dep:agent",
     "dep:agent_servers",
     "dep:agent-client-protocol",
@@ -43,7 +42,6 @@ visual-tests = [
     "image_viewer/test-support",
     "clock/test-support",
     "acp_thread/test-support",
-    "assistant_text_thread/test-support",
     "agent_ui/test-support",
 ]
 
@@ -115,7 +113,6 @@ semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
 acp_thread = { workspace = true, optional = true }
-assistant_text_thread = { workspace = true, optional = true }
 agent = { workspace = true, optional = true }
 agent_servers = { workspace = true, optional = true }
 agent-client-protocol = { workspace = true, optional = true }
