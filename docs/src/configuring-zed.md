@@ -244,6 +244,16 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Update extensions
+
+- Description: Define extensions to be auto-updated or not auto-updated.
+- Setting: `auto_update_extensions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
