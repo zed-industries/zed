@@ -371,7 +371,10 @@ mod test_support {
             &[]
         }
 
-        fn model_selector(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
+        fn model_selector(
+            &self,
+            _session_id: &acp::SessionId,
+        ) -> Option<Rc<dyn AgentModelSelector>> {
             Some(self.model_selector_impl())
         }
 
