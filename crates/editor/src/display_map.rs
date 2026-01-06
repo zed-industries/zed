@@ -305,6 +305,28 @@ impl Companion {
         }
     }
 
+    pub(crate) fn convert_row_to_companion(
+        &self,
+        display_map_id: EntityId,
+    ) -> ConvertMultiBufferRow {
+        if display_map_id == self.rhs_display_map_id {
+            self.rhs_row_to_lhs_row
+        } else {
+            self.lhs_row_to_rhs_row
+        }
+    }
+
+    pub(crate) fn excerpt_to_companion_excerpt(
+        &self,
+        display_map_id: EntityId,
+    ) -> &HashMap<ExcerptId, ExcerptId> {
+        if display_map_id == self.rhs_display_map_id {
+            &self.rhs_excerpt_to_lhs_excerpt
+        } else {
+            &self.lhs_excerpt_to_rhs_excerpt
+        }
+    }
+
     pub(crate) fn companion_excerpt_to_excerpt(
         &self,
         display_map_id: EntityId,
