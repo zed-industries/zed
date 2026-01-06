@@ -473,9 +473,9 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { version = "0.7.0" }
-blade-macros = { version = "0.3.0" }
-blade-util = { version = "0.3.0" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"

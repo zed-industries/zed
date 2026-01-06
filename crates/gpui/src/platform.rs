@@ -499,6 +499,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
+    fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
@@ -518,6 +519,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn is_subpixel_rendering_supported(&self) -> bool;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -654,6 +656,8 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
+    -> TextRenderingMode;
 }
 
 pub(crate) struct NoopTextSystem;
@@ -774,6 +778,14 @@ impl PlatformTextSystem for NoopTextSystem {
             len: text.len(),
         }
     }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
+    }
 }
 
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
@@ -831,6 +843,8 @@ impl AtlasKey {
             AtlasKey::Glyph(params) => {
                 if params.is_emoji {
                     AtlasTextureKind::Polychrome
+                } else if params.subpixel_rendering {
+                    AtlasTextureKind::Subpixel
                 } else {
                     AtlasTextureKind::Monochrome
                 }
@@ -932,6 +946,7 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
+    Subpixel = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1441,6 +1456,18 @@ pub enum WindowBackgroundAppearance {
     MicaBackdrop,
     /// The Mica Alt backdrop material, supported on Windows 11.
     MicaAltBackdrop,
+}
+
+/// The text rendering mode to use for drawing glyphs.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TextRenderingMode {
+    /// Use the platform's default text rendering mode.
+    #[default]
+    PlatformDefault,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 /// The options that can be configured for a file dialog prompt

@@ -96,6 +96,16 @@ struct ShaderMonoSpritesData {
 }
 
 #[derive(blade_macros::ShaderData)]
+struct ShaderSubpixelSpritesData {
+    globals: GlobalParams,
+    gamma_ratios: [f32; 4],
+    subpixel_enhanced_contrast: f32,
+    t_sprite: gpu::TextureView,
+    s_sprite: gpu::Sampler,
+    b_subpixel_sprites: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
 struct ShaderPolySpritesData {
     globals: GlobalParams,
     t_sprite: gpu::TextureView,
@@ -134,6 +144,7 @@ struct BladePipelines {
     paths: gpu::RenderPipeline,
     underlines: gpu::RenderPipeline,
     mono_sprites: gpu::RenderPipeline,
+    subpixel_sprites: gpu::RenderPipeline,
     poly_sprites: gpu::RenderPipeline,
     surfaces: gpu::RenderPipeline,
 }
@@ -277,6 +288,31 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
+            subpixel_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "subpixel-sprites",
+                data_layouts: &[&ShaderSubpixelSpritesData::layout()],
+                vertex: shader.at("vs_subpixel_sprite"),
+                vertex_fetches: &[],
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: Some(shader.at("fs_subpixel_sprite")),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_info.format,
+                    blend: Some(gpu::BlendState {
+                        color: gpu::BlendComponent {
+                            src_factor: gpu::BlendFactor::Src1,
+                            dst_factor: gpu::BlendFactor::OneMinusSrc1,
+                            operation: gpu::BlendOperation::Add,
+                        },
+                        alpha: gpu::BlendComponent::OVER,
+                    }),
+                    write_mask: gpu::ColorWrites::COLOR,
+                }],
+                multisample_state: gpu::MultisampleState::default(),
+            }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
                 data_layouts: &[&ShaderPolySpritesData::layout()],
@@ -315,6 +351,7 @@ impl BladePipelines {
         gpu.destroy_render_pipeline(&mut self.paths);
         gpu.destroy_render_pipeline(&mut self.underlines);
         gpu.destroy_render_pipeline(&mut self.mono_sprites);
+        gpu.destroy_render_pipeline(&mut self.subpixel_sprites);
         gpu.destroy_render_pipeline(&mut self.poly_sprites);
         gpu.destroy_render_pipeline(&mut self.surfaces);
     }
@@ -672,7 +709,11 @@ impl BladeRenderer {
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
                     view: frame.texture_view(),
-                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
+                    init_op: gpu::InitOp::Clear(if self.surface_config.transparent {
+                        gpu::TextureColor::TransparentBlack
+                    } else {
+                        gpu::TextureColor::White
+                    }),
                     finish_op: gpu::FinishOp::Store,
                 }],
                 depth_stencil: None,
@@ -814,6 +855,29 @@ impl BladeRenderer {
                             t_sprite: tex_info.raw_view,
                             s_sprite: self.atlas_sampler,
                             b_poly_sprites: instance_buf,
+                        },
+                    );
+                    encoder.draw(0, 4, 0, sprites.len() as u32);
+                }
+                PrimitiveBatch::SubpixelSprites {
+                    texture_id,
+                    sprites,
+                } => {
+                    let tex_info = self.atlas.get_texture_info(texture_id);
+                    let instance_buf =
+                        unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
+                    let mut encoder = pass.with(&self.pipelines.subpixel_sprites);
+                    encoder.bind(
+                        0,
+                        &ShaderSubpixelSpritesData {
+                            globals,
+                            gamma_ratios: self.rendering_parameters.gamma_ratios,
+                            subpixel_enhanced_contrast: self
+                                .rendering_parameters
+                                .subpixel_enhanced_contrast,
+                            t_sprite: tex_info.raw_view,
+                            s_sprite: self.atlas_sampler,
+                            b_subpixel_sprites: instance_buf,
                         },
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
@@ -1016,6 +1080,10 @@ struct RenderingParameters {
     // Allowed range: [0.0, ..), other values are clipped
     // Default: 1.0
     grayscale_enhanced_contrast: f32,
+    // Env var: ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST
+    // Allowed range: [0.0, ..), other values are clipped
+    // Default: 0.5
+    subpixel_enhanced_contrast: f32,
 }
 
 impl RenderingParameters {
@@ -1042,11 +1110,17 @@ impl RenderingParameters {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0_f32)
             .max(0.0);
+        let subpixel_enhanced_contrast = env::var("ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5_f32)
+            .max(0.0);
 
         Self {
             path_sample_count,
             gamma_ratios,
             grayscale_enhanced_contrast,
+            subpixel_enhanced_contrast,
         }
     }
 }
