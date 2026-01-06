@@ -13,7 +13,9 @@ use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::Project;
 use project::buffer_store::BufferStoreEvent;
+use smol::stream::StreamExt;
 use std::{fs, path::PathBuf, sync::Arc};
+use util::{paths::PathStyle, rel_path::RelPath};
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -75,6 +77,23 @@ async fn cursor_position(
     {
         return Err(error);
     }
+
+    let worktree = project.update(cx, |project, cx| {
+        project.visible_worktrees(cx).next().context("no worktrees")
+    })??;
+    worktree
+        .update(cx, |worktree, _| {
+            worktree
+                .as_local_mut()
+                .unwrap()
+                .refresh_entries_for_paths(vec![
+                    RelPath::new(&example.spec.cursor_path, PathStyle::Posix)
+                        .unwrap()
+                        .into_arc(),
+                ])
+        })?
+        .next()
+        .await;
 
     let cursor_path = project
         .read_with(cx, |project, cx| {
