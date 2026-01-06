@@ -1869,11 +1869,19 @@ impl GitStore {
             });
 
         let branch_name = envelope.payload.branch_name.into();
+        let remote_branch_name = envelope.payload.remote_branch_name.into();
         let remote_name = envelope.payload.remote_name.into();
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.push(branch_name, remote_name, options, askpass, cx)
+                repository_handle.push(
+                    branch_name,
+                    remote_branch_name,
+                    remote_name,
+                    options,
+                    askpass,
+                    cx,
+                )
             })?
             .await??;
         Ok(proto::RemoteMessageResponse {
@@ -4738,6 +4746,7 @@ impl Repository {
     pub fn push(
         &mut self,
         branch: SharedString,
+        remote_branch: SharedString,
         remote: SharedString,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
@@ -4765,7 +4774,7 @@ impl Repository {
 
         let this = cx.weak_entity();
         self.send_job(
-            Some(format!("git push {} {} {}", args, remote, branch).into()),
+            Some(format!("git push {} {} {}:{}", args, remote, branch, remote_branch).into()),
             move |git_repo, mut cx| async move {
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
@@ -4776,6 +4785,7 @@ impl Repository {
                         let result = backend
                             .push(
                                 branch.to_string(),
+                                remote_branch.to_string(),
                                 remote.to_string(),
                                 options,
                                 askpass,
@@ -4813,6 +4823,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 askpass_id,
                                 branch_name: branch.to_string(),
+                                remote_branch_name: remote_branch.to_string(),
                                 remote_name: remote.to_string(),
                                 options: options.map(|options| match options {
                                     PushOptions::Force => proto::push::PushOptions::Force,

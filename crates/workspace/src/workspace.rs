@@ -1321,7 +1321,7 @@ impl Workspace {
                     }
                 }
 
-                project::Event::DisconnectedFromSshRemote => {
+                project::Event::DisconnectedFromRemote => {
                     this.update_window_edited(window, cx);
                 }
 
