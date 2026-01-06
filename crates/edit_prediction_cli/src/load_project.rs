@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::EditPredictionStore;
-use edit_prediction::udiff::OpenedBuffers;
+use edit_prediction::udiff::{OpenedBuffers, refresh_worktree_entries};
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
@@ -73,6 +73,11 @@ async fn cursor_position(
         && !error.is::<LanguageNotFound>()
     {
         return Err(error);
+    }
+
+    // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
+    if let Some(worktree) = project.read_with(cx, |project, cx| project.worktrees(cx).next())? {
+        refresh_worktree_entries(&worktree, [&*example.spec.cursor_path], cx).await?;
     }
 
     let cursor_path = project
