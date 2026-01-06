@@ -976,7 +976,7 @@
             { "pattern": "mkfs\\." },
             { "pattern": "dd\\s+if=/dev/(zero|random)" },
             // Fork bomb
-            { "pattern": ":\\(\\)\\{\\s*:\\|:\\&\\s*\\};:" },
+            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
             // System files
             { "pattern": "/etc/passwd" },
             { "pattern": "/etc/shadow" },
