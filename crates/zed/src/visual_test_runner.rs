@@ -77,327 +77,324 @@ fn main() {
         Application::new()
             .with_assets(assets::Assets)
             .run(move |cx| {
-            // Initialize settings store first (required by theme and other subsystems)
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
+                // Initialize settings store first (required by theme and other subsystems)
+                let settings_store = SettingsStore::test(cx);
+                cx.set_global(settings_store);
 
-            // Create AppState using the production-like initialization
-            let app_state = init_app_state(cx);
+                // Create AppState using the production-like initialization
+                let app_state = init_app_state(cx);
 
-            // Initialize all Zed subsystems
-            gpui_tokio::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            client::init(&app_state.client, cx);
-            audio::init(cx);
-            workspace::init(app_state.clone(), cx);
-            release_channel::init(semver::Version::new(0, 0, 0), cx);
-            command_palette::init(cx);
-            editor::init(cx);
-            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-            title_bar::init(cx);
-            project_panel::init(cx);
-            outline_panel::init(cx);
-            terminal_view::init(cx);
-            image_viewer::init(cx);
-            search::init(cx);
-            prompt_store::init(cx);
-            language_model::init(app_state.client.clone(), cx);
-            language_models::init(
-                app_state.user_store.clone(),
-                app_state.client.clone(),
-                cx,
-            );
+                // Initialize all Zed subsystems
+                gpui_tokio::init(cx);
+                theme::init(theme::LoadThemes::JustBase, cx);
+                client::init(&app_state.client, cx);
+                audio::init(cx);
+                workspace::init(app_state.clone(), cx);
+                release_channel::init(semver::Version::new(0, 0, 0), cx);
+                command_palette::init(cx);
+                editor::init(cx);
+                call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+                title_bar::init(cx);
+                project_panel::init(cx);
+                outline_panel::init(cx);
+                terminal_view::init(cx);
+                image_viewer::init(cx);
+                search::init(cx);
+                prompt_store::init(cx);
+                language_model::init(app_state.client.clone(), cx);
+                language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
 
-            // Dismiss onboarding banners so they don't appear in screenshots
-            cx.spawn(async |_| {
-                db::kvp::KEY_VALUE_STORE
-                    .write_kvp(
-                        "acp_claude_code_onboarding_banner_dismissed_at".to_string(),
-                        chrono::Utc::now().to_rfc3339(),
-                    )
-                    .await
-            })
-            .detach();
-
-            // Open a real Zed workspace window
-            let window_size = size(px(1280.0), px(800.0));
-            // Window can be hidden since we use direct texture capture (reading pixels from
-            // Metal texture) instead of ScreenCaptureKit which requires visible windows.
-            let bounds = Bounds {
-                origin: point(px(0.0), px(0.0)),
-                size: window_size,
-            };
-
-            // Create a project for the workspace
-            let project = project::Project::local(
-                app_state.client.clone(),
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                None,
-                false,
-                cx,
-            );
-
-            let workspace_window: WindowHandle<Workspace> = cx
-                .open_window(
-                    WindowOptions {
-                        window_bounds: Some(WindowBounds::Windowed(bounds)),
-                        focus: false,
-                        show: false,
-                        ..Default::default()
-                    },
-                    |window, cx| {
-                        cx.new(|cx| {
-                            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                        })
-                    },
-                )
-                .expect("Failed to open workspace window");
-
-            // Add the test project as a worktree directly to the project
-            let add_worktree_task = workspace_window
-                .update(cx, |workspace, _window, cx| {
-                    workspace.project().update(cx, |project, cx| {
-                        project.find_or_create_worktree(&project_path, true, cx)
-                    })
+                // Dismiss onboarding banners so they don't appear in screenshots
+                cx.spawn(async |_| {
+                    db::kvp::KEY_VALUE_STORE
+                        .write_kvp(
+                            "acp_claude_code_onboarding_banner_dismissed_at".to_string(),
+                            chrono::Utc::now().to_rfc3339(),
+                        )
+                        .await
                 })
-                .expect("Failed to update workspace");
+                .detach();
 
-            // Clone app_state for the async block
-            let app_state_for_tests = app_state.clone();
+                // Open a real Zed workspace window
+                let window_size = size(px(1280.0), px(800.0));
+                // Window can be hidden since we use direct texture capture (reading pixels from
+                // Metal texture) instead of ScreenCaptureKit which requires visible windows.
+                let bounds = Bounds {
+                    origin: point(px(0.0), px(0.0)),
+                    size: window_size,
+                };
 
-            // Spawn async task to set up the UI and capture screenshot
-            cx.spawn(async move |mut cx| {
-                // Wait for the worktree to be added
-                if let Err(e) = add_worktree_task.await {
-                    eprintln!("Failed to add worktree: {:?}", e);
-                }
+                // Create a project for the workspace
+                let project = project::Project::local(
+                    app_state.client.clone(),
+                    app_state.node_runtime.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
+                    None,
+                    false,
+                    cx,
+                );
 
-                // Wait for UI to settle
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
-                    .await;
-
-                // Create and add the project panel to the workspace
-                let panel_task = cx.update(|cx| {
-                    workspace_window
-                        .update(cx, |_workspace, window, cx| {
-                            let weak_workspace = cx.weak_entity();
-                            window.spawn(cx, async move |cx| {
-                                ProjectPanel::load(weak_workspace, cx.clone()).await
+                let workspace_window: WindowHandle<Workspace> = cx
+                    .open_window(
+                        WindowOptions {
+                            window_bounds: Some(WindowBounds::Windowed(bounds)),
+                            focus: false,
+                            show: false,
+                            ..Default::default()
+                        },
+                        |window, cx| {
+                            cx.new(|cx| {
+                                Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                             })
-                        })
-                        .ok()
-                });
+                        },
+                    )
+                    .expect("Failed to open workspace window");
 
-                if let Ok(Some(task)) = panel_task {
-                    if let Ok(panel) = task.await {
-                        cx.update(|cx| {
-                            workspace_window
-                                .update(cx, |workspace, window, cx| {
-                                    workspace.add_panel(panel, window, cx);
+                // Add the test project as a worktree directly to the project
+                let add_worktree_task = workspace_window
+                    .update(cx, |workspace, _window, cx| {
+                        workspace.project().update(cx, |project, cx| {
+                            project.find_or_create_worktree(&project_path, true, cx)
+                        })
+                    })
+                    .expect("Failed to update workspace");
+
+                // Clone app_state for the async block
+                let app_state_for_tests = app_state.clone();
+
+                // Spawn async task to set up the UI and capture screenshot
+                cx.spawn(async move |mut cx| {
+                    // Wait for the worktree to be added
+                    if let Err(e) = add_worktree_task.await {
+                        eprintln!("Failed to add worktree: {:?}", e);
+                    }
+
+                    // Wait for UI to settle
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    // Create and add the project panel to the workspace
+                    let panel_task = cx.update(|cx| {
+                        workspace_window
+                            .update(cx, |_workspace, window, cx| {
+                                let weak_workspace = cx.weak_entity();
+                                window.spawn(cx, async move |cx| {
+                                    ProjectPanel::load(weak_workspace, cx.clone()).await
                                 })
-                                .ok();
-                        })
-                        .ok();
-                    }
-                }
+                            })
+                            .ok()
+                    });
 
-                // Wait for panel to be added
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
+                    if let Ok(Some(task)) = panel_task {
+                        if let Ok(panel) = task.await {
+                            cx.update(|cx| {
+                                workspace_window
+                                    .update(cx, |workspace, window, cx| {
+                                        workspace.add_panel(panel, window, cx);
+                                    })
+                                    .ok();
+                            })
+                            .ok();
+                        }
+                    }
+
+                    // Wait for panel to be added
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    // Open the project panel
+                    cx.update(|cx| {
+                        workspace_window
+                            .update(cx, |workspace, window, cx| {
+                                workspace.open_panel::<ProjectPanel>(window, cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
+
+                    // Wait for project panel to render
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    // Open main.rs in the editor
+                    let open_file_task = cx.update(|cx| {
+                        workspace_window
+                            .update(cx, |workspace, window, cx| {
+                                let worktree = workspace.project().read(cx).worktrees(cx).next();
+                                if let Some(worktree) = worktree {
+                                    let worktree_id = worktree.read(cx).id();
+                                    let rel_path: std::sync::Arc<util::rel_path::RelPath> =
+                                        util::rel_path::rel_path("src/main.rs").into();
+                                    let project_path: project::ProjectPath =
+                                        (worktree_id, rel_path).into();
+                                    Some(workspace.open_path(project_path, None, true, window, cx))
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok()
+                            .flatten()
+                    });
+
+                    if let Ok(Some(task)) = open_file_task {
+                        if let Ok(item) = task.await {
+                            // Focus the opened item to dismiss the welcome screen
+                            cx.update(|cx| {
+                                workspace_window
+                                    .update(cx, |workspace, window, cx| {
+                                        let pane = workspace.active_pane().clone();
+                                        pane.update(cx, |pane, cx| {
+                                            if let Some(index) = pane.index_for_item(item.as_ref())
+                                            {
+                                                pane.activate_item(index, true, true, window, cx);
+                                            }
+                                        });
+                                    })
+                                    .ok();
+                            })
+                            .ok();
+
+                            // Wait for item activation to render
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(500))
+                                .await;
+                        }
+                    }
+
+                    // Request a window refresh to ensure all pending effects are processed
+                    cx.refresh().ok();
+
+                    // Wait for UI to fully stabilize
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(2))
+                        .await;
+
+                    // Track test results
+                    let mut passed = 0;
+                    let mut failed = 0;
+                    let mut updated = 0;
+
+                    // Run Test 1: Project Panel (with project panel visible)
+                    println!("\n--- Test 1: project_panel ---");
+                    let test_result = run_visual_test(
+                        "project_panel",
+                        workspace_window.into(),
+                        &mut cx,
+                        update_baseline,
+                    )
                     .await;
 
-                // Open the project panel
-                cx.update(|cx| {
-                    workspace_window
-                        .update(cx, |workspace, window, cx| {
-                            workspace.open_panel::<ProjectPanel>(window, cx);
-                        })
-                        .ok();
-                })
-                .ok();
+                    match test_result {
+                        Ok(TestResult::Passed) => {
+                            println!("✓ project_panel: PASSED");
+                            passed += 1;
+                        }
+                        Ok(TestResult::BaselineUpdated(path)) => {
+                            println!("✓ project_panel: Baseline updated at {}", path.display());
+                            updated += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("✗ project_panel: FAILED - {}", e);
+                            failed += 1;
+                        }
+                    }
 
-                // Wait for project panel to render
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
+                    // Close the project panel for the second test
+                    cx.update(|cx| {
+                        workspace_window
+                            .update(cx, |workspace, window, cx| {
+                                workspace.close_panel::<ProjectPanel>(window, cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
+
+                    // Refresh and wait for panel to close
+                    cx.refresh().ok();
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    // Run Test 2: Workspace with Editor (without project panel)
+                    println!("\n--- Test 2: workspace_with_editor ---");
+                    let test_result = run_visual_test(
+                        "workspace_with_editor",
+                        workspace_window.into(),
+                        &mut cx,
+                        update_baseline,
+                    )
                     .await;
 
-                // Open main.rs in the editor
-                let open_file_task = cx.update(|cx| {
-                    workspace_window
-                        .update(cx, |workspace, window, cx| {
-                            let worktree = workspace.project().read(cx).worktrees(cx).next();
-                            if let Some(worktree) = worktree {
-                                let worktree_id = worktree.read(cx).id();
-                                let rel_path: std::sync::Arc<util::rel_path::RelPath> =
-                                    util::rel_path::rel_path("src/main.rs").into();
-                                let project_path: project::ProjectPath =
-                                    (worktree_id, rel_path).into();
-                                Some(workspace.open_path(project_path, None, true, window, cx))
-                            } else {
-                                None
-                            }
-                        })
-                        .ok()
-                        .flatten()
-                });
-
-                if let Ok(Some(task)) = open_file_task {
-                    if let Ok(item) = task.await {
-                        // Focus the opened item to dismiss the welcome screen
-                        cx.update(|cx| {
-                            workspace_window
-                                .update(cx, |workspace, window, cx| {
-                                    let pane = workspace.active_pane().clone();
-                                    pane.update(cx, |pane, cx| {
-                                        if let Some(index) = pane.index_for_item(item.as_ref()) {
-                                            pane.activate_item(index, true, true, window, cx);
-                                        }
-                                    });
-                                })
-                                .ok();
-                        })
-                        .ok();
-
-                        // Wait for item activation to render
-                        cx.background_executor()
-                            .timer(std::time::Duration::from_millis(500))
-                            .await;
+                    match test_result {
+                        Ok(TestResult::Passed) => {
+                            println!("✓ workspace_with_editor: PASSED");
+                            passed += 1;
+                        }
+                        Ok(TestResult::BaselineUpdated(path)) => {
+                            println!(
+                                "✓ workspace_with_editor: Baseline updated at {}",
+                                path.display()
+                            );
+                            updated += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("✗ workspace_with_editor: FAILED - {}", e);
+                            failed += 1;
+                        }
                     }
-                }
 
-                // Request a window refresh to ensure all pending effects are processed
-                cx.refresh().ok();
-
-                // Wait for UI to fully stabilize
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(2))
+                    // Run Test 3: Agent Thread View with Image
+                    println!("\n--- Test 3: agent_thread_with_image ---");
+                    let test_result = run_agent_thread_view_test(
+                        app_state_for_tests.clone(),
+                        &mut cx,
+                        update_baseline,
+                    )
                     .await;
 
-                // Track test results
-                let mut passed = 0;
-                let mut failed = 0;
-                let mut updated = 0;
-
-                // Run Test 1: Project Panel (with project panel visible)
-                println!("\n--- Test 1: project_panel ---");
-                let test_result = run_visual_test(
-                    "project_panel",
-                    workspace_window.into(),
-                    &mut cx,
-                    update_baseline,
-                )
-                .await;
-
-                match test_result {
-                    Ok(TestResult::Passed) => {
-                        println!("✓ project_panel: PASSED");
-                        passed += 1;
+                    match test_result {
+                        Ok(TestResult::Passed) => {
+                            println!("✓ agent_thread_with_image: PASSED");
+                            passed += 1;
+                        }
+                        Ok(TestResult::BaselineUpdated(path)) => {
+                            println!(
+                                "✓ agent_thread_with_image: Baseline updated at {}",
+                                path.display()
+                            );
+                            updated += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
+                            failed += 1;
+                        }
                     }
-                    Ok(TestResult::BaselineUpdated(path)) => {
-                        println!("✓ project_panel: Baseline updated at {}", path.display());
-                        updated += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("✗ project_panel: FAILED - {}", e);
-                        failed += 1;
-                    }
-                }
 
-                // Close the project panel for the second test
-                cx.update(|cx| {
-                    workspace_window
-                        .update(cx, |workspace, window, cx| {
-                            workspace.close_panel::<ProjectPanel>(window, cx);
-                        })
-                        .ok();
-                })
-                .ok();
-
-                // Refresh and wait for panel to close
-                cx.refresh().ok();
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
-                    .await;
-
-                // Run Test 2: Workspace with Editor (without project panel)
-                println!("\n--- Test 2: workspace_with_editor ---");
-                let test_result = run_visual_test(
-                    "workspace_with_editor",
-                    workspace_window.into(),
-                    &mut cx,
-                    update_baseline,
-                )
-                .await;
-
-                match test_result {
-                    Ok(TestResult::Passed) => {
-                        println!("✓ workspace_with_editor: PASSED");
-                        passed += 1;
+                    // Print summary
+                    println!("\n=== Test Summary ===");
+                    println!("Passed: {}", passed);
+                    println!("Failed: {}", failed);
+                    if updated > 0 {
+                        println!("Baselines Updated: {}", updated);
                     }
-                    Ok(TestResult::BaselineUpdated(path)) => {
-                        println!(
-                            "✓ workspace_with_editor: Baseline updated at {}",
-                            path.display()
-                        );
-                        updated += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("✗ workspace_with_editor: FAILED - {}", e);
-                        failed += 1;
-                    }
-                }
 
-                // Run Test 3: Agent Thread View with Image
-                println!("\n--- Test 3: agent_thread_with_image ---");
-                let test_result = run_agent_thread_view_test(
-                    app_state_for_tests.clone(),
-                    &mut cx,
-                    update_baseline,
-                )
-                .await;
-
-                match test_result {
-                    Ok(TestResult::Passed) => {
-                        println!("✓ agent_thread_with_image: PASSED");
-                        passed += 1;
+                    if failed > 0 {
+                        eprintln!("\n=== Visual Tests FAILED ===");
+                        cx.update(|cx| cx.quit()).ok();
+                        std::process::exit(1);
+                    } else {
+                        println!("\n=== All Visual Tests PASSED ===");
                     }
-                    Ok(TestResult::BaselineUpdated(path)) => {
-                        println!(
-                            "✓ agent_thread_with_image: Baseline updated at {}",
-                            path.display()
-                        );
-                        updated += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
-                        failed += 1;
-                    }
-                }
 
-                // Print summary
-                println!("\n=== Test Summary ===");
-                println!("Passed: {}", passed);
-                println!("Failed: {}", failed);
-                if updated > 0 {
-                    println!("Baselines Updated: {}", updated);
-                }
-
-                if failed > 0 {
-                    eprintln!("\n=== Visual Tests FAILED ===");
                     cx.update(|cx| cx.quit()).ok();
-                    std::process::exit(1);
-                } else {
-                    println!("\n=== All Visual Tests PASSED ===");
-                }
-
-                cx.update(|cx| cx.quit()).ok();
-            })
-            .detach();
-        });
+                })
+                .detach();
+            });
     });
 
     // Keep temp_dir alive until we're done
@@ -930,9 +927,12 @@ async fn run_agent_thread_view_test(
         .await;
 
     // Refresh window
-    cx.update_window(workspace_window.into(), |_view, window: &mut Window, _cx| {
-        window.refresh();
-    })?;
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(300))
