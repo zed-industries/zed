@@ -393,15 +393,21 @@ impl TableColumnWidths {
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
         resize_behavior: &TableRow<TableResizeBehavior>,
+        resize_mode: ColumnResizeMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Use the new pixel-centric implementation
-        self.on_drag_move_px(drag_event, resize_behavior, window, cx);
+        match resize_mode {
+            ColumnResizeMode::Fractional => {
+                self.on_drag_move_fraction(drag_event, resize_behavior, window, cx);
+            }
+            ColumnResizeMode::Absolute => {
+                self.on_drag_move_px(drag_event, resize_behavior, window, cx);
+            }
+        }
     }
 
-    // Old fraction-based implementation (preserved as dead code)
-    #[allow(dead_code)]
+    // Old fraction-based implementation (now used for Unset/Fixed table widths)
     fn on_drag_move_fraction(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
@@ -627,6 +633,24 @@ pub enum TableWidth {
     Fixed(Length),
     /// Adjust the table width based on the width of the columns
     ColumnDriven,
+}
+
+/// Controls how column resize handles behave
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnResizeMode {
+    /// Use fraction-based resizing (redistributes width between columns)
+    Fractional,
+    /// Use absolute pixel-based resizing (only resizes the specific column)
+    Absolute,
+}
+
+impl From<&TableWidth> for ColumnResizeMode {
+    fn from(width: &TableWidth) -> Self {
+        match width {
+            TableWidth::Unset | TableWidth::Fixed(_) => ColumnResizeMode::Fractional,
+            TableWidth::ColumnDriven => ColumnResizeMode::Absolute,
+        }
+    }
 }
 
 /// A table component
@@ -1028,6 +1052,7 @@ impl RenderOnce for Table {
             })
             .map(|(curr, resize_behavior, initial)| (curr.downgrade(), resize_behavior, initial));
 
+        let resize_mode = ColumnResizeMode::from(&self.width);
         let width = self.width;
         let no_rows_rendered = self.rows.is_empty();
 
@@ -1055,7 +1080,13 @@ impl RenderOnce for Table {
                         move |e, window, cx| {
                             widths
                                 .update(cx, |widths, cx| {
-                                    widths.on_drag_move(e, &resize_behavior, window, cx);
+                                    widths.on_drag_move(
+                                        e,
+                                        &resize_behavior,
+                                        resize_mode,
+                                        window,
+                                        cx,
+                                    );
                                 })
                                 .ok();
                         }
