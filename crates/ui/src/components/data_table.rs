@@ -535,8 +535,15 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    /// Enables variable row height list rendering for tables with rows of different heights.
-    /// This is theoretically slower than uniform_list but supports multiline content properly, which allows for non-uniform tables suitable for displaying CSV data.
+    /// Enables rendering of tables with variable row heights, allowing each row to have its own height.
+    ///
+    /// This mode is useful for displaying content such as CSV data or multiline cells, where rows may not have uniform heights.
+    /// It is generally slower than [`Table::uniform_list`] due to the need to measure each row individually, but it provides correct layout for non-uniform or multiline content.
+    ///
+    /// # Parameters
+    /// - `row_count`: The total number of rows in the table.
+    /// - `list_state`: The [`ListState`] used for managing scroll position and virtualization. This must be initialized and managed by the caller, and should be kept in sync with the number of rows.
+    /// - `render_row_fn`: A closure that renders a single row, given the row index, a mutable reference to [`Window`], and a mutable reference to [`App`]. It should return an array of [`AnyElement`]s, one for each column.
     pub fn variable_row_height_list(
         mut self,
         row_count: usize,
