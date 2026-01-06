@@ -8,7 +8,7 @@ use gpui::{
     Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
-use itertools::intersperse_with;
+use itertools::{Itertools as _, intersperse_with};
 use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
@@ -184,6 +184,7 @@ impl TableInteractionState {
                                     cx.stop_propagation();
                                 })
                             })
+                            // Why we need it here?
                             .on_drag(DraggedColumn(column_ix), |_, _offset, _window, cx| {
                                 cx.new(|_cx| gpui::Empty)
                             })
@@ -257,6 +258,23 @@ impl TableColumnWidths {
             }
             DefiniteLength::Fraction(fraction) => *fraction,
         }
+    }
+
+    fn get_pixels(length: &DefiniteLength, rem_size: Pixels, bounds_width: Pixels) -> Pixels {
+        match length {
+            DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => *pixels,
+            DefiniteLength::Absolute(AbsoluteLength::Rems(rems_width)) => {
+                rems_width.to_pixels(rem_size)
+            }
+            DefiniteLength::Fraction(fraction) => {
+                // Convert fraction to pixels based on bounds width
+                px(*fraction * bounds_width.to_f64() as f32)
+            }
+        }
+    }
+
+    fn get_min_size_pixels(min_size_fraction: f32, bounds_width: Pixels) -> Pixels {
+        px(min_size_fraction * bounds_width.to_f64() as f32)
     }
 
     fn on_double_click(
@@ -378,6 +396,19 @@ impl TableColumnWidths {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Use the new pixel-centric implementation
+        self.on_drag_move_px(drag_event, resize_behavior, window, cx);
+    }
+
+    // Old fraction-based implementation (preserved as dead code)
+    #[allow(dead_code)]
+    fn on_drag_move_fraction(
+        &mut self,
+        drag_event: &DragMoveEvent<DraggedColumn>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let drag_position = drag_event.event.position;
         let bounds = drag_event.bounds;
 
@@ -413,7 +444,23 @@ impl TableColumnWidths {
 
         Self::drag_column_handle(diff, col_idx, &mut widths, resize_behavior);
 
-        self.visible_widths = widths.map(DefiniteLength::Fraction);
+        self.visible_widths = widths
+            .as_slice()
+            .iter()
+            .map(|length| DefiniteLength::Fraction(*length))
+            .collect_vec()
+            .into_table_row(self.cols());
+    }
+
+    fn total_width(&self) -> Pixels {
+        self.visible_widths
+            .as_slice()
+            .into_iter()
+            .map(|dl| match dl {
+                DefiniteLength::Absolute(AbsoluteLength::Pixels(px)) => *px,
+                _ => px(100.0),
+            })
+            .sum()
     }
 
     fn drag_column_handle(
@@ -486,6 +533,62 @@ impl TableColumnWidths {
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
 
         diff_remaining
+    }
+
+    // Pixel-centric resize methods (new implementation)
+    // Implements Excel/Google Sheets style column resizing:
+    // - Only the dragged column changes width
+    // - Adjacent columns remain unchanged
+    // - Total table width grows/shrinks accordingly
+    fn on_drag_move_px(
+        &mut self,
+        drag_event: &DragMoveEvent<DraggedColumn>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let drag_position = drag_event.event.position;
+        let bounds = drag_event.bounds;
+
+        let rem_size = window.rem_size();
+        let bounds_width = bounds.right() - bounds.left();
+        let col_idx = drag_event.drag(cx).0;
+
+        // Work directly in pixel space
+        let column_handle_width_px = px(RESIZE_COLUMN_WIDTH);
+
+        let mut widths_px = self
+            .widths
+            .map_ref(|length| Self::get_pixels(length, rem_size, bounds_width));
+
+        // Calculate the left edge of the column being resized
+        let mut column_left_edge = bounds.left();
+        for i in 0..col_idx {
+            column_left_edge += widths_px[i] + column_handle_width_px;
+        }
+
+        // Calculate new width based on drag position relative to column's left edge
+        let new_width = drag_position.x - column_left_edge - column_handle_width_px;
+
+        // Apply minimum size constraint if specified
+        let final_width = if let Some(min_size_fraction) = resize_behavior[col_idx].min_size() {
+            let min_size_px = Self::get_min_size_pixels(min_size_fraction, bounds_width);
+            new_width.max(min_size_px)
+        } else {
+            // Ensure column never becomes too narrow to be usable
+            new_width.max(px(20.0)) // Minimum 20px width
+        };
+
+        // Update only the specific column being resized
+        widths_px[col_idx] = final_width;
+
+        // Convert pixel widths back to DefiniteLength::Absolute
+        self.visible_widths = widths_px
+            .as_slice()
+            .iter()
+            .map(|px_width| DefiniteLength::Absolute(AbsoluteLength::Pixels(*px_width)))
+            .collect_vec()
+            .into_table_row(self.cols());
     }
 }
 
@@ -896,6 +999,17 @@ impl RenderOnce for Table {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
+
+        let table_width_px = self
+            .col_widths
+            .as_ref()
+            .unwrap()
+            .current
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .total_width();
+
         let current_widths = self
             .col_widths
             .as_ref()
@@ -921,7 +1035,7 @@ impl RenderOnce for Table {
             .map(|this| match width {
                 TableWidth::Unset => this,
                 TableWidth::Fixed(length) => this.w(length),
-                TableWidth::ColumnDriven => todo!(),
+                TableWidth::ColumnDriven => this.w(Length::Definite(table_width_px.into())),
             })
             .h_full()
             .v_flex()
