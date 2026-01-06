@@ -14,6 +14,7 @@ use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_dif
 use postage::stream::Stream as _;
 use project::Project;
 use util::{paths::PathStyle, rel_path::RelPath};
+use worktree::Worktree;
 
 #[derive(Clone, Debug)]
 pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
@@ -28,29 +29,18 @@ pub async fn apply_diff(
         .read_with(cx, |project, cx| project.visible_worktrees(cx).next())?
         .context("project has no worktree")?;
 
-    // Ensure the files in the diff are loaded, since worktree scanning is disabled in
-    // edit prediction CLI.
-    let mut paths = Vec::new();
-    for line in diff_str.lines() {
-        if let DiffLine::OldPath { path } = DiffLine::parse(line) {
-            if path != "/dev/null" {
-                let path = Path::new(path.as_ref());
-                paths.push(RelPath::new(path, PathStyle::Posix)?.into_arc());
-
-                let path_without_root = path.components().skip(1).collect::<PathBuf>();
-                paths.push(RelPath::new(&path_without_root, PathStyle::Posix)?.into_arc());
+    let paths: Vec<_> = diff_str
+        .lines()
+        .filter_map(|line| {
+            if let DiffLine::OldPath { path } = DiffLine::parse(line) {
+                if path != "/dev/null" {
+                    return Some(PathBuf::from(path.as_ref()));
+                }
             }
-        }
-    }
-    worktree
-        .update(cx, |worktree, _| {
-            worktree
-                .as_local()
-                .unwrap()
-                .refresh_entries_for_paths(paths)
-        })?
-        .recv()
-        .await;
+            None
+        })
+        .collect();
+    refresh_worktree_entries(&worktree, paths.iter().map(|p| p.as_path()), cx).await?;
 
     let mut included_files = HashMap::default();
 
@@ -127,6 +117,38 @@ pub async fn apply_diff(
     }
 
     Ok(OpenedBuffers(included_files))
+}
+
+pub async fn refresh_worktree_entries(
+    worktree: &Entity<Worktree>,
+    paths: impl IntoIterator<Item = &Path>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let mut rel_paths = Vec::new();
+    for path in paths {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+            rel_paths.push(rel_path.into_arc());
+        }
+
+        let path_without_root: PathBuf = path.components().skip(1).collect();
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+            rel_paths.push(rel_path.into_arc());
+        }
+    }
+
+    if !rel_paths.is_empty() {
+        worktree
+            .update(cx, |worktree, _| {
+                worktree
+                    .as_local()
+                    .unwrap()
+                    .refresh_entries_for_paths(rel_paths)
+            })?
+            .recv()
+            .await;
+    }
+
+    Ok(())
 }
 
 /// Extract the diff for a specific file from a multi-file diff.
