@@ -134,9 +134,12 @@ impl Watcher for FsWatcher {
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
 
-        for (registration_path, _) in &mut { self.registrations.lock().clone() } {
-            if !registration_path.starts_with(path) {
-                continue;
+        let registrations = self.registrations.lock().clone();
+        let path: Arc<std::path::Path> = Arc::from(path);
+
+        for (registration_path, _) in registrations.range(path.clone()..) {
+            if !registration_path.starts_with(&path) {
+                break;
             }
 
             let Some(registration) = self.registrations.lock().remove(registration_path) else {
