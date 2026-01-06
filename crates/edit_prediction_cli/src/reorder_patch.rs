@@ -150,7 +150,11 @@ impl ToString for Patch {
         let mut result = self.header.clone();
         for hunk in &self.hunks {
             let current_file = hunk.filename.clone();
-            result.push_str(&format!("--- a/{}\n", current_file));
+            if hunk.is_file_creation() {
+                result.push_str("--- /dev/null\n");
+            } else {
+                result.push_str(&format!("--- a/{}\n", current_file));
+            }
             result.push_str(&format!("+++ b/{}\n", current_file));
             result.push_str(&hunk.to_string());
         }
@@ -330,6 +334,11 @@ impl ToString for Hunk {
 }
 
 impl Hunk {
+    /// Returns true if this hunk represents a file creation (old side is empty).
+    pub fn is_file_creation(&self) -> bool {
+        self.old_start == 0 && self.old_count == 0
+    }
+
     /// Render the hunk header
     pub fn header_string(&self) -> String {
         format!(
@@ -1456,6 +1465,33 @@ mod tests {
             -blue
              brown
             // Some garbage
+        "}
+        );
+    }
+
+    #[test]
+    fn test_file_creation_diff_header() {
+        // When old_start and old_count are both 0, the file is being created,
+        // so the --- line should be /dev/null instead of a/filename
+        let patch = Patch::parse_unified_diff(indoc! {"
+            --- a/new_file.rs
+            +++ b/new_file.rs
+            @@ -0,0 +1,3 @@
+            +fn main() {
+            +    println!(\"hello\");
+            +}
+        "});
+
+        let actual = patch.to_string();
+        assert_eq!(
+            actual,
+            indoc! {"
+            --- /dev/null
+            +++ b/new_file.rs
+            @@ -0,0 +1,3 @@
+            +fn main() {
+            +    println!(\"hello\");
+            +}
         "}
         );
     }
