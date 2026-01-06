@@ -1102,17 +1102,8 @@ impl Thread {
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
 
-        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let tool_names = self.registered_tool_names();
-            self.add_tool(SubagentTool::new(
-                cx.weak_entity(),
-                self.project.clone(),
-                self.project_context.clone(),
-                self.context_server_registry.clone(),
-                self.templates.clone(),
-                self.depth(),
-                tool_names,
-            ));
+        if cx.has_flag::<SubagentsFeatureFlag>() {
+            self.add_tool(SubagentTool::new());
         }
     }
 
