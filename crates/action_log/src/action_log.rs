@@ -79,7 +79,13 @@ impl ActionLog {
                 });
 
                 let text_snapshot = buffer.read(cx).text_snapshot();
-                let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                let language = buffer.read(cx).language().cloned();
+                let language_registry = buffer.read(cx).language_registry();
+                let diff = cx.new(|cx| {
+                    let mut diff = BufferDiff::new(&text_snapshot, cx);
+                    diff.language_changed(language, language_registry, cx);
+                    diff
+                });
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
@@ -192,7 +198,7 @@ impl ActionLog {
             .ok();
         let buffer_repo = git_store.read_with(cx, |git_store, cx| {
             git_store.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-        })?;
+        });
 
         let (mut git_diff_updates_tx, mut git_diff_updates_rx) = watch::channel(());
         let _repo_subscription =
@@ -208,7 +214,7 @@ impl ActionLog {
                             }
                         }
                     }))
-                })?
+                })
             } else {
                 None
             };
@@ -262,7 +268,7 @@ impl ActionLog {
                         );
                     }
 
-                    (Arc::new(base_text.to_string()), base_text)
+                    (Arc::from(base_text.to_string().as_str()), base_text)
                 }
             });
 
@@ -302,7 +308,7 @@ impl ActionLog {
                     .context("buffer not tracked")?;
                 let old_unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let agent_diff_base = tracked_buffer.diff_base.clone();
-                let git_diff_base = git_diff.read(cx).base_text().as_rope().clone();
+                let git_diff_base = git_diff.read(cx).base_text(cx).as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
@@ -352,7 +358,7 @@ impl ActionLog {
                     }
 
                     (
-                        Arc::new(new_agent_diff_base.to_string()),
+                        Arc::from(new_agent_diff_base.to_string().as_str()),
                         new_agent_diff_base,
                     )
                 }))
@@ -374,11 +380,11 @@ impl ActionLog {
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
         buffer_snapshot: text::BufferSnapshot,
-        new_base_text: Arc<String>,
+        new_base_text: Arc<str>,
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, language, language_registry) = this.read_with(cx, |this, cx| {
+        let (diff, language) = this.read_with(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
@@ -386,56 +392,53 @@ impl ActionLog {
             anyhow::Ok((
                 tracked_buffer.diff.clone(),
                 buffer.read(cx).language().cloned(),
-                buffer.read(cx).language_registry(),
             ))
         })??;
-        let diff_snapshot = BufferDiff::update_diff(
-            diff.clone(),
-            buffer_snapshot.clone(),
-            Some(new_base_text),
-            true,
-            false,
-            language,
-            language_registry,
-            cx,
-        )
+        let update = diff
+            .update(cx, |diff, cx| {
+                diff.update_diff(
+                    buffer_snapshot.clone(),
+                    Some(new_base_text),
+                    true,
+                    language,
+                    cx,
+                )
+            })
+            .await;
+        diff.update(cx, |diff, cx| {
+            diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
+        })
         .await;
-        let mut unreviewed_edits = Patch::default();
-        if let Ok(diff_snapshot) = diff_snapshot {
-            unreviewed_edits = cx
-                .background_spawn({
-                    let diff_snapshot = diff_snapshot.clone();
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    let new_diff_base = new_diff_base.clone();
-                    async move {
-                        let mut unreviewed_edits = Patch::default();
-                        for hunk in diff_snapshot.hunks_intersecting_range(
-                            Anchor::min_for_buffer(buffer_snapshot.remote_id())
-                                ..Anchor::max_for_buffer(buffer_snapshot.remote_id()),
-                            &buffer_snapshot,
-                        ) {
-                            let old_range = new_diff_base
-                                .offset_to_point(hunk.diff_base_byte_range.start)
-                                ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
-                            let new_range = hunk.range.start..hunk.range.end;
-                            unreviewed_edits.push(point_to_row_edit(
-                                Edit {
-                                    old: old_range,
-                                    new: new_range,
-                                },
-                                &new_diff_base,
-                                buffer_snapshot.as_rope(),
-                            ));
-                        }
-                        unreviewed_edits
-                    }
-                })
-                .await;
+        let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
-            diff.update(cx, |diff, cx| {
-                diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx);
-            })?;
-        }
+        let unreviewed_edits = cx
+            .background_spawn({
+                let buffer_snapshot = buffer_snapshot.clone();
+                let new_diff_base = new_diff_base.clone();
+                async move {
+                    let mut unreviewed_edits = Patch::default();
+                    for hunk in diff_snapshot.hunks_intersecting_range(
+                        Anchor::min_for_buffer(buffer_snapshot.remote_id())
+                            ..Anchor::max_for_buffer(buffer_snapshot.remote_id()),
+                        &buffer_snapshot,
+                    ) {
+                        let old_range = new_diff_base
+                            .offset_to_point(hunk.diff_base_byte_range.start)
+                            ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
+                        let new_range = hunk.range.start..hunk.range.end;
+                        unreviewed_edits.push(point_to_row_edit(
+                            Edit {
+                                old: old_range,
+                                new: new_range,
+                            },
+                            &new_diff_base,
+                            buffer_snapshot.as_rope(),
+                        ));
+                    }
+                    unreviewed_edits
+                }
+            })
+            .await;
         this.update(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
@@ -975,7 +978,8 @@ impl TrackedBuffer {
     fn has_edits(&self, cx: &App) -> bool {
         self.diff
             .read(cx)
-            .hunks(self.buffer.read(cx), cx)
+            .snapshot(cx)
+            .hunks(self.buffer.read(cx))
             .next()
             .is_some()
     }
@@ -2388,13 +2392,14 @@ mod tests {
                     (
                         buffer,
                         diff.read(cx)
-                            .hunks(&snapshot, cx)
+                            .snapshot(cx)
+                            .hunks(&snapshot)
                             .map(|hunk| HunkStatus {
                                 diff_status: hunk.status().kind,
                                 range: hunk.range,
                                 old_text: diff
                                     .read(cx)
-                                    .base_text()
+                                    .base_text(cx)
                                     .text_for_range(hunk.diff_base_byte_range)
                                     .collect(),
                             })

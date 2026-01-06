@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
-use util::ConnectionResult;
+use util::{ConnectionResult, ResultExt, process::Child};
 
 use crate::{
     adapters::{DebugAdapterBinary, TcpArguments},
@@ -178,9 +178,7 @@ impl TransportDelegate {
         self.tasks.lock().clear();
 
         let log_dap_communications =
-            cx.update(|cx| DebuggerSettings::get_global(cx).log_dap_communications)
-                .with_context(|| "Failed to get Debugger Setting log dap communications error in transport::start_handlers. Defaulting to false")
-                .unwrap_or(false);
+            cx.update(|cx| DebuggerSettings::get_global(cx).log_dap_communications);
 
         let connect = self.transport.lock().connect();
         let (input, output) = connect.await?;
@@ -528,7 +526,7 @@ impl TcpTransport {
             command.args(&binary.arguments);
             command.envs(&binary.envs);
 
-            let mut p = Child::spawn(command, Stdio::null())
+            let mut p = Child::spawn(command, Stdio::null(), Stdio::piped(), Stdio::piped())
                 .with_context(|| "failed to start debug adapter.")?;
 
             stdout_task = p.stdout.take().map(|stdout| {
@@ -550,10 +548,9 @@ impl TcpTransport {
             process = Some(p);
         };
 
-        let timeout = connection_args.timeout.unwrap_or_else(|| {
-            cx.update(|cx| DebuggerSettings::get_global(cx).timeout)
-                .unwrap_or(20000u64)
-        });
+        let timeout = connection_args
+            .timeout
+            .unwrap_or_else(|| cx.update(|cx| DebuggerSettings::get_global(cx).timeout));
 
         log::info!(
             "Debug adapter has connected to TCP server {}:{}",
@@ -582,7 +579,7 @@ impl Transport for TcpTransport {
 
     fn kill(&mut self) {
         if let Some(process) = &mut *self.process.lock() {
-            process.kill();
+            process.kill().log_err();
         }
     }
 
@@ -647,7 +644,7 @@ impl Transport for TcpTransport {
 impl Drop for TcpTransport {
     fn drop(&mut self) {
         if let Some(mut p) = self.process.lock().take() {
-            p.kill()
+            p.kill().log_err();
         }
     }
 }
@@ -678,7 +675,7 @@ impl StdioTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        let mut process = Child::spawn(command, Stdio::piped())?;
+        let mut process = Child::spawn(command, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let _stderr_task = process.stderr.take().map(|stderr| {
             cx.background_spawn(TransportDelegate::handle_adapter_log(
@@ -703,7 +700,7 @@ impl Transport for StdioTransport {
     }
 
     fn kill(&mut self) {
-        self.process.lock().kill();
+        self.process.lock().kill().log_err();
     }
 
     fn connect(
@@ -731,7 +728,7 @@ impl Transport for StdioTransport {
 
 impl Drop for StdioTransport {
     fn drop(&mut self) {
-        self.process.lock().kill();
+        self.process.lock().kill().log_err();
     }
 }
 
@@ -1022,70 +1019,5 @@ impl Transport for FakeTransport {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
         self
-    }
-}
-
-struct Child {
-    process: smol::process::Child,
-}
-
-impl std::ops::Deref for Child {
-    type Target = smol::process::Child;
-
-    fn deref(&self) -> &Self::Target {
-        &self.process
-    }
-}
-
-impl std::ops::DerefMut for Child {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.process
-    }
-}
-
-impl Child {
-    fn into_inner(self) -> smol::process::Child {
-        self.process
-    }
-
-    #[cfg(not(windows))]
-    fn spawn(mut command: std::process::Command, stdin: Stdio) -> Result<Self> {
-        util::set_pre_exec_to_start_new_session(&mut command);
-        let mut command = smol::process::Command::from(command);
-        let process = command
-            .stdin(stdin)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("failed to spawn command `{command:?}`",))?;
-        Ok(Self { process })
-    }
-
-    #[cfg(windows)]
-    fn spawn(command: std::process::Command, stdin: Stdio) -> Result<Self> {
-        // TODO(windows): create a job object and add the child process handle to it,
-        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
-        let mut command = smol::process::Command::from(command);
-        let process = command
-            .stdin(stdin)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("failed to spawn command `{command:?}`",))?;
-        Ok(Self { process })
-    }
-
-    #[cfg(not(windows))]
-    fn kill(&mut self) {
-        let pid = self.process.id();
-        unsafe {
-            libc::killpg(pid as i32, libc::SIGKILL);
-        }
-    }
-
-    #[cfg(windows)]
-    fn kill(&mut self) {
-        // TODO(windows): terminate the job object in kill
-        let _ = self.process.kill();
     }
 }

@@ -13,7 +13,7 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = ["assistant_text_thread/test-support", "eval_utils", "gpui/test-support", "language/test-support", "reqwest_client", "workspace/test-support", "agent/test-support"]
+test-support = ["assistant_text_thread/test-support", "acp_thread/test-support", "eval_utils", "gpui/test-support", "language/test-support", "reqwest_client", "workspace/test-support", "agent/test-support"]
 unit-eval = []
 
 [dependencies]
@@ -106,6 +106,7 @@ reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
+base64.workspace = true
 agent = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }

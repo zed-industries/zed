@@ -12,8 +12,8 @@ use editor::{
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
-    Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Empty, Entity, EntityId,
-    Image, ImageFormat, Img, SharedString, Task, WeakEntity, pulsating_between,
+    AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
+    SharedString, Task, WeakEntity,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
@@ -32,12 +32,13 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::Duration,
 };
 use text::OffsetRangeExt;
-use ui::{ButtonLike, Disclosure, TintColor, Toggleable, prelude::*};
+use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
+
+use crate::ui::MentionCrease;
 
 pub type MentionTask = Shared<Task<Result<Mention, String>>>;
 
@@ -93,7 +94,7 @@ impl MentionSet {
                 let content = if full_mention_content
                     && let MentionUri::Directory { abs_path } = &mention_uri
                 {
-                    cx.update(|cx| full_mention_for_directory(&project, abs_path, cx))?
+                    cx.update(|cx| full_mention_for_directory(&project, abs_path, cx))
                         .await?
                 } else {
                     task.await.map_err(|e| anyhow!("{e}"))?
@@ -179,9 +180,7 @@ impl MentionSet {
             let image = cx
                 .spawn(async move |_, cx| {
                     let image = image_task.await.map_err(|e| e.to_string())?;
-                    let image = image
-                        .update(cx, |image, _| image.image.clone())
-                        .map_err(|e| e.to_string())?;
+                    let image = image.update(cx, |image, _| image.image.clone());
                     Ok(image)
                 })
                 .shared();
@@ -290,10 +289,10 @@ impl MentionSet {
             let task = project.update(cx, |project, cx| project.open_image(project_path, cx));
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
-                let image = image.update(cx, |image, _| image.image.clone())?;
+                let image = image.update(cx, |image, _| image.image.clone());
                 let format = image.format;
                 let image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
@@ -364,8 +363,8 @@ impl MentionSet {
                     content,
                     tracked_buffers: vec![cx.entity()],
                 }
-            })?;
-            anyhow::Ok(mention)
+            });
+            Ok(mention)
         })
     }
 
@@ -492,9 +491,9 @@ impl MentionSet {
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
-                .update(cx, |agent, cx| agent.thread_summary(id, cx))?
+                .update(cx, |agent, cx| agent.thread_summary(id, cx))
                 .await?;
-            anyhow::Ok(Mention::Text {
+            Ok(Mention::Text {
                 content: summary.to_string(),
                 tracked_buffers: Vec::new(),
             })
@@ -511,7 +510,7 @@ impl MentionSet {
         });
         cx.spawn(async move |_, cx| {
             let text_thread = text_thread_task.await?;
-            let xml = text_thread.update(cx, |text_thread, cx| text_thread.to_xml(cx))?;
+            let xml = text_thread.update(cx, |text_thread, cx| text_thread.to_xml(cx));
             Ok(Mention::Text {
                 content: xml,
                 tracked_buffers: Vec::new(),
@@ -579,8 +578,8 @@ pub(crate) fn paste_images_as_context(
         })
         .ok();
         for image in images {
-            let Ok((excerpt_id, text_anchor, multibuffer_anchor)) =
-                editor.update_in(cx, |message_editor, window, cx| {
+            let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+                .update_in(cx, |message_editor, window, cx| {
                     let snapshot = message_editor.snapshot(window, cx);
                     let (excerpt_id, _, buffer_snapshot) =
                         snapshot.buffer_snapshot().as_singleton().unwrap();
@@ -598,6 +597,7 @@ pub(crate) fn paste_images_as_context(
                     );
                     (*excerpt_id, text_anchor, multibuffer_anchor)
                 })
+                .ok()
             else {
                 break;
             };
@@ -606,12 +606,10 @@ pub(crate) fn paste_images_as_context(
             let Some(start_anchor) = multibuffer_anchor else {
                 continue;
             };
-            let Ok(end_anchor) = editor.update(cx, |editor, cx| {
+            let end_anchor = editor.update(cx, |editor, cx| {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
-            }) else {
-                continue;
-            };
+            });
             let image = Arc::new(image);
             let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
                 insert_crease_for_mention(
@@ -647,23 +645,17 @@ pub(crate) fn paste_images_as_context(
                 })
                 .shared();
 
-            mention_set
-                .update(cx, |mention_set, _cx| {
-                    mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
-                })
-                .ok();
+            mention_set.update(cx, |mention_set, _cx| {
+                mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            });
 
             if task.await.notify_async_err(cx).is_none() {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.edit([(start_anchor..end_anchor, "")], cx);
-                    })
-                    .ok();
-                mention_set
-                    .update(cx, |mention_set, _cx| {
-                        mention_set.remove_mention(&crease_id)
-                    })
-                    .ok();
+                editor.update(cx, |editor, cx| {
+                    editor.edit([(start_anchor..end_anchor, "")], cx);
+                });
+                mention_set.update(cx, |mention_set, _cx| {
+                    mention_set.remove_mention(&crease_id)
+                });
             }
         }
     }))
@@ -754,25 +746,8 @@ fn render_fold_icon_button(
                 .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
                 .unwrap_or_default();
 
-            ButtonLike::new(fold_id)
-                .style(ButtonStyle::Filled)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(is_in_text_selection)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::from_path(icon_path.clone())
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Label::new(label.clone())
-                                .size(LabelSize::Small)
-                                .buffer_font(cx)
-                                .single_line(),
-                        ),
-                )
+            MentionCrease::new(fold_id, icon_path.clone(), label.clone())
+                .is_toggled(is_in_text_selection)
                 .into_any_element()
         }
     })
@@ -838,42 +813,44 @@ fn full_mention_for_directory(
     cx.spawn(async move |cx| {
         let file_paths = worktree.read_with(cx, |worktree, _cx| {
             collect_files_in_path(worktree, &directory_path)
-        })?;
+        });
         let descendants_future = cx.update(|cx| {
-            futures::future::join_all(file_paths.into_iter().map(|(worktree_path, full_path)| {
-                let rel_path = worktree_path
-                    .strip_prefix(&directory_path)
-                    .log_err()
-                    .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+            futures::future::join_all(file_paths.into_iter().map(
+                |(worktree_path, full_path): (Arc<RelPath>, String)| {
+                    let rel_path = worktree_path
+                        .strip_prefix(&directory_path)
+                        .log_err()
+                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
 
-                let open_task = project.update(cx, |project, cx| {
-                    project.buffer_store().update(cx, |buffer_store, cx| {
-                        let project_path = ProjectPath {
-                            worktree_id,
-                            path: worktree_path,
-                        };
-                        buffer_store.open_buffer(project_path, cx)
+                    let open_task = project.update(cx, |project, cx| {
+                        project.buffer_store().update(cx, |buffer_store, cx| {
+                            let project_path = ProjectPath {
+                                worktree_id,
+                                path: worktree_path,
+                            };
+                            buffer_store.open_buffer(project_path, cx)
+                        })
+                    });
+
+                    cx.spawn(async move |cx| {
+                        let buffer = open_task.await.log_err()?;
+                        let buffer_content = outline::get_buffer_content_or_outline(
+                            buffer.clone(),
+                            Some(&full_path),
+                            &cx,
+                        )
+                        .await
+                        .ok()?;
+
+                        Some((rel_path, full_path, buffer_content.text, buffer))
                     })
-                });
-
-                cx.spawn(async move |cx| {
-                    let buffer = open_task.await.log_err()?;
-                    let buffer_content = outline::get_buffer_content_or_outline(
-                        buffer.clone(),
-                        Some(&full_path),
-                        &cx,
-                    )
-                    .await
-                    .ok()?;
-
-                    Some((rel_path, full_path, buffer_content.text, buffer))
-                })
-            }))
-        })?;
+                },
+            ))
+        });
 
         let contents = cx
             .background_spawn(async move {
-                let (contents, tracked_buffers) = descendants_future
+                let (contents, tracked_buffers): (Vec<_>, Vec<_>) = descendants_future
                     .await
                     .into_iter()
                     .flatten()
@@ -947,12 +924,14 @@ impl Render for LoadingContext {
             .editor
             .update(cx, |editor, cx| editor.is_range_selected(&self.range, cx))
             .unwrap_or_default();
-        ButtonLike::new(("loading-context", self.id))
-            .style(ButtonStyle::Filled)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(is_in_text_selection)
-            .when_some(self.image.clone(), |el, image_task| {
-                el.hoverable_tooltip(move |_, cx| {
+
+        let id = ElementId::from(("loading_context", self.id));
+
+        MentionCrease::new(id, self.icon.clone(), self.label.clone())
+            .is_toggled(is_in_text_selection)
+            .is_loading(self.loading.is_some())
+            .when_some(self.image.clone(), |this, image_task| {
+                this.image_preview(move |_, cx| {
                     let image = image_task.peek().cloned().transpose().ok().flatten();
                     let image_task = image_task.clone();
                     cx.new::<ImageHover>(|cx| ImageHover {
@@ -971,35 +950,6 @@ impl Render for LoadingContext {
                     .into()
                 })
             })
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::from_path(self.icon.clone())
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(self.label.clone())
-                            .size(LabelSize::Small)
-                            .buffer_font(cx)
-                            .single_line(),
-                    )
-                    .map(|el| {
-                        if self.loading.is_some() {
-                            el.with_animation(
-                                "loading-context-crease",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.opacity(delta),
-                            )
-                            .into_any()
-                        } else {
-                            el.into_any()
-                        }
-                    }),
-            )
     }
 }
 

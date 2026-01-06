@@ -116,7 +116,6 @@ pub struct UserStore {
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
-    invite_info: Option<InviteInfo>,
     client: Weak<Client>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
@@ -173,7 +172,6 @@ impl UserStore {
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
-            client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
 
@@ -193,7 +191,6 @@ impl UserStore {
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
             outgoing_contact_requests: Default::default(),
-            invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
             _maintain_contacts: cx.spawn(async move |this, cx| {
@@ -259,7 +256,7 @@ impl UserStore {
                                     } else {
                                         anyhow::Ok(())
                                     }
-                                })??;
+                                })?;
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }
@@ -297,32 +294,13 @@ impl UserStore {
         self.by_github_login.clear();
     }
 
-    async fn handle_update_invite_info(
-        this: Entity<Self>,
-        message: TypedEnvelope<proto::UpdateInviteInfo>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            this.invite_info = Some(InviteInfo {
-                url: Arc::from(message.payload.url),
-                count: message.payload.count,
-            });
-            cx.notify();
-        })?;
-        Ok(())
-    }
-
     async fn handle_show_contacts(
         this: Entity<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
+        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts));
         Ok(())
-    }
-
-    pub fn invite_info(&self) -> Option<&InviteInfo> {
-        self.invite_info.as_ref()
     }
 
     async fn handle_update_contacts(
@@ -334,7 +312,7 @@ impl UserStore {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
-        })?;
+        });
         Ok(())
     }
 
@@ -375,7 +353,7 @@ impl UserStore {
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
                         incoming_requests.push({
-                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))
                                 .await?
                         });
                     }
@@ -383,7 +361,7 @@ impl UserStore {
                     let mut outgoing_requests = Vec::new();
                     for requested_user_id in message.outgoing_requests {
                         outgoing_requests.push(
-                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))
                                 .await?,
                         );
                     }
@@ -450,7 +428,7 @@ impl UserStore {
                         }
 
                         cx.notify();
-                    })?;
+                    });
 
                     Ok(())
                 })
@@ -820,7 +798,7 @@ impl UserStore {
                             this.read_with(cx, |this, _cx| {
                                 this.client.upgrade().map(|client| client.cloud_client())
                             })
-                        })??
+                        })?
                         .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
 
                     let response = cloud_client.get_authenticated_user().await?;
@@ -828,7 +806,7 @@ impl UserStore {
                         this.update(cx, |this, cx| {
                             this.update_authenticated_user(response, cx);
                         })
-                    })??;
+                    })?;
                 }
             }
 
@@ -936,7 +914,7 @@ impl Contact {
         let user = user_store
             .update(cx, |user_store, cx| {
                 user_store.get_user(contact.user_id, cx)
-            })?
+            })
             .await?;
         Ok(Self {
             user,

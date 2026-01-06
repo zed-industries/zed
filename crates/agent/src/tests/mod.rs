@@ -114,6 +114,10 @@ impl crate::TerminalHandle for FakeTerminalHandle {
         self.killed.store(true, Ordering::SeqCst);
         Ok(())
     }
+
+    fn was_stopped_by_user(&self, _cx: &AsyncApp) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 struct FakeThreadEnvironment {

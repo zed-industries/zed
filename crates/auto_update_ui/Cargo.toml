@@ -17,7 +17,6 @@ auto_update.workspace = true
 client.workspace = true
 editor.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 markdown_preview.workspace = true
 release_channel.workspace = true
 semver.workspace = true

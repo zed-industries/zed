@@ -11,7 +11,7 @@ use edit_prediction::{
     EditPredictionStore,
     zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
 };
-use gpui::AsyncApp;
+use gpui::{AsyncApp, Entity};
 use std::sync::Arc;
 use zeta_prompt::format_zeta_prompt;
 
@@ -23,53 +23,70 @@ pub async fn run_format_prompt(
 ) -> Result<()> {
     run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
+    let step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
 
     match prompt_format {
         PromptFormat::Teacher => {
+            step_progress.set_substatus("formatting teacher prompt");
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: example.spec.expected_patch.clone(), // TODO
+                expected_output: example
+                    .spec
+                    .expected_patches
+                    .first()
+                    .cloned()
+                    .unwrap_or_default(),
                 format: prompt_format,
             });
         }
         PromptFormat::Zeta2 => {
+            step_progress.set_substatus("loading project");
             run_load_project(example, app_state, cx.clone()).await?;
 
-            let ep_store = cx.update(|cx| {
+            step_progress.set_substatus("formatting zeta2 prompt");
+
+            let ep_store: Entity<EditPredictionStore> = cx.update(|cx| {
                 EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-            })??;
+            })?;
 
             let state = example.state.as_ref().context("state must be set")?;
-            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot());
             let project = state.project.clone();
-            let (_, input) = ep_store.update(&mut cx, |ep_store, cx| {
-                let events = ep_store
-                    .edit_history_for_project(&project, cx)
-                    .into_iter()
-                    .map(|e| e.event)
-                    .collect();
-                anyhow::Ok(zeta2_prompt_input(
-                    &snapshot,
-                    example
-                        .context
-                        .as_ref()
-                        .context("context must be set")?
-                        .files
-                        .clone(),
-                    events,
-                    example.spec.cursor_path.clone(),
-                    example
-                        .buffer
-                        .as_ref()
-                        .context("buffer must be set")?
-                        .cursor_offset,
-                ))
-            })??;
+            let (_, input) =
+                ep_store.update(&mut cx, |ep_store: &mut EditPredictionStore, cx| {
+                    let events = ep_store
+                        .edit_history_for_project(&project, cx)
+                        .into_iter()
+                        .map(|e| e.event)
+                        .collect();
+                    anyhow::Ok(zeta2_prompt_input(
+                        &snapshot,
+                        example
+                            .context
+                            .as_ref()
+                            .context("context must be set")?
+                            .files
+                            .clone(),
+                        events,
+                        example.spec.cursor_path.clone(),
+                        example
+                            .buffer
+                            .as_ref()
+                            .context("buffer must be set")?
+                            .cursor_offset,
+                    ))
+                })?;
             let prompt = format_zeta_prompt(&input);
-            let expected_output =
-                zeta2_output_for_patch(&input, &example.spec.expected_patch.clone())?;
+            let expected_output = zeta2_output_for_patch(
+                &input,
+                &example
+                    .spec
+                    .expected_patches
+                    .first()
+                    .context("expected patches is empty")?
+                    .clone(),
+            )?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
@@ -86,6 +103,7 @@ impl TeacherPrompt {
     const PROMPT: &str = include_str!("teacher.prompt.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+    pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
@@ -111,18 +129,27 @@ impl TeacherPrompt {
         // 2. Context retriever just didn't include cursor line.
         //
         // In that case, fallback to using `cursor_position` as excerpt.
-        let cursor_file = &example
+        let example_buffer = example
             .buffer
             .as_ref()
-            .context("`buffer` should be filled in in the context collection step")?
-            .content;
+            .context("`buffer` should be filled in in the context collection step")?;
+        let cursor_file = &example_buffer.content;
 
-        // Extract updated (new) editable region from the model response
+        // Extract updated (new) editable region from the model response.
+        // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
+        let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
 
-        // Reconstruct old editable region we sent to the model
-        let old_editable_region = Self::format_editable_region(example);
-        let old_editable_region = Self::extract_editable_region(&old_editable_region);
+        let old_editable_region =
+            example_buffer.content[example_buffer.editable_range.clone()].to_string();
+
+        // Normalize leading newlines: if old starts with newline but new doesn't,
+        // prepend newline to new to preserve whitespace structure.
+        // This handles the case where the model drops the leading blank line.
+        if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
+            new_editable_region.insert(0, '\n');
+        }
+
         ensure!(
             cursor_file.contains(&old_editable_region),
             "Something's wrong: editable_region is not found in the cursor file"
@@ -176,18 +203,30 @@ impl TeacherPrompt {
     fn format_editable_region(example: &Example) -> String {
         let mut result = String::new();
 
+        let example_buffer = example.buffer.as_ref().unwrap();
+
         let path_str = example.spec.cursor_path.to_string_lossy();
         result.push_str(&format!("`````path=\"{path_str}\"\n"));
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.context_range.start..example_buffer.editable_range.start],
+        );
         result.push_str(Self::EDITABLE_REGION_START);
-
-        // TODO: control number of lines around cursor
-        result.push_str(&example.spec.cursor_position);
-        if !example.spec.cursor_position.ends_with('\n') {
-            result.push('\n');
-        }
-
-        result.push_str(&format!("{}\n", Self::EDITABLE_REGION_END));
-        result.push_str("`````");
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.editable_range.start..example_buffer.cursor_offset],
+        );
+        result.push_str(Self::USER_CURSOR_MARKER);
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.cursor_offset..example_buffer.editable_range.end],
+        );
+        result.push_str(Self::EDITABLE_REGION_END);
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.editable_range.end..example_buffer.context_range.end],
+        );
+        result.push_str("\n`````");
 
         result
     }
@@ -199,6 +238,7 @@ impl TeacherPrompt {
         let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
+        let region = region.strip_suffix('\n').unwrap_or(region);
 
         region.replace("<|user_cursor|>", "")
     }
@@ -227,16 +267,16 @@ fn extract_last_codeblock(text: &str) -> String {
         }
 
         let backtick_count = backtick_end - start;
-        let closing_backticks = "`".repeat(backtick_count);
+        let closing_pattern = format!("\n{}", "`".repeat(backtick_count));
 
         while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
             backtick_end += 1;
         }
 
-        if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
+        if let Some(end_pos) = text[backtick_end..].find(&closing_pattern) {
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos + 1];
             last_block = Some(code_block.to_string());
-            search_start = backtick_end + end_pos + backtick_count;
+            search_start = backtick_end + end_pos + closing_pattern.len();
         } else {
             break;
         }
@@ -267,6 +307,37 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_codeblock_with_nested_fences() {
+        let text = indoc::indoc! {"
+            `````
+            content with ``` inline
+            and ```python nested
+            more content
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "content with ``` inline\nand ```python nested\nmore content\n"
+        );
+    }
+
+    #[test]
+    fn test_extract_codeblock_ignores_inline_backticks() {
+        let text = indoc::indoc! {"
+            `````
+            here is some `code` with inline backticks
+            and here```more```stuff
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "here is some `code` with inline backticks\nand here```more```stuff\n"
+        );
+    }
+
+    #[test]
     fn test_extract_editable_region() {
         let text = indoc::indoc! {"
             some lines
@@ -286,7 +357,78 @@ mod tests {
             indoc::indoc! {"
             one
             two three
+            "}
+        );
+    }
 
+    #[test]
+    fn test_extract_last_codeblock_nested_bibtex() {
+        let text = indoc::indoc! {r#"
+            Looking at the edit history, I can see that a Citation section was just added.
+
+            `````
+            ## Collaborations
+            Our mission is to create a 4D generative model.
+
+            ## Citation
+
+            If you found Unique3D helpful, please cite our report:
+            ```bibtex
+            @misc{wu2024unique3d,
+                  title={Unique3D},
+            }
+            ```
+            `````
+            "#};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            indoc::indoc! {r#"
+            ## Collaborations
+            Our mission is to create a 4D generative model.
+
+            ## Citation
+
+            If you found Unique3D helpful, please cite our report:
+            ```bibtex
+            @misc{wu2024unique3d,
+                  title={Unique3D},
+            }
+            ```
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_extract_editable_region_no_markers() {
+        let text = indoc::indoc! {"
+            one
+            two three
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three"}
+        );
+    }
+
+    #[test]
+    fn test_extract_editable_region_strips_cursor_marker() {
+        let text = indoc::indoc! {"
+            <|editable_region_start|>
+            one
+            <|user_cursor|>two three
+
+            <|editable_region_end|>
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three
             "}
         );
     }

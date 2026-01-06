@@ -28,11 +28,15 @@ pub async fn run_prediction(
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    if !example.predictions.is_empty() {
-        return Ok(());
-    }
-
     let provider = provider.context("provider is required")?;
+
+    if let Some(existing_prediction) = example.predictions.first() {
+        if existing_prediction.provider == provider {
+            return Ok(());
+        } else {
+            example.predictions.clear();
+        }
+    }
 
     run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
@@ -52,12 +56,13 @@ pub async fn run_prediction(
 
     run_load_project(example, app_state.clone(), cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
+    let step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
     if matches!(
         provider,
         PredictionProvider::Zeta1 | PredictionProvider::Zeta2
     ) {
+        step_progress.set_substatus("authenticating");
         static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
         AUTHENTICATED
             .get_or_init(|| {
@@ -73,9 +78,9 @@ pub async fn run_prediction(
             .await;
     }
 
-    let ep_store = cx.update(|cx| {
-        EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-    })??;
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx))
+        .context("EditPredictionStore not initialized")?;
 
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
@@ -88,15 +93,15 @@ pub async fn run_prediction(
             }
         };
         store.set_edit_prediction_model(model);
-    })?;
+    });
+    step_progress.set_substatus("configuring model");
     let state = example.state.as_ref().context("state must be set")?;
     let run_dir = RUN_DIR.join(&example.spec.name);
 
     let updated_example = Arc::new(Mutex::new(example.clone()));
     let current_run_ix = Arc::new(AtomicUsize::new(0));
 
-    let mut debug_rx =
-        ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx))?;
+    let mut debug_rx = ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx));
     let debug_task = cx.background_spawn({
         let updated_example = updated_example.clone();
         let current_run_ix = current_run_ix.clone();
@@ -169,6 +174,7 @@ pub async fn run_prediction(
                 provider,
             });
 
+        step_progress.set_substatus("requesting prediction");
         let prediction = ep_store
             .update(&mut cx, |store, cx| {
                 store.request_prediction(
@@ -178,13 +184,15 @@ pub async fn run_prediction(
                     cloud_llm_client::PredictEditsRequestTrigger::Cli,
                     cx,
                 )
-            })?
+            })
             .await?;
 
         let actual_patch = prediction
             .and_then(|prediction| {
                 let prediction = prediction.prediction.ok()?;
-                prediction.edit_preview.as_unified_diff(&prediction.edits)
+                prediction
+                    .edit_preview
+                    .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
             })
             .unwrap_or_default();
 
@@ -204,13 +212,13 @@ pub async fn run_prediction(
             } else {
                 ("no prediction", InfoStyle::Warning)
             };
-            _step_progress.set_info(info, style);
+            step_progress.set_info(info, style);
         }
     }
 
     ep_store.update(&mut cx, |store, _| {
         store.remove_project(&state.project);
-    })?;
+    });
     debug_task.await?;
 
     *example = Arc::into_inner(updated_example)

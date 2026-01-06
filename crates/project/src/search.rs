@@ -326,39 +326,65 @@ impl SearchQuery {
         }
     }
 
-    pub(crate) fn detect(
+    pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
     ) -> Result<bool> {
+        let query_str = self.as_str();
+        let needle_len = query_str.len();
+        if needle_len == 0 {
+            return Ok(false);
+        }
         if self.as_str().is_empty() {
             return Ok(false);
         }
 
+        let mut text = String::new();
+        let mut bytes_read = 0;
+        // Yield from this function every 128 bytes scanned.
+        const YIELD_THRESHOLD: usize = 128;
         match self {
             Self::Text { search, .. } => {
-                let mat = search.stream_find_iter(reader).next();
-                match mat {
-                    Some(Ok(_)) => Ok(true),
-                    Some(Err(err)) => Err(err.into()),
-                    None => Ok(false),
+                if query_str.contains('\n') {
+                    reader.read_to_string(&mut text)?;
+                    Ok(search.is_match(&text))
+                } else {
+                    // Yield from this function every 128 bytes scanned.
+                    const YIELD_THRESHOLD: usize = 128;
+                    while reader.read_line(&mut text)? > 0 {
+                        if search.is_match(&text) {
+                            return Ok(true);
+                        }
+                        bytes_read += text.len();
+                        if bytes_read >= YIELD_THRESHOLD {
+                            bytes_read = 0;
+                            smol::future::yield_now().await;
+                        }
+                        text.clear();
+                    }
+                    Ok(false)
                 }
             }
             Self::Regex {
                 regex, multiline, ..
             } => {
                 if *multiline {
-                    let mut text = String::new();
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text)?.is_some())
+                        Ok(regex.is_match(&text)?)
                     }
                 } else {
-                    for line in reader.lines() {
-                        let line = line?;
-                        if regex.find(&line)?.is_some() {
+                    while reader.read_line(&mut text)? > 0 {
+                        if regex.is_match(&text)? {
                             return Ok(true);
                         }
+                        bytes_read += text.len();
+                        if bytes_read >= YIELD_THRESHOLD {
+                            bytes_read = 0;
+                            smol::future::yield_now().await;
+                        }
+                        text.clear();
                     }
                     Ok(false)
                 }
