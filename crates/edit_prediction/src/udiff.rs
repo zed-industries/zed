@@ -62,36 +62,26 @@ pub async fn apply_diff(
                 hunk,
                 is_new_file,
             } => {
+                let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
+                let rel_path = RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?;
+                let project_path = project::ProjectPath {
+                    worktree_id,
+                    path: rel_path.into_arc(),
+                };
+
                 let buffer = match current_file {
                     None => {
-                        let buffer = if is_new_file {
+                        if is_new_file {
                             // New file - create it first, then open the buffer
-                            let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
-                            let rel_path =
-                                RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?;
-                            let project_path = project::ProjectPath {
-                                worktree_id,
-                                path: rel_path.into_arc(),
-                            };
                             project
                                 .update(cx, |project, cx| {
                                     project.create_entry(project_path.clone(), false, cx)
                                 })?
                                 .await?;
-                            project
-                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                                .await?
-                        } else {
-                            // Existing file - find and open it
-                            let project_path = project
-                                .update(cx, |project, cx| {
-                                    project.find_project_path(path.as_ref(), cx)
-                                })?
-                                .context("no such path")?;
-                            project
-                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                                .await?
-                        };
+                        }
+                        let buffer = project
+                            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                            .await?;
                         included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()
@@ -460,7 +450,13 @@ fn resolve_hunk_edits_in_buffer(
                 offset = Some(range.start + ix);
             }
         }
-        offset.ok_or_else(|| anyhow!("Failed to match context:\n{}", hunk.context))
+        offset.ok_or_else(|| {
+            anyhow!(
+                "Failed to match context:\n\n```\n{}```\n\nBuffer contents:\n\n```\n{}```",
+                hunk.context,
+                buffer.text()
+            )
+        })
     }?;
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer
