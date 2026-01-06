@@ -679,14 +679,6 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
-    /// Whether the `%` motion matches quote characters (`'`, `"`, `` ` ``).
-    ///
-    /// When enabled, pressing `%` inside quotes jumps between opening and
-    /// closing quotes. This extends Vim's default `%` behavior, which only
-    /// matches bracket-like pairs.
-    ///
-    /// Default: true
-    pub use_match_quotes: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,

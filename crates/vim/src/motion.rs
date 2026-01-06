@@ -10,12 +10,11 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::Settings;
 use std::ops::Range;
 use workspace::searchable::Direction;
 
 use crate::{
-    Vim, VimSettings,
+    Vim,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
@@ -278,6 +277,15 @@ struct FirstNonWhitespace {
     display_lines: bool,
 }
 
+/// Moves to the matching bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct Matching {
+    #[serde(default)]
+    match_quotes: bool,
+}
+
 /// Moves to the end of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
@@ -350,8 +358,6 @@ actions!(
         StartOfDocument,
         /// Moves to the end of the document.
         EndOfDocument,
-        /// Moves to the matching bracket or delimiter.
-        Matching,
         /// Goes to a percentage position in the file.
         GoToPercentage,
         /// Moves to the start of the next line.
@@ -502,10 +508,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &EndOfDocument, window, cx| {
         vim.motion(Motion::EndOfDocument, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Matching, window, cx| {
-        let match_quotes = VimSettings::get_global(cx).use_match_quotes;
-        vim.motion(Motion::Matching { match_quotes }, window, cx)
-    });
+    Vim::action(
+        editor,
+        cx,
+        |vim, &Matching { match_quotes }: &Matching, window, cx| {
+            vim.motion(Motion::Matching { match_quotes }, window, cx)
+        },
+    );
+
     Vim::action(editor, cx, |vim, _: &GoToPercentage, window, cx| {
         vim.motion(Motion::GoToPercentage, window, cx)
     });
