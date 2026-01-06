@@ -1729,28 +1729,11 @@ This section breaks down the implementation into 5 reviewable PRs. Each PR is de
 - [x] `test_max_depth_enforced` (named `test_max_subagent_depth_prevents_tool_registration`)
 - [x] `test_allowed_tools_validated` (named `test_allowed_tools_restricts_subagent_capabilities`)
 - [x] `test_parent_cancel_stops_subagent`
+- [ ] `test_subagent_model_error_returned_as_tool_error` (see notes below)
+- [ ] `test_context_low_triggers_interrupt_for_summary` (see notes below)
+- [ ] `test_subagent_timeout_triggers_early_summary` (see notes below)
 
-**Definition of Done:**
-
-- [x] Subagent spawns with correct model
-- [x] Task prompt is sent to subagent
-- [x] Subagent can use tools
-- [x] Summary prompt triggers final response
-- [x] Result returned to parent as tool result
-- [x] `timeout_ms` is implemented and triggers early summary
-- [x] `allowed_tools` filtering is implemented
-- [x] Cancellation propagates from parent to subagent
-- [x] `./script/clippy` passes
-
-**STATUS: ✅ COMPLETED**
-
----
-
-### PR 2.5: Remaining Integration Tests (TODO)
-
-**Goal:** Add the remaining integration tests that require more complex mocking infrastructure.
-
-**Tests still needed:**
+**Remaining tests - implementation notes:**
 
 These tests require setting up mock model responses that simulate specific conditions:
 
@@ -1771,8 +1754,6 @@ These tests require setting up mock model responses that simulate specific condi
    - Verify: Timeout fires and triggers interrupt for summary
    - Why complex: Need timing-sensitive test that doesn't flake
 
-**Implementation approach:**
-
 For these tests, consider:
 
 - Extending `FakeLanguageModel` to support configurable delays and token usage reporting
@@ -1781,12 +1762,18 @@ For these tests, consider:
 
 **Definition of Done:**
 
-- [ ] `test_subagent_model_error_returned_as_tool_error`
-- [ ] `test_context_low_triggers_interrupt_for_summary`
-- [ ] `test_subagent_timeout_triggers_early_summary`
-- [ ] All tests pass consistently (no flakes)
+- [x] Subagent spawns with correct model
+- [x] Task prompt is sent to subagent
+- [x] Subagent can use tools
+- [x] Summary prompt triggers final response
+- [x] Result returned to parent as tool result
+- [x] `timeout_ms` is implemented and triggers early summary
+- [x] `allowed_tools` filtering is implemented
+- [x] Cancellation propagates from parent to subagent
+- [x] `./script/clippy` passes
+- [ ] All tests listed above pass
 
-**STATUS: 🚧 TODO**
+**STATUS: 🚧 IN PROGRESS** (remaining: 3 integration tests)
 
 ---
 
