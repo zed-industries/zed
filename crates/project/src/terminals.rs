@@ -14,7 +14,8 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
+    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
+    terminal_settings::TerminalSettings,
 };
 use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
 
@@ -568,8 +569,7 @@ fn create_remote_shell(
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    // Set default terminfo that does not break the highlighting via ssh.
-    env.insert("TERM".to_string(), "xterm-256color".to_string());
+    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
