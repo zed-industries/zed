@@ -13,7 +13,9 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
+use text::{
+    Anchor, Bias, BufferId, Edit, OffsetRangeExt, Patch, Point, ToOffset as _, ToPoint as _,
+};
 use util::ResultExt;
 
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -45,6 +47,7 @@ impl std::fmt::Debug for BufferDiffSnapshot {
 pub struct BufferDiffUpdate {
     base_text_changed: bool,
     inner: BufferDiffInner<Arc<str>>,
+    buffer_version: clock::Global,
 }
 
 #[derive(Clone)]
@@ -53,6 +56,7 @@ struct BufferDiffInner<BaseText> {
     pending_hunks: SumTree<PendingHunk>,
     base_text: BaseText,
     base_text_exists: bool,
+    buffer_version: clock::Global,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -234,6 +238,10 @@ impl BufferDiffSnapshot {
         self.secondary_diff.as_deref()
     }
 
+    pub fn buffer_version(&self) -> &clock::Global {
+        &self.inner.buffer_version
+    }
+
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -366,31 +374,55 @@ impl BufferDiffSnapshot {
         {
             // Found a hunk that starts before the target.
             let hunk_base_text_end = cursor.end().diff_base_byte_range.end;
+            let prev_hunk_buffer_end = hunk.buffer_range.end;
             let unclipped_point = if target.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
-                // Target falls strictly between two hunks.
-                let mut unclipped_point = hunk_base_text_end.to_point(self.base_text());
-                unclipped_point +=
-                    Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
-                unclipped_point
+                cursor.next();
+                let inter_hunk_range = prev_hunk_buffer_end
+                    ..cursor
+                        .item()
+                        .map(|h| h.buffer_range.start)
+                        .unwrap_or(Anchor::MAX);
+
+                let edits: Vec<Edit<Point>> = buffer
+                    .edits_since_in_range::<Point>(self.buffer_version(), inter_hunk_range)
+                    .collect();
+                let patch = Patch::new(edits);
+
+                let range_start_point = prev_hunk_buffer_end.to_point(buffer);
+                let query_point_relative = Point::new(row, 0) - range_start_point;
+                let query_old_point_relative = patch.new_to_old(query_point_relative, bias);
+                hunk_base_text_end.to_point(self.base_text()) + query_old_point_relative
             } else if bias == Bias::Right {
+                cursor.next();
                 hunk_base_text_end.to_point(self.base_text())
             } else {
+                cursor.next();
                 hunk.diff_base_byte_range.start.to_point(self.base_text())
             };
-            // Move the cursor so that at the next step we can clip with the start of the next hunk.
-            cursor.next();
             unclipped_point
         } else {
             // Target is before the added region for the first hunk.
             debug_assert!(self.inner.hunks.first().is_none_or(|first_hunk| {
                 target.cmp(&first_hunk.buffer_range.start, buffer).is_le()
             }));
-            Point::new(row, 0)
+
+            let inter_hunk_range = Anchor::MIN
+                ..self
+                    .inner
+                    .hunks
+                    .first()
+                    .map(|h| h.buffer_range.start)
+                    .unwrap_or(Anchor::MAX);
+
+            let edits: Vec<Edit<Point>> = buffer
+                .edits_since_in_range::<Point>(self.buffer_version(), inter_hunk_range)
+                .collect();
+            let patch = Patch::new(edits);
+
+            let query_point = Point::new(row, 0);
+            patch.new_to_old(query_point, bias)
         };
 
-        // If the target falls in the region between two hunks, we added an overshoot above.
-        // There may be changes in the main buffer that are not reflected in the hunks,
-        // so we need to ensure this overshoot keeps us in the corresponding base text region.
         let max_point = if let Some(next_hunk) = cursor.item() {
             next_hunk
                 .diff_base_byte_range
@@ -995,7 +1027,8 @@ fn compare_hunks(
             (Some(new_hunk), None) => {
                 start.get_or_insert(new_hunk.buffer_range.start);
                 base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
-                if end.is_none_or(|end| end.cmp(&new_hunk.buffer_range.end, &new_snapshot).is_le()) {
+                if end.is_none_or(|end| end.cmp(&new_hunk.buffer_range.end, &new_snapshot).is_le())
+                {
                     end.replace(new_hunk.buffer_range.end);
                 }
                 base_text_end = base_text_end.max(Some(new_hunk.diff_base_byte_range.end));
@@ -1175,6 +1208,7 @@ impl BufferDiff {
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: false,
+                buffer_version: buffer.version().clone(),
             },
             secondary_diff: None,
         }
@@ -1195,6 +1229,7 @@ impl BufferDiff {
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: true,
+                buffer_version: buffer.version().clone(),
             },
             secondary_diff: None,
         }
@@ -1322,6 +1357,7 @@ impl BufferDiff {
             language.as_ref().map(|l| l.default_scope()),
             cx,
         );
+        let buffer_version = buffer.version().clone();
 
         cx.background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
@@ -1348,10 +1384,12 @@ impl BufferDiff {
                     hunks,
                     base_text_exists,
                     pending_hunks: SumTree::new(&buffer),
+                    buffer_version: buffer_version.clone(),
                 };
                 BufferDiffUpdate {
                     inner,
                     base_text_changed,
+                    buffer_version,
                 }
             })
     }
@@ -1436,6 +1474,7 @@ impl BufferDiff {
             None
         };
         state.hunks = new_state.hunks;
+        state.buffer_version = update.buffer_version;
         if update.base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
@@ -1519,6 +1558,7 @@ impl BufferDiff {
                 pending_hunks: self.inner.pending_hunks.clone(),
                 base_text: self.inner.base_text.read(cx).snapshot(),
                 base_text_exists: self.inner.base_text_exists,
+                buffer_version: self.inner.buffer_version.clone(),
             },
             secondary_diff: self
                 .secondary_diff
@@ -2643,7 +2683,7 @@ mod tests {
 
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let buffer_snapshot = buffer.snapshot();
-        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text.clone(), cx);
+        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
 
         // Test row_to_base_text_row
         let expected_results = [
@@ -2692,6 +2732,104 @@ mod tests {
                 diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
                 expected_left,
                 "base_text_row_to_row base_text_row={base_text_row}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_row_to_base_text_row_with_stale_diff(cx: &mut TestAppContext) {
+        // Test the behavior of row_to_base_text_row when the buffer has been edited
+        // after the diff was computed. Specifically, we insert lines in an unmodified
+        // region between two hunks and verify the clamping behavior.
+
+        let base_text = "
+            zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+        "
+        .unindent();
+
+        // Initial buffer: two modification hunks with an unmodified region between them
+        let buffer_text = "
+            zero
+            ONE
+            two
+            three
+            four
+            FIVE
+            six
+            seven
+            eight
+        "
+        .unindent();
+
+        // Diff structure:
+        //   row 0: zero
+        //   row 1: ONE        <- Hunk 1: "one" -> "ONE" (base row 1)
+        //   row 2: two
+        //   row 3: three      <- Unmodified region
+        //   row 4: four
+        //   row 5: FIVE       <- Hunk 2: "five" -> "FIVE" (base row 5)
+        //   row 6: six
+        //   row 7: seven
+        //   row 8: eight
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+
+        // Insert two lines after "two" (at end of row 2), without recomputing the diff.
+        // The buffer becomes:
+        //   row 0: zero
+        //   row 1: ONE          <- Hunk 1 (anchors still here)
+        //   row 2: two
+        //   row 3: INSERTED_A   <- NEW
+        //   row 4: INSERTED_B   <- NEW
+        //   row 5: three
+        //   row 6: four
+        //   row 7: FIVE         <- Hunk 2 (anchors moved here)
+        //   row 8: six
+        //   row 9: seven
+        //   row 10: eight
+
+        let insert_offset = buffer.point_to_offset(Point::new(3, 0));
+        buffer.edit([(insert_offset..insert_offset, "INSERTED_A\nINSERTED_B\n")]);
+        let buffer_snapshot = buffer.snapshot();
+
+        // Verify the buffer content is as expected (11 content rows + 1 empty row from trailing newline)
+        assert_eq!(buffer_snapshot.max_point().row, 11);
+
+        // Test row_to_base_text_row with the stale diff and new buffer snapshot
+        let expected_results = [
+            // (buffer_row, expected_right, expected_left)
+            (0, 0, 0),  // zero - before Hunk 1
+            (1, 2, 1),  // ONE - inside Hunk 1
+            (2, 2, 2),  // two - after Hunk 1
+            (3, 3, 3),  // INSERTED_A - back-translates to base row 3
+            (4, 3, 3),  // INSERTED_B - back-translates to base row 3 (inside insertion)
+            (5, 3, 3),  // three - back-translates to base row 3
+            (6, 4, 4),  // four - back-translates to base row 4
+            (7, 6, 5),  // FIVE - inside Hunk 2
+            (8, 6, 6),  // six - after Hunk 2
+            (9, 7, 7),  // seven - after Hunk 2
+            (10, 8, 8), // eight - after Hunk 2
+        ];
+
+        for (buffer_row, expected_right, expected_left) in expected_results {
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
+                expected_right,
+                "row_to_base_text_row Bias::Right buffer_row={buffer_row}"
+            );
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "row_to_base_text_row Bias::Left buffer_row={buffer_row}"
             );
         }
     }
