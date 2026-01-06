@@ -100,7 +100,7 @@ sed \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
 
-app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace-root | xargs)
+app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace-root --bin zed | xargs)
 
 mv Cargo.toml.backup Cargo.toml
 popd
