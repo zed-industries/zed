@@ -32,9 +32,7 @@ visual-tests = [
     "dep:tempfile",
     "dep:acp_thread",
     "dep:action_log",
-    "dep:agent",
     "dep:agent_servers",
-    "dep:agent-client-protocol",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
@@ -61,8 +59,8 @@ required-features = ["visual-tests"]
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
-agent = { workspace = true, optional = true }
-agent-client-protocol = { workspace = true, optional = true }
+agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 agent_ui_v2.workspace = true
