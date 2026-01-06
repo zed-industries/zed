@@ -239,6 +239,9 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
+[package.metadata.bundle-dev.bin.zed]
+name = "Zed Dev"
+
 [package.metadata.bundle-nightly]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
 identifier = "dev.zed.Zed-Nightly"
@@ -246,6 +249,9 @@ name = "Zed Nightly"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
+
+[package.metadata.bundle-nightly.bin.zed]
+name = "Zed Nightly"
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
@@ -255,6 +261,9 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
+[package.metadata.bundle-preview.bin.zed]
+name = "Zed Preview"
+
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
 identifier = "dev.zed.Zed"
@@ -262,6 +271,9 @@ name = "Zed"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
+
+[package.metadata.bundle-stable.bin.zed]
+name = "Zed"
 
 [package.metadata.cargo-machete]
 ignored = ["profiling", "zstd", "tracing"]
