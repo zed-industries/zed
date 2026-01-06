@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display, Write},
     mem,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -34,7 +34,11 @@ pub async fn apply_diff(
     for line in diff_str.lines() {
         if let DiffLine::OldPath { path } = DiffLine::parse(line) {
             if path != "/dev/null" {
-                paths.push(RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc());
+                let path = Path::new(path.as_ref());
+                paths.push(RelPath::new(path, PathStyle::Posix)?.into_arc());
+
+                let path_without_root = path.components().skip(1).collect::<PathBuf>();
+                paths.push(RelPath::new(&path_without_root, PathStyle::Posix)?.into_arc());
             }
         }
     }
@@ -62,23 +66,14 @@ pub async fn apply_diff(
                 hunk,
                 is_new_file,
             } => {
-                let worktree_id = worktree.read_with(cx, |wt, _| wt.id())?;
-                let rel_path = RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?;
-                let project_path = project::ProjectPath {
-                    worktree_id,
-                    path: rel_path.into_arc(),
-                };
+                let project_path = project
+                    .update(cx, |project, cx| {
+                        project.find_project_path(path.as_ref(), cx)
+                    })?
+                    .context("no such path")?;
 
                 let buffer = match current_file {
                     None => {
-                        if is_new_file {
-                            // New file - create it first, then open the buffer
-                            project
-                                .update(cx, |project, cx| {
-                                    project.create_entry(project_path.clone(), false, cx)
-                                })?
-                                .await?;
-                        }
                         let buffer = project
                             .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                             .await?;
