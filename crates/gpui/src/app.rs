@@ -1499,7 +1499,6 @@ impl App {
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
             app: self.this.clone(),
-            liveness_token: std::sync::Arc::downgrade(&self.liveness),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
@@ -1531,10 +1530,9 @@ impl App {
         };
 
         let mut cx = self.to_async();
-        let liveness_token = std::sync::Arc::downgrade(&self.liveness);
 
         self.foreground_executor
-            .spawn_context(liveness_token, async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Spawns the future returned by the given function on the main thread with
@@ -1550,10 +1548,9 @@ impl App {
         };
 
         let mut cx = self.to_async();
-        let liveness_token = std::sync::Arc::downgrade(&self.liveness);
 
         self.foreground_executor
-            .spawn_context_with_priority(liveness_token, priority, async move { f(&mut cx).await })
+            .spawn_with_priority(priority, async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
