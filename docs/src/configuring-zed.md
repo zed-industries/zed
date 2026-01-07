@@ -1923,6 +1923,8 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.svn",
   "**/.hg",
   "**/.jj",
+  "**/.sl",
+  "**/.repo",
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
