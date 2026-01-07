@@ -60,12 +60,7 @@ fn main() {
 
     let update_baseline = std::env::var("UPDATE_BASELINE").is_ok();
 
-    if update_baseline {
-        println!("=== Visual Test Runner (UPDATE MODE) ===\n");
-        println!("Baseline images will be updated.\n");
-    } else {
-        println!("=== Visual Test Runner ===\n");
-    }
+    let _ = update_baseline;
 
     // Create a temporary directory for test files
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
@@ -159,9 +154,7 @@ fn main() {
                 // Spawn async task to set up the UI and capture screenshot
                 cx.spawn(async move |mut cx| {
                     // Wait for the worktree to be added
-                    if let Err(e) = add_worktree_task.await {
-                        eprintln!("Failed to add worktree: {:?}", e);
-                    }
+                    let _ = add_worktree_task.await;
 
                     // Wait for UI to settle
                     cx.background_executor()
@@ -272,7 +265,6 @@ fn main() {
                     let mut updated = 0;
 
                     // Run Test 1: Project Panel (with project panel visible)
-                    println!("\n--- Test 1: project_panel ---");
                     let test_result = run_visual_test(
                         "project_panel",
                         workspace_window.into(),
@@ -282,18 +274,9 @@ fn main() {
                     .await;
 
                     match test_result {
-                        Ok(TestResult::Passed) => {
-                            println!("✓ project_panel: PASSED");
-                            passed += 1;
-                        }
-                        Ok(TestResult::BaselineUpdated(path)) => {
-                            println!("✓ project_panel: Baseline updated at {}", path.display());
-                            updated += 1;
-                        }
-                        Err(e) => {
-                            eprintln!("✗ project_panel: FAILED - {}", e);
-                            failed += 1;
-                        }
+                        Ok(TestResult::Passed) => passed += 1,
+                        Ok(TestResult::BaselineUpdated(_)) => updated += 1,
+                        Err(_) => failed += 1,
                     }
 
                     // Close the project panel for the second test
@@ -313,7 +296,6 @@ fn main() {
                         .await;
 
                     // Run Test 2: Workspace with Editor (without project panel)
-                    println!("\n--- Test 2: workspace_with_editor ---");
                     let test_result = run_visual_test(
                         "workspace_with_editor",
                         workspace_window.into(),
@@ -323,25 +305,12 @@ fn main() {
                     .await;
 
                     match test_result {
-                        Ok(TestResult::Passed) => {
-                            println!("✓ workspace_with_editor: PASSED");
-                            passed += 1;
-                        }
-                        Ok(TestResult::BaselineUpdated(path)) => {
-                            println!(
-                                "✓ workspace_with_editor: Baseline updated at {}",
-                                path.display()
-                            );
-                            updated += 1;
-                        }
-                        Err(e) => {
-                            eprintln!("✗ workspace_with_editor: FAILED - {}", e);
-                            failed += 1;
-                        }
+                        Ok(TestResult::Passed) => passed += 1,
+                        Ok(TestResult::BaselineUpdated(_)) => updated += 1,
+                        Err(_) => failed += 1,
                     }
 
                     // Run Test 3: Agent Thread View with Image (collapsed and expanded)
-                    println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
                     let test_result = run_agent_thread_view_test(
                         app_state_for_tests.clone(),
                         &mut cx,
@@ -350,36 +319,16 @@ fn main() {
                     .await;
 
                     match test_result {
-                        Ok(TestResult::Passed) => {
-                            println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
-                            passed += 1;
-                        }
-                        Ok(TestResult::BaselineUpdated(_)) => {
-                            println!(
-                                "✓ agent_thread_with_image: Baselines updated (collapsed + expanded)"
-                            );
-                            updated += 1;
-                        }
-                        Err(e) => {
-                            eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
-                            failed += 1;
-                        }
+                        Ok(TestResult::Passed) => passed += 1,
+                        Ok(TestResult::BaselineUpdated(_)) => updated += 1,
+                        Err(_) => failed += 1,
                     }
 
-                    // Print summary
-                    println!("\n=== Test Summary ===");
-                    println!("Passed: {}", passed);
-                    println!("Failed: {}", failed);
-                    if updated > 0 {
-                        println!("Baselines Updated: {}", updated);
-                    }
+                    let _ = (passed, updated);
 
                     if failed > 0 {
-                        eprintln!("\n=== Visual Tests FAILED ===");
                         cx.update(|cx| cx.quit()).ok();
                         std::process::exit(1);
-                    } else {
-                        println!("\n=== All Visual Tests PASSED ===");
                     }
 
                     cx.update(|cx| cx.quit()).ok();
@@ -423,7 +372,6 @@ async fn run_visual_test(
 
     // Save the actual screenshot
     screenshot.save(&actual_path)?;
-    println!("Screenshot saved to: {}", actual_path.display());
 
     if update_baseline {
         // Update the baseline
@@ -449,13 +397,6 @@ async fn run_visual_test(
 
     let comparison = compare_images(&baseline, &screenshot);
 
-    println!(
-        "Image comparison: {:.2}% match ({} different pixels out of {})",
-        comparison.match_percentage * 100.0,
-        comparison.diff_pixel_count,
-        comparison.total_pixels
-    );
-
     if comparison.match_percentage >= MATCH_THRESHOLD {
         Ok(TestResult::Passed)
     } else {
@@ -463,7 +404,6 @@ async fn run_visual_test(
         if let Some(diff_image) = comparison.diff_image {
             let diff_path = Path::new(&output_dir).join(format!("{}_diff.png", test_name));
             diff_image.save(&diff_path)?;
-            println!("Diff image saved to: {}", diff_path.display());
         }
 
         Err(anyhow::anyhow!(
@@ -570,12 +510,6 @@ fn capture_screenshot(window: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Resu
     let screenshot = cx.update_window(window, |_view, window: &mut Window, _cx| {
         window.render_to_image()
     })??;
-
-    println!(
-        "Screenshot captured: {}x{} pixels",
-        screenshot.width(),
-        screenshot.height()
-    );
 
     Ok(screenshot)
 }
