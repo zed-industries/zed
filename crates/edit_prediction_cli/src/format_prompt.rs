@@ -130,12 +130,22 @@ impl TeacherPrompt {
             .context("`buffer` should be filled in in the context collection step")?
             .content;
 
-        // Extract updated (new) editable region from the model response
+        // Extract updated (new) editable region from the model response.
+        // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
+        let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
 
         // Reconstruct old editable region we sent to the model
         let old_editable_region = Self::format_editable_region(example);
         let old_editable_region = Self::extract_editable_region(&old_editable_region);
+
+        // Normalize leading newlines: if old starts with newline but new doesn't,
+        // prepend newline to new to preserve whitespace structure.
+        // This handles the case where the model drops the leading blank line.
+        if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
+            new_editable_region.insert(0, '\n');
+        }
+
         ensure!(
             cursor_file.contains(&old_editable_region),
             "Something's wrong: editable_region is not found in the cursor file"
@@ -214,6 +224,7 @@ impl TeacherPrompt {
         let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
+        let region = region.strip_suffix('\n').unwrap_or(region);
 
         region.replace("<|user_cursor|>", "")
     }
@@ -242,16 +253,16 @@ fn extract_last_codeblock(text: &str) -> String {
         }
 
         let backtick_count = backtick_end - start;
-        let closing_backticks = "`".repeat(backtick_count);
+        let closing_pattern = format!("\n{}", "`".repeat(backtick_count));
 
         while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
             backtick_end += 1;
         }
 
-        if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
+        if let Some(end_pos) = text[backtick_end..].find(&closing_pattern) {
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos + 1];
             last_block = Some(code_block.to_string());
-            search_start = backtick_end + end_pos + backtick_count;
+            search_start = backtick_end + end_pos + closing_pattern.len();
         } else {
             break;
         }
@@ -282,6 +293,37 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_codeblock_with_nested_fences() {
+        let text = indoc::indoc! {"
+            `````
+            content with ``` inline
+            and ```python nested
+            more content
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "content with ``` inline\nand ```python nested\nmore content\n"
+        );
+    }
+
+    #[test]
+    fn test_extract_codeblock_ignores_inline_backticks() {
+        let text = indoc::indoc! {"
+            `````
+            here is some `code` with inline backticks
+            and here```more```stuff
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "here is some `code` with inline backticks\nand here```more```stuff\n"
+        );
+    }
+
+    #[test]
     fn test_extract_editable_region() {
         let text = indoc::indoc! {"
             some lines
@@ -301,7 +343,78 @@ mod tests {
             indoc::indoc! {"
             one
             two three
+            "}
+        );
+    }
 
+    #[test]
+    fn test_extract_last_codeblock_nested_bibtex() {
+        let text = indoc::indoc! {r#"
+            Looking at the edit history, I can see that a Citation section was just added.
+
+            `````
+            ## Collaborations
+            Our mission is to create a 4D generative model.
+
+            ## Citation
+
+            If you found Unique3D helpful, please cite our report:
+            ```bibtex
+            @misc{wu2024unique3d,
+                  title={Unique3D},
+            }
+            ```
+            `````
+            "#};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            indoc::indoc! {r#"
+            ## Collaborations
+            Our mission is to create a 4D generative model.
+
+            ## Citation
+
+            If you found Unique3D helpful, please cite our report:
+            ```bibtex
+            @misc{wu2024unique3d,
+                  title={Unique3D},
+            }
+            ```
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_extract_editable_region_no_markers() {
+        let text = indoc::indoc! {"
+            one
+            two three
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three"}
+        );
+    }
+
+    #[test]
+    fn test_extract_editable_region_strips_cursor_marker() {
+        let text = indoc::indoc! {"
+            <|editable_region_start|>
+            one
+            <|user_cursor|>two three
+
+            <|editable_region_end|>
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three
             "}
         );
     }
