@@ -425,7 +425,7 @@ struct LastEvent {
     new_snapshot: TextBufferSnapshot,
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
-    end_edit_anchor: Option<Anchor>,
+    edit_range: Option<Range<Anchor>>,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
 }
@@ -479,7 +479,7 @@ impl LastEvent {
             new_snapshot: boundary_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            end_edit_anchor: self.end_edit_anchor,
+            edit_range: None,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -489,7 +489,7 @@ impl LastEvent {
             new_snapshot: self.new_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            end_edit_anchor: self.end_edit_anchor,
+            edit_range: None,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -999,10 +999,7 @@ impl EditPredictionStore {
 
         let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-        let end_edit_anchor = new_snapshot
-            .anchored_edits_since::<Point>(&old_snapshot.version)
-            .last()
-            .map(|(_, range)| range.end);
+        let edit_range = edited_range(&old_snapshot, &new_snapshot);
         let events = &mut project_state.events;
 
         let now = cx.background_executor().now();
@@ -1012,13 +1009,19 @@ impl EditPredictionStore {
                 && old_snapshot.version == last_event.new_snapshot.version;
 
             let should_coalesce = is_next_snapshot_of_same_buffer
-                && end_edit_anchor
+                && edit_range
                     .as_ref()
-                    .zip(last_event.end_edit_anchor.as_ref())
+                    .zip(last_event.edit_range.as_ref())
                     .is_some_and(|(a, b)| {
                         let a = a.to_point(&new_snapshot);
                         let b = b.to_point(&new_snapshot);
-                        a.row.abs_diff(b.row) <= CHANGE_GROUPING_LINE_SPAN
+                        if a.start > b.end {
+                            a.start.row.abs_diff(b.end.row) <= CHANGE_GROUPING_LINE_SPAN
+                        } else if b.start > a.end {
+                            b.start.row.abs_diff(a.end.row) <= CHANGE_GROUPING_LINE_SPAN
+                        } else {
+                            true
+                        }
                     });
 
             if should_coalesce {
@@ -1031,19 +1034,20 @@ impl EditPredictionStore {
                         Some(last_event.new_snapshot.clone());
                 }
 
-                last_event.end_edit_anchor = end_edit_anchor;
+                last_event.edit_range = edit_range;
                 last_event.new_snapshot = new_snapshot;
                 last_event.last_edit_time = Some(now);
                 return;
             }
         }
 
-        if events.len() + 1 >= EVENT_COUNT_MAX {
-            events.pop_front();
-        }
-
         if let Some(event) = project_state.last_event.take() {
-            events.extend(event.finalize(&project_state.license_detection_watchers, cx));
+            if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
+                if events.len() + 1 >= EVENT_COUNT_MAX {
+                    events.pop_front();
+                }
+                events.push_back(event);
+            }
         }
 
         project_state.last_event = Some(LastEvent {
@@ -1051,7 +1055,7 @@ impl EditPredictionStore {
             new_file,
             old_snapshot,
             new_snapshot,
-            end_edit_anchor,
+            edit_range,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
         });
@@ -2090,6 +2094,20 @@ impl EditPredictionStore {
         self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
             && all_language_settings(None, cx).edit_predictions.use_context;
     }
+}
+
+fn edited_range(
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
+) -> Option<Range<Anchor>> {
+    new_snapshot
+        .anchored_edits_since::<usize>(&old_snapshot.version)
+        .fold(None, |acc, (_, range)| {
+            Some(match acc {
+                None => range,
+                Some(acc) => acc.start..range.end,
+            })
+        })
 }
 
 #[derive(Error, Debug)]
