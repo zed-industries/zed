@@ -1,4 +1,4 @@
-use super::{latest, since_v0_6_0};
+use super::latest;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::WorktreeDelegate;
