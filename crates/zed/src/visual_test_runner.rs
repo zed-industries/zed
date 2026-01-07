@@ -25,13 +25,14 @@
 //!   VISUAL_TEST_OUTPUT_DIR - Directory to save test output (default: target/visual_tests)
 
 use anyhow::{Context, Result};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
     App, AppContext as _, Application, Bounds, Window, WindowBounds, WindowHandle, WindowOptions,
     point, px, size,
 };
 use image::RgbaImage;
 use project_panel::ProjectPanel;
-use settings::SettingsStore;
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -106,6 +107,17 @@ fn main() {
                 prompt_store::init(cx);
                 language_model::init(app_state.client.clone(), cx);
                 language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+                git_ui::init(cx);
+
+                // Disable agent notifications during visual tests to avoid popup windows
+                agent_settings::AgentSettings::override_global(
+                    agent_settings::AgentSettings {
+                        notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                        play_sound_when_agent_done: false,
+                        ..agent_settings::AgentSettings::get_global(cx).clone()
+                    },
+                    cx,
+                );
 
                 // Open a real Zed workspace window
                 let window_size = size(px(1280.0), px(800.0));
@@ -362,6 +374,30 @@ fn main() {
                         }
                         Err(e) => {
                             eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
+                            failed += 1;
+                        }
+                    }
+
+                    // Run Test 4: Diff Review Button visual tests
+                    println!("\n--- Test 4: diff_review_button (3 variants) ---");
+                    let test_result = run_diff_review_visual_tests(
+                        app_state_for_tests.clone(),
+                        &mut cx,
+                        update_baseline,
+                    )
+                    .await;
+
+                    match test_result {
+                        Ok(TestResult::Passed) => {
+                            println!("✓ diff_review_button: PASSED");
+                            passed += 1;
+                        }
+                        Ok(TestResult::BaselineUpdated(_)) => {
+                            println!("✓ diff_review_button: Baselines updated");
+                            updated += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("✗ diff_review_button: FAILED - {}", e);
                             failed += 1;
                         }
                     }
@@ -737,6 +773,252 @@ fn init_app_state(cx: &mut gpui::App) -> Arc<AppState> {
         build_window_options: |_, _| Default::default(),
         session,
     })
+}
+
+/// Runs the diff review button visual tests.
+/// Creates three screenshots:
+/// 1. Diff view with feature flag enabled (button visible with tooltip on hover)
+/// 2. Diff view with feature flag disabled (no button)
+/// 3. Regular editor with feature flag enabled (no button)
+async fn run_diff_review_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use git_ui::project_diff::ProjectDiff;
+
+    // Create a temporary directory with test files and a real git repo
+    let temp_dir = tempfile::tempdir()?;
+    let project_path = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    // Initialize a real git repository
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Configure git user for commits
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&project_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Create a test file with original content
+    let original_content = "// Original content\n";
+    std::fs::write(project_path.join("thread-view.tsx"), original_content)?;
+
+    // Commit the original file
+    std::process::Command::new("git")
+        .args(["add", "thread-view.tsx"])
+        .current_dir(&project_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Modify the file to create a diff
+    let modified_content = r#"import { ScrollArea } from 'components';
+import { ButtonAlt, Tooltip } from 'ui';
+import { Message, FileEdit } from 'types';
+import { AiPaneTabContext } from 'context';
+"#;
+    std::fs::write(project_path.join("thread-view.tsx"), modified_content)?;
+
+    // Create a project
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    })?;
+
+    // Add the test directory as a worktree
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    })?;
+    let _ = add_worktree_task.await?;
+
+    // Wait for worktree to be fully scanned and git status to be detected
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(500))
+        .await;
+
+    // Create window for the diff view - sized to show just the editor
+    let window_size = size(px(600.0), px(400.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    // Test 1: Diff view with feature flag enabled
+    // Enable the feature flag
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["diff-review".to_string()]);
+    })?;
+
+    let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+            },
+        )
+    })??;
+
+    // Wait for workspace to initialize
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(200))
+        .await;
+
+    // Create and add the ProjectDiff using the public deploy_at method
+    workspace_window.update(cx, |workspace, window, cx| {
+        ProjectDiff::deploy_at(workspace, None, window, cx);
+    })?;
+
+    // Wait for diff to render
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(500))
+        .await;
+
+    // Refresh window
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    // Capture Test 1: Diff with flag enabled
+    let test1_result = run_visual_test(
+        "diff_review_button_enabled",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await?;
+
+    // Test 2: Diff view with feature flag disabled
+    // Disable the feature flag
+    cx.update(|cx| {
+        cx.update_flags(false, vec![]);
+    })?;
+
+    // Refresh window
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    // Capture Test 2: Diff with flag disabled
+    let test2_result = run_visual_test(
+        "diff_review_button_disabled",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await?;
+
+    // Test 3: Regular editor with flag enabled (should NOT show button)
+    // Re-enable the feature flag
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["diff-review".to_string()]);
+    })?;
+
+    // Create a new window with just a regular editor
+    let regular_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+            },
+        )
+    })??;
+
+    // Wait for workspace
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(200))
+        .await;
+
+    // Open a regular file (not a diff view)
+    let open_file_task = regular_window.update(cx, |workspace, window, cx| {
+        let worktree = workspace.project().read(cx).worktrees(cx).next();
+        if let Some(worktree) = worktree {
+            let worktree_id = worktree.read(cx).id();
+            let rel_path: std::sync::Arc<util::rel_path::RelPath> =
+                util::rel_path::rel_path("thread-view.tsx").into();
+            let project_path: project::ProjectPath = (worktree_id, rel_path).into();
+            Some(workspace.open_path(project_path, None, true, window, cx))
+        } else {
+            None
+        }
+    })?;
+
+    if let Some(task) = open_file_task {
+        task.await.ok();
+    }
+
+    // Wait for file to open
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_view, window: &mut Window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    // Capture Test 3: Regular editor with flag enabled (no button)
+    let test3_result = run_visual_test(
+        "diff_review_button_regular_editor",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await?;
+
+    // Return combined result
+    match (&test1_result, &test2_result, &test3_result) {
+        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _, _) => Ok(TestResult::BaselineUpdated(p.clone())),
+        (_, TestResult::BaselineUpdated(p), _) => Ok(TestResult::BaselineUpdated(p.clone())),
+        (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    }
 }
 
 /// A stub AgentServer for visual testing that returns a pre-programmed connection.

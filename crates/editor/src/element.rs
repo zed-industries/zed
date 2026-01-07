@@ -36,6 +36,7 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
@@ -3027,6 +3028,51 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_diff_review_button(
+        &self,
+        line_height: Pixels,
+        scroll_position: gpui::Point<ScrollOffset>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        snapshot: &EditorSnapshot,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if !cx.has_flag::<DiffReviewFeatureFlag>() {
+            return None;
+        }
+
+        let show_diff_review_button = self.editor.read(cx).show_diff_review_button();
+        if !show_diff_review_button {
+            return None;
+        }
+
+        let max_point = snapshot.display_snapshot.max_point();
+        let last_row = max_point.row();
+
+        let button = IconButton::new("diff_review_button", IconName::Plus)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .style(ButtonStyle::Transparent)
+            .tooltip(Tooltip::text("Add Review"));
+
+        let button = prepaint_gutter_button(
+            button,
+            last_row,
+            line_height,
+            gutter_dimensions,
+            scroll_position,
+            gutter_hitbox,
+            display_hunks,
+            window,
+            cx,
+        );
+
+        Some(button)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6465,6 +6511,10 @@ impl EditorElement {
 
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
+            }
+
+            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
+                diff_review_button.paint(window, cx);
             }
         });
     }
@@ -10289,6 +10339,17 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let diff_review_button = self.layout_diff_review_button(
+                        line_height,
+                        scroll_position,
+                        &gutter_dimensions,
+                        &gutter_hitbox,
+                        &display_hunks,
+                        &snapshot,
+                        window,
+                        cx,
+                    );
+
                     self.layout_signature_help(
                         &hitbox,
                         content_origin,
@@ -10486,6 +10547,7 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
+                        diff_review_button,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -10664,6 +10726,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
+    diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,

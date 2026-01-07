@@ -35,3 +35,13 @@ pub struct AgentSharingFeatureFlag;
 impl FeatureFlag for AgentSharingFeatureFlag {
     const NAME: &'static str = "agent-sharing";
 }
+
+pub struct DiffReviewFeatureFlag;
+
+impl FeatureFlag for DiffReviewFeatureFlag {
+    const NAME: &'static str = "diff-review";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
