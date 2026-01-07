@@ -45,3 +45,13 @@ impl FeatureFlag for SubagentsFeatureFlag {
         false
     }
 }
+
+pub struct DiffReviewFeatureFlag;
+
+impl FeatureFlag for DiffReviewFeatureFlag {
+    const NAME: &'static str = "diff-review";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}

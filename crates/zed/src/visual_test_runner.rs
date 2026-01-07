@@ -50,6 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
+    editor::Editor,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
@@ -60,7 +61,7 @@ use {
     project_panel::ProjectPanel,
     settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore},
     std::{
-        any::Any,
+        any::{Any, TypeId},
         path::{Path, PathBuf},
         rc::Rc,
         sync::Arc,
@@ -1751,5 +1752,446 @@ fn run_agent_thread_view_test(
         (TestResult::BaselineUpdated(p), _) | (_, TestResult::BaselineUpdated(p)) => {
             Ok(TestResult::BaselineUpdated(p.clone()))
         }
+    }
+}
+
+/// Runs visual tests for the diff review button in the project diff view.
+///
+/// This test captures three states:
+/// 1. Diff view with feature flag enabled and button visible on hover
+/// 2. Diff view with tooltip visible when hovering the button
+/// 3. Diff view with feature flag disabled (no button)
+#[cfg(target_os = "macos")]
+fn run_diff_review_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // Create a temporary directory with test files and a real git repo
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path.canonicalize()?;
+    let project_path = canonical_temp.join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Configure git user for commits
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&project_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Create initial file and commit
+    let src_dir = project_path.join("src");
+    std::fs::create_dir_all(&src_dir)?;
+
+    let original_content = r#"// Original content
+import { ScrollArea } from 'components';
+import { ButtonAlt, Tooltip } from 'ui';
+import { Message, FileEdit } from 'types';
+import { AiPaneTabContext } from 'context';
+"#;
+    std::fs::write(src_dir.join("thread-view.tsx"), original_content)?;
+
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_path)
+        .output()?;
+
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&project_path)
+        .output()?;
+
+    // Modify the file to create a diff
+    let modified_content = r#"// Modified content with changes
+import { ScrollArea } from 'components';
+import { ButtonAlt, Tooltip } from 'ui';
+import { Message, FileEdit } from 'types';
+import { AiPaneTabContext } from 'context';
+"#;
+    std::fs::write(src_dir.join("thread-view.tsx"), modified_content)?;
+
+    // Create a window for the diff view
+    let window_size = size(px(600.0), px(500.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    // Create project pointing to the git repo
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    });
+
+    // Open workspace window
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open diff workspace window")?;
+
+    cx.run_until_parked();
+
+    // Add the git repo as a worktree
+    let add_worktree_task = workspace_window
+        .update(cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                project.find_or_create_worktree(&project_path, true, cx)
+            })
+        })
+        .context("Failed to start adding worktree")?;
+
+    cx.background_executor.allow_parking();
+    let worktree_result = cx.background_executor.block_test(add_worktree_task);
+    cx.background_executor.forbid_parking();
+    let (worktree, _) = worktree_result.context("Failed to add worktree")?;
+
+    cx.run_until_parked();
+
+    // Wait for the worktree scan to complete
+    let scan_complete_task =
+        cx.update(|cx| worktree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete()));
+    cx.background_executor.allow_parking();
+    cx.background_executor.block_test(scan_complete_task);
+    cx.background_executor.forbid_parking();
+
+    cx.run_until_parked();
+
+    // Wait for git repository barriers to complete
+    let project_handle = workspace_window
+        .update(cx, |workspace, _window, _cx| workspace.project().clone())
+        .context("Failed to get project")?;
+
+    for _ in 0..100 {
+        let barriers = cx.update(|cx| {
+            project_handle.update(cx, |project, cx| {
+                let repos = project
+                    .repositories(cx)
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                repos
+                    .into_iter()
+                    .map(|repo| repo.update(cx, |repo, _| repo.barrier()))
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        if !barriers.is_empty() {
+            cx.background_executor.allow_parking();
+            for barrier in barriers {
+                let _ = cx.background_executor.block_test(barrier);
+            }
+            cx.background_executor.forbid_parking();
+            break;
+        }
+
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    cx.run_until_parked();
+
+    // Enable the diff-review feature flag
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["diff-review".to_string()]);
+    });
+
+    cx.run_until_parked();
+
+    // Open the ProjectDiff view
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, window, cx);
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    // Poll until the diff view has content
+    for attempt in 0..200 {
+        let has_content = workspace_window
+            .update(cx, |workspace, _window, cx| {
+                if let Some(item) = workspace.active_item(cx) {
+                    if let Some(editor_entity) = item.act_as_type(TypeId::of::<Editor>(), cx) {
+                        let editor_handle = editor_entity.downcast::<Editor>().unwrap();
+                        let editor = editor_handle.read(cx);
+                        let buffer = editor.buffer().read(cx);
+                        !buffer.is_empty()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+
+        if has_content {
+            eprintln!("Diff content detected after {} iterations", attempt);
+            break;
+        }
+
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Test 1: Diff with flag enabled - button appears on hover over gutter
+    // Position in the gutter area
+    let gutter_row1_position = point(px(25.0), px(60.0));
+
+    // Initial draw to register mouse listeners
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.draw(cx).clear();
+    })?;
+    cx.run_until_parked();
+
+    // Move mouse over the gutter to trigger diff review indicator
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.simulate_mouse_move(gutter_row1_position, cx);
+    })?;
+    cx.run_until_parked();
+
+    // Draw to process the mouse move
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.draw(cx).clear();
+    })?;
+    cx.run_until_parked();
+
+    // Move mouse again to ensure indicator is created
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.simulate_mouse_move(gutter_row1_position, cx);
+    })?;
+    cx.run_until_parked();
+
+    // Advance clock past the 200ms debounce for the diff review indicator
+    cx.advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+
+    // Draw to render the button
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.draw(cx).clear();
+    })?;
+    cx.run_until_parked();
+
+    // Refresh window
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test1_result = run_visual_test(
+        "diff_review_button_enabled",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 1b: Tooltip visible when hovering over the diff review button
+    let button_position = point(px(5.0), px(60.0));
+
+    // Move mouse over the button to trigger tooltip scheduling
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.simulate_mouse_move(button_position, cx);
+    })?;
+    cx.run_until_parked();
+
+    // Draw to register the button's tooltip hover listener
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.draw(cx).clear();
+    })?;
+    cx.run_until_parked();
+
+    // Move mouse over button again to trigger tooltip scheduling
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.simulate_mouse_move(button_position, cx);
+    })?;
+    cx.run_until_parked();
+
+    // Advance clock past TOOLTIP_SHOW_DELAY (500ms)
+    cx.advance_clock(TOOLTIP_SHOW_DELAY + Duration::from_millis(100));
+    cx.run_until_parked();
+
+    // Draw to render the tooltip
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        window.draw(cx).clear();
+    })?;
+    cx.run_until_parked();
+
+    // Refresh window
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test1b_result = run_visual_test(
+        "diff_review_button_tooltip",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 2: Diff view with feature flag disabled
+    let close_task = workspace_window
+        .update(cx, |workspace, window, cx| {
+            if let Some(item) = workspace.active_item(cx) {
+                let item_id = item.item_id();
+                let pane = workspace.active_pane().clone();
+                Some(pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(item_id, workspace::SaveIntent::Skip, window, cx)
+                }))
+            } else {
+                None
+            }
+        })
+        .ok()
+        .flatten();
+
+    if let Some(task) = close_task {
+        cx.background_executor.allow_parking();
+        let _ = cx.background_executor.block_test(task);
+        cx.background_executor.forbid_parking();
+    }
+
+    cx.run_until_parked();
+
+    // Disable all feature flags
+    cx.update(|cx| {
+        cx.update_flags(false, vec![]);
+    });
+
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Reopen ProjectDiff view with flag disabled
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, window, cx);
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    // Poll until the diff view has content
+    for attempt in 0..200 {
+        let has_content = workspace_window
+            .update(cx, |workspace, _window, cx| {
+                if let Some(item) = workspace.active_item(cx) {
+                    if let Some(editor_entity) = item.act_as_type(TypeId::of::<Editor>(), cx) {
+                        let editor_handle = editor_entity.downcast::<Editor>().unwrap();
+                        let editor = editor_handle.read(cx);
+                        let buffer = editor.buffer().read(cx);
+                        !buffer.is_empty()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+
+        if has_content {
+            eprintln!(
+                "Disabled test: Diff content detected after {} iterations",
+                attempt
+            );
+            break;
+        }
+
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    let test2_result = run_visual_test(
+        "diff_review_button_disabled",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Clean up worktrees
+    workspace_window
+        .update(cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                let worktree_ids: Vec<_> =
+                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in worktree_ids {
+                    project.remove_worktree(id, cx);
+                }
+            });
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    // Close window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Return combined result
+    match (&test1_result, &test1b_result, &test2_result) {
+        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _, _)
+        | (_, TestResult::BaselineUpdated(p), _)
+        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
     }
 }
