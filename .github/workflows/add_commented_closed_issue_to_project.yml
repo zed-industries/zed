@@ -45,6 +45,5 @@ jobs:
       - if: steps.check-staff.outputs.result == 'false'
         uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
         with:
-          # TODO: Change back to project 71 after testing
-          project-url: https://github.com/orgs/zed-industries/projects/73
+          project-url: https://github.com/orgs/zed-industries/projects/71
           github-token: ${{ steps.get-app-token.outputs.token }}
