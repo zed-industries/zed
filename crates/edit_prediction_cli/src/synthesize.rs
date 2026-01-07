@@ -108,7 +108,7 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
     std::os::windows::fs::symlink_dir(&*FAILED_EXAMPLES_DIR, &*LATEST_FAILED_EXAMPLES_DIR)?;
 
     let progress = Progress::global();
-    progress.set_total_steps(config.count);
+    progress.set_total_examples(config.count);
 
     let clone_progress = progress.start(Step::Synthesize, "clone");
     let repo_path = ensure_repo_cloned(&config.repo_url).await?;
