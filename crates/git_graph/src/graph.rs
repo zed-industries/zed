@@ -122,23 +122,6 @@ pub struct CommitData {
     pub _ref_names: Vec<SharedString>,
 }
 
-#[derive(Clone, Debug)]
-pub struct GraphLine {
-    pub from_lane: usize,
-    pub to_lane: usize,
-    pub line_type: LineType,
-    pub color_idx: usize,
-    pub continues_from_above: bool,
-    pub ends_at_commit: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum LineType {
-    Straight,
-    MergeDown,
-    BranchOut,
-}
-
 // todo! On accent colors updating it's len we need to update lane colors to use different indices
 #[derive(Copy, Clone)]
 struct BranchColor(u8);
@@ -174,8 +157,14 @@ impl LaneState {
                 full_interval: starting_row..ending_row,
                 color_idx: color.0 as usize,
                 segments: {
-                    segments.push(CommitLineSegment::Straight { to_row: ending_row });
-                    segments
+                    if let Some(CommitLineSegment::Curve { on_row, .. }) = segments.first()
+                        && *on_row == ending_row
+                    {
+                        segments
+                    } else {
+                        segments.push(CommitLineSegment::Straight { to_row: ending_row });
+                        segments
+                    }
                 },
             }),
             _ => None,
