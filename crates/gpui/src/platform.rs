@@ -92,9 +92,9 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
-    // For standalone background executor, use a dead liveness since there's no App
-    let dead_liveness = std::sync::Arc::downgrade(&std::sync::Arc::new(()));
-    current_platform(true, dead_liveness).background_executor()
+    // For standalone background executor, use a dead liveness since there's no App.
+    // Weak::new() creates a weak reference that always returns None on upgrade.
+    current_platform(true, std::sync::Weak::new()).background_executor()
 }
 
 #[cfg(target_os = "macos")]
