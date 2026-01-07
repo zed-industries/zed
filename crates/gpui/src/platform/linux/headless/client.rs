@@ -21,20 +21,17 @@ pub struct HeadlessClientState {
 pub(crate) struct HeadlessClient(Rc<RefCell<HeadlessClientState>>);
 
 impl HeadlessClient {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(liveness: std::sync::Weak<()>) -> Self {
         let event_loop = EventLoop::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal(), liveness);
 
         let handle = event_loop.handle();
 
         handle
             .insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
                 if let calloop::channel::Event::Msg(runnable) = event {
-                    match runnable {
-                        crate::RunnableVariant::Meta(runnable) => runnable.run(),
-                        crate::RunnableVariant::Compat(runnable) => runnable.run(),
-                    };
+                    runnable.run_unprofiled();
                 }
             })
             .ok();

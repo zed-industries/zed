@@ -462,7 +462,11 @@ impl HeadlessProject {
                             .with_tag("path", path.to_string_lossy().as_ref())
                     )
                 })?;
-                parent.join(path.file_name().unwrap())
+                if let Some(file_name) = path.file_name() {
+                    parent.join(file_name)
+                } else {
+                    parent
+                }
             }
         };
 

@@ -1283,32 +1283,11 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
-                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(
-                                &this.project().read(cx).worktree_store(),
-                                *worktree_id,
-                                cx,
-                            );
-                        });
-                    }
-                }
-
                 project::Event::WorktreeRemoved(_) => {
                     this.update_worktree_data(window, cx);
                 }
 
-                project::Event::WorktreeAdded(worktree_id) => {
-                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(
-                                &this.project().read(cx).worktree_store(),
-                                *worktree_id,
-                                cx,
-                            );
-                        });
-                    }
+                project::Event::WorktreeUpdatedEntries(..) | project::Event::WorktreeAdded(..) => {
                     this.update_worktree_data(window, cx);
                 }
 
@@ -1321,7 +1300,7 @@ impl Workspace {
                     }
                 }
 
-                project::Event::DisconnectedFromSshRemote => {
+                project::Event::DisconnectedFromRemote => {
                     this.update_window_edited(window, cx);
                 }
 
@@ -4945,8 +4924,6 @@ impl Workspace {
 
         cx.notify();
         proto::FollowResponse {
-            // TODO: Remove after version 0.145.x stabilizes.
-            active_view_id: active_view.as_ref().and_then(|view| view.id.clone()),
             views: active_view.iter().cloned().collect(),
             active_view,
         }
@@ -5220,19 +5197,14 @@ impl Workspace {
                         && let Some(variant) = item.to_state_proto(window, cx)
                     {
                         let view = Some(proto::View {
-                            id: id.clone(),
+                            id,
                             leader_id: leader_peer_id,
                             variant: Some(variant),
                             panel_id: panel_id.map(|id| id as i32),
                         });
 
                         is_project_item = item.is_project_item(window, cx);
-                        update = proto::UpdateActiveView {
-                            view,
-                            // TODO: Remove after version 0.145.x stabilizes.
-                            id,
-                            leader_id: leader_peer_id,
-                        };
+                        update = proto::UpdateActiveView { view };
                     };
                 }
             }

@@ -1,3 +1,4 @@
+use crate::paths::WORKTREES_DIR;
 use crate::{PredictionProvider, PromptFormat};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -90,7 +91,7 @@ pub struct ExampleScore {
 }
 
 impl Example {
-    pub fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
+    pub fn repo_name(&self) -> Result<RepoName<'_>> {
         // git@github.com:owner/repo.git
         if self.spec.repository_url.contains('@') {
             let (owner, repo) = self
@@ -101,10 +102,10 @@ impl Example {
                 .1
                 .split_once('/')
                 .context("expected / in git url")?;
-            Ok((
-                Cow::Borrowed(owner),
-                Cow::Borrowed(repo.trim_end_matches(".git")),
-            ))
+            Ok(RepoName {
+                owner: Cow::Borrowed(owner),
+                name: Cow::Borrowed(repo.trim_end_matches(".git")),
+            })
         // http://github.com/owner/repo.git
         } else {
             let url = Url::parse(&self.spec.repository_url)?;
@@ -120,21 +121,29 @@ impl Example {
                 .to_string();
             assert!(segments.next().is_none());
 
-            Ok((owner.into(), repo.into()))
+            Ok(RepoName {
+                owner: Cow::Owned(owner),
+                name: Cow::Owned(repo),
+            })
         }
     }
 }
 
-pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
+pub struct RepoName<'a> {
+    pub owner: Cow<'a, str>,
+    pub name: Cow<'a, str>,
+}
+
+impl RepoName<'_> {
+    pub fn worktree_path(&self) -> PathBuf {
+        WORKTREES_DIR
+            .join(self.owner.as_ref())
+            .join(self.name.as_ref())
+    }
+}
+
+pub fn read_example_files(inputs: &[PathBuf]) -> Vec<Example> {
     let mut examples = Vec::new();
-
-    let stdin_path: PathBuf = PathBuf::from("-");
-
-    let inputs = if inputs.is_empty() {
-        &[stdin_path]
-    } else {
-        inputs
-    };
 
     for path in inputs {
         let is_stdin = path.as_path() == Path::new("-");
@@ -201,7 +210,6 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
         }
     }
 
-    sort_examples_by_repo_and_rev(&mut examples);
     examples
 }
 

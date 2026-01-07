@@ -448,8 +448,12 @@ message Envelope {
         TrustWorktrees trust_worktrees = 404;
         RestrictWorktrees restrict_worktrees = 405;
 
-        FindSearchCandidatesChunk find_search_candidates_chunk = 406;
-        FindSearchCandidatesChunkResponse find_search_candidates_chunk_response = 407; // current max
+        ShareAgentThread share_agent_thread = 406;
+        GetSharedAgentThread get_shared_agent_thread = 407;
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
+
+        FindSearchCandidatesChunk find_search_candidates_chunk = 409;
+        FindSearchCandidatesChunkResponse find_search_candidates_chunk_response = 410; // current max
     }
 
     reserved 87 to 88;
