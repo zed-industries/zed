@@ -145,10 +145,37 @@ struct BranchColor(u8);
 
 enum LaneState {
     Empty,
-    Active { sha: Oid, color: BranchColor },
+    Active {
+        sha: Oid,
+        color: BranchColor,
+        starting_row: usize,
+        starting_col: usize,
+    },
 }
 
 impl LaneState {
+    fn to_commit_line(&mut self, parent: Oid, ending_row: usize) -> Option<CommitLine> {
+        let state = std::mem::replace(self, LaneState::Empty);
+
+        match state {
+            LaneState::Active {
+                // todo! there's a bug where we use the same sha as both the parent and child commit
+                sha,
+                color,
+                starting_row,
+                starting_col,
+            } => Some(CommitLine {
+                child: sha,
+                child_column: starting_col,
+                parent,
+                full_interval: starting_row..ending_row,
+                color_idx: color.0 as usize,
+                segments: SmallVec::new(),
+            }),
+            _ => None,
+        }
+    }
+
     fn is_commit(&self, other: &Oid) -> bool {
         match self {
             LaneState::Empty => false,
@@ -169,7 +196,6 @@ pub struct CommitEntry {
     pub data: CommitData,
     pub lane: usize,
     pub color_idx: usize,
-    pub lines: Vec<GraphLine>,
 }
 
 type ActiveLaneIdx = usize;
@@ -193,11 +219,12 @@ enum CommitLineSegment {
     Curve { to_column: usize, on_row: usize },
 }
 
-struct CommitLine {
-    child: Oid,
-    child_column: usize,
-    parent: Oid,
-    full_interval: Range<usize>,
+pub struct CommitLine {
+    pub child: Oid,
+    pub child_column: usize,
+    pub parent: Oid,
+    pub full_interval: Range<usize>,
+    pub color_idx: usize,
     segments: SmallVec<[CommitLineSegment; 1]>,
 }
 
@@ -215,7 +242,7 @@ pub struct GitGraph {
     pub commits: Vec<Rc<CommitEntry>>,
     pub max_commit_count: AllCommitCount,
     pub max_lanes: usize,
-    pub lines: Vec<CommitLine>,
+    pub lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
 }
@@ -271,58 +298,22 @@ impl GitGraph {
         for commit in commits.into_iter() {
             let commit_row = self.commits.len();
 
-            if let Some(line_indices) = self.active_commit_lines_by_parent.remove(&commit.sha) {
-                for line_idx in line_indices {
-                    let Some(line) = self.lines.get_mut(line_idx) else {
-                        continue;
-                    };
-
-                    line.full_interval.end = commit_row;
-
-                    let key = CommitLineKey {
-                        child: line.child,
-                        parent: line.parent,
-                    };
-                    self.active_commit_lines.remove(&key);
-                }
-            }
-
             let commit_lane = self
                 .lane_states
                 .iter()
                 .position(|lane: &LaneState| lane.is_commit(&commit.sha));
 
             let branch_continued = commit_lane.is_some();
+            if let Some(commit_line) = commit_lane
+                .and_then(|lane| self.lane_states[lane].to_commit_line(commit.sha, commit_row))
+            {
+                self.lines.push(Rc::new(commit_line));
+            }
+
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
             let commit_color = self.get_lane_color(commit_lane);
 
-            let mut lines = Vec::from_iter(self.lane_states.iter().enumerate().filter_map(
-                |(idx, lane)| match lane {
-                    // todo!: We can probably optimize this by using commit_lane != idx && !was_expected
-                    LaneState::Active { sha, color } if sha != &commit.sha => Some(GraphLine {
-                        from_lane: idx,
-                        to_lane: idx,
-                        line_type: LineType::Straight,
-                        color_idx: color.0 as usize, // todo! change this
-                        continues_from_above: true,
-                        ends_at_commit: false,
-                    }),
-                    _ => None,
-                },
-            ));
-
             self.lane_states[commit_lane] = LaneState::Empty;
-
-            if commit.parents.is_empty() && branch_continued {
-                lines.push(GraphLine {
-                    from_lane: commit_lane,
-                    to_lane: commit_lane,
-                    line_type: LineType::Straight,
-                    color_idx: commit_color.0 as usize,
-                    continues_from_above: true,
-                    ends_at_commit: true,
-                });
-            }
 
             commit
                 .parents
@@ -334,7 +325,7 @@ impl GitGraph {
                             .iter()
                             .enumerate()
                             .find_map(|(lane_idx, lane_state)| match lane_state {
-                                LaneState::Active { sha, color } if sha == parent => {
+                                LaneState::Active { sha, color, .. } if sha == parent => {
                                     Some((lane_idx, color))
                                 }
                                 _ => None,
@@ -343,121 +334,104 @@ impl GitGraph {
                     if let Some((parent_lane, parent_color)) = parent_lane
                         && parent_lane != commit_lane
                     {
-                        if branch_continued {
-                            lines.push(GraphLine {
-                                from_lane: commit_lane,
-                                to_lane: commit_lane,
-                                line_type: LineType::Straight,
-                                // todo! this field should be a byte
-                                color_idx: commit_color.0 as usize,
-                                continues_from_above: true,
-                                ends_at_commit: true,
-                            });
-                        }
 
-                        lines.push(GraphLine {
-                            from_lane: commit_lane,
-                            to_lane: parent_lane,
-                            line_type: LineType::MergeDown,
-                            color_idx: parent_color.0 as usize,
-                            continues_from_above: false,
-                            ends_at_commit: false,
-                        });
+                        // todo! This means that the branch was checked out
 
-                        let line_idx = self.lines.len();
-                        self.lines.push(CommitLine {
-                            child: commit.sha,
-                            child_column: commit_lane,
-                            parent: *parent,
-                            full_interval: commit_row..usize::MAX,
-                            segments: SmallVec::from_iter([CommitLineSegment::Curve {
-                                to_column: parent_lane,
-                                on_row: commit_row,
-                            }]),
-                        });
+                        // let line_idx = self.lines.len();
+                        // self.lines.push(CommitLine {
+                        //     child: commit.sha,
+                        //     child_column: commit_lane,
+                        //     parent: *parent,
+                        //     full_interval: commit_row..usize::MAX,
+                        //     segments: SmallVec::from_iter([CommitLineSegment::Curve {
+                        //         to_column: parent_lane,
+                        //         on_row: commit_row,
+                        //     }]),
+                        // });
 
-                        self.active_commit_lines.insert(
-                            CommitLineKey {
-                                child: commit.sha,
-                                parent: *parent,
-                            },
-                            line_idx,
-                        );
-                        self.active_commit_lines_by_parent
-                            .entry(*parent)
-                            .or_default()
-                            .push(line_idx);
-                    // base commit
+                        // self.active_commit_lines.insert(
+                        //     CommitLineKey {
+                        //         child: commit.sha,
+                        //         parent: *parent,
+                        //     },
+                        //     line_idx,
+                        // );
+                        // self.active_commit_lines_by_parent
+                        //     .entry(*parent)
+                        //     .or_default()
+                        //     .push(line_idx);
+                        // base commit
                     } else if parent_idx == 0 {
                         self.lane_states[commit_lane] = LaneState::Active {
                             sha: *parent,
                             color: commit_color,
+                            starting_col: commit_lane,
+                            starting_row: commit_row,
                         };
-                        lines.push(GraphLine {
-                            from_lane: commit_lane,
-                            to_lane: commit_lane,
-                            line_type: LineType::Straight,
-                            color_idx: commit_color.0 as usize,
-                            continues_from_above: branch_continued,
-                            ends_at_commit: false,
-                        });
 
                         let line_idx = self.lines.len();
-                        self.lines.push(CommitLine {
-                            child: commit.sha,
-                            child_column: commit_lane,
-                            parent: *parent,
-                            full_interval: commit_row..usize::MAX,
-                            segments: SmallVec::new(),
-                        });
+                        // self.lines.push(CommitLine {
+                        //     child: commit.sha,
+                        //     child_column: commit_lane,
+                        //     parent: *parent,
+                        //     full_interval: commit_row..usize::MAX,
+                        //     segments: SmallVec::new(),
+                        // });
 
-                        self.active_commit_lines.insert(
-                            CommitLineKey {
-                                child: commit.sha,
-                                parent: *parent,
-                            },
-                            line_idx,
-                        );
-                        self.active_commit_lines_by_parent
-                            .entry(*parent)
-                            .or_default()
-                            .push(line_idx);
+                        // self.active_commit_lines.insert(
+                        //     CommitLineKey {
+                        //         child: commit.sha,
+                        //         parent: *parent,
+                        //     },
+                        //     line_idx,
+                        // );
+                        // self.active_commit_lines_by_parent
+                        //     .entry(*parent)
+                        //     .or_default()
+                        //     .push(line_idx);
                     } else {
                         let parent_lane = self.first_empty_lane_idx();
                         let parent_color = self.get_lane_color(parent_lane);
 
-                        lines.push(GraphLine {
-                            from_lane: commit_lane,
-                            to_lane: parent_lane,
-                            line_type: LineType::BranchOut,
-                            color_idx: parent_color.0 as usize,
-                            continues_from_above: false,
-                            ends_at_commit: false,
-                        });
+                        self.lane_states[parent_lane] = LaneState::Active {
+                            sha: *parent,
+                            color: parent_color,
+                            starting_col: parent_lane,
+                            starting_row: commit_row,
+                        };
+
+                        // lines.push(GraphLine {
+                        //     from_lane: commit_lane,
+                        //     to_lane: parent_lane,
+                        //     line_type: LineType::BranchOut,
+                        //     color_idx: parent_color.0 as usize,
+                        //     continues_from_above: false,
+                        //     ends_at_commit: false,
+                        // });
 
                         let line_idx = self.lines.len();
-                        self.lines.push(CommitLine {
-                            child: commit.sha,
-                            child_column: commit_lane,
-                            parent: *parent,
-                            full_interval: commit_row..usize::MAX,
-                            segments: SmallVec::from_iter([CommitLineSegment::Curve {
-                                to_column: parent_lane,
-                                on_row: commit_row,
-                            }]),
-                        });
+                        // self.lines.push(CommitLine {
+                        //     child: commit.sha,
+                        //     child_column: commit_lane,
+                        //     parent: *parent,
+                        //     full_interval: commit_row..usize::MAX,
+                        //     segments: SmallVec::from_iter([CommitLineSegment::Curve {
+                        //         to_column: parent_lane,
+                        //         on_row: commit_row,
+                        //     }]),
+                        // });
 
-                        self.active_commit_lines.insert(
-                            CommitLineKey {
-                                child: commit.sha,
-                                parent: *parent,
-                            },
-                            line_idx,
-                        );
-                        self.active_commit_lines_by_parent
-                            .entry(*parent)
-                            .or_default()
-                            .push(line_idx);
+                        // self.active_commit_lines.insert(
+                        //     CommitLineKey {
+                        //         child: commit.sha,
+                        //         parent: *parent,
+                        //     },
+                        //     line_idx,
+                        // );
+                        // self.active_commit_lines_by_parent
+                        //     .entry(*parent)
+                        //     .or_default()
+                        //     .push(line_idx);
                     }
                 });
 
@@ -467,7 +441,6 @@ impl GitGraph {
                 data: commit,
                 lane: commit_lane,
                 color_idx: commit_color.0 as usize,
-                lines,
             }));
         }
     }

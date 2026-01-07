@@ -2,16 +2,18 @@ use gpui::{
     App, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, Window, canvas, point, px,
 };
 use theme::AccentColors;
-use ui::ActiveTheme as _;
+use ui::{ActiveTheme as _, div};
 
 use crate::{GitGraph, graph::LineType};
+
+const LANE_WIDTH: Pixels = px(16.0);
+const LINE_WIDTH: Pixels = px(1.5);
+const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
+const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
 
 pub fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
 }
-
-const LANE_WIDTH: Pixels = px(16.0);
-const LINE_WIDTH: Pixels = px(1.5);
 
 fn lane_center_x(bounds: Bounds<Pixels>, left_padding: Pixels, lane: f32) -> Pixels {
     bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0
@@ -24,14 +26,26 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     let first_visible_row = top_row.item_ix;
     // this goes one row over to draw the lines off the screen correctly
     let last_visible_row = first_visible_row
-        + (graph.list_state.viewport_bounds().size.height / row_height).floor() as usize;
+        + (graph.list_state.viewport_bounds().size.height / row_height).ceil() as usize;
     let graph_width = px(16.0) * (4 as f32) + px(24.0);
     let loaded_commit_count = graph.graph.commits.len();
 
+    let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
+        ..(last_visible_row).min(loaded_commit_count);
     // todo! Figure out how we can avoid over allocating this data
-    let rows = graph.graph.commits[first_visible_row.min(loaded_commit_count.saturating_sub(1))
-        ..(last_visible_row).min(loaded_commit_count)]
-        .to_vec();
+    let rows = graph.graph.commits[viewport_range.clone()].to_vec();
+    let commit_lines: Vec<_> = graph
+        .graph
+        .lines
+        .iter()
+        .filter(|line| {
+            (line.full_interval.start >= viewport_range.start
+                && line.full_interval.start <= viewport_range.end)
+                || (line.full_interval.end >= viewport_range.start
+                    && line.full_interval.end <= viewport_range.end)
+        })
+        .cloned()
+        .collect();
 
     canvas(
         move |_bounds, _window, _cx| {},
@@ -47,16 +61,26 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                             - scroll_offset;
 
                     let commit_x = lane_center_x(bounds, left_padding, row.lane as f32);
-                    let radius = px(4.5);
-                    let stroke_width = px(1.5);
 
-                    draw_commit_circle(
-                        commit_x,
-                        row_y_center,
-                        radius,
-                        stroke_width,
-                        row_color,
-                        window,
+                    draw_commit_circle(commit_x, row_y_center, row_color, window);
+                }
+
+                for line in commit_lines {
+                    let line_color = accent_colors.color_for_index(line.color_idx as u32);
+                    let line_x = lane_center_x(bounds, left_padding, line.child_column as f32);
+
+                    let start_row = line.full_interval.start as i32 - first_visible_row as i32;
+                    let end_row = line.full_interval.end as i32 - first_visible_row as i32;
+
+                    let from_y = bounds.origin.y + start_row as f32 * row_height + row_height / 2.0
+                        - scroll_offset
+                        + COMMIT_CIRCLE_RADIUS;
+                    let to_y = bounds.origin.y + end_row as f32 * row_height + row_height / 2.0
+                        - scroll_offset
+                        - COMMIT_CIRCLE_RADIUS;
+
+                    draw_straight_line(
+                        window, line_x, from_y, line_x, to_y, LINE_WIDTH, line_color,
                     );
                 }
             })
@@ -66,14 +90,10 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     .h_full()
 }
 
-fn draw_commit_circle(
-    center_x: Pixels,
-    center_y: Pixels,
-    radius: Pixels,
-    stroke_width: Pixels,
-    color: Hsla,
-    window: &mut Window,
-) {
+fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &mut Window) {
+    let radius = COMMIT_CIRCLE_RADIUS;
+    let stroke_width = COMMIT_CIRCLE_STROKE_WIDTH;
+
     let mut builder = PathBuilder::stroke(stroke_width);
 
     // Start at the rightmost point of the circle
