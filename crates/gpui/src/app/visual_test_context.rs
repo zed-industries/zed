@@ -37,7 +37,9 @@ impl VisualTestAppContext {
     /// - Screenshots can be captured via ScreenCaptureKit
     /// - All platform APIs work as they do in production
     pub fn new() -> Self {
-        let platform = current_platform(false);
+        let liveness = Arc::new(());
+        let liveness_weak = Arc::downgrade(&liveness);
+        let platform = current_platform(false, liveness_weak);
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -45,7 +47,7 @@ impl VisualTestAppContext {
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        let mut app = App::new_app(platform.clone(), liveness, asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
