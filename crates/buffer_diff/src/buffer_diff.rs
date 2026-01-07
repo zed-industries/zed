@@ -806,6 +806,7 @@ fn build_diff_options(
 
 fn compute_hunks(
     diff_base: Option<(Arc<str>, Rope)>,
+    base_snapshot: language::BufferSnapshot,
     buffer: language::BufferSnapshot,
     diff_options: Option<DiffOptions>,
 ) -> SumTree<InternalDiffHunk> {
@@ -849,6 +850,7 @@ fn compute_hunks(
                     &patch,
                     hunk_index,
                     &diff_base_rope,
+                    &base_snapshot,
                     &buffer,
                     &mut divergence,
                     diff_options.as_ref(),
@@ -968,6 +970,7 @@ fn process_patch_hunk(
     patch: &GitPatch<'_>,
     hunk_index: usize,
     diff_base: &Rope,
+    base_snapshot: &language::BufferSnapshot,
     buffer: &language::BufferSnapshot,
     buffer_row_divergence: &mut i64,
     diff_options: Option<&DiffOptions>,
@@ -1073,12 +1076,24 @@ fn process_patch_hunk(
         (Vec::default(), Vec::default())
     };
 
+    let buffer_byte_range =
+        buffer_range.start.to_offset(&buffer.text)..buffer_range.end.to_offset(&buffer.text);
+    let buffer_syntax_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
+    let base_syntax_tree = build_syntax_tree(base_snapshot, diff_base_byte_range.clone());
+
+    let syntax_diff = match (base_syntax_tree, buffer_syntax_tree) {
+        (Some(base), Some(buffer)) => syntax_diff::diff_trees(&base, &buffer)
+            .ok()
+            .map(|diff| diff.relative_to(diff_base_byte_range.start, buffer_byte_range.start)),
+        _ => None,
+    };
+
     InternalDiffHunk {
         buffer_range,
         diff_base_byte_range,
         base_word_diffs,
         buffer_word_diffs,
-        syntax_diff: None,
+        syntax_diff,
     }
 }
 
@@ -1087,7 +1102,7 @@ fn build_syntax_tree(
     byte_range: Range<usize>,
 ) -> Option<SyntaxTree> {
     let source = &snapshot.text();
-    let syntax_layer = snapshot.smallest_syntax_layer_containing(byte_range.clone());
+    let syntax_layer = snapshot.syntax_layers().next();
     let ts_tree = syntax_layer
         .map(|layer| layer.node())
         .and_then(|tree| tree.descendant_for_byte_range(byte_range.start, byte_range.end))
@@ -1279,22 +1294,30 @@ impl BufferDiff {
             cx,
         );
 
+        let base_text_rope = if let Some(base_text) = &base_text {
+            if base_text_changed {
+                Rope::from(base_text.as_ref())
+            } else {
+                prev_base_text
+            }
+        } else {
+            Rope::new()
+        };
+
+        // TODO: understand how to replicate this inside the inner buffer
+        // to avoid double parsing
+        let base_snapshot =
+            language::Buffer::build_snapshot(base_text_rope.clone(), language, None, cx);
+
         cx.background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
-                let base_text_rope = if let Some(base_text) = &base_text {
-                    if base_text_changed {
-                        Rope::from(base_text.as_ref())
-                    } else {
-                        prev_base_text
-                    }
-                } else {
-                    Rope::new()
-                };
+                let base_snapshot = base_snapshot.await;
                 let base_text_exists = base_text.is_some();
                 let hunks = compute_hunks(
                     base_text
                         .clone()
-                        .map(|base_text| (base_text, base_text_rope.clone())),
+                        .map(|base_text| (base_text, base_text_rope)),
+                    base_snapshot,
                     buffer.clone(),
                     diff_options,
                 );

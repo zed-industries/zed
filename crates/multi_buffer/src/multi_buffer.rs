@@ -4016,6 +4016,39 @@ impl MultiBufferSnapshot {
                     })
                     .unwrap_or_default();
 
+            let syntax_diffs = hunk
+                .syntax_diff
+                .map(|syntax_diff| {
+                    let mut syntax_diffs = Vec::new();
+
+                    if self.show_deleted_hunks || is_inverted {
+                        let hunk_start_offset = if is_inverted {
+                            Anchor::in_buffer(
+                                excerpt.id,
+                                excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
+                            )
+                            .to_offset(self)
+                        } else {
+                            Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self)
+                        };
+
+                        syntax_diffs.extend(syntax_diff.lhs_ranges.iter().map(|range| {
+                            hunk_start_offset + range.start..hunk_start_offset + range.end
+                        }));
+                    }
+
+                    if !is_inverted {
+                        let hunk_start_offset =
+                            Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self);
+                        syntax_diffs.extend(syntax_diff.rhs_ranges.into_iter().map(|range| {
+                            hunk_start_offset + range.start..hunk_start_offset + range.end
+                        }));
+                    }
+
+                    syntax_diffs
+                })
+                .unwrap_or_default();
+
             let buffer_range = if is_inverted {
                 excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start)
                     ..excerpt.buffer.anchor_before(hunk.diff_base_byte_range.end)
@@ -4029,13 +4062,14 @@ impl MultiBufferSnapshot {
             } else {
                 DiffHunkStatusKind::Modified
             };
+
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range,
                 word_diffs,
-                syntax_diffs: Vec::default(),
+                syntax_diffs,
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
                 status: DiffHunkStatus {
