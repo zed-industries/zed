@@ -492,6 +492,8 @@ impl NativeAgent {
     ) -> Option<Task<Result<RulesFileContext>>> {
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
+
+        // Check for single rules file
         let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
@@ -502,9 +504,35 @@ impl NativeAgent {
             })
             .next();
 
-        // Note that Cline supports `.clinerules` being a directory, but that is not currently
-        // supported. This doesn't seem to occur often in GitHub repositories.
-        selected_rules_file.map(|path_in_worktree| {
+        // Check for .rules.d directory
+        let rules_dir_entry = worktree
+            .entry_for_path(RelPath::unix(".rules.d").unwrap())
+            .filter(|entry| entry.is_dir());
+
+        // If neither exists, return None
+        if selected_rules_file.is_none() && rules_dir_entry.is_none() {
+            return None;
+        }
+
+        // Load both if available
+        Some(Self::load_combined_rules(
+            worktree_id,
+            selected_rules_file,
+            rules_dir_entry.map(|entry| entry.id),
+            project.clone(),
+            cx,
+        ))
+    }
+
+    fn load_combined_rules(
+        worktree_id: WorktreeId,
+        rules_file_path: Option<Arc<RelPath>>,
+        rules_dir_entry_id: Option<ProjectEntryId>,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Result<RulesFileContext>> {
+        // Load the single rules file if it exists
+        let rules_file_task = rules_file_path.as_ref().map(|path_in_worktree| {
             let project_path = ProjectPath {
                 worktree_id,
                 path: path_in_worktree.clone(),
@@ -517,15 +545,130 @@ impl NativeAgent {
                     anyhow::Ok((project_entry_id, buffer.as_rope().clone()))
                 })?
             });
-            // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
                 let (project_entry_id, rope) = rope_task.await?;
-                anyhow::Ok(RulesFileContext {
-                    path_in_worktree,
-                    text: rope.to_string().trim().to_string(),
-                    project_entry_id: project_entry_id.to_usize(),
-                })
+                anyhow::Ok((rope.to_string().trim().to_string(), project_entry_id))
             })
+        });
+
+        // Load the rules directory if it exists
+        let rules_dir_task = rules_dir_entry_id.map(|dir_entry_id| {
+            Self::load_rules_from_directory_content(worktree_id, dir_entry_id, project.clone(), cx)
+        });
+
+        // Combine both
+        let rules_file_path_for_context = rules_file_path.clone();
+        cx.background_spawn(async move {
+            let mut combined_text = String::new();
+            let mut primary_entry_id = None;
+
+            // Add single rules file content
+            if let Some(task) = rules_file_task {
+                match task.await {
+                    Ok((text, entry_id)) => {
+                        combined_text.push_str(&text);
+                        primary_entry_id = Some(entry_id);
+                    }
+                    Err(e) => log::warn!("Failed to load rules file: {}", e),
+                }
+            }
+
+            // Add rules.d content
+            if let Some(task) = rules_dir_task {
+                match task.await {
+                    Ok((text, entry_id)) => {
+                        if !combined_text.is_empty() && !text.is_empty() {
+                            combined_text.push_str("\n\n");
+                        }
+                        combined_text.push_str(&text);
+                        // Use rules.d entry id if we don't have one yet
+                        if primary_entry_id.is_none() {
+                            primary_entry_id = Some(entry_id);
+                        }
+                    }
+                    Err(e) => log::warn!("Failed to load rules from .rules.d: {}", e),
+                }
+            }
+
+            let path_in_worktree = rules_file_path_for_context
+                .unwrap_or_else(|| RelPath::unix(".rules.d").unwrap().into());
+
+            anyhow::Ok(RulesFileContext {
+                path_in_worktree,
+                text: combined_text,
+                project_entry_id: primary_entry_id.context("no rules loaded")?.to_usize(),
+            })
+        })
+    }
+
+    fn load_rules_from_directory_content(
+        worktree_id: WorktreeId,
+        dir_entry_id: ProjectEntryId,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Result<(String, ProjectEntryId)>> {
+        let worktree = project
+            .read(cx)
+            .worktree_for_id(worktree_id)
+            .and_then(|worktree| Some(worktree.read(cx).snapshot()));
+
+        let snapshot = match worktree {
+            Some(snap) => snap,
+            None => return Task::ready(Err(anyhow!("worktree not found"))),
+        };
+
+        let dir_path = match snapshot.entry_for_id(dir_entry_id) {
+            Some(entry) => entry.path.clone(),
+            None => return Task::ready(Err(anyhow!("directory entry not found"))),
+        };
+
+        // Collect all markdown and text files in .rules.d
+        let mut file_paths = Vec::new();
+        for entry in snapshot.child_entries(&dir_path) {
+            if entry.is_file() {
+                let path_str = entry.path.to_string_lossy();
+                if path_str.ends_with(".md") || path_str.ends_with(".txt") {
+                    file_paths.push(entry.path.clone());
+                }
+            }
+        }
+
+        // Sort files for consistent ordering
+        file_paths.sort();
+
+        if file_paths.is_empty() {
+            return Task::ready(Err(anyhow!("no markdown or text files found in .rules.d")));
+        }
+
+        // Open all files and read their contents
+        let buffer_tasks: Vec<_> = file_paths
+            .iter()
+            .map(|path| {
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: path.clone(),
+                };
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx))
+            })
+            .collect();
+
+        let rope_task = cx.spawn(async move |cx| {
+            let mut rules_texts = Vec::new();
+            for buffer_task in buffer_tasks {
+                let rope = buffer_task
+                    .await?
+                    .read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
+                rules_texts.push(rope.to_string().trim().to_string());
+            }
+            anyhow::Ok(rules_texts)
+        });
+
+        // Build concatenated string from all files
+        cx.background_spawn(async move {
+            let rules_texts = rope_task.await?;
+            let combined_text = rules_texts.join("\n\n");
+
+            anyhow::Ok((combined_text, dir_entry_id))
         })
     }
 
@@ -1573,6 +1716,112 @@ mod internal_tests {
                     })
                 }]
             )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rules_d_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            history_store,
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let worktree = project
+            .update(cx, |project, cx| project.create_worktree("/a", true, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Test 1: .rules.d directory with multiple files
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".rules.d": {
+                    "01-style.md": "# Coding Style\nUse tabs for indentation.",
+                    "02-testing.md": "# Testing\nWrite tests for all functions.",
+                    "03-docs.txt": "# Documentation\nDocument all public APIs."
+                }
+            }),
+        )
+        .await;
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let context = agent.project_context.read(cx);
+            let rules_file = context.worktrees[0].rules_file.as_ref().unwrap();
+
+            // Check that all files are combined
+            assert!(rules_file.text.contains("Coding Style"));
+            assert!(rules_file.text.contains("Testing"));
+            assert!(rules_file.text.contains("Documentation"));
+
+            // Check they're in alphabetical order
+            let style_pos = rules_file.text.find("Coding Style").unwrap();
+            let testing_pos = rules_file.text.find("Testing").unwrap();
+            let docs_pos = rules_file.text.find("Documentation").unwrap();
+            assert!(style_pos < testing_pos);
+            assert!(testing_pos < docs_pos);
+        });
+
+        // Test 2: Both .rules file and .rules.d directory
+        fs.insert_file(
+            "/a/.rules",
+            "# Main Rules\nThis is the main rules file.".as_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let context = agent.project_context.read(cx);
+            let rules_file = context.worktrees[0].rules_file.as_ref().unwrap();
+
+            // Check that both are combined
+            assert!(rules_file.text.contains("Main Rules"));
+            assert!(rules_file.text.contains("Coding Style"));
+            assert!(rules_file.text.contains("Testing"));
+
+            // .rules should come before .rules.d
+            let main_pos = rules_file.text.find("Main Rules").unwrap();
+            let style_pos = rules_file.text.find("Coding Style").unwrap();
+            assert!(main_pos < style_pos);
+        });
+
+        // Test 3: Remove .rules.d and keep only .rules file
+        fs.remove_dir("/a/.rules.d", Default::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let context = agent.project_context.read(cx);
+            let rules_file = context.worktrees[0].rules_file.as_ref().unwrap();
+
+            // Should only have .rules content now
+            assert!(rules_file.text.contains("Main Rules"));
+            assert!(!rules_file.text.contains("Coding Style"));
+            assert_eq!(
+                rules_file.text,
+                "# Main Rules\nThis is the main rules file."
+            );
         });
     }
 

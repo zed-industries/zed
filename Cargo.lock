@@ -12699,6 +12699,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_yaml",
  "strum 0.27.2",
  "tempfile",
  "text",

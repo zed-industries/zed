@@ -310,13 +310,7 @@ pub fn text_threads_dir() -> &'static PathBuf {
 /// This is where the prompts for use with the Assistant are stored.
 pub fn prompts_dir() -> &'static PathBuf {
     static PROMPTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    PROMPTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("prompts")
-        } else {
-            data_dir().join("prompts")
-        }
-    })
+    PROMPTS_DIR.get_or_init(|| config_dir().join("prompts"))
 }
 
 /// Returns the path to the prompt templates directory.
