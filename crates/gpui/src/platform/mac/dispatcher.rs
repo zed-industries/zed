@@ -3,8 +3,8 @@
 #![allow(non_snake_case)]
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RealtimePriority, RunnableMeta,
-    GpuiRunnable, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, GpuiRunnable, PlatformDispatcher, Priority, RealtimePriority,
+    RunnableMeta, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
 };
 
 use anyhow::Context;

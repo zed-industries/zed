@@ -61,7 +61,6 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
-use ztracing::instrument;
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
@@ -81,6 +80,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+use ztracing::instrument;
 actions!(
     git_panel,
     [

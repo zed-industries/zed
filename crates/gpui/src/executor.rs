@@ -408,7 +408,11 @@ impl BackgroundExecutor {
             );
 
             async_task::Builder::new()
-                .metadata(RunnableMeta { location, priority, app: None })
+                .metadata(RunnableMeta {
+                    location,
+                    priority,
+                    app: None,
+                })
                 .spawn(
                     move |_| future,
                     move |runnable| {
@@ -418,7 +422,11 @@ impl BackgroundExecutor {
         } else {
             let location = core::panic::Location::caller();
             async_task::Builder::new()
-                .metadata(RunnableMeta { location, priority, app: None })
+                .metadata(RunnableMeta {
+                    location,
+                    priority,
+                    app: None,
+                })
                 .spawn(
                     move |_| future,
                     move |runnable| dispatcher.dispatch(GpuiRunnable::GpuiSpawned(runnable), label),
@@ -677,11 +685,14 @@ impl BackgroundExecutor {
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
-                priority: Priority::inherit(), app: None
+                priority: Priority::inherit(),
+                app: None,
             })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_after(duration, GpuiRunnable::GpuiSpawned(runnable))
+                move |runnable| {
+                    dispatcher.dispatch_after(duration, GpuiRunnable::GpuiSpawned(runnable))
+                }
             });
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -836,8 +847,14 @@ impl ForegroundExecutor {
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
-                move |runnable| dispatcher.dispatch_on_main_thread(GpuiRunnable::GpuiSpawned(runnable)),
-                RunnableMeta { location, priority, app: Some(app) },
+                move |runnable| {
+                    dispatcher.dispatch_on_main_thread(GpuiRunnable::GpuiSpawned(runnable))
+                },
+                RunnableMeta {
+                    location,
+                    priority,
+                    app: Some(app),
+                },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))

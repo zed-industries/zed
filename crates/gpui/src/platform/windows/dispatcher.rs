@@ -21,7 +21,7 @@ use windows::{
 };
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, HWND, GpuiRunnable, PlatformDispatcher, SafeHwnd, THREAD_TIMINGS,
+    GLOBAL_THREAD_TIMINGS, GpuiRunnable, HWND, PlatformDispatcher, SafeHwnd, THREAD_TIMINGS,
     TaskLabel, TaskTiming, ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
 };
 
