@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use syntax_diff::SyntaxDiff;
+use syntax_diff::{SyntaxDiff, SyntaxTree};
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
