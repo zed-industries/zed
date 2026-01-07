@@ -5993,47 +5993,79 @@ enum ByteContent {
     Binary,
     Unknown,
 }
-// Heuristic check using null byte distribution.
-// NOTE: This relies on the presence of ASCII characters (which become `0x00` in UTF-16).
-// Files consisting purely of non-ASCII characters (like Japanese) may not be detected here
-// and will result in `Unknown`.
+
+// Heuristic check using null byte distribution plus a generic text-likeness
+// heuristic. This prefers UTF-16 when many bytes are NUL and otherwise
+// distinguishes between text-like and binary-like content.
 fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
     if bytes.len() < 2 {
         return ByteContent::Unknown;
     }
 
-    let check_len = bytes.len().min(FILE_ANALYSIS_BYTES);
-    let sample = &bytes[..check_len];
-
-    if !sample.contains(&0) {
-        return ByteContent::Unknown;
+    if is_known_binary_header(bytes) {
+        return ByteContent::Binary;
     }
 
-    let mut even_nulls = 0;
-    let mut odd_nulls = 0;
+    let limit = bytes.len().min(FILE_ANALYSIS_BYTES);
+    let mut even_null_count = 0usize;
+    let mut odd_null_count = 0usize;
+    let mut non_text_like_count = 0usize;
 
-    for (i, &byte) in sample.iter().enumerate() {
+    for (i, &byte) in bytes[..limit].iter().enumerate() {
         if byte == 0 {
             if i % 2 == 0 {
-                even_nulls += 1;
+                even_null_count += 1;
             } else {
-                odd_nulls += 1;
+                odd_null_count += 1;
             }
+            non_text_like_count += 1;
+            continue;
+        }
+
+        let is_text_like = match byte {
+            b'\t' | b'\n' | b'\r' | 0x0C => true,
+            0x20..=0x7E => true,
+            // Treat bytes that are likely part of UTF-8 or single-byte encodings as text-like.
+            0x80..=0xBF | 0xC2..=0xF4 => true,
+            _ => false,
+        };
+
+        if !is_text_like {
+            non_text_like_count += 1;
         }
     }
 
-    let total_nulls = even_nulls + odd_nulls;
-    if total_nulls < check_len / 10 {
+    let total_null_count = even_null_count + odd_null_count;
+
+    // If there are no NUL bytes at all, this is overwhelmingly likely to be text.
+    if total_null_count == 0 {
         return ByteContent::Unknown;
     }
 
-    if even_nulls > odd_nulls * 4 {
-        return ByteContent::Utf16Be;
+    if total_null_count >= limit / 16 {
+        if even_null_count > odd_null_count * 4 {
+            return ByteContent::Utf16Be;
+        }
+        if odd_null_count > even_null_count * 4 {
+            return ByteContent::Utf16Le;
+        }
+        return ByteContent::Binary;
     }
 
-    if odd_nulls > even_nulls * 4 {
-        return ByteContent::Utf16Le;
+    if non_text_like_count * 100 < limit * 8 {
+        ByteContent::Unknown
+    } else {
+        ByteContent::Binary
     }
+}
 
-    ByteContent::Binary
+fn is_known_binary_header(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-") // PDF
+        || bytes.starts_with(b"PK\x03\x04") // ZIP local header
+        || bytes.starts_with(b"PK\x05\x06") // ZIP end of central directory
+        || bytes.starts_with(b"PK\x07\x08") // ZIP spanning/splitting
+        || bytes.starts_with(b"\x89PNG\r\n\x1a\n") // PNG
+        || bytes.starts_with(b"\xFF\xD8\xFF") // JPEG
+        || bytes.starts_with(b"GIF87a") // GIF87a
+        || bytes.starts_with(b"GIF89a") // GIF89a
 }
