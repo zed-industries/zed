@@ -20669,7 +20669,6 @@ version = "0.219.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
- "action_log",
  "activity_indicator",
  "agent",
  "agent-client-protocol",
@@ -20684,6 +20683,7 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
+ "base64 0.22.1",
  "bincode",
  "breadcrumbs",
  "call",
