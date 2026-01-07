@@ -121,11 +121,7 @@ impl AgentTool for MovePathTool {
                 tool_name: "move_path".to_string(),
                 input_value: input.source_path.clone(),
             };
-            Some(event_stream.authorize_with_context(
-                format!("Move {src} to {dest}"),
-                context,
-                cx,
-            ))
+            Some(event_stream.authorize_with_context(format!("Move {src} to {dest}"), context, cx))
         } else {
             None
         };
