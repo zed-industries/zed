@@ -28,7 +28,7 @@ use std::{
     ffi::c_void,
     mem::MaybeUninit,
     ptr::{NonNull, addr_of},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use util::ResultExt;
 
@@ -81,7 +81,7 @@ impl PlatformDispatcher for MacDispatcher {
             ),
         };
 
-        let queue_priority = match priority {
+        let queue_priority = match runnable.priority() {
             Priority::Realtime(_) => unreachable!(),
             Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH as isize,
             Priority::Medium => DISPATCH_QUEUE_PRIORITY_DEFAULT as isize,
@@ -97,7 +97,7 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable, _priority: Priority) {
+    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable) {
         let (context, trampoline) = match runnable {
             GpuiRunnable::GpuiSpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
