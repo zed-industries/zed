@@ -26,8 +26,9 @@ pub async fn run_scoring(
     )
     .await?;
 
-    let _progress = Progress::global().start(Step::Score, &example.spec.name);
+    let progress = Progress::global().start(Step::Score, &example.spec.name);
 
+    progress.set_substatus("applying patches");
     let original_text = &example.buffer.as_ref().unwrap().content;
     let expected_texts: Vec<String> = example
         .spec
@@ -39,6 +40,7 @@ pub async fn run_scoring(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    progress.set_substatus("computing metrics");
     let mut scores = vec![];
     for prediction in &example.predictions {
         let actual_text = match apply_diff_to_string(&prediction.actual_patch, original_text) {
