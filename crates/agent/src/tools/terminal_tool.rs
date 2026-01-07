@@ -186,10 +186,35 @@ fn process_content(
             }
         }
         None => {
-            format!(
-                "Command failed or was interrupted.\nPartial output captured:\n\n{}",
-                content,
-            )
+            // When exit_code is None, check if there's a signal indicating how the process ended.
+            // SIGKILL (signal 9) or SIGTERM (signal 15) typically means the user stopped the command.
+            let was_stopped_by_user = exit_status
+                .signal
+                .as_ref()
+                .map(|s| s == "SIGKILL" || s == "SIGTERM" || s == "9" || s == "15")
+                .unwrap_or(false);
+
+            if was_stopped_by_user {
+                // User manually stopped the command - just show the output without error framing
+                if is_empty {
+                    "Command was stopped. No output was captured.".to_string()
+                } else {
+                    format!(
+                        "Command was stopped. Output captured before stopping:\n\n{}",
+                        content
+                    )
+                }
+            } else {
+                // Unknown termination reason
+                if is_empty {
+                    "Command terminated unexpectedly. No output was captured.".to_string()
+                } else {
+                    format!(
+                        "Command terminated unexpectedly. Output captured:\n\n{}",
+                        content,
+                    )
+                }
+            }
         }
     };
     content
