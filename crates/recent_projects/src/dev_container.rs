@@ -518,7 +518,7 @@ impl DevContainerModal {
     }
 }
 
-impl ElmLikeModalV2 for DevContainerModal {
+impl StatefulModal for DevContainerModal {
     type State = DevContainerState;
     type Message = DevContainerMessage;
 
@@ -661,7 +661,7 @@ impl Render for DevContainerModal {
     }
 }
 
-pub trait ElmLikeModalV2: ModalView + EventEmitter<DismissEvent> + Render {
+pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     type State;
     type Message;
 
