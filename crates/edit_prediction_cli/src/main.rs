@@ -256,8 +256,7 @@ async fn load_examples(
 
     let mut examples = read_example_files(&file_inputs);
 
-    let total_steps = examples.len() + captured_after_timestamps.len();
-    Progress::global().set_total_steps(total_steps);
+    Progress::global().set_total_examples(examples.len());
 
     let remaining_limit_for_snowflake =
         args.limit.map(|limit| limit.saturating_sub(examples.len()));
@@ -295,7 +294,7 @@ async fn load_examples(
         }
     }
 
-    Progress::global().set_total_steps(examples.len() + captured_after_timestamps.len());
+    Progress::global().set_total_examples(examples.len());
 
     Ok(examples)
 }
