@@ -1,9 +1,10 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
+use crate::{App, GpuiRunnable, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use parking_lot::{Condvar, Mutex};
 use smol::prelude::*;
 use std::{
+    cell::Cell,
     fmt::Debug,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
@@ -81,7 +82,21 @@ pub enum Priority {
     Low,
 }
 
+thread_local! {
+static CURRENT_TASKS_PRIORITY: Cell<Priority> = const { Cell::new(Priority::Medium) }; }
+
 impl Priority {
+    /// Sets the priority any spawn call from the runnable about
+    /// to be run will use
+    pub(crate) fn set_as_default_for_spawns(&self) {
+        CURRENT_TASKS_PRIORITY.set(*self);
+    }
+
+    /// Returns the priority from the currently running task
+    pub fn inherit() -> Self {
+        CURRENT_TASKS_PRIORITY.get()
+    }
+
     #[allow(dead_code)]
     pub(crate) const fn probability(&self) -> u32 {
         match self {
@@ -329,19 +344,14 @@ impl BackgroundExecutor {
                 .metadata(RunnableMeta {
                     location,
                     app: None,
+                    priority: Priority::inherit(),
                 })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
                         future.await
                     },
-                    move |runnable| {
-                        dispatcher.dispatch(
-                            RunnableVariant::Meta(runnable),
-                            None,
-                            Priority::default(),
-                        )
-                    },
+                    move |runnable| dispatcher.dispatch(GpuiRunnable::GpuiSpawned(runnable), None),
                 )
         };
         runnable.schedule();
@@ -387,6 +397,7 @@ impl BackgroundExecutor {
                         };
                         profiler::add_task_timing(timing);
 
+                        Priority::Realtime(realtime).set_as_default_for_spawns();
                         runnable.run();
 
                         let end = Instant::now();
@@ -399,6 +410,7 @@ impl BackgroundExecutor {
             async_task::Builder::new()
                 .metadata(RunnableMeta {
                     location,
+                    priority,
                     app: None,
                 })
                 .spawn(
@@ -412,13 +424,12 @@ impl BackgroundExecutor {
             async_task::Builder::new()
                 .metadata(RunnableMeta {
                     location,
+                    priority,
                     app: None,
                 })
                 .spawn(
                     move |_| future,
-                    move |runnable| {
-                        dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
-                    },
+                    move |runnable| dispatcher.dispatch(GpuiRunnable::GpuiSpawned(runnable), label),
                 )
         };
 
@@ -674,11 +685,14 @@ impl BackgroundExecutor {
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
+                priority: Priority::inherit(),
                 app: None,
             })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+                move |runnable| {
+                    dispatcher.dispatch_after(duration, GpuiRunnable::GpuiSpawned(runnable))
+                }
             });
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -785,7 +799,10 @@ impl ForegroundExecutor {
         }
     }
 
-    /// Enqueues the given Task to run on the main thread at some point in the future.
+    /// Enqueues the given Task to run on the main thread at some point in the
+    /// future. This inherits the priority of the caller. Use
+    /// [`spawn_with_priority`](Self::spawn_with_priority) if you want to
+    /// overwrite that.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
@@ -831,10 +848,11 @@ impl ForegroundExecutor {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
                 move |runnable| {
-                    dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
+                    dispatcher.dispatch_on_main_thread(GpuiRunnable::GpuiSpawned(runnable))
                 },
                 RunnableMeta {
                     location,
+                    priority,
                     app: Some(app),
                 },
             );

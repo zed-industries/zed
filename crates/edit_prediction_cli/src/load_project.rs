@@ -5,11 +5,13 @@ use crate::{
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::EditPredictionStore;
 use edit_prediction::udiff::{OpenedBuffers, refresh_worktree_entries};
+use edit_prediction::{
+    EditPredictionStore, cursor_excerpt::editable_and_context_ranges_for_cursor_position, zeta2,
+};
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, OffsetRangeExt as _, ToOffset, ToPoint};
 use project::Project;
 use project::buffer_store::BufferStoreEvent;
 use std::{fs, path::PathBuf, sync::Arc};
@@ -27,11 +29,26 @@ pub async fn run_load_project(
 
     let project = setup_project(example, &app_state, &progress, &mut cx).await?;
 
-    let _open_buffers = apply_edit_history(example, &project, &mut cx).await?;
+    progress.set_substatus("applying edit history");
+    let open_buffers = apply_edit_history(example, &project, &mut cx).await?;
 
-    let (buffer, cursor_position) = cursor_position(example, &project, &mut cx).await?;
+    progress.set_substatus("resolving cursor");
+    let (buffer, cursor_position) =
+        cursor_position(example, &project, &open_buffers, &mut cx).await?;
+    buffer
+        .read_with(&cx, |buffer, _| buffer.parsing_idle())?
+        .await;
     let (example_buffer, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let cursor_point = cursor_position.to_point(&buffer);
+        let snapshot = buffer.snapshot();
+        let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+            cursor_point,
+            &snapshot,
+            zeta2::MAX_REWRITE_TOKENS,
+            zeta2::MAX_CONTEXT_TOKENS,
+        );
+        let editable_range = editable_range.to_offset(&snapshot);
+        let context_range = context_range.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
@@ -42,6 +59,8 @@ pub async fn run_load_project(
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
                 cursor_offset: cursor_position.to_offset(&buffer),
+                context_range,
+                editable_range,
             },
             language_name,
         )
@@ -54,7 +73,7 @@ pub async fn run_load_project(
         buffer,
         project,
         cursor_position,
-        _open_buffers,
+        _open_buffers: open_buffers,
     });
     Ok(())
 }
@@ -62,6 +81,7 @@ pub async fn run_load_project(
 async fn cursor_position(
     example: &Example,
     project: &Entity<Project>,
+    open_buffers: &OpenedBuffers,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Buffer>, Anchor)> {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
@@ -75,25 +95,31 @@ async fn cursor_position(
         return Err(error);
     }
 
-    // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
-    if let Some(worktree) = project.read_with(cx, |project, cx| project.worktrees(cx).next())? {
-        refresh_worktree_entries(&worktree, [&*example.spec.cursor_path], cx).await?;
-    }
+    let cursor_path_str = example.spec.cursor_path.to_string_lossy();
+    // We try open_buffers first because the file might be new and not saved to disk
+    let cursor_buffer = if let Some(buffer) = open_buffers.get(&cursor_path_str) {
+        buffer.clone()
+    } else {
+        // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
+        if let Some(worktree) = project.read_with(cx, |project, cx| project.worktrees(cx).next())? {
+            refresh_worktree_entries(&worktree, [&*example.spec.cursor_path], cx).await?;
+        }
 
-    let cursor_path = project
-        .read_with(cx, |project, cx| {
-            project.find_project_path(&example.spec.cursor_path, cx)
-        })?
-        .with_context(|| {
-            format!(
-                "failed to find cursor path {}",
-                example.spec.cursor_path.display()
-            )
-        })?;
+        let cursor_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(&example.spec.cursor_path, cx)
+            })?
+            .with_context(|| {
+                format!(
+                    "failed to find cursor path {}",
+                    example.spec.cursor_path.display()
+                )
+            })?;
 
-    let cursor_buffer = project
-        .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
-        .await?;
+        project
+            .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
+            .await?
+    };
 
     let (cursor_excerpt, cursor_offset_within_excerpt) = example.spec.cursor_excerpt()?;
 
@@ -195,6 +221,17 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     let repo_dir = git::repo_path_for_url(&example.spec.repository_url)?;
     let worktree_path = repo_name.worktree_path();
     let repo_lock = git::lock_repo(&repo_dir).await;
+
+    // Clean up any stale git lock files from previous crashed runs.
+    // Safe-ish since we have our own lock.
+    // WARNING: Can corrupt worktrees if multiple processes of the CLI are running.
+    let worktree_git_dir = repo_dir
+        .join(".git/worktrees")
+        .join(repo_name.name.as_ref());
+    let index_lock = worktree_git_dir.join("index.lock");
+    if index_lock.exists() {
+        fs::remove_file(&index_lock).ok();
+    }
 
     if !repo_dir.is_dir() {
         step_progress.set_substatus(format!("cloning {}", repo_name.name));

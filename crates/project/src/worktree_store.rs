@@ -25,7 +25,7 @@ use worktree::{
     WorktreeId,
 };
 
-use crate::ProjectPath;
+use crate::{ProjectPath, trusted_worktrees::TrustedWorktrees};
 
 enum WorktreeStoreState {
     Local {
@@ -469,6 +469,7 @@ impl WorktreeStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
         let abs_path: Arc<SanitizedPath> = SanitizedPath::new_arc(&abs_path);
+        let is_via_collab = matches!(&self.state, WorktreeStoreState::Remote { upstream_client, .. } if upstream_client.is_via_collab());
         if !self.loading_worktrees.contains_key(&abs_path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
@@ -497,7 +498,28 @@ impl WorktreeStore {
             this.update(cx, |this, _| this.loading_worktrees.remove(&abs_path))
                 .ok();
             match result {
-                Ok(worktree) => Ok(worktree),
+                Ok(worktree) => {
+                    if !is_via_collab {
+                        if let Some((trusted_worktrees, worktree_store)) = this
+                            .update(cx, |_, cx| {
+                                TrustedWorktrees::try_get_global(cx).zip(Some(cx.entity()))
+                            })
+                            .ok()
+                            .flatten()
+                        {
+                            trusted_worktrees
+                                .update(cx, |trusted_worktrees, cx| {
+                                    trusted_worktrees.can_trust(
+                                        &worktree_store,
+                                        worktree.read(cx).id(),
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                    }
+                    Ok(worktree)
+                }
                 Err(err) => Err((*err).cloned()),
             }
         })

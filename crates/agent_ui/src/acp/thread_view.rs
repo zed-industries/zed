@@ -736,9 +736,7 @@ impl AcpThreadView {
                             })
                         });
 
-                        if this.focus_handle(cx).is_focused(window) {
-                            this.message_editor.focus_handle(cx).focus(window, cx);
-                        }
+                        this.message_editor.focus_handle(cx).focus(window, cx);
 
                         cx.notify();
                     }
@@ -3709,9 +3707,8 @@ impl AcpThreadView {
                         .on_click({
                             let terminal = terminal.clone();
                             cx.listener(move |_this, _event, _window, cx| {
-                                let inner_terminal = terminal.read(cx).inner().clone();
-                                inner_terminal.update(cx, |inner_terminal, _cx| {
-                                    inner_terminal.kill_active_task();
+                                terminal.update(cx, |terminal, cx| {
+                                    terminal.stop_by_user(cx);
                                 });
                             })
                         }),

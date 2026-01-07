@@ -153,9 +153,9 @@ async fn test_channel_notes_participant_indices(
         .fs()
         .insert_tree("/root", json!({"file.txt": "123"}))
         .await;
-    let (project_a, worktree_id_a) = client_a.build_local_project("/root", cx_a).await;
-    let project_b = client_b.build_empty_local_project(cx_b);
-    let project_c = client_c.build_empty_local_project(cx_c);
+    let (project_a, worktree_id_a) = client_a.build_local_project_with_trust("/root", cx_a).await;
+    let project_b = client_b.build_empty_local_project(false, cx_b);
+    let project_c = client_c.build_empty_local_project(false, cx_c);
 
     let (workspace_a, mut cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, mut cx_b) = client_b.build_workspace(&project_b, cx_b);

@@ -1,7 +1,7 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPrediction, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, prediction::EditPredictionResult,
+    EditPredictionStore, UserActionRecord, UserActionType, prediction::EditPredictionResult,
 };
 use anyhow::{Result, bail};
 use client::Client;
@@ -68,6 +68,7 @@ impl SweepAi {
             .unwrap_or("untitled")
             .into();
         let offset = inputs.position.to_offset(&inputs.snapshot);
+        let buffer_entity_id = inputs.buffer.entity_id();
 
         let recent_buffers = inputs.recent_paths.iter().cloned();
         let http_client = cx.http_client();
@@ -171,6 +172,14 @@ impl SweepAi {
                 });
             }
 
+            let file_path_str = full_path.display().to_string();
+            let recent_user_actions = inputs
+                .user_actions
+                .iter()
+                .filter(|r| r.buffer_id == buffer_entity_id)
+                .map(|r| to_sweep_user_action(r, &file_path_str))
+                .collect();
+
             let request_body = AutocompleteRequest {
                 debug_info,
                 repo_name,
@@ -184,7 +193,7 @@ impl SweepAi {
                 branch: None,
                 file_chunks,
                 retrieval_chunks,
-                recent_user_actions: vec![],
+                recent_user_actions,
                 use_bytes: true,
                 // TODO
                 privacy_mode_enabled: false,
@@ -386,7 +395,6 @@ struct UserAction {
     pub timestamp: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ActionType {
@@ -395,6 +403,22 @@ enum ActionType {
     DeleteChar,
     InsertSelection,
     DeleteSelection,
+}
+
+fn to_sweep_user_action(record: &UserActionRecord, file_path: &str) -> UserAction {
+    UserAction {
+        action_type: match record.action_type {
+            UserActionType::InsertChar => ActionType::InsertChar,
+            UserActionType::InsertSelection => ActionType::InsertSelection,
+            UserActionType::DeleteChar => ActionType::DeleteChar,
+            UserActionType::DeleteSelection => ActionType::DeleteSelection,
+            UserActionType::CursorMovement => ActionType::CursorMovement,
+        },
+        line_number: record.line_number as usize,
+        offset: record.offset,
+        file_path: file_path.to_string(),
+        timestamp: record.timestamp_epoch_ms,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
