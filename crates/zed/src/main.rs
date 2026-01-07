@@ -746,10 +746,26 @@ fn main() {
             .map(|arg| parse_url_arg(arg, cx))
             .collect();
 
-        let diff_paths: Vec<[String; 2]> = args
-            .diff
+        let diff_all_mode = !args.diff_all.is_empty();
+        let diff_source = if diff_all_mode {
+            &args.diff_all
+        } else {
+            &args.diff
+        };
+
+        let diff_paths: Vec<[String; 2]> = diff_source
             .chunks(2)
             .map(|chunk| [chunk[0].clone(), chunk[1].clone()])
+            .collect();
+        let diff_labels: Vec<String> = diff_paths
+            .iter()
+            .map(|pair| {
+                PathBuf::from(&pair[1])
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| pair[1].clone())
+            })
             .collect();
 
         #[cfg(target_os = "windows")]
@@ -761,7 +777,9 @@ fn main() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths,
+                diff_labels,
                 wsl,
+                diff_all: diff_all_mode,
             })
         }
 
@@ -1031,6 +1049,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let (workspace, _results) = open_paths_with_positions(
                         &paths_with_position,
                         &[],
+                        &[],
+                        false,
                         app_state,
                         workspace::OpenOptions::default(),
                         cx,
@@ -1092,6 +1112,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
                 &request.diff_paths,
+                &request.diff_labels,
+                request.diff_all,
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,
@@ -1450,6 +1472,9 @@ struct Args {
     /// Pairs of file paths to diff. Can be specified multiple times.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
     diff: Vec<String>,
+    /// Pairs of file paths to diff in a single aggregated view. Cannot be combined with --diff.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], conflicts_with = "diff")]
+    diff_all: Vec<String>,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     ///

@@ -12,6 +12,7 @@ use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     ffi::OsStr,
     fs, io,
@@ -20,8 +21,9 @@ use std::{
     sync::Arc,
     thread::{self, JoinHandle},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
+use walkdir::WalkDir;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
@@ -119,6 +121,9 @@ struct Args {
     /// Pairs of file paths to diff. Can be specified multiple times.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
     diff: Vec<String>,
+    /// Pairs of file paths to diff in a single aggregated view. Cannot be combined with --diff.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], conflicts_with = "diff")]
+    diff_all: Vec<String>,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -178,6 +183,120 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         }),
     }
     .map(|path_with_pos| path_with_pos.to_string(|path| path.to_string_lossy().into_owned()))
+}
+
+fn expand_directory_diff_pairs(
+    diff_pairs: Vec<[String; 2]>,
+) -> anyhow::Result<(Vec<[String; 2]>, Vec<String>, Vec<TempDir>)> {
+    let mut expanded = Vec::new();
+    let mut labels = Vec::new();
+    let mut temp_dirs = Vec::new();
+
+    for pair in diff_pairs {
+        let left = PathBuf::from(&pair[0]);
+        let right = PathBuf::from(&pair[1]);
+
+        if left.is_dir() && right.is_dir() {
+            let (mut pairs, mut rels, temp_dir) = expand_directory_pair(&left, &right)?;
+            expanded.append(&mut pairs);
+            labels.append(&mut rels);
+            if let Some(temp_dir) = temp_dir {
+                temp_dirs.push(temp_dir);
+            }
+        } else {
+            expanded.push(pair);
+            labels.push(label_for_pair(&left, &right));
+        }
+    }
+
+    Ok((expanded, labels, temp_dirs))
+}
+
+fn expand_directory_pair(
+    left: &Path,
+    right: &Path,
+) -> anyhow::Result<(Vec<[String; 2]>, Vec<String>, Option<TempDir>)> {
+    let left_files = collect_files(left)?;
+    let right_files = collect_files(right)?;
+
+    let mut rel_paths = BTreeSet::new();
+    rel_paths.extend(left_files.keys().cloned());
+    rel_paths.extend(right_files.keys().cloned());
+
+    let mut temp_dir = TempDir::new()?;
+    let mut temp_dir_used = false;
+    let mut pairs = Vec::new();
+    let mut labels = Vec::new();
+
+    for rel in rel_paths {
+        match (left_files.get(&rel), right_files.get(&rel)) {
+            (Some(left_path), Some(right_path)) => {
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
+                labels.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+            (Some(left_path), None) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    stub.to_string_lossy().into_owned(),
+                ]);
+                labels.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+            (None, Some(right_path)) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push([
+                    stub.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
+                labels.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+            (None, None) => {}
+        }
+    }
+
+    let temp_dir = if temp_dir_used { Some(temp_dir) } else { None };
+    Ok((pairs, labels, temp_dir))
+}
+
+fn collect_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
+    let mut files = BTreeMap::new();
+
+    for entry in WalkDir::new(root) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let rel = entry
+                .path()
+                .strip_prefix(root)
+                .context("stripping directory prefix")?
+                .to_path_buf();
+            files.insert(rel, entry.into_path());
+        }
+    }
+
+    Ok(files)
+}
+
+fn create_empty_stub(temp_dir: &mut TempDir, rel: &Path) -> anyhow::Result<PathBuf> {
+    let stub_path = temp_dir.path().join(rel);
+    if let Some(parent) = stub_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::File::create(&stub_path)?;
+    Ok(stub_path)
+}
+
+fn label_for_pair(left: &Path, right: &Path) -> String {
+    let candidate = if right.exists() { right } else { left };
+    candidate
+        .file_name()
+        .and_then(|os| os.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| candidate.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -473,6 +592,9 @@ fn main() -> Result<()> {
     let mut paths = vec![];
     let mut urls = vec![];
     let mut diff_paths = vec![];
+    let mut diff_labels = vec![];
+    let diff_all_mode = !args.diff_all.is_empty();
+    let mut synthetic_temp_dirs = vec![];
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
 
@@ -482,6 +604,19 @@ fn main() -> Result<()> {
             parse_path_with_position(&path[1])?,
         ]);
     }
+
+    for path in args.diff_all.chunks(2) {
+        diff_paths.push([
+            parse_path_with_position(&path[0])?,
+            parse_path_with_position(&path[1])?,
+        ]);
+    }
+
+    let (expanded_diff_paths, expanded_labels, temp_dirs) =
+        expand_directory_diff_pairs(diff_paths)?;
+    diff_paths = expanded_diff_paths;
+    diff_labels = expanded_labels;
+    synthetic_temp_dirs.extend(temp_dirs);
 
     #[cfg(target_os = "windows")]
     let wsl = args.wsl.as_ref();
@@ -538,6 +673,8 @@ fn main() -> Result<()> {
                     paths,
                     urls,
                     diff_paths,
+                    diff_labels,
+                    diff_all: diff_all_mode,
                     wsl,
                     wait: args.wait,
                     open_new_workspace,

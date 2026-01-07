@@ -3915,7 +3915,11 @@ impl EditorElement {
         let file = for_excerpt.buffer.file();
         let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
         let path_style = file.map(|file| file.path_style(cx));
-        let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
+        let relative_path = editor
+            .path_overrides
+            .get(&for_excerpt.buffer_id)
+            .cloned()
+            .or_else(|| for_excerpt.buffer.resolve_file_path(include_root, cx));
         let (parent_path, filename) = if let Some(path) = &relative_path {
             if let Some(path_style) = path_style {
                 let (dir, file_name) = path_style.split(path);
