@@ -197,19 +197,19 @@ These **built-in tools** get the full regex-based permission system:
 
 Other built-in tools (`read_file`, `list_directory`, `grep`, `find_path`, `now`, `thinking`, `diagnostics`, `open`, `restore_file_from_disk`, `copy_path`) do not get granular permissions.
 
-## Third-Party Tools (MCP and Custom)
+## Third-Party Tools (MCP Tools from Context Servers)
 
-Third-party tools get **simple per-tool permissions** without regex support:
-
-- MCP tools (from context servers)
-- Custom tools added via Settings
+MCP tools (from context servers like filesystem, GitHub, etc.) get **simple per-tool permissions** without regex support:
 
 For these tools:
 - `default_mode` can be set to `allow`, `deny`, or `confirm`
-- No `always_allow`, `always_deny`, or `always_confirm` regex lists
-- The "Always allow <tool_name>" button sets `tools.<tool_id>.default_mode = "allow"`
+- No `always_allow`, `always_deny`, or `always_confirm` regex lists (no predictable input format)
+- The permission dialog shows only 3 buttons:
+  1. **Always allow <tool_name>** - Sets `tools.<tool_id>.default_mode = "allow"`
+  2. **Allow** - Approve once
+  3. **Deny** - Reject once
 
-This ensures users can grant per-tool permissions without needing to configure regex patterns.
+This ensures users can grant per-tool permissions without needing to configure regex patterns, while still eliminating the global "Always Allow" button.
 
 **Note**: This permission system applies only to the native Zed agent. External agent servers (Claude Code, Gemini CLI, etc.) have their own permission systems and are not affected by these settings.
 
@@ -347,15 +347,16 @@ pub enum ToolPermissionMode {
             { "pattern": "^https://crates\\.io" },
           ],
         },
-        // Third-party tools: simple default_mode, no regex
+        // MCP tools: simple default_mode, no regex
+        // Tool IDs are prefixed with server ID to avoid collisions
         "mcp__filesystem__read_file": {
           "default_mode": "allow", // Trust this MCP tool
         },
         "mcp__github__create_issue": {
           "default_mode": "confirm", // Always ask before creating issues
         },
-        "custom_deploy_tool": {
-          "default_mode": "deny", // Block this custom tool entirely
+        "mcp__dangerous-server__delete_everything": {
+          "default_mode": "deny", // Block this MCP tool entirely
         },
       },
     },
@@ -762,16 +763,18 @@ fn get_settings_for_worktree(
 - Path-based tools match against file paths
 - URL-based tools match against URLs
 
-### PR 3.5: Third-Party Tool Permissions
+### PR 3.5: MCP Tool Permissions
 
-**Goal**: MCP tools and custom tools get per-tool default_mode support (no regex)
+**Goal**: MCP tools (from context servers) get per-tool default_mode support (no regex)
 
-**Background**: Currently, MCP tools (from context servers) call `event_stream.authorize()` which shows the old global "Always Allow" button. We need to:
+**Background**: Currently, MCP tools call `event_stream.authorize()` which shows the old global "Always Allow" button. We need to:
 1. Make them use the new tool-specific authorization flow
 2. Support arbitrary tool IDs in settings (not just the 8 built-in tools)
-3. Show only "Always allow <tool_name>" (no pattern button, since third-party tools don't have predictable input formats)
+3. Show only 3 buttons: "Always allow <tool_name>", "Allow", "Deny" (no pattern button, since MCP tools don't have predictable input formats that we can extract patterns from)
 
-**Tool ID Format**: MCP tools use their tool name directly (e.g., `read_file`, `create_issue`). To avoid collisions with built-in tools, we prefix MCP tool IDs in settings with the server ID: `mcp__<server_id>__<tool_name>` (e.g., `mcp__filesystem__read_file`, `mcp__github__create_issue`).
+**Why no pattern button for MCP tools?** Built-in tools like `terminal` and `edit_file` have well-known input schemas where we can extract meaningful patterns (command prefix, file path directory). MCP tools have arbitrary schemas defined by the context server, so we can't reliably extract patterns.
+
+**Tool ID Format**: To avoid collisions with built-in tools, MCP tool IDs in settings are prefixed with the server ID: `mcp__<server_id>__<tool_name>` (e.g., `mcp__filesystem__read_file`, `mcp__github__create_issue`).
 
 #### Files to Modify
 
@@ -846,13 +849,13 @@ if let Some(rules) = settings.tool_permissions.tools.get(&tool_id) {
 
 **Verification**:
 
-- MCP tools show "Always allow <tool_name>" button (3 buttons total)
+- MCP tools show exactly 3 buttons: "Always allow <tool_name>", "Allow", "Deny"
 - No pattern-based button appears for MCP tools
 - No global "Always Allow" button appears
-- Clicking "Always allow" updates settings with `tools.mcp__<server>__<tool>.default_mode = "allow"`
+- Clicking "Always allow <tool_name>" updates settings with `tools.mcp__<server>__<tool>.default_mode = "allow"`
 - MCP tools with `default_mode = "allow"` auto-approve without dialog
 - MCP tools with `default_mode = "deny"` fail with clear error message
-- Tool IDs are properly namespaced to avoid collisions with built-in tools
+- Tool IDs are properly namespaced to avoid collisions with built-in tools (e.g., an MCP tool named `terminal` becomes `mcp__<server>__terminal`, not `terminal`)
 
 ### PR 4: UI Updates (Behind Feature Flag)
 
