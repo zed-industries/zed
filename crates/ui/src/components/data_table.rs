@@ -29,7 +29,7 @@ struct UniformListData<const COLS: usize> {
 }
 
 struct VariableRowHeightListData<const COLS: usize> {
-    /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own height
+    /// Unlike UniformList, this closure renders only single row, allowing each one to have its own height
     render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
     list_state: ListState,
     row_count: usize,
@@ -681,10 +681,11 @@ pub fn render_table_row<const COLS: usize>(
         .column_widths
         .map_or([None; COLS], |widths| widths.map(Some));
 
-    let mut row = h_flex()
+    let mut row = div()
         // NOTE: `h_flex()` sneakily applies `items_center()` which is not default behavior for div element.
-        // Rolling back to items_stretch to allow for layout flexibility.
-        .items_stretch()
+        // Applying `.flex().flex_row()` manually to overcome that
+        .flex()
+        .flex_row()
         .id(("table_row", row_index))
         .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
