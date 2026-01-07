@@ -1265,7 +1265,7 @@ impl SettingsStore {
         }
 
         for (directory_with_config, _, parsed_editorconfig) in
-            self.local_editorconfig_settings(for_worktree)
+            self.local_internal_editorconfig_settings(for_worktree)
         {
             if !for_path.starts_with(&directory_with_config) {
                 properties.use_fallbacks();

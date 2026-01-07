@@ -819,7 +819,9 @@ impl SettingsObserver {
                     })
                     .log_err();
             }
-            for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
+            for (path, content, _) in
+                store.local_internal_editorconfig_settings(worktree.read(cx).id())
+            {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
