@@ -1527,9 +1527,12 @@ impl LocalLspStore {
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
+            let remove_whitespace_on_empty_lines = settings.remove_whitespace_on_empty_lines;
             let diff = buffer
                 .handle
-                .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))?
+                .read_with(cx, |buffer, cx| {
+                    buffer.remove_trailing_whitespace(remove_whitespace_on_empty_lines, cx)
+                })?
                 .await;
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
@@ -1538,8 +1541,9 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
+            let remove_whitespace_on_empty_lines = settings.remove_whitespace_on_empty_lines;
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
-                buffer.ensure_final_newline(cx);
+                buffer.ensure_final_newline(remove_whitespace_on_empty_lines, cx);
             })?;
         }
 
