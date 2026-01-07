@@ -20,10 +20,16 @@ use serde::{Deserialize, Serialize};
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
-    DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
-    SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
+    DapSettingsContent, Editorconfig, InvalidSettingsError, LocalSettingsKind, RegisterSetting,
+    Settings, SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
 };
-use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cell::OnceCell,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
@@ -889,13 +895,15 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) {
         match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
-                .subscribe(worktree, |this, worktree, event, cx| {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                cx.subscribe(worktree, |this, worktree, event, cx| {
                     if let worktree::Event::UpdatedEntries(changes) = event {
                         this.update_local_worktree_settings(&worktree, changes, cx)
                     }
                 })
-                .detach(),
+                .detach();
+                self.load_external_editorconfigs(worktree, cx);
+            }
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     store.clear_local_settings(*worktree_id, cx).log_err();
@@ -903,6 +911,77 @@ impl SettingsObserver {
             }
             _ => {}
         }
+    }
+
+    fn load_external_editorconfigs(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
+        let SettingsObserverMode::Local(fs) = &self.mode else {
+            return;
+        };
+
+        let worktree = worktree.read(cx);
+        if !worktree.is_local() {
+            return;
+        }
+
+        let worktree_id = worktree.id();
+        let worktree_abs_path = worktree.abs_path();
+        let fs = fs.clone();
+
+        let cached_configs: HashMap<Arc<Path>, Editorconfig> =
+            cx.global::<SettingsStore>().cached_external_editorconfigs();
+
+        cx.spawn(async move |_, cx| {
+            let mut external_paths: Vec<Arc<Path>> = Vec::new();
+            let mut new_configs: Vec<(Arc<Path>, Editorconfig)> = Vec::new();
+
+            let mut current = worktree_abs_path.parent().map(|p| p.to_path_buf());
+
+            while let Some(dir) = current {
+                let dir_path: Arc<Path> = Arc::from(dir.as_path());
+                if let Some(cached) = cached_configs.get(&dir_path) {
+                    let is_root = cached.is_root;
+                    external_paths.push(dir_path);
+                    if is_root {
+                        break;
+                    }
+                } else {
+                    let editorconfig_path = dir.join(EDITORCONFIG_NAME);
+                    if let Ok(content) = fs.load(&editorconfig_path).await {
+                        match content.parse::<Editorconfig>() {
+                            Ok(parsed) => {
+                                let is_root = parsed.is_root;
+                                external_paths.push(dir_path.clone());
+                                new_configs.push((dir_path, parsed));
+                                if is_root {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to parse external editorconfig at {:?}: {}",
+                                    editorconfig_path,
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+                current = dir.parent().map(|p| p.to_path_buf());
+            }
+
+            if external_paths.is_empty() {
+                return;
+            }
+
+            external_paths.reverse();
+            new_configs.reverse();
+
+            cx.update_global::<SettingsStore, _>(|store, _cx| {
+                store.set_worktree_external_editorconfigs(worktree_id, external_paths, new_configs);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn update_local_worktree_settings(
