@@ -453,7 +453,7 @@ message Envelope {
         GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
 
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
-        FindSearchCandidatesChunkResponse find_search_candidates_chunk_response = 410; // current max
+        FindSearchCandidatesCancelled find_search_candidates_cancelled = 410; // current max
     }
 
     reserved 87 to 88;

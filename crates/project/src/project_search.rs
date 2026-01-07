@@ -257,6 +257,16 @@ impl Search {
                         else {
                             return;
                         };
+
+                        let cancel_ongoing_search = util::defer({
+                            let client = client.clone();
+                            move || {
+                                _ = client.send(proto::FindSearchCandidatesCancelled {
+                                    project_id: remote_id,
+                                    handle,
+                                });
+                            }
+                        });
                         let request = client.request(proto::FindSearchCandidates {
                             project_id: remote_id,
                             query: Some(query.to_proto()),
@@ -311,6 +321,7 @@ impl Search {
                                     right?;
 
                                     drop(guard);
+                                    cancel_ongoing_search.abort();
                                     anyhow::Ok(())
                                 })
                                 .await

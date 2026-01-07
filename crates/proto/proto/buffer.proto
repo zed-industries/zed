@@ -329,12 +329,7 @@ message FindSearchCandidatesChunk {
   }
 }
 
-message FindSearchCandidatesChunkResponse {
-    oneof variant {
-      SearchChunkPayload ack = 1;
-      SearchChunkPayload cancelled = 2;
-    }
+message FindSearchCandidatesCancelled {
+    uint64 project_id = 1;
+    uint64 handle = 2;
 }
-
-
-message SearchChunkPayload {}

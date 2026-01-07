@@ -288,6 +288,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
 
+        session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
 
@@ -780,7 +781,7 @@ impl HeadlessProject {
     async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
@@ -792,9 +793,12 @@ impl HeadlessProject {
         let project_id = message.project_id;
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
         let handle = message.handle;
-
+        let _buffer_store = buffer_store.clone();
         let client = this.read_with(&cx, |this, _| this.session.clone())?;
-        cx.spawn(async move |cx| {
+        let task = cx.spawn(async move |cx| {
+            let bomb = util::defer(|| {
+                log::error!("Stopped search yayy");
+            });
             let results = this.update(cx, |this, cx| {
                 project::Search::local(
                     this.fs.clone(),
@@ -815,7 +819,7 @@ impl HeadlessProject {
                     .await?;
                 let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto())?;
                 if let Some(buffer_ids) = batcher.push(buffer_id) {
-                    let response = client
+                    client
                         .request(proto::FindSearchCandidatesChunk {
                             handle,
                             peer_id: Some(peer_id),
@@ -825,18 +829,10 @@ impl HeadlessProject {
                             )),
                         })
                         .await?;
-                    match response.variant {
-                        Some(proto::find_search_candidates_chunk_response::Variant::Cancelled(
-                            _,
-                        )) => {
-                            return anyhow::Ok(());
-                        }
-                        _ => {}
-                    }
                 }
             }
             if let Some(buffer_ids) = batcher.flush() {
-                let response = client
+                client
                     .request(proto::FindSearchCandidatesChunk {
                         handle,
                         peer_id: Some(peer_id),
@@ -846,14 +842,8 @@ impl HeadlessProject {
                         )),
                     })
                     .await?;
-                match response.variant {
-                    Some(proto::find_search_candidates_chunk_response::Variant::Cancelled(_)) => {
-                        return anyhow::Ok(());
-                    }
-                    _ => {}
-                }
             }
-            let _ = client
+            client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
                     peer_id: Some(peer_id),
@@ -863,11 +853,25 @@ impl HeadlessProject {
                     )),
                 })
                 .await?;
+            bomb.abort();
             anyhow::Ok(())
-        })
-        .detach();
+        });
+        _buffer_store.update(&mut cx, |this, _| {
+            this.register_ongoing_project_search((peer_id, handle), task);
+        })?;
 
         Ok(proto::Ack {})
+    }
+
+    // Goes from client to host.
+    async fn handle_find_search_candidates_cancel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FindSearchCandidatesCancelled>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        log::error!("Ending search!");
+        let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_find_search_candidates_cancel(buffer_store, envelope, cx).await
     }
 
     async fn handle_list_remote_directory(

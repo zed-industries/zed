@@ -346,7 +346,7 @@ messages!(
     (GetSharedAgentThread, Foreground),
     (GetSharedAgentThreadResponse, Foreground),
     (FindSearchCandidatesChunk, Background),
-    (FindSearchCandidatesChunkResponse, Background)
+    (FindSearchCandidatesCancelled, Background),
 );
 
 request_messages!(
@@ -536,7 +536,7 @@ request_messages!(
     (GitCreateWorktree, Ack),
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
-    (FindSearchCandidatesChunk, FindSearchCandidatesChunkResponse),
+    (FindSearchCandidatesChunk, Ack),
 );
 
 lsp_messages!(
@@ -713,6 +713,7 @@ entity_messages!(
     TrustWorktrees,
     RestrictWorktrees,
     FindSearchCandidatesChunk,
+    FindSearchCandidatesCancelled,
 );
 
 entity_messages!(

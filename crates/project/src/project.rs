@@ -1058,6 +1058,7 @@ impl Project {
         client.add_entity_message_handler(Self::handle_toggle_lsp_logs);
         client.add_entity_message_handler(Self::handle_create_image_for_peer);
         client.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
+        client.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1502,6 +1503,7 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_restrict_worktrees);
             remote_proto.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
 
+            remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
             BufferStore::init(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
@@ -4936,13 +4938,24 @@ impl Project {
         Ok(proto::Ack {})
     }
 
+    // Goes from host to client.
     async fn handle_find_search_candidates_chunk(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
-    ) -> Result<proto::FindSearchCandidatesChunkResponse> {
+    ) -> Result<proto::Ack> {
         let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone())?;
         BufferStore::handle_find_search_candidates_chunk(buffer_store, envelope, cx).await
+    }
+
+    // Goes from client to host.
+    async fn handle_find_search_candidates_cancel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FindSearchCandidatesCancelled>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone())?;
+        BufferStore::handle_find_search_candidates_cancel(buffer_store, envelope, cx).await
     }
 
     async fn handle_update_buffer(
@@ -5048,10 +5061,11 @@ impl Project {
         Ok(response)
     }
 
+    // Goes from client to host.
     async fn handle_search_candidate_buffers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
@@ -5061,9 +5075,9 @@ impl Project {
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
 
         let handle = message.handle;
-
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store().clone())?;
         let client = this.read_with(&cx, |this, _| this.client())?;
-        cx.spawn(async move |cx| {
+        let task = cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
                 this.search_impl(query, cx).matching_buffers(cx)
             })?;
@@ -5073,7 +5087,7 @@ impl Project {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 })?;
                 if let Some(buffer_ids) = batcher.push(buffer_id) {
-                    let response = client
+                    let _ = client
                         .request(proto::FindSearchCandidatesChunk {
                             handle,
                             peer_id: Some(peer_id),
@@ -5083,18 +5097,10 @@ impl Project {
                             )),
                         })
                         .await?;
-                    match response.variant {
-                        Some(proto::find_search_candidates_chunk_response::Variant::Cancelled(
-                            _,
-                        )) => {
-                            return anyhow::Ok(());
-                        }
-                        _ => {}
-                    }
                 }
             }
             if let Some(buffer_ids) = batcher.flush() {
-                let response = client
+                let _ = client
                     .request(proto::FindSearchCandidatesChunk {
                         handle,
                         peer_id: Some(peer_id),
@@ -5104,12 +5110,6 @@ impl Project {
                         )),
                     })
                     .await?;
-                match response.variant {
-                    Some(proto::find_search_candidates_chunk_response::Variant::Cancelled(_)) => {
-                        return anyhow::Ok(());
-                    }
-                    _ => {}
-                }
             }
             let _ = client
                 .request(proto::FindSearchCandidatesChunk {
@@ -5122,8 +5122,10 @@ impl Project {
                 })
                 .await?;
             anyhow::Ok(())
-        })
-        .detach();
+        });
+        buffer_store.update(&mut cx, |this, _| {
+            this.register_ongoing_project_search((peer_id, handle), task);
+        })?;
 
         Ok(proto::Ack {})
     }
