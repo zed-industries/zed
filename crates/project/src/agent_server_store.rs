@@ -760,7 +760,7 @@ impl AgentServerStore {
                     new_version_available_tx,
                     &mut cx.to_async(),
                 ))
-            })??
+            })?
             .await?;
         Ok(proto::AgentServerCommand {
             path: command.path.to_string_lossy().into_owned(),
@@ -840,7 +840,7 @@ impl AgentServerStore {
                 .collect();
             cx.emit(AgentServersUpdated);
             Ok(())
-        })?
+        })
     }
 
     async fn handle_external_extension_agents_updated(
@@ -889,7 +889,7 @@ impl AgentServerStore {
             this.reregister_agents(cx);
             cx.emit(AgentServersUpdated);
             Ok(())
-        })?
+        })
     }
 
     async fn handle_loading_status_updated(
@@ -904,7 +904,8 @@ impl AgentServerStore {
             {
                 status_tx.send(envelope.payload.status.into()).ok();
             }
-        })
+        });
+        Ok(())
     }
 
     async fn handle_new_version_available(
@@ -921,7 +922,8 @@ impl AgentServerStore {
                     .send(Some(envelope.payload.version))
                     .ok();
             }
-        })
+        });
+        Ok(())
     }
 
     pub fn get_extension_id_for_agent(

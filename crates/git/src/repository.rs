@@ -744,8 +744,6 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
                     .context("could not find git binary path")
                     .log_err()
             })
-            .ok()
-            .flatten()
         } else {
             None
         };
