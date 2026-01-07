@@ -99,7 +99,8 @@ impl Progress {
                     inner: Mutex::new(ProgressInner {
                         completed: Vec::new(),
                         in_progress: HashMap::new(),
-                        is_tty: std::io::stderr().is_terminal(),
+                        is_tty: std::env::var("NO_COLOR").is_err()
+                            && std::io::stderr().is_terminal(),
                         terminal_width: get_terminal_width(),
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
@@ -110,7 +111,7 @@ impl Progress {
                     }),
                 });
                 let _ = log::set_logger(&LOGGER);
-                log::set_max_level(log::LevelFilter::Error);
+                log::set_max_level(log::LevelFilter::Info);
                 progress
             })
             .clone()
