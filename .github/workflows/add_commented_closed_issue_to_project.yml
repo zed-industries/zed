@@ -42,8 +42,69 @@ jobs:
             }
 
       # Add to the support team's board for triage
-      - if: steps.check-staff.outputs.result == 'false'
+      - id: add-to-project
+        if: steps.check-staff.outputs.result == 'false'
         uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
         with:
           project-url: https://github.com/orgs/zed-industries/projects/71
           github-token: ${{ steps.get-app-token.outputs.token }}
+
+      # Set status to "Incoming" (overrides project's default "Closed" automation)
+      - if: steps.add-to-project.outputs.itemId
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            const itemId = '${{ steps.add-to-project.outputs.itemId }}';
+            const projectNumber = 71;
+
+            // Get project ID and Status field in one query
+            const { organization } = await github.graphql(`
+              query($org: String!, $projectNumber: Int!) {
+                organization(login: $org) {
+                  projectV2(number: $projectNumber) {
+                    id
+                    field(name: "Status") {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { org: 'zed-industries', projectNumber });
+
+            const project = organization.projectV2;
+            if (!project.field) {
+              throw new Error('Could not find "Status" field in project');
+            }
+
+            const incomingOption = project.field.options.find(o => o.name === 'Incoming');
+            if (!incomingOption) {
+              throw new Error('Could not find "Incoming" status option');
+            }
+
+            // Update the item's status
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) {
+                  projectV2Item {
+                    id
+                  }
+                }
+              }
+            `, {
+              projectId: project.id,
+              itemId,
+              fieldId: project.field.id,
+              optionId: incomingOption.id
+            });
