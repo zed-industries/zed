@@ -153,12 +153,28 @@ impl AgentTool for TerminalTool {
 
             let output = terminal.current_output(cx)?;
 
-            Ok(process_content(
-                output,
-                &input.command,
-                exit_status,
-                timed_out,
-            ))
+            // Debug logging to see exactly what we're sending to the LLM
+            eprintln!("=== TERMINAL TOOL RESULT DEBUG ===");
+            eprintln!("Command: {}", input.command);
+            eprintln!("Timeout setting: {:?}", timeout);
+            eprintln!("Elapsed time: {:?}", started_at.elapsed());
+            eprintln!("timed_out: {}", timed_out);
+            eprintln!("exit_status.exit_code: {:?}", exit_status.exit_code);
+            eprintln!("exit_status.signal: {:?}", exit_status.signal);
+            eprintln!("output.truncated: {}", output.truncated);
+            eprintln!("output.output length: {}", output.output.len());
+            eprintln!(
+                "output.output (first 500 chars): {:?}",
+                output.output.chars().take(500).collect::<String>()
+            );
+
+            let result = process_content(output, &input.command, exit_status, timed_out);
+
+            eprintln!("=== FINAL RESULT TO LLM (first 1000 chars) ===");
+            eprintln!("{:?}", result.chars().take(1000).collect::<String>());
+            eprintln!("=== END DEBUG ===");
+
+            Ok(result)
         })
     }
 }
