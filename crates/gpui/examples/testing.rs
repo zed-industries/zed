@@ -285,8 +285,8 @@ mod tests {
     }
 
     /// Note that the test executor panics if you await a future that waits on
-    /// something outside GPUI's control, like a real timer or network IO.
-    /// You should mock external systems when possible, as this feature can be used
+    /// something outside GPUI's control, like a reading a file or network IO.
+    /// You should mock external systems where possible, as this feature can be used
     /// to detect potential deadlocks in your async code.
     ///
     /// However, if you want to disable this check use `allow_parking()`
