@@ -3013,10 +3013,9 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
         self.next_frame.scene.diagnostic_quads.push(crate::test_scene::DiagnosticQuad {
             name: name.into(),
-            bounds: bounds.scale(scale_factor),
+            bounds,
             color,
         });
     }

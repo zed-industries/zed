@@ -23,7 +23,7 @@ pub(crate) type DrawOrder = u32;
 /// Test-only scene snapshot for inspecting rendered content.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_scene {
-    use crate::{Bounds, Hsla, Point, ScaledPixels, SharedString};
+    use crate::{Bounds, Hsla, Pixels, Point, ScaledPixels, SharedString};
 
     /// A rendered quad (background, border, cursor, selection, etc.)
     #[derive(Debug, Clone)]
@@ -43,8 +43,8 @@ pub mod test_scene {
     pub struct DiagnosticQuad {
         /// A stable name that test code can filter by.
         pub name: SharedString,
-        /// Bounds in scaled pixels.
-        pub bounds: Bounds<ScaledPixels>,
+        /// Bounds in logical pixels (not scaled).
+        pub bounds: Bounds<Pixels>,
         /// Optional color hint (useful when visualizing).
         pub color: Option<Hsla>,
     }
