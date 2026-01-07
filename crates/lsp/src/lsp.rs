@@ -48,16 +48,15 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 /// The default amount of time to wait while initializing or fetching LSP servers, in seconds.
 ///
-/// Should not be used in most cases and is exported solely for use inside ProjectSettings defaults.
+/// Should not be used (in favor of DEFAULT_LSP_REQUEST_TIMEOUT) and is exported solely for use inside ProjectSettings defaults.
 pub const DEFAULT_LSP_REQUEST_TIMEOUT_SECS: u64 = 120;
 /// A timeout representing the value of [DEFAULT_LSP_REQUEST_TIMEOUT_SECS].
 ///
-/// Should **only be used as a fallback** when a corresponding config value cannot be obtained!
+/// Should **only be used** in tests and as a fallback when a corresponding config value cannot be obtained!
 pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
     Duration::from_secs(DEFAULT_LSP_REQUEST_TIMEOUT_SECS);
-// TODO: Figure out how to configure lsp_store to adhere to relevant config setting instead of
-// solely using this
 
+/// The shutdown timeout for LSP servers (including Prettier/Copilot).
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -953,9 +952,7 @@ impl LanguageServer {
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
-        let Some(tasks) = self.io_tasks.lock().take() else {
-            return None;
-        };
+        let tasks = self.io_tasks.lock().take()?;
 
         let response_handlers = self.response_handlers.clone();
         let next_id = AtomicI32::new(self.next_id.load(SeqCst));
@@ -1391,8 +1388,10 @@ impl LanguageServer {
         }
     }
 
-    pub fn request_timer(&self) -> impl Future<Output = String> {
-        Self::request_timeout_future(self.executor.clone(), self.request_timeout)
+    /// Obtain a request timer for the LSP.
+    /// Accepts a minimum timeout duration to use.
+    pub fn request_timer(&self, min_timeout: Option<Duration>) -> impl Future<Output = String> {
+        Self::request_timeout_future(self.executor.clone(), self.request_timeout.max(min_timeout))
     }
 
     /// Sends a RPC notification to the language server.

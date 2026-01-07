@@ -13044,7 +13044,9 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                let timer = server.request_timer().fuse();
+                // Clamp timeout duration at default 120ms to mitigate infinite loops from re-trying connections.
+                // This allows users to increase the
+                let timer = server.request_timer(Some(DEFAULT_LSP_REQUEST_TIMEOUT)).fuse();
                 let progress = pin!(progress_rx.recv().fuse());
                 let response_result = server
                     .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
