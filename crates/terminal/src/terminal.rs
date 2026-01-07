@@ -2146,7 +2146,11 @@ impl Terminal {
             && task.status == TaskStatus::Running
         {
             if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+                // First kill the foreground process group (the command running in the shell)
                 info.kill_current_process();
+                // Then kill the shell itself so that the terminal exits properly
+                // and wait_for_completed_task can complete
+                info.kill_child_process();
             }
         }
     }
@@ -3081,6 +3085,133 @@ mod tests {
                 "Should have ProcessHyperlink event when dragging within hyperlink bounds"
             );
         });
+    }
+
+    /// Test that kill_active_task properly terminates both the foreground process
+    /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_kill_active_task_completes_and_captures_output(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        // Run a command that prints output then sleeps for a long time
+        // The echo ensures we have output to capture before killing
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+            Some("echo".to_owned()),
+            &["test_output_before_kill; sleep 60".to_owned()],
+        );
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        // Wait a bit for the echo to execute and produce output
+        smol::Timer::after(Duration::from_millis(200)).await;
+
+        // Kill the active task
+        terminal.update(cx, |term, _cx| {
+            term.kill_active_task();
+        });
+
+        // wait_for_completed_task should complete within a reasonable time (not hang)
+        let completion_result = smol_timeout(Duration::from_secs(5), completion_rx.recv()).await;
+        assert!(
+            completion_result.is_ok(),
+            "wait_for_completed_task should complete after kill_active_task, but it timed out"
+        );
+
+        // The exit status should indicate the process was killed (not a clean exit)
+        let exit_status = completion_result.unwrap().unwrap();
+        assert!(
+            exit_status.is_some(),
+            "Should have received an exit status after killing"
+        );
+
+        // Verify that output captured before killing is still available
+        let content = terminal.update(cx, |term, _| term.get_content());
+        assert!(
+            content.contains("test_output_before_kill"),
+            "Output from before kill should be captured, got: {content}"
+        );
+    }
+
+    /// Test that kill_active_task on a task that's not running is a no-op
+    #[gpui::test]
+    async fn test_kill_active_task_on_completed_task_is_noop(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        // Run a command that exits immediately
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .build(Some("echo".to_owned()), &["done".to_owned()]);
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        // Wait for the command to complete naturally
+        let exit_status = smol_timeout(Duration::from_secs(5), completion_rx.recv())
+            .await
+            .expect("Command should complete")
+            .expect("Should receive exit status");
+        assert_eq!(exit_status, Some(ExitStatus::default()));
+
+        // Now try to kill - should be a no-op since task already completed
+        terminal.update(cx, |term, _cx| {
+            term.kill_active_task();
+        });
+
+        // Content should still be there
+        let content = terminal.update(cx, |term, _| term.get_content());
+        assert!(
+            content.contains("done"),
+            "Output should still be present after no-op kill, got: {content}"
+        );
     }
 
     mod perf {
