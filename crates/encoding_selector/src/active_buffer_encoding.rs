@@ -1,12 +1,12 @@
 use editor::Editor;
 use encoding_rs::{Encoding, UTF_8};
 use gpui::{
-    div, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window,
+    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window, div,
 };
 use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{
-    item::{ItemHandle, Settings},
     StatusBarSettings, StatusItemView, Workspace,
+    item::{ItemHandle, Settings},
 };
 
 pub struct ActiveBufferEncoding {
