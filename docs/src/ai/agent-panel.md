@@ -81,9 +81,11 @@ Edit diffs also appear in individual buffers. If your active tab had edits made 
 Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant context, manually adding whatever would be useful to fulfill your prompt is still very encouraged as a way to not only improve the AI's response quality but also to speed up its response time.
 
 In Zed's Agent Panel, all pieces of context are added as mentions in the panel's message editor.
-You can type `@` to mention files, directories, symbols, previous threads, and rules files.
+You can type `@` to mention files, directories, symbols, previous threads, rules files, and diagnostics (when there are errors or warnings).
 
 Copying images and pasting them in the panel's message editor is also supported.
+
+Use `@diagnostics` when you want to inject the latest language-server diagnostics directly into your prompt—the completion menu shows how many errors and warnings are available so you can pick errors only, warnings only, or both without leaving the thread.
 
 When you paste multi-line code selections copied from an editor buffer, Zed automatically formats them as @mentions with the file context. To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
