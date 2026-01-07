@@ -441,7 +441,6 @@ fn main() {
                     if args.output.is_some() || !matches!(command, Command::Eval(_)) {
                         output.as_ref().map(|path| {
                             let file = OpenOptions::new()
-                                
                                 .create(true)
                                 .append(true)
                                 .open(path)
