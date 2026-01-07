@@ -622,6 +622,231 @@ impl SplittableEditor {
         }
     }
 
+    fn debug_print(&self, cx: &mut App) {
+        use crate::DisplayRow;
+        use crate::display_map::Block;
+        use buffer_diff::DiffHunkStatusKind;
+
+        assert!(
+            self.secondary.is_some(),
+            "debug_print is only useful when secondary editor exists"
+        );
+
+        let secondary = self.secondary.as_ref().unwrap();
+
+        // Get terminal width, default to 80 if unavailable
+        let terminal_width = std::env::var("COLUMNS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(80);
+
+        // Each side gets half the terminal width minus the separator
+        let separator = " │ ";
+        let side_width = (terminal_width - separator.len()) / 2;
+
+        // Get display snapshots for both editors
+        let secondary_snapshot = secondary.editor.update(cx, |editor, cx| {
+            editor.display_map.update(cx, |map, cx| map.snapshot(cx))
+        });
+        let primary_snapshot = self.primary_editor.update(cx, |editor, cx| {
+            editor.display_map.update(cx, |map, cx| map.snapshot(cx))
+        });
+
+        let secondary_max_row = secondary_snapshot.max_point().row().0;
+        let primary_max_row = primary_snapshot.max_point().row().0;
+        let max_row = secondary_max_row.max(primary_max_row);
+
+        // Build a map from display row -> block type string
+        // Each row of a multi-row block gets an entry with the same block type
+        fn build_block_map(
+            snapshot: &crate::DisplaySnapshot,
+            max_row: u32,
+        ) -> std::collections::HashMap<u32, String> {
+            let mut block_map = std::collections::HashMap::new();
+            for (start_row, block) in
+                snapshot.blocks_in_range(DisplayRow(0)..DisplayRow(max_row + 1))
+            {
+                let (block_type, height) = match block {
+                    Block::Spacer { height, .. } => ("SPACER", *height),
+                    Block::ExcerptBoundary { height, .. } => ("EXCERPT_BOUNDARY", *height),
+                    Block::BufferHeader { height, .. } => ("BUFFER_HEADER", *height),
+                    Block::FoldedBuffer { height, .. } => ("FOLDED_BUFFER", *height),
+                    Block::Custom(custom) => ("CUSTOM_BLOCK", custom.height.unwrap_or(1)),
+                };
+                for offset in 0..height {
+                    block_map.insert(start_row.0 + offset, block_type.to_string());
+                }
+            }
+            block_map
+        }
+
+        let secondary_blocks = build_block_map(&secondary_snapshot, secondary_max_row);
+        let primary_blocks = build_block_map(&primary_snapshot, primary_max_row);
+
+        // Helper to truncate a line with ellipsis if too long
+        fn truncate_line(line: &str, max_width: usize) -> String {
+            let char_count = line.chars().count();
+            if char_count <= max_width {
+                return line.to_string();
+            }
+            if max_width < 9 {
+                return line.chars().take(max_width).collect();
+            }
+            let prefix_len = 3;
+            let suffix_len = 3;
+            let ellipsis = "...";
+            let prefix: String = line.chars().take(prefix_len).collect();
+            let suffix: String = line
+                .chars()
+                .rev()
+                .take(suffix_len)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            format!("{}{}{}", prefix, ellipsis, suffix)
+        }
+
+        // Helper to format a single row for one side
+        // Format: "ln# diff bytes(cumul) text" or block info
+        // Line numbers come from buffer_row in RowInfo (1-indexed for display)
+        fn format_row(
+            row: u32,
+            max_row: u32,
+            snapshot: &crate::DisplaySnapshot,
+            blocks: &std::collections::HashMap<u32, String>,
+            row_infos: &[multi_buffer::RowInfo],
+            cumulative_bytes: &[usize],
+            side_width: usize,
+        ) -> String {
+            // Get row info if available
+            let row_info = row_infos.get(row as usize);
+
+            // Line number prefix (3 chars + space)
+            // Use buffer_row from RowInfo, which is None for block rows
+            let line_prefix = if row > max_row {
+                "    ".to_string()
+            } else if let Some(buffer_row) = row_info.and_then(|info| info.buffer_row) {
+                format!("{:>3} ", buffer_row + 1) // 1-indexed for display
+            } else {
+                "    ".to_string() // block rows have no line number
+            };
+            let content_width = side_width.saturating_sub(line_prefix.len());
+
+            if row > max_row {
+                return format!("{}{}", line_prefix, " ".repeat(content_width));
+            }
+
+            // Check if this row is a block row
+            if let Some(block_type) = blocks.get(&row) {
+                let block_str = format!("~~~[{}]~~~", block_type);
+                let formatted = format!("{:^width$}", block_str, width = content_width);
+                return format!("{}{}", line_prefix, truncate_line(&formatted, content_width));
+            }
+
+            // Get line text
+            let line_text = snapshot.line(DisplayRow(row));
+            let line_bytes = line_text.len();
+
+            // Diff status marker
+            let diff_marker = match row_info.and_then(|info| info.diff_status.as_ref()) {
+                Some(status) => match status.kind {
+                    DiffHunkStatusKind::Added => "+",
+                    DiffHunkStatusKind::Deleted => "-",
+                    DiffHunkStatusKind::Modified => "~",
+                },
+                None => " ",
+            };
+
+            // Cumulative bytes
+            let cumulative = cumulative_bytes.get(row as usize).copied().unwrap_or(0);
+
+            // Format: "diff bytes(cumul) text" - use 3 digits for bytes, 4 for cumulative
+            let info_prefix = format!("{}{:>3}({:>4}) ", diff_marker, line_bytes, cumulative);
+            let text_width = content_width.saturating_sub(info_prefix.len());
+            let truncated_text = truncate_line(&line_text, text_width);
+
+            format!(
+                "{}{}{:<width$}",
+                line_prefix,
+                info_prefix,
+                truncated_text,
+                width = text_width
+            )
+        }
+
+        // Collect row infos for both sides
+        let secondary_row_infos: Vec<_> = secondary_snapshot
+            .row_infos(DisplayRow(0))
+            .take((secondary_max_row + 1) as usize)
+            .collect();
+        let primary_row_infos: Vec<_> = primary_snapshot
+            .row_infos(DisplayRow(0))
+            .take((primary_max_row + 1) as usize)
+            .collect();
+
+        // Calculate cumulative bytes for each side (only counting non-block rows)
+        let mut secondary_cumulative = Vec::with_capacity((secondary_max_row + 1) as usize);
+        let mut cumulative = 0usize;
+        for row in 0..=secondary_max_row {
+            if !secondary_blocks.contains_key(&row) {
+                cumulative += secondary_snapshot.line(DisplayRow(row)).len() + 1; // +1 for newline
+            }
+            secondary_cumulative.push(cumulative);
+        }
+
+        let mut primary_cumulative = Vec::with_capacity((primary_max_row + 1) as usize);
+        cumulative = 0;
+        for row in 0..=primary_max_row {
+            if !primary_blocks.contains_key(&row) {
+                cumulative += primary_snapshot.line(DisplayRow(row)).len() + 1;
+            }
+            primary_cumulative.push(cumulative);
+        }
+
+        // Print header
+        eprintln!();
+        eprintln!("{}", "═".repeat(terminal_width));
+        let header_left = format!("{:^width$}", "SECONDARY (LEFT)", width = side_width);
+        let header_right = format!("{:^width$}", "PRIMARY (RIGHT)", width = side_width);
+        eprintln!("{}{}{}", header_left, separator, header_right);
+        eprintln!(
+            "{:^width$}{}{:^width$}",
+            "ln# diff len(cum) text",
+            separator,
+            "ln# diff len(cum) text",
+            width = side_width
+        );
+        eprintln!("{}", "─".repeat(terminal_width));
+
+        // Print each row
+        for row in 0..=max_row {
+            let left = format_row(
+                row,
+                secondary_max_row,
+                &secondary_snapshot,
+                &secondary_blocks,
+                &secondary_row_infos,
+                &secondary_cumulative,
+                side_width,
+            );
+            let right = format_row(
+                row,
+                primary_max_row,
+                &primary_snapshot,
+                &primary_blocks,
+                &primary_row_infos,
+                &primary_cumulative,
+                side_width,
+            );
+            eprintln!("{}{}{}", left, separator, right);
+        }
+
+        eprintln!("{}", "═".repeat(terminal_width));
+        eprintln!("Legend: + added, - deleted, ~ modified, ~~~ block/spacer row");
+        eprintln!();
+    }
+
     fn randomly_edit_excerpts(
         &mut self,
         rng: &mut impl rand::Rng,
@@ -1296,6 +1521,446 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_split_editor_block_alignment_after_deleting_unmodified_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Start with base text and current text that are identical
+        // This means no diff hunks initially
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+        let current_text = base_text.clone();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        // Add excerpts covering the whole buffer
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        // Initial state: both sides should be identical with no spacers
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+
+        // Delete an unmodified line (delete "ccc" which is row 2, 0-indexed)
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.debug_print(cx);
+            });
+        });
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+        // Secondary should still show "ccc" because diff hasn't been recalculated yet
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+
+        // Now recalculate the diff - this should mark "ccc" as deleted in the diff
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        // After diff recalculation: the primary should show a spacer for the deleted "ccc" line
+        // and the secondary should still show "ccc"
+        // BUG: The secondary erroneously removes its spacer after diff recalculation,
+        // causing misalignment
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_editor_block_alignment_after_undoing_deleted_unmodified_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Start with a diff where some lines are already deleted from base.
+        // This creates an initial state with spacers on the primary (RHS) side.
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+        // Current text is missing "bbb" and "ccc" compared to base
+        let current_text = "
+            aaa
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        // Initial state: primary (RHS) has spacers for deleted "bbb" and "ccc"
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+
+        // Delete an unmodified line ("eee" at row 2 in current text)
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // After deletion: primary has an additional spacer for deleted "eee"
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            § spacer
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+
+        // Recalculate the diff to reflect the deletion.
+        // This simulates what happens after the 250ms debounce timer fires in real usage.
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        // After diff recalculation: diff now includes "eee" as a deleted hunk
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            § spacer
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+
+        // Now undo the deletion
+        buffer.update(cx, |buffer, cx| {
+            buffer.undo(cx);
+        });
+
+        cx.run_until_parked();
+
+        // After undo, but BEFORE the diff is recalculated:
+        // The text "eee" is restored in the buffer, but the diff still shows "eee"
+        // as a deleted hunk (it hasn't been recalculated yet).
+        //
+        // BUG: The spacer for the "eee" diff hunk remains even though the text is
+        // restored, causing BOTH the spacer AND the restored "eee" to appear.
+        // This causes visual jitter until the diff is recalculated.
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+        
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.debug_print(cx);
+            });
+        });
+
+        // Expected: spacer should be removed since "eee" is back in the buffer
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent()
+        );
+    }
+
+    #[gpui::test]
     async fn test_split_row_translation(cx: &mut gpui::TestAppContext) {
         use buffer_diff::BufferDiff;
         use language::Buffer;

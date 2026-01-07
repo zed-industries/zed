@@ -54,7 +54,13 @@ pub struct BlockMapReader<'a> {
 
 pub struct BlockMapWriter<'a> {
     block_map: &'a mut BlockMap,
-    companion: Option<(&'a Companion, EntityId)>,
+    companion: Option<BlockMapWriterCompanion<'a>>,
+}
+
+struct BlockMapWriterCompanion<'a> {
+    companion: &'a Companion,
+    snapshot: &'a WrapSnapshot,
+    entity: EntityId,
 }
 
 #[derive(Clone)]
@@ -563,11 +569,20 @@ impl BlockMap {
         &'a mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
-        companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
+        companion_wrap_edits: Option<(&'a WrapSnapshot, &'a WrapPatch)>,
         companion: Option<(&'a Companion, EntityId)>,
     ) -> BlockMapWriter<'a> {
         self.sync(&wrap_snapshot, edits, companion_wrap_edits, companion);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
+        let companion = match (companion_wrap_edits, companion) {
+            (Some(_), None) | (None, Some(_)) => unreachable!(),
+            (None, None) => None,
+            (Some(companion_wrap_edits), Some(companion)) => Some(BlockMapWriterCompanion {
+                companion: companion.0,
+                snapshot: companion_wrap_edits.0,
+                entity: companion.1,
+            })
+        };
         BlockMapWriter {
             block_map: self,
             companion,
@@ -625,16 +640,13 @@ impl BlockMap {
                             .row,
                     );
 
-                    let mut my_start_row = convert(
+                    let my_start_row = convert(
                         excerpt_map,
                         wrap_snapshot.buffer_snapshot(),
                         companion_new_snapshot.buffer_snapshot(),
                         companion_start_row,
                         Bias::Left,
                     );
-                    if my_start_row > MultiBufferRow(0) {
-                        my_start_row.0 -= 1;
-                    }
                     let my_end_row = convert(
                         excerpt_map,
                         wrap_snapshot.buffer_snapshot(),
@@ -1038,15 +1050,18 @@ impl BlockMap {
         })
     }
 
+    // FIXME
     fn spacer_blocks(
         &self,
-        new_buffer_range: Range<MultiBufferPoint>,
+        mut new_buffer_range: Range<MultiBufferPoint>,
         new_wrap_row_range: Range<WrapRow>,
         wrap_snapshot: &WrapSnapshot,
         companion_snapshot: &WrapSnapshot,
         companion: &Companion,
         display_map_id: EntityId,
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
+        dbg!(&new_buffer_range);
+
         // This function calculates which spacer blocks should appear for the
         // given range of wrap rows. These spacer blocks are needed when viewing
         // a diff side-by-side, to ensure that equivalent lines appear next to
@@ -1096,18 +1111,17 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        // Debug: print diff hunks
         let diff_hunks: Vec<_> = our_buffer
             .diff_hunks_in_range(new_buffer_range.clone())
             .collect();
-        dbg!(&new_buffer_range);
-        for hunk in &diff_hunks {
-            dbg!(&hunk.row_range);
-        }
+        dbg!(&diff_hunks);
         let excerpt_to_companion_excerpt = companion.excerpt_to_companion_excerpt(display_map_id);
 
-        // Get starting wrap rows for both sides
-        let our_start_wrap_row = new_wrap_row_range.start;
+        debug_assert_eq!(new_buffer_range.start.column, 0);
+
+        new_buffer_range.start.row = new_buffer_range.start.row.saturating_sub(1);
+        new_buffer_range.start.column = 0;
+        let our_start_wrap_row = wrap_snapshot.make_wrap_point(new_buffer_range.start, Bias::Left).row();
 
         // Convert our start buffer row to companion's coordinate space
         let companion_start_buffer_row = convert_row_to_companion(
@@ -1424,8 +1438,12 @@ impl BlockMapWriter<'_> {
             }]);
         }
 
+        let default_patch = Patch::default();
+        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
+            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
+        }).unzip();
         self.block_map
-            .sync(wrap_snapshot, edits, None, self.companion);
+            .sync(wrap_snapshot, edits, companion_snapshot, companion);
         ids
     }
 
@@ -1481,8 +1499,12 @@ impl BlockMapWriter<'_> {
             }
         }
 
+        let default_patch = Patch::default();
+        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
+            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
+        }).unzip();
         self.block_map
-            .sync(wrap_snapshot, edits, None, self.companion);
+            .sync(wrap_snapshot, edits, companion_snapshot, companion);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1528,8 +1550,13 @@ impl BlockMapWriter<'_> {
         self.block_map
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
+        let default_patch = Patch::default();
+        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
+            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
+        }).unzip();
+
         self.block_map
-            .sync(wrap_snapshot, edits, None, self.companion);
+            .sync(wrap_snapshot, edits, companion_snapshot, companion);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1609,16 +1636,14 @@ impl BlockMapWriter<'_> {
                 new: range,
             });
         }
-        
-        // FIXME
-        let companion_wrap_snapshot = if let Some((companion, _)) = self.companion {
-            companion.
-        } else {
-            None
-        }
 
+
+        let default_patch = Patch::default();
+        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
+            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
+        }).unzip();
         self.block_map
-            .sync(&wrap_snapshot, edits, Some((companion)), self.companion);
+            .sync(&wrap_snapshot, edits, companion_snapshot, companion);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -4167,7 +4192,7 @@ mod tests {
 
         let rhs_entity_id = rhs_multibuffer.entity_id();
 
-        let companion = cx.new(|cx| {
+        let companion = cx.new(|_| {
             let mut c = Companion::new(
                 rhs_entity_id,
                 convert_rhs_row_to_lhs,
