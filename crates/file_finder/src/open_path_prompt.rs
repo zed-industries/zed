@@ -706,7 +706,7 @@ impl PickerDelegate for OpenPathDelegate {
                 if is_current_dir_candidate {
                     return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
                 } else {
-                    FileIcons::get_folder_icon(false, path, cx)?
+                    FileIcons::get_folder_icon(false, false, path, cx)?
                 }
             } else {
                 FileIcons::get_icon(path, cx)?
