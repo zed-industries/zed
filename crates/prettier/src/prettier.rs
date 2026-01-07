@@ -480,7 +480,7 @@ impl Prettier {
 
                 let response = local
                     .server
-                    .request::<Format>(params)
+                    .request::<Format>(Some(params))
                     .await
                     .into_response()?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
@@ -529,7 +529,7 @@ impl Prettier {
         match self {
             Self::Real(local) => local
                 .server
-                .request::<ClearCache>(())
+                .request::<ClearCache>(None)
                 .await
                 .into_response()
                 .context("prettier clear cache"),

@@ -208,7 +208,8 @@ pub struct Request<'a, T> {
     jsonrpc: &'static str,
     id: RequestId,
     method: &'a str,
-    params: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    params: Option<T>,
 }
 
 /// Language server protocol RPC request response message before it is deserialized into a concrete type.
@@ -249,7 +250,8 @@ struct Notification<'a, T> {
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
-    params: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    params: Option<T>,
 }
 
 /// Language server RPC notification message before it is deserialized into a concrete type.
@@ -917,7 +919,7 @@ impl LanguageServer {
     ) -> Task<Result<Arc<Self>>> {
         cx.background_spawn(async move {
             let response = self
-                .request::<request::Initialize>(params)
+                .request::<request::Initialize>(Some(params))
                 .await
                 .into_response()
                 .with_context(|| {
@@ -934,7 +936,7 @@ impl LanguageServer {
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(InitializedParams {})?;
+            self.notify::<notification::Initialized>(Some(InitializedParams {}))?;
             Ok(Arc::new(self))
         })
     }
@@ -954,7 +956,7 @@ impl LanguageServer {
                 &outbound_tx,
                 &notification_serializers,
                 &executor,
-                (),
+                None,
             );
 
             let server = self.server.clone();
@@ -986,7 +988,7 @@ impl LanguageServer {
                 }
 
                 response_handlers.lock().take();
-                Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
+                Self::notify_internal::<notification::Exit>(&notification_serializers, None).ok();
                 notification_serializers.close();
                 output_done.recv().await;
                 server.lock().take().map(|mut child| child.kill());
@@ -1205,7 +1207,7 @@ impl LanguageServer {
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request<T: request::Request>(
         &self,
-        params: T::Params,
+        params: Option<T::Params>,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
@@ -1226,7 +1228,7 @@ impl LanguageServer {
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
         &self,
-        params: T::Params,
+        params: Option<T::Params>,
         timer: U,
     ) -> impl LspRequestFuture<T::Result> + use<T, U>
     where
@@ -1250,7 +1252,7 @@ impl LanguageServer {
         notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
-        params: T::Params,
+        params: Option<T::Params>,
     ) -> impl LspRequestFuture<T::Result> + use<T, U>
     where
         T::Result: 'static + Send,
@@ -1313,9 +1315,9 @@ impl LanguageServer {
                 if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &notification_serializers,
-                        CancelParams {
+                        Some(CancelParams {
                             id: NumberOrString::Number(id),
-                        },
+                        }),
                     )
                     .ok();
                 }
@@ -1350,7 +1352,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
-        params: T::Params,
+        params: Option<T::Params>,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
@@ -1376,14 +1378,14 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+    pub fn notify<T: notification::Notification>(&self, params: Option<T::Params>) -> Result<()> {
         let outbound = self.notification_tx.clone();
         Self::notify_internal::<T>(&outbound, params)
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<NotificationSerializer>,
-        params: T::Params,
+        params: Option<T::Params>,
     ) -> Result<()> {
         let serializer = NotificationSerializer(Box::new(move || {
             serde_json::to_string(&Notification {
@@ -1429,7 +1431,7 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(Some(params)).ok();
         }
     }
 
@@ -1463,7 +1465,7 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(Some(params)).ok();
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
@@ -1495,7 +1497,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(Some(params)).ok();
         }
     }
 
@@ -1513,16 +1515,16 @@ impl LanguageServer {
         version: i32,
         initial_text: String,
     ) {
-        self.notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+        self.notify::<notification::DidOpenTextDocument>(Some(DidOpenTextDocumentParams {
             text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
-        })
+        }))
         .ok();
     }
 
     pub fn unregister_buffer(&self, uri: Uri) {
-        self.notify::<notification::DidCloseTextDocument>(DidCloseTextDocumentParams {
+        self.notify::<notification::DidCloseTextDocument>(Some(DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
-        })
+        }))
         .ok();
     }
 }
@@ -1736,12 +1738,12 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: Option<T::Params>) {
         self.server.notify::<T>(params).ok();
     }
 
     /// See [`LanguageServer::request`].
-    pub async fn request<T>(&self, params: T::Params) -> ConnectionResult<T::Result>
+    pub async fn request<T>(&self, params: Option<T::Params>) -> ConnectionResult<T::Result>
     where
         T: request::Request,
         T::Result: 'static + Send,
@@ -1839,24 +1841,24 @@ impl FakeLanguageServer {
         progress: WorkDoneProgressBegin,
     ) {
         let token = token.into();
-        self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+        self.request::<request::WorkDoneProgressCreate>(Some(WorkDoneProgressCreateParams {
             token: NumberOrString::String(token.clone()),
-        })
+        }))
         .await
         .into_response()
         .unwrap();
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(Some(ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
-        });
+        }));
     }
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(Some(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
-        });
+        }));
     }
 }
 
@@ -1912,14 +1914,14 @@ mod tests {
             .await
             .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(Some(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
                 ),
-            })
+            }))
             .unwrap();
         assert_eq!(
             fake.receive_notification::<notification::DidOpenTextDocument>()
@@ -1930,15 +1932,15 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(Some(ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
-        });
-        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+        }));
+        fake.notify::<notification::PublishDiagnostics>(Some(PublishDiagnosticsParams {
             uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
-        });
+        }));
         assert_eq!(message_rx.recv().await.unwrap().message, "ok");
         assert_eq!(
             diagnostics_rx.recv().await.unwrap().uri.as_str(),

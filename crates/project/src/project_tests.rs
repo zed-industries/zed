@@ -1482,7 +1482,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Keep track of the FS events reported to the language server.
     let file_changes = Arc::new(Mutex::new(Vec::new()));
     fake_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
+        .request::<lsp::request::RegisterCapability>(Some(lsp::RegistrationParams {
             registrations: vec![lsp::Registration {
                 id: Default::default(),
                 method: "workspace/didChangeWatchedFiles".to_string(),
@@ -1524,7 +1524,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 )
                 .ok(),
             }],
-        })
+        }))
         .await
         .into_response()
         .unwrap();
@@ -1968,16 +1968,18 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: None,
-        diagnostics: vec![lsp::Diagnostic {
-            range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
-            severity: Some(lsp::DiagnosticSeverity::ERROR),
-            message: "undefined variable 'A'".to_string(),
-            ..Default::default()
-        }],
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: None,
+            diagnostics: vec![lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                message: "undefined variable 'A'".to_string(),
+                ..Default::default()
+            }],
+        },
+    ));
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
@@ -2021,11 +2023,13 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     });
 
     // Ensure publishing empty diagnostics twice only results in one update event.
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: None,
-        diagnostics: Default::default(),
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: None,
+            diagnostics: Default::default(),
+        },
+    ));
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
@@ -2034,11 +2038,13 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: None,
-        diagnostics: Default::default(),
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: None,
+            diagnostics: Default::default(),
+        },
+    ));
     cx.executor().run_until_parked();
     assert_eq!(futures::poll!(events.next()), Poll::Pending);
 }
@@ -2165,16 +2171,18 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
 
     // Publish diagnostics
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: None,
-        diagnostics: vec![lsp::Diagnostic {
-            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-            severity: Some(lsp::DiagnosticSeverity::ERROR),
-            message: "the message".to_string(),
-            ..Default::default()
-        }],
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: None,
+            diagnostics: vec![lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                message: "the message".to_string(),
+                ..Default::default()
+            }],
+        },
+    ));
 
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
@@ -2246,11 +2254,13 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 
     // Before restarting the server, report diagnostics with an unknown buffer version.
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: Some(10000),
-        diagnostics: Vec::new(),
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: Some(10000),
+            diagnostics: Vec::new(),
+        },
+    ));
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
@@ -2497,33 +2507,35 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     assert!(change_notification_1.text_document.version > open_notification.text_document.version);
 
     // Report some diagnostics for the initial version of the buffer
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: Some(open_notification.text_document.version),
-        diagnostics: vec![
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: "undefined variable 'A'".to_string(),
-                source: Some("disk".to_string()),
-                ..Default::default()
-            },
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: "undefined variable 'BB'".to_string(),
-                source: Some("disk".to_string()),
-                ..Default::default()
-            },
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("disk".to_string()),
-                message: "undefined variable 'CCC'".to_string(),
-                ..Default::default()
-            },
-        ],
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: Some(open_notification.text_document.version),
+            diagnostics: vec![
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'A'".to_string(),
+                    source: Some("disk".to_string()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'BB'".to_string(),
+                    source: Some("disk".to_string()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    source: Some("disk".to_string()),
+                    message: "undefined variable 'CCC'".to_string(),
+                    ..Default::default()
+                },
+            ],
+        },
+    ));
 
     // The diagnostics have moved down since they were created.
     cx.executor().run_until_parked();
@@ -2585,26 +2597,28 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     // Ensure overlapping diagnostics are highlighted correctly.
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: Some(open_notification.text_document.version),
-        diagnostics: vec![
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: "undefined variable 'A'".to_string(),
-                source: Some("disk".to_string()),
-                ..Default::default()
-            },
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 12)),
-                severity: Some(DiagnosticSeverity::WARNING),
-                message: "unreachable statement".to_string(),
-                source: Some("disk".to_string()),
-                ..Default::default()
-            },
-        ],
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: Some(open_notification.text_document.version),
+            diagnostics: vec![
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'A'".to_string(),
+                    source: Some("disk".to_string()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 12)),
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    message: "unreachable statement".to_string(),
+                    source: Some("disk".to_string()),
+                    ..Default::default()
+                },
+            ],
+        },
+    ));
 
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
@@ -2679,26 +2693,28 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     );
 
     // Handle out-of-order diagnostics
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
-        version: Some(change_notification_2.text_document.version),
-        diagnostics: vec![
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: "undefined variable 'BB'".to_string(),
-                source: Some("disk".to_string()),
-                ..Default::default()
-            },
-            lsp::Diagnostic {
-                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
-                severity: Some(DiagnosticSeverity::WARNING),
-                message: "undefined variable 'A'".to_string(),
-                source: Some("disk".to_string()),
-                ..Default::default()
-            },
-        ],
-    });
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(Some(
+        lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+            version: Some(change_notification_2.text_document.version),
+            diagnostics: vec![
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'BB'".to_string(),
+                    source: Some("disk".to_string()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    message: "undefined variable 'A'".to_string(),
+                    source: Some("disk".to_string()),
+                    ..Default::default()
+                },
+            ],
+        },
+    ));
 
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
@@ -3917,7 +3933,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                 let fake = fake.clone();
                 async move {
                     fake.server
-                        .request::<lsp::request::ApplyWorkspaceEdit>(
+                        .request::<lsp::request::ApplyWorkspaceEdit>(Some(
                             lsp::ApplyWorkspaceEditParams {
                                 label: None,
                                 edit: lsp::WorkspaceEdit {
@@ -3938,7 +3954,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                                     ..Default::default()
                                 },
                             },
-                        )
+                        ))
                         .await
                         .into_response()
                         .unwrap();

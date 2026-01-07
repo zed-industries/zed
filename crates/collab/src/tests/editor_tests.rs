@@ -1376,7 +1376,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     fake_language_server.start_progress("the-token").await;
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
             lsp::WorkDoneProgressReport {
@@ -1384,7 +1384,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
                 ..Default::default()
             },
         )),
-    });
+    }));
     executor.run_until_parked();
 
     let token = ProgressToken::String(SharedString::from("the-token"));
@@ -1412,7 +1412,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
             lsp::WorkDoneProgressReport {
@@ -1420,7 +1420,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
                 ..Default::default()
             },
         )),
-    });
+    }));
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, cx| {
@@ -2110,7 +2110,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>(None)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2324,7 +2324,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>(None)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2983,7 +2983,7 @@ async fn test_lsp_pull_diagnostics(
         );
     });
 
-    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
@@ -3003,8 +3003,8 @@ async fn test_lsp_pull_diagnostics(
             }],
             version: None,
         },
-    );
-    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+    ));
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
@@ -3024,10 +3024,10 @@ async fn test_lsp_pull_diagnostics(
             }],
             version: None,
         },
-    );
+    ));
 
     if should_stream_workspace_diagnostic {
-        fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        fake_language_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
             token: expected_workspace_diagnostic_token.clone(),
             value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
@@ -3083,7 +3083,7 @@ async fn test_lsp_pull_diagnostics(
                     ],
                 }),
             ),
-        });
+        }));
     };
 
     let mut workspace_diagnostic_start_count =
@@ -3208,7 +3208,7 @@ async fn test_lsp_pull_diagnostics(
     });
 
     if should_stream_workspace_diagnostic {
-        fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        fake_language_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
             token: expected_workspace_diagnostic_token.clone(),
             value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
@@ -3244,7 +3244,7 @@ async fn test_lsp_pull_diagnostics(
                     )],
                 }),
             ),
-        });
+        }));
         workspace_diagnostic_start_count =
             workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire);
         workspace_diagnostic_cancel_tx.send(()).await.unwrap();
@@ -3364,7 +3364,7 @@ async fn test_lsp_pull_diagnostics(
     }
 
     fake_language_server
-        .request::<lsp::request::WorkspaceDiagnosticRefresh>(())
+        .request::<lsp::request::WorkspaceDiagnosticRefresh>(None)
         .await
         .into_response()
         .expect("workspace diagnostics refresh request failed");

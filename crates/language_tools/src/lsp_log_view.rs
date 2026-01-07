@@ -627,7 +627,7 @@ impl LspLogView {
             });
 
             server
-                .notify::<SetTrace>(SetTraceParams { value: level })
+                .notify::<SetTrace>(Some(SetTraceParams { value: level }))
                 .ok();
         }
     }

@@ -1060,7 +1060,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>(None)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1226,19 +1226,21 @@ pub mod tests {
 
         let progress_token = 42;
         fake_server
-            .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
-                token: lsp::ProgressToken::Number(progress_token),
-            })
+            .request::<lsp::request::WorkDoneProgressCreate>(Some(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(progress_token),
+                },
+            ))
             .await
             .into_response()
             .expect("work done progress create request failed");
         cx.executor().run_until_parked();
-        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        fake_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
             token: lsp::ProgressToken::Number(progress_token),
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
                 lsp::WorkDoneProgressBegin::default(),
             )),
-        });
+        }));
         cx.executor().run_until_parked();
 
         editor
@@ -1253,12 +1255,12 @@ pub mod tests {
             })
             .unwrap();
 
-        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        fake_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
             token: lsp::ProgressToken::Number(progress_token),
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
                 lsp::WorkDoneProgressEnd::default(),
             )),
-        });
+        }));
         cx.executor().run_until_parked();
 
         editor
@@ -1601,7 +1603,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>(None)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1759,7 +1761,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>(None)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1832,7 +1834,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>(None)
             .await
             .into_response()
             .expect("inlay refresh request failed");

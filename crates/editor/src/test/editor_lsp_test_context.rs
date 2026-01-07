@@ -479,7 +479,7 @@ impl EditorLspTestContext {
         })
     }
 
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: Option<T::Params>) {
         self.lsp.notify::<T>(params);
     }
 

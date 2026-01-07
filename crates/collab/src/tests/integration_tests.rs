@@ -4076,7 +4076,7 @@ async fn test_collaborating_with_diagnostics(
     fake_language_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
-    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
@@ -4087,7 +4087,7 @@ async fn test_collaborating_with_diagnostics(
                 ..Default::default()
             }],
         },
-    );
+    ));
 
     // Client A shares the project and, simultaneously, the language server
     // publishes a diagnostic. This is done to ensure that the server always
@@ -4096,7 +4096,7 @@ async fn test_collaborating_with_diagnostics(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
@@ -4107,7 +4107,7 @@ async fn test_collaborating_with_diagnostics(
                 ..Default::default()
             }],
         },
-    );
+    ));
 
     // Join the worktree as client B.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
@@ -4170,7 +4170,7 @@ async fn test_collaborating_with_diagnostics(
     );
 
     // Simulate a language server reporting more errors for a file.
-    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
@@ -4189,7 +4189,7 @@ async fn test_collaborating_with_diagnostics(
                 },
             ],
         },
-    );
+    ));
 
     // Clients B and C get the updated summaries
     executor.run_until_parked();
@@ -4268,13 +4268,13 @@ async fn test_collaborating_with_diagnostics(
     });
 
     // Simulate a language server reporting no errors for a file.
-    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: Vec::new(),
         },
-    );
+    ));
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, cx| {
@@ -4359,13 +4359,13 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     // Simulate a language server reporting errors for a file.
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server
-        .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
+        .request::<lsp::request::WorkDoneProgressCreate>(Some(lsp::WorkDoneProgressCreateParams {
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
-        })
+        }))
         .await
         .into_response()
         .unwrap();
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
             lsp::WorkDoneProgressBegin {
@@ -4373,9 +4373,9 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                 ..Default::default()
             },
         )),
-    });
+    }));
     for file_name in file_names {
-        fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        fake_language_server.notify::<lsp::notification::PublishDiagnostics>(Some(
             lsp::PublishDiagnosticsParams {
                 uri: lsp::Uri::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
                 version: None,
@@ -4387,14 +4387,14 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                     ..Default::default()
                 }],
             },
-        );
+        ));
     }
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(Some(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
             lsp::WorkDoneProgressEnd { message: None },
         )),
-    });
+    }));
 
     // When the "disk base diagnostics finished" message is received, the buffers'
     // diagnostics are expected to be present.

@@ -264,7 +264,7 @@ impl RegisteredBuffer {
                             buffer.snapshot = new_snapshot;
                             server
                                 .lsp
-                                .notify::<lsp::notification::DidChangeTextDocument>(
+                                .notify::<lsp::notification::DidChangeTextDocument>(Some(
                                     lsp::DidChangeTextDocumentParams {
                                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                                             buffer.uri.clone(),
@@ -272,7 +272,7 @@ impl RegisteredBuffer {
                                         ),
                                         content_changes,
                                     },
-                                )
+                                ))
                                 .ok();
                         }
                         let _ = done_tx.send((buffer.snapshot_version, buffer.snapshot.clone()));
@@ -553,9 +553,9 @@ impl Copilot {
                 .context("copilot: did change configuration")?;
 
             let status = server
-                .request::<request::CheckStatus>(request::CheckStatusParams {
+                .request::<request::CheckStatus>(Some(request::CheckStatusParams {
                     local_checks_only: false,
-                })
+                }))
                 .await
                 .into_response()
                 .context("copilot: check status")?;
@@ -619,9 +619,9 @@ impl Copilot {
                         .spawn(async move |this, cx| {
                             let sign_in = async {
                                 let sign_in = lsp
-                                    .request::<request::SignInInitiate>(
+                                    .request::<request::SignInInitiate>(Some(
                                         request::SignInInitiateParams {},
-                                    )
+                                    ))
                                     .await
                                     .into_response()
                                     .context("copilot sign-in")?;
@@ -645,11 +645,11 @@ impl Copilot {
                                             }
                                         })?;
                                         let response = lsp
-                                            .request::<request::SignInConfirm>(
+                                            .request::<request::SignInConfirm>(Some(
                                                 request::SignInConfirmParams {
                                                     user_code: flow.user_code,
                                                 },
-                                            )
+                                            ))
                                             .await
                                             .into_response()
                                             .context("copilot: sign in confirm")?;
@@ -698,7 +698,7 @@ impl Copilot {
                 let server = server.clone();
                 cx.background_spawn(async move {
                     server
-                        .request::<request::SignOut>(request::SignOutParams {})
+                        .request::<request::SignOut>(Some(request::SignOutParams {}))
                         .await
                         .into_response()
                         .context("copilot: sign in confirm")?;
@@ -769,7 +769,7 @@ impl Copilot {
                 let language_id = id_for_language(buffer.read(cx).language());
                 let snapshot = buffer.read(cx).snapshot();
                 server
-                    .notify::<lsp::notification::DidOpenTextDocument>(
+                    .notify::<lsp::notification::DidOpenTextDocument>(Some(
                         lsp::DidOpenTextDocumentParams {
                             text_document: lsp::TextDocumentItem {
                                 uri: uri.clone(),
@@ -778,7 +778,7 @@ impl Copilot {
                                 text: snapshot.text(),
                             },
                         },
-                    )
+                    ))
                     .ok();
 
                 e.insert(RegisteredBuffer {
@@ -817,14 +817,14 @@ impl Copilot {
                 language::BufferEvent::Saved => {
                     server
                         .lsp
-                        .notify::<lsp::notification::DidSaveTextDocument>(
+                        .notify::<lsp::notification::DidSaveTextDocument>(Some(
                             lsp::DidSaveTextDocumentParams {
                                 text_document: lsp::TextDocumentIdentifier::new(
                                     registered_buffer.uri.clone(),
                                 ),
                                 text: None,
                             },
-                        )
+                        ))
                         .ok();
                 }
                 language::BufferEvent::FileHandleChanged
@@ -840,15 +840,15 @@ impl Copilot {
                         registered_buffer.language_id = new_language_id;
                         server
                             .lsp
-                            .notify::<lsp::notification::DidCloseTextDocument>(
+                            .notify::<lsp::notification::DidCloseTextDocument>(Some(
                                 lsp::DidCloseTextDocumentParams {
                                     text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                 },
-                            )
+                            ))
                             .ok();
                         server
                             .lsp
-                            .notify::<lsp::notification::DidOpenTextDocument>(
+                            .notify::<lsp::notification::DidOpenTextDocument>(Some(
                                 lsp::DidOpenTextDocumentParams {
                                     text_document: lsp::TextDocumentItem::new(
                                         registered_buffer.uri.clone(),
@@ -857,7 +857,7 @@ impl Copilot {
                                         registered_buffer.snapshot.text(),
                                     ),
                                 },
-                            )
+                            ))
                             .ok();
                     }
                 }
@@ -874,11 +874,11 @@ impl Copilot {
         {
             server
                 .lsp
-                .notify::<lsp::notification::DidCloseTextDocument>(
+                .notify::<lsp::notification::DidCloseTextDocument>(Some(
                     lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                     },
-                )
+                ))
                 .ok();
         }
     }
@@ -909,10 +909,10 @@ impl Copilot {
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
-                .request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
+                .request::<NextEditSuggestions>(Some(request::NextEditSuggestionsParams {
                     text_document: lsp::VersionedTextDocumentIdentifier { uri, version },
                     position: point_to_lsp(position),
-                })
+                }))
                 .await
                 .into_response()
                 .context("copilot: get completions")?;
@@ -947,13 +947,14 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
         if let Some(command) = &completion.command {
-            let request = server
-                .lsp
-                .request::<lsp::ExecuteCommand>(lsp::ExecuteCommandParams {
-                    command: command.command.clone(),
-                    arguments: command.arguments.clone().unwrap_or_default(),
-                    ..Default::default()
-                });
+            let request =
+                server
+                    .lsp
+                    .request::<lsp::ExecuteCommand>(Some(lsp::ExecuteCommandParams {
+                        command: command.command.clone(),
+                        arguments: command.arguments.clone().unwrap_or_default(),
+                        ..Default::default()
+                    }));
             cx.background_spawn(async move {
                 request
                     .await
@@ -1113,9 +1114,9 @@ fn notify_did_change_config_to_server(
     });
 
     server
-        .notify::<lsp::notification::DidChangeConfiguration>(lsp::DidChangeConfigurationParams {
-            settings,
-        })
+        .notify::<lsp::notification::DidChangeConfiguration>(Some(
+            lsp::DidChangeConfigurationParams { settings },
+        ))
         .ok();
     Ok(())
 }
