@@ -51,7 +51,7 @@ struct WindowsPlatformInner {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
-    main_receiver: PriorityQueueReceiver<RunnableVariant>,
+    main_receiver: PriorityQueueReceiver<GpuiRunnable>,
     dispatcher: Arc<WindowsDispatcher>,
 }
 
@@ -856,7 +856,7 @@ impl WindowsPlatformInner {
                 }
                 let mut main_receiver = self.main_receiver.clone();
                 match main_receiver.try_pop() {
-                    Ok(Some(runnable)) => WindowsDispatcher::execute_runnable(runnable),
+                    Ok(Some(runnable)) => _ = runnable.run_and_profile(),
                     _ => break 'timeout_loop,
                 }
             }
@@ -868,7 +868,7 @@ impl WindowsPlatformInner {
             match main_receiver.try_pop() {
                 Ok(Some(runnable)) => {
                     self.dispatcher.wake_posted.store(true, Ordering::Release);
-                    runnable.run_and_time();
+                    runnable.run_and_profile();
                 }
                 _ => break 'tasks,
             }

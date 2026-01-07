@@ -247,15 +247,19 @@ fn set_audio_thread_priority() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Note we can not send through a GpuiRunnable as that would require allocating
+// to keep the pointer alive. So we recreate it here.
 extern "C" fn trampoline(runnable: *mut c_void) {
     let task =
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
     let task = GpuiRunnable::GpuiSpawned(task);
-    task.run_and_time();
+    task.run_and_profile();
 }
 
+// Note we can not send through a GpuiRunnable as that would require allocating
+// to keep the pointer alive. So we recreate it here.
 extern "C" fn trampoline_compat(runnable: *mut c_void) {
     let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
     let task = GpuiRunnable::DependencySpawned(task);
-    task.run_and_time();
+    task.run_and_profile();
 }
