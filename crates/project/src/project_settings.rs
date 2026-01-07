@@ -819,9 +819,7 @@ impl SettingsObserver {
                     })
                     .log_err();
             }
-            for (path, content, _) in
-                store.local_internal_editorconfig_settings(worktree.read(cx).id())
-            {
+            for (path, content, _) in store.local_internal_editorconfigs(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -921,20 +919,15 @@ impl SettingsObserver {
         };
 
         let worktree = worktree.read(cx);
-        if !worktree.is_local() {
-            return;
-        }
-
         let worktree_id = worktree.id();
         let worktree_abs_path = worktree.abs_path();
         let fs = fs.clone();
 
-        let cached_configs: HashMap<Arc<Path>, Editorconfig> =
-            cx.global::<SettingsStore>().cached_external_editorconfigs();
+        let cached_configs = cx.global::<SettingsStore>().local_external_editorconfigs();
 
         cx.spawn(async move |_, cx| {
-            let mut external_paths: Vec<Arc<Path>> = Vec::new();
-            let mut new_configs: Vec<(Arc<Path>, Editorconfig)> = Vec::new();
+            let mut external_paths = Vec::new();
+            let mut new_configs = Vec::new();
 
             let mut current = worktree_abs_path.parent().map(|p| p.to_path_buf());
 
@@ -979,7 +972,8 @@ impl SettingsObserver {
             new_configs.reverse();
 
             cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store.set_worktree_external_editorconfigs(worktree_id, external_paths, new_configs);
+                store.set_local_external_editorconfigs(new_configs);
+                store.set_external_editorconfig_paths_for_worktree(worktree_id, external_paths);
             })
             .ok();
         })

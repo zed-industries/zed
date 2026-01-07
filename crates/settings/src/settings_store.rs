@@ -154,7 +154,7 @@ pub struct SettingsStore {
     merged_settings: Rc<SettingsContent>,
 
     local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
-    editorconfigs: EditorconfigStore,
+    editorconfig_settings: EditorconfigStore,
 
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
@@ -226,14 +226,14 @@ impl FromStr for Editorconfig {
 pub struct EditorconfigStore {
     /// These can be shared across multiple worktrees.
     pub external_configs: BTreeMap<Arc<Path>, Editorconfig>,
-    pub worktrees: BTreeMap<WorktreeId, WorktreeEditorconfigs>,
+    pub worktree_configs: BTreeMap<WorktreeId, WorktreeEditorconfigs>,
 }
 
 #[derive(Clone, Default)]
 pub struct WorktreeEditorconfigs {
     /// Ordered from closest to filesystem root to closest to worktree root.
     pub external_config_paths: Vec<Arc<Path>>,
-    pub worktree_configs: BTreeMap<Arc<RelPath>, (String, Option<Editorconfig>)>,
+    pub internal_configs: BTreeMap<Arc<RelPath>, (String, Option<Editorconfig>)>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -292,7 +292,7 @@ impl SettingsStore {
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
-            editorconfigs: EditorconfigStore::default(),
+            editorconfig_settings: EditorconfigStore::default(),
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
@@ -886,8 +886,12 @@ impl SettingsStore {
                     .remove(&SettingsFile::Project((root_id, directory_path.clone())));
             }
             (LocalSettingsKind::Editorconfig, None) => {
-                if let Some(worktree_configs) = self.editorconfigs.worktrees.get_mut(&root_id) {
-                    worktree_configs.worktree_configs.remove(&directory_path);
+                if let Some(worktree_configs) = self
+                    .editorconfig_settings
+                    .worktree_configs
+                    .get_mut(&root_id)
+                {
+                    worktree_configs.internal_configs.remove(&directory_path);
                 }
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
@@ -925,9 +929,13 @@ impl SettingsStore {
                 }
             }
             (LocalSettingsKind::Editorconfig, Some(editorconfig_contents)) => {
-                let worktree_configs = self.editorconfigs.worktrees.entry(root_id).or_default();
-                match worktree_configs
+                let worktree_configs = self
+                    .editorconfig_settings
                     .worktree_configs
+                    .entry(root_id)
+                    .or_default();
+                match worktree_configs
+                    .internal_configs
                     .entry(directory_path.clone())
                 {
                     btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
@@ -994,16 +1002,16 @@ impl SettingsStore {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
 
-        if let Some(removed) = self.editorconfigs.worktrees.remove(&root_id) {
+        if let Some(removed) = self.editorconfig_settings.worktree_configs.remove(&root_id) {
             let paths_in_use: HashSet<_> = self
-                .editorconfigs
-                .worktrees
+                .editorconfig_settings
+                .worktree_configs
                 .values()
                 .flat_map(|w| w.external_config_paths.iter())
                 .collect();
             for path in removed.external_config_paths {
                 if !paths_in_use.contains(&path) {
-                    self.editorconfigs.external_configs.remove(&path);
+                    self.editorconfig_settings.external_configs.remove(&path);
                 }
             }
         }
@@ -1030,17 +1038,17 @@ impl SettingsStore {
             .map(|((_, path), content)| (path.clone(), &content.project))
     }
 
-    pub fn local_internal_editorconfig_settings(
+    pub fn local_internal_editorconfigs(
         &self,
         root_id: WorktreeId,
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
-        self.editorconfigs
-            .worktrees
+        self.editorconfig_settings
+            .worktree_configs
             .get(&root_id)
             .into_iter()
             .flat_map(|worktree_configs| {
                 worktree_configs
-                    .worktree_configs
+                    .internal_configs
                     .iter()
                     .map(|(path, (content, parsed_content))| {
                         (path.clone(), content.clone(), parsed_content.clone())
@@ -1048,28 +1056,35 @@ impl SettingsStore {
             })
     }
 
-    pub fn cached_external_editorconfigs(&self) -> HashMap<Arc<Path>, Editorconfig> {
-        self.editorconfigs
+    pub fn local_external_editorconfigs(&self) -> HashMap<Arc<Path>, Editorconfig> {
+        self.editorconfig_settings
             .external_configs
             .iter()
             .map(|(path, config)| (path.clone(), config.clone()))
             .collect()
     }
 
-    pub fn set_worktree_external_editorconfigs(
+    pub fn set_local_external_editorconfigs(
         &mut self,
-        worktree_id: WorktreeId,
-        external_paths: Vec<Arc<Path>>,
         new_configs: Vec<(Arc<Path>, Editorconfig)>,
     ) {
         for (path, config) in new_configs {
-            self.editorconfigs.external_configs.insert(path, config);
+            self.editorconfig_settings
+                .external_configs
+                .insert(path, config);
         }
-        self.editorconfigs
-            .worktrees
+    }
+
+    pub fn set_external_editorconfig_paths_for_worktree(
+        &mut self,
+        worktree_id: WorktreeId,
+        external_config_paths: Vec<Arc<Path>>,
+    ) {
+        self.editorconfig_settings
+            .worktree_configs
             .entry(worktree_id)
             .or_default()
-            .external_config_paths = external_paths;
+            .external_config_paths = external_config_paths;
     }
 
     pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
@@ -1239,17 +1254,21 @@ impl SettingsStore {
         for_path: &RelPath,
     ) -> Option<EditorconfigProperties> {
         let mut properties = EditorconfigProperties::new();
-        let worktree_configs = self.editorconfigs.worktrees.get(&for_worktree);
+        let worktree_configs = self
+            .editorconfig_settings
+            .worktree_configs
+            .get(&for_worktree);
         let empty_path: Arc<RelPath> = RelPath::empty().into();
         let root_has_root_true = worktree_configs
-            .and_then(|configs| configs.worktree_configs.get(&empty_path))
+            .and_then(|configs| configs.internal_configs.get(&empty_path))
             .and_then(|(_, parsed)| parsed.as_ref())
             .is_some_and(|ec| ec.is_root);
 
         if !root_has_root_true {
             if let Some(configs) = worktree_configs {
                 for path in &configs.external_config_paths {
-                    if let Some(parsed_editorconfig) = self.editorconfigs.external_configs.get(path)
+                    if let Some(parsed_editorconfig) =
+                        self.editorconfig_settings.external_configs.get(path)
                     {
                         if parsed_editorconfig.is_root {
                             properties = EditorconfigProperties::new();
@@ -1265,7 +1284,7 @@ impl SettingsStore {
         }
 
         for (directory_with_config, _, parsed_editorconfig) in
-            self.local_internal_editorconfig_settings(for_worktree)
+            self.local_internal_editorconfigs(for_worktree)
         {
             if !for_path.starts_with(&directory_with_config) {
                 properties.use_fallbacks();
