@@ -8398,7 +8398,7 @@ pub(crate) mod tests {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new("allow"),
-                "Allow",
+                "Allow Once",
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
@@ -8486,7 +8486,10 @@ pub(crate) mod tests {
                     labels.contains(&"Always allow `cargo` commands"),
                     "Missing pattern button"
                 );
-                assert!(labels.contains(&"Allow"), "Missing 'Allow' button");
+                assert!(
+                    labels.contains(&"Allow Once"),
+                    "Missing 'Allow Once' button"
+                );
                 assert!(labels.contains(&"Deny"), "Missing 'Deny' button");
             }
         });
@@ -8516,7 +8519,7 @@ pub(crate) mod tests {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new("allow"),
-                "Allow",
+                "Allow Once",
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
@@ -8616,7 +8619,7 @@ pub(crate) mod tests {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new("allow"),
-                "Allow",
+                "Allow Once",
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
@@ -8712,7 +8715,7 @@ pub(crate) mod tests {
             // Note: No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new("allow"),
-                "Allow",
+                "Allow Once",
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
@@ -8788,7 +8791,10 @@ pub(crate) mod tests {
                     labels.contains(&"Always allow terminal"),
                     "Missing 'Always allow terminal' button"
                 );
-                assert!(labels.contains(&"Allow"), "Missing 'Allow' button");
+                assert!(
+                    labels.contains(&"Allow Once"),
+                    "Missing 'Allow Once' button"
+                );
                 assert!(labels.contains(&"Deny"), "Missing 'Deny' button");
                 // Should NOT contain a pattern button
                 assert!(

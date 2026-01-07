@@ -819,7 +819,7 @@ async fn run_tool_permission_buttons_test(
         ),
         acp::PermissionOption::new(
             acp::PermissionOptionId::new("allow"),
-            "Allow",
+            "Allow Once",
             acp::PermissionOptionKind::AllowOnce,
         ),
         acp::PermissionOption::new(
@@ -982,7 +982,7 @@ async fn run_edit_file_permission_buttons_test(
         ),
         acp::PermissionOption::new(
             acp::PermissionOptionId::new("allow"),
-            "Allow",
+            "Allow Once",
             acp::PermissionOptionKind::AllowOnce,
         ),
         acp::PermissionOption::new(
@@ -1145,7 +1145,7 @@ async fn run_fetch_permission_buttons_test(
         ),
         acp::PermissionOption::new(
             acp::PermissionOptionId::new("allow"),
-            "Allow",
+            "Allow Once",
             acp::PermissionOptionKind::AllowOnce,
         ),
         acp::PermissionOption::new(
@@ -1302,7 +1302,7 @@ async fn run_terminal_no_pattern_permission_buttons_test(
         ),
         acp::PermissionOption::new(
             acp::PermissionOptionId::new("allow"),
-            "Allow",
+            "Allow Once",
             acp::PermissionOptionKind::AllowOnce,
         ),
         acp::PermissionOption::new(
