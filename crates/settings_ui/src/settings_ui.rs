@@ -2,7 +2,7 @@ mod components;
 mod page_data;
 mod pages;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -11,7 +11,9 @@ use gpui::{
     Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
-use project::{Project, WorktreeId};
+
+use language::Buffer;
+use project::{Project, ProjectPath, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -155,7 +157,7 @@ trait AnySettingField {
         current_file: &SettingsUiFile,
         file_set_in: &settings::SettingsFile,
         cx: &App,
-    ) -> Option<Box<dyn Fn(&mut App)>>;
+    ) -> Option<Box<dyn Fn(&mut Window, &mut App)>>;
 
     fn json_path(&self) -> Option<&'static str>;
 }
@@ -185,7 +187,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         current_file: &SettingsUiFile,
         file_set_in: &settings::SettingsFile,
         cx: &App,
-    ) -> Option<Box<dyn Fn(&mut App)>> {
+    ) -> Option<Box<dyn Fn(&mut Window, &mut App)>> {
         if file_set_in == &settings::SettingsFile::Default {
             return None;
         }
@@ -204,7 +206,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         }
         let current_file = current_file.clone();
 
-        return Some(Box::new(move |cx| {
+        return Some(Box::new(move |window, cx| {
             let store = SettingsStore::global(cx);
             let default_value = (this.pick)(store.raw_default_settings());
             let is_set_somewhere_other_than_default = store
@@ -216,9 +218,15 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             } else {
                 None
             };
-            update_settings_file(current_file.clone(), None, cx, move |settings, _| {
-                (this.write)(settings, value_to_set);
-            })
+            update_settings_file(
+                current_file.clone(),
+                None,
+                window,
+                cx,
+                move |settings, _| {
+                    (this.write)(settings, value_to_set);
+                },
+            )
             // todo(settings_ui): Don't log err
             .log_err();
         }));
@@ -580,7 +588,6 @@ pub fn open_settings_editor(
     }
 
     // We have to defer this to get the workspace off the stack.
-
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
         let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
@@ -676,6 +683,8 @@ pub struct SettingsWindow {
     pages: Vec<SettingsPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
+    /// Cached settings file buffers to avoid repeated disk I/O on each settings change
+    project_setting_file_buffers: HashMap<ProjectPath, Entity<Buffer>>,
     /// Index into navbar_entries
     navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
@@ -1074,8 +1083,8 @@ fn render_settings_item(
                                         .icon_size(IconSize::Small)
                                         .tooltip(Tooltip::text("Reset to Default"))
                                         .on_click({
-                                            move |_, _, cx| {
-                                                reset_to_default(cx);
+                                            move |_, window, cx| {
+                                                reset_to_default(window, cx);
                                             }
                                         }),
                                 )
@@ -1517,6 +1526,7 @@ impl SettingsWindow {
             files: vec![],
 
             current_file: current_file,
+            project_setting_file_buffers: HashMap::default(),
             pages: vec![],
             navbar_entries: vec![],
             navbar_entry: 0,
@@ -2043,14 +2053,9 @@ impl SettingsWindow {
             }
 
             if let Some(worktree_id) = settings_ui_file.worktree_id() {
-                let directory_name = all_projects(cx)
+                let directory_name = all_projects(self.original_window.as_ref(), cx)
                     .find_map(|project| project.read(cx).worktree_for_id(worktree_id, cx))
-                    .and_then(|worktree| worktree.read(cx).root_dir())
-                    .and_then(|root_dir| {
-                        root_dir
-                            .file_name()
-                            .map(|os_string| os_string.to_string_lossy().to_string())
-                    });
+                    .map(|worktree| worktree.read(cx).root_name());
 
                 let Some(directory_name) = directory_name else {
                     log::error!(
@@ -2060,7 +2065,8 @@ impl SettingsWindow {
                     continue;
                 };
 
-                self.worktree_root_dirs.insert(worktree_id, directory_name);
+                self.worktree_root_dirs
+                    .insert(worktree_id, directory_name.as_unix_str().to_string());
             }
 
             let focus_handle = prev_files
@@ -2076,7 +2082,7 @@ impl SettingsWindow {
 
         let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(cx)
+        for worktree in all_projects(self.original_window.as_ref(), cx)
             .flat_map(|project| project.read(cx).visible_worktrees(cx))
             .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
         {
@@ -3542,7 +3548,10 @@ impl Render for SettingsWindow {
     }
 }
 
-fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+fn all_projects(
+    window: Option<&WindowHandle<Workspace>>,
+    cx: &App,
+) -> impl Iterator<Item = Entity<project::Project>> {
     workspace::AppState::global(cx)
         .upgrade()
         .map(|app_state| {
@@ -3552,6 +3561,9 @@ fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
                 .workspaces()
                 .iter()
                 .filter_map(|workspace| Some(workspace.read(cx).ok()?.project().clone()))
+                .chain(
+                    window.and_then(|workspace| Some(workspace.read(cx).ok()?.project().clone())),
+                )
         })
         .into_iter()
         .flatten()
@@ -3560,6 +3572,7 @@ fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
 fn update_settings_file(
     file: SettingsUiFile,
     file_name: Option<&'static str>,
+    window: &mut Window,
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
@@ -3568,41 +3581,11 @@ fn update_settings_file(
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let Some((worktree, project)) = all_projects(cx).find_map(|project| {
-                project
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .zip(Some(project))
-            }) else {
-                anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+            let Some(settings_window) = window.root::<SettingsWindow>().flatten() else {
+                anyhow::bail!("No settings window found");
             };
 
-            project.update(cx, |project, cx| {
-                let task = if project.contains_local_settings_file(worktree_id, &rel_path, cx) {
-                    None
-                } else {
-                    Some(worktree.update(cx, |worktree, cx| {
-                        worktree.create_entry(rel_path.clone(), false, None, cx)
-                    }))
-                };
-
-                cx.spawn(async move |project, cx| {
-                    if let Some(task) = task
-                        && task.await.is_err()
-                    {
-                        return;
-                    };
-
-                    project
-                        .update(cx, |project, cx| {
-                            project.update_local_settings_file(worktree_id, rel_path, cx, update);
-                        })
-                        .ok();
-                })
-                .detach();
-            });
-
-            return Ok(());
+            update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
         }
         SettingsUiFile::User => {
             // todo(settings_ui) error?
@@ -3611,6 +3594,86 @@ fn update_settings_file(
         }
         SettingsUiFile::Server(_) => unimplemented!(),
     }
+}
+
+fn update_project_setting_file(
+    worktree_id: WorktreeId,
+    rel_path: Arc<RelPath>,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+    settings_window: Entity<SettingsWindow>,
+    cx: &mut App,
+) -> Result<()> {
+    let Some((worktree, project)) =
+        all_projects(settings_window.read(cx).original_window.as_ref(), cx).find_map(|project| {
+            project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .zip(Some(project))
+        })
+    else {
+        anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+    };
+
+    let project_path = ProjectPath {
+        worktree_id,
+        path: rel_path.clone(),
+    };
+
+    let needs_creation = !project
+        .read(cx)
+        .contains_local_settings_file(worktree_id, &rel_path, cx);
+
+    let create_task = needs_creation.then(|| {
+        worktree.update(cx, |worktree, cx| {
+            worktree.create_entry(rel_path.clone(), false, None, cx)
+        })
+    });
+    let buffer_store = project.read(cx).buffer_store().clone();
+
+    cx.spawn(async move |cx| {
+        if let Some(create_task) = create_task {
+            create_task.await?;
+        }
+        let cached_buffer = settings_window.read_with(cx, |settings_window, _| {
+            settings_window
+                .project_setting_file_buffers
+                .get(&project_path)
+                .cloned()
+        })?;
+        let buffer = if let Some(cached_buffer) = cached_buffer {
+            cached_buffer
+        } else {
+            let buffer = buffer_store
+                .update(cx, |store, cx| store.open_buffer(project_path.clone(), cx))?
+                .await
+                .context("Failed to open settings file")?;
+
+            settings_window.update(cx, |this, _cx| {
+                this.project_setting_file_buffers
+                    .insert(project_path, buffer.clone());
+            })?;
+
+            buffer
+        };
+
+        buffer.update(cx, |buffer, cx| {
+            let current_text = buffer.text();
+            let new_text = cx
+                .global::<SettingsStore>()
+                .new_text_for_update(current_text, |settings| update(settings, cx));
+            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+        })?;
+
+        buffer_store
+            .update(cx, |store, cx| store.save_buffer(buffer, cx))?
+            .await
+            .context("Failed to save settings file")?;
+
+        anyhow::Ok(())
+    })
+    .detach();
+
+    return anyhow::Ok(());
 }
 
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
@@ -3634,10 +3697,16 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             |editor, placeholder| editor.with_placeholder(placeholder),
         )
         .on_confirm({
-            move |new_text, cx| {
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                    (field.write)(settings, new_text.map(Into::into));
-                })
+            move |new_text, window, cx| {
+                update_settings_file(
+                    file.clone(),
+                    field.json_path,
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        (field.write)(settings, new_text.map(Into::into));
+                    },
+                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -3662,11 +3731,11 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
         .on_click({
-            move |state, _window, cx| {
+            move |state, window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
+                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
                     (field.write)(settings, Some(state.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
@@ -3723,11 +3792,17 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
         .mode(NumberFieldMode::Edit, cx)
         .tab_index(0_isize)
         .on_change({
-            move |value, _window, cx| {
+            move |value, window, cx| {
                 let value = *value;
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(value));
-                })
+                update_settings_file(
+                    file.clone(),
+                    field.json_path,
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        (field.write)(settings, Some(value));
+                    },
+                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -3755,13 +3830,19 @@ where
     let current_value = current_value.copied().unwrap_or(variants()[0]);
 
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
-        move |value, cx| {
+        move |value, window, cx| {
             if value == current_value {
                 return;
             }
-            update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                (field.write)(settings, Some(value));
-            })
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, _cx| {
+                    (field.write)(settings, Some(value));
+                },
+            )
             .log_err(); // todo(settings_ui) don't log err
         }
     })
@@ -3806,10 +3887,11 @@ fn render_font_picker(
             Some(cx.new(move |cx| {
                 font_picker(
                     current_value.clone().into(),
-                    move |font_name, cx| {
+                    move |font_name, window, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
+                            window,
                             cx,
                             move |settings, _cx| {
                                 (field.write)(settings, Some(font_name.into()));
@@ -3855,10 +3937,11 @@ fn render_theme_picker(
                 let current_value = current_value.clone();
                 theme_picker(
                     current_value,
-                    move |theme_name, cx| {
+                    move |theme_name, window, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
+                            window,
                             cx,
                             move |settings, _cx| {
                                 (field.write)(
@@ -3907,10 +3990,11 @@ fn render_icon_theme_picker(
                 let current_value = current_value.clone();
                 icon_theme_picker(
                     current_value,
-                    move |theme_name, cx| {
+                    move |theme_name, window, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
+                            window,
                             cx,
                             move |settings, _cx| {
                                 (field.write)(
@@ -4024,6 +4108,7 @@ pub mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
+            project_setting_file_buffers: HashMap::default(),
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
