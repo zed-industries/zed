@@ -76,7 +76,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Workspace,
+    DraggedSelection, SelectedEntry, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
@@ -623,6 +623,32 @@ pub struct GitPanel {
 struct BulkStaging {
     repo_id: RepositoryId,
     anchor: RepoPath,
+}
+
+struct DraggedGitStatusEntry {
+    display_name: String,
+    click_offset: Point<Pixels>,
+}
+
+impl Render for DraggedGitStatusEntry {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme::ThemeSettings::get_global(cx).ui_font.clone();
+        h_flex()
+            .font(ui_font)
+            .pl(self.click_offset.x + px(12.))
+            .pt(self.click_offset.y + px(12.))
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .items_center()
+                    .py_1()
+                    .px_2()
+                    .rounded_lg()
+                    .bg(cx.theme().colors().background)
+                    .child(Label::new(self.display_name.clone())),
+            )
+    }
 }
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
@@ -4962,6 +4988,21 @@ impl GitPanel {
 
         let handle = cx.weak_entity();
 
+        let dragged_selection = self.active_repository.as_ref().and_then(|repo| {
+            let project_path = repo
+                .read(cx)
+                .repo_path_to_project_path(&entry.repo_path, cx)?;
+            let project_entry = self.project.read(cx).entry_for_path(&project_path, cx)?;
+            Some(DraggedSelection {
+                active_selection: SelectedEntry {
+                    worktree_id: project_path.worktree_id,
+                    entry_id: project_entry.id,
+                },
+                marked_selections: Arc::from([]),
+            })
+        });
+        let display_name_for_drag = display_name.clone();
+
         let selected_bg_alpha = 0.08;
         let marked_bg_alpha = 0.12;
         let state_opacity_step = 0.04;
@@ -5027,6 +5068,17 @@ impl GitPanel {
             .bg(base_bg)
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
+            .when_some(dragged_selection, |el, selection| {
+                el.on_drag(selection, {
+                    let display_name = display_name_for_drag.clone();
+                    move |_selection, click_offset, _window, cx| {
+                        cx.new(|_| DraggedGitStatusEntry {
+                            display_name: display_name.clone(),
+                            click_offset,
+                        })
+                    }
+                })
+            })
             .child(name_row)
             .child(
                 div()
