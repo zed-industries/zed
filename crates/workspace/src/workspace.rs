@@ -3805,15 +3805,15 @@ impl Workspace {
                 && old_id != item.item_id()
             {
                 // switching to a different item, so unpreview old active item
-                pane.update(cx, |pane, _| {
-                    pane.unpreview_item_if_preview(old_id);
+                pane.update(cx, |pane, cx| {
+                    pane.unpreview_item_if_preview(old_id, cx);
                 });
             }
 
             self.activate_item(&item, activate_pane, focus_item, window, cx);
             if !allow_new_preview {
-                pane.update(cx, |pane, _| {
-                    pane.unpreview_item_if_preview(item.item_id());
+                pane.update(cx, |pane, cx| {
+                    pane.unpreview_item_if_preview(item.item_id(), cx);
                 });
             }
             return item;
@@ -3827,7 +3827,7 @@ impl Workspace {
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
             if !keep_old_preview && let Some(old_id) = old_item_id {
-                pane.unpreview_item_if_preview(old_id);
+                pane.unpreview_item_if_preview(old_id, cx);
             }
             if allow_new_preview {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
@@ -4265,13 +4265,22 @@ impl Workspace {
     ) {
         let mut serialize_workspace = true;
         match event {
-            pane::Event::AddItem { item } => {
+            pane::Event::AddItem { item, preview } => {
                 item.added_to_pane(self, pane.clone(), window, cx);
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
                 self.project.update(cx, |project, cx| {
-                    project.set_open_path(item.project_path(cx), cx)
+                    if let Some(path) = item.project_path(cx) {
+                        project.add_open_path(path, *preview, cx)
+                    }
+                });
+            }
+            pane::Event::KeepItem { item } => {
+                self.project.update(cx, |project, cx| {
+                    if let Some(path) = item.project_path(cx) {
+                        project.add_open_path(path, false, cx)
+                    }
                 });
             }
             pane::Event::Split { direction, mode } => {
@@ -4331,7 +4340,7 @@ impl Workspace {
                 }
                 serialize_workspace = false;
             }
-            pane::Event::RemovedItem { item } => {
+            pane::Event::RemoveItem { item, preview } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id())
@@ -4343,7 +4352,9 @@ impl Workspace {
                     item_id: item.item_id(),
                 });
                 self.project.update(cx, |project, cx| {
-                    project.set_closed_path(item.project_path(cx), cx)
+                    if let Some(path) = item.project_path(cx) {
+                        project.remove_open_path(path, *preview, cx)
+                    }
                 });
             }
             pane::Event::Focus => {

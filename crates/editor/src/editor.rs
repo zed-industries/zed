@@ -2038,7 +2038,12 @@ impl Editor {
                         }
                     }
 
-                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
+                    project::Event::EntryRenamed {
+                        transaction,
+                        from_path: _,
+                        to_path,
+                        to_abs_path,
+                    } => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -2057,8 +2062,8 @@ impl Editor {
                                         p.update(cx, |pane, _| {
                                             pane.nav_history_mut().rename_item(
                                                 entity_id,
-                                                project_path.clone(),
-                                                abs_path.clone().into(),
+                                                to_path.clone(),
+                                                to_abs_path.clone().into(),
                                             );
                                         })
                                     });
@@ -17935,7 +17940,7 @@ impl Editor {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
             }
             if was_existing && !allow_preview {
-                pane.unpreview_item_if_preview(item.item_id());
+                pane.unpreview_item_if_preview(item.item_id(), cx);
             }
             pane.add_item(item, activate_pane, true, destination_index, window, cx);
         });
@@ -22454,7 +22459,7 @@ impl Editor {
                                 if !PreviewTabsSettings::get_global(cx)
                                     .enable_preview_from_multibuffer
                                 {
-                                    pane.unpreview_item_if_preview(pane_item_id);
+                                    pane.unpreview_item_if_preview(pane_item_id, cx);
                                 }
                             });
                             Some(editor)

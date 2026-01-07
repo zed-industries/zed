@@ -34,7 +34,7 @@ use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
-    manifest_tree::{LabelPresence, RootPathTrie, TriePath},
+    manifest_tree::{RootPathTrie, TriePath},
     project_settings::GoToDiagnosticSeverityFilter,
 };
 use project_panel_settings::ProjectPanelSettings;
@@ -98,7 +98,7 @@ struct State {
     pinned_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     expanding_path: Option<ProjectPath>,
     collapsing_path: Option<ProjectPath>,
-    open_paths: HashMap<WorktreeId, RootPathTrie<()>>,
+    open_paths: HashMap<WorktreeId, RootPathTrie<String, usize>>,
 }
 
 impl State {
@@ -613,40 +613,81 @@ impl ProjectPanel {
                 &project,
                 window,
                 |this, project, event, window, cx| match event {
-                    project::Event::EntryOpened(project_path, _entry_id) => {
-                        if this
-                            .state
-                            .open_paths
-                            .get(&project_path.worktree_id)
-                            .is_none()
-                        {
+                    project::Event::EntryOpened { path, preview } => {
+                        // Do not mark previewed files as open.
+                        // This prevents the tree from moving while browsing:
+                        // preview file -> collapse parent -> preview other file
+                        if *preview {
+                            return;
+                        }
+                        if this.state.open_paths.get(&path.worktree_id).is_none() {
                             this.state
                                 .open_paths
-                                .insert(project_path.worktree_id, RootPathTrie::new());
+                                .insert(path.worktree_id, RootPathTrie::<String, usize>::new());
                         }
-                        if let Some(open_paths) =
-                            this.state.open_paths.get_mut(&project_path.worktree_id)
-                        {
-                            let trie_path = TriePath::new(&project_path.path);
-                            if open_paths.get(&trie_path).is_none() {
-                                open_paths.insert(&trie_path, (), LabelPresence::KnownAbsent);
+                        if let Some(open_paths) = this.state.open_paths.get_mut(&path.worktree_id) {
+                            let trie_path = TriePath::new(&path.path);
+                            // Count instances of open file in different panes
+                            if let Some(labels) = open_paths.get(&trie_path)
+                                && let Some(count) = labels.get(&"count".to_string())
+                            {
+                                open_paths.insert(&trie_path, "count".to_string(), *count + 1);
+                            } else {
+                                open_paths.insert(&trie_path, "count".to_string(), 1);
                             }
-                            this.update_visible_entries(None, false, true, window, cx);
+                            this.update_visible_entries(None, false, false, window, cx);
                         }
                     }
-                    project::Event::EntryClosed(project_path, _entry_id) => {
-                        if let Some(open_paths) =
-                            this.state.open_paths.get_mut(&project_path.worktree_id)
-                        {
-                            let trie_path = TriePath::new(&project_path.path);
-                            open_paths.prune(&trie_path);
-                            // Root of `open_paths` is worktree's root directory
-                            // If `open_paths` has no children, remove it
+                    project::Event::EntryClosed { path, preview } => {
+                        if *preview {
+                            return;
+                        }
+                        if let Some(open_paths) = this.state.open_paths.get_mut(&path.worktree_id) {
+                            let trie_path = TriePath::new(&path.path);
+                            if let Some(labels) = open_paths.get(&trie_path)
+                                && let Some(count) = labels.get(&"count".to_string())
+                                && *count > 1
+                            {
+                                open_paths.insert(&trie_path, "count".to_string(), *count - 1);
+                            } else {
+                                open_paths.prune(&trie_path);
+                            }
+                            // Root of `open_paths` is worktree's root directory.
+                            // If `open_paths` has no children, remove it,
                             // otherwise worktree's root directory is considered open
                             if open_paths.len() == 0 {
-                                this.state.open_paths.remove(&project_path.worktree_id);
+                                this.state.open_paths.remove(&path.worktree_id);
                             }
-                            this.update_visible_entries(None, false, true, window, cx);
+                            this.update_visible_entries(None, false, false, window, cx);
+                        }
+                    }
+                    project::Event::EntryRenamed {
+                        transaction: _,
+                        from_path,
+                        to_path,
+                        to_abs_path: _,
+                    } => {
+                        if let Some(from_open_paths) =
+                            this.state.open_paths.get_mut(&from_path.worktree_id)
+                        {
+                            let trie_path = TriePath::new(&from_path.path);
+                            let branch = from_open_paths.prune(&trie_path);
+                            if from_open_paths.len() == 0 {
+                                this.state.open_paths.remove(&from_path.worktree_id);
+                            }
+                            if this.state.open_paths.get(&to_path.worktree_id).is_none() {
+                                this.state.open_paths.insert(
+                                    to_path.worktree_id,
+                                    RootPathTrie::<String, usize>::new(),
+                                );
+                            }
+                            if let Some(to_open_paths) =
+                                this.state.open_paths.get_mut(&to_path.worktree_id)
+                            {
+                                let trie_path = TriePath::new(&to_path.path);
+                                to_open_paths.graft(&trie_path, branch);
+                            }
+                            this.update_visible_entries(None, false, false, window, cx);
                         }
                     }
                     project::Event::ActiveEntryChanged(Some(entry_id)) => {
@@ -1440,20 +1481,26 @@ impl ProjectPanel {
                     Ok(ix) => match pinned_dir_ids.binary_search(&entry_id) {
                         Ok(_) => {
                             self.state.expanding_path = project.path_for_entry(entry_id, cx);
+                            self.state.collapsing_path = None;
                         }
                         Err(_) => {
                             expanded_dir_ids.remove(ix);
                             self.state.collapsing_path = project.path_for_entry(entry_id, cx);
+                            self.state.expanding_path = None;
                         }
                     },
                     Err(ix) => {
                         project.expand_entry(worktree_id, entry_id, cx);
                         expanded_dir_ids.insert(ix, entry_id);
                         self.state.expanding_path = project.path_for_entry(entry_id, cx);
+                        self.state.collapsing_path = None;
                     }
                 }
             });
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
+            // Keep `collapsing_path` after updating visible entries.
+            // This enables pinning the lineage of a previewed file made permanent:
+            // preview file -> collapse ancestor -> double click preview tab
             window.focus(&self.focus_handle, cx);
             cx.notify();
         }
@@ -1487,8 +1534,14 @@ impl ProjectPanel {
                 }
             }
             self.project.update(cx, |project, cx| match expand {
-                false => self.state.collapsing_path = project.path_for_entry(entry_id, cx),
-                true => self.state.expanding_path = project.path_for_entry(entry_id, cx),
+                false => {
+                    self.state.collapsing_path = project.path_for_entry(entry_id, cx);
+                    self.state.expanding_path = None;
+                }
+                true => {
+                    self.state.expanding_path = project.path_for_entry(entry_id, cx);
+                    self.state.collapsing_path = None;
+                }
             });
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
             window.focus(&self.focus_handle, cx);
@@ -3598,15 +3651,12 @@ impl ProjectPanel {
                         let mut auto_folded_ancestors = vec![];
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         let mut expansion_stop: Option<ProjectPath> = None;
+                        let open_paths = new_state.open_paths.get(&worktree_id);
                         while let Some(entry) = entry_iter.entry() {
-                            let editing =
-                                new_state
-                                    .open_paths
-                                    .get(&worktree_id)
-                                    .is_some_and(|open_paths| {
-                                        open_paths.get(&TriePath::new(&entry.path)).is_some()
-                                    })
-                                    || entry.git_summary != GitSummary::UNCHANGED;
+                            let editing = entry.git_summary != GitSummary::UNCHANGED
+                                || open_paths.is_some_and(|open_paths| {
+                                    open_paths.get(&TriePath::new(&entry.path)).is_some()
+                                });
                             let folded = auto_fold_dirs
                                 && entry.kind.is_dir()
                                 && !new_state.unfolded_dir_ids.contains(&entry.id)
@@ -3862,8 +3912,6 @@ impl ProjectPanel {
                             index: OnceCell::new(),
                         })
                     }
-                    new_state.expanding_path = None;
-                    new_state.collapsing_path = None;
                     if let Some((project_entry_id, worktree_id, _)) = max_width_item {
                         let mut visited_worktrees_length = 0;
                         let index = new_state

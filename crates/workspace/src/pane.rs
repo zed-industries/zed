@@ -287,8 +287,19 @@ impl DeploySearch {
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub enum Event {
+    // A preview or permanent tab is added
     AddItem {
         item: Box<dyn ItemHandle>,
+        preview: bool,
+    },
+    // A preview tab is made permanent
+    KeepItem {
+        item: Box<dyn ItemHandle>,
+    },
+    // A preview or permanent tab is removed
+    RemoveItem {
+        item: Box<dyn ItemHandle>,
+        preview: bool,
     },
     ActivateItem {
         local: bool,
@@ -296,9 +307,6 @@ pub enum Event {
     },
     Remove {
         focus_on_pane: Option<Entity<Pane>>,
-    },
-    RemovedItem {
-        item: Box<dyn ItemHandle>,
     },
     Split {
         direction: SplitDirection,
@@ -321,8 +329,13 @@ pub enum Event {
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Event::AddItem { item } => f
+            Event::AddItem { item, preview } => f
                 .debug_struct("AddItem")
+                .field("item", &item.item_id())
+                .field("preview", preview)
+                .finish(),
+            Event::KeepItem { item } => f
+                .debug_struct("KeepItem")
                 .field("item", &item.item_id())
                 .finish(),
             Event::ActivateItem { local, .. } => f
@@ -330,9 +343,10 @@ impl fmt::Debug for Event {
                 .field("local", local)
                 .finish(),
             Event::Remove { .. } => f.write_str("Remove"),
-            Event::RemovedItem { item } => f
-                .debug_struct("RemovedItem")
+            Event::RemoveItem { item, preview } => f
+                .debug_struct("RemoveItem")
                 .field("item", &item.item_id())
+                .field("preview", preview)
                 .finish(),
             Event::Split { direction, mode } => f
                 .debug_struct("Split")
@@ -909,8 +923,11 @@ impl Pane {
 
     /// Promotes the item with the given ID to not be a preview item.
     /// This does nothing if it wasn't already a preview item.
-    pub fn unpreview_item_if_preview(&mut self, item_id: EntityId) {
-        if self.is_active_preview_item(item_id) {
+    pub fn unpreview_item_if_preview(&mut self, item_id: EntityId, cx: &mut Context<Self>) {
+        if let Some(preview_item) = self.preview_item()
+            && preview_item.item_id() == item_id
+        {
+            cx.emit(Event::KeepItem { item: preview_item });
             self.preview_item_id = None;
         }
     }
@@ -949,12 +966,12 @@ impl Pane {
         self.pinned_tab_count
     }
 
-    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &App) {
+    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &mut Context<Self>) {
         if let Some(preview_item) = self.preview_item()
             && preview_item.item_id() == item_id
             && !preview_item.preserve_preview(cx)
         {
-            self.unpreview_item_if_preview(item_id);
+            self.unpreview_item_if_preview(item_id, cx);
         }
     }
 
@@ -996,7 +1013,7 @@ impl Pane {
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 if !allow_preview && let Some(item) = pane.items.get(index) {
-                    pane.unpreview_item_if_preview(item.item_id());
+                    pane.unpreview_item_if_preview(item.item_id(), cx);
                 }
                 if activate {
                     pane.activate_item(index, focus_item, focus_item, window, cx);
@@ -1219,7 +1236,8 @@ impl Pane {
             }
         }
 
-        cx.emit(Event::AddItem { item });
+        let preview = self.is_active_preview_item(item.item_id());
+        cx.emit(Event::AddItem { item, preview });
     }
 
     pub fn add_item(
@@ -2035,8 +2053,11 @@ impl Pane {
         }
 
         let item = self.items.remove(item_index);
-
-        cx.emit(Event::RemovedItem { item: item.clone() });
+        let preview = self.is_active_preview_item(item.item_id());
+        cx.emit(Event::RemoveItem {
+            item: item.clone(),
+            preview,
+        });
         if self.items.is_empty() {
             item.deactivated(window, cx);
             if close_pane_if_empty {
@@ -2057,7 +2078,7 @@ impl Pane {
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
-        self.unpreview_item_if_preview(item.item_id());
+        self.unpreview_item_if_preview(item.item_id(), cx);
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
@@ -2268,7 +2289,7 @@ impl Pane {
 
             if can_save {
                 pane.update_in(cx, |pane, window, cx| {
-                    pane.unpreview_item_if_preview(item.item_id());
+                    pane.unpreview_item_if_preview(item.item_id(), cx);
                     item.save(
                         SaveOptions {
                             format: should_format,
@@ -2531,7 +2552,7 @@ impl Pane {
             let should_activate = ix == self.active_item_index;
 
             if matches!(operation, PinOperation::Pin) {
-                self.unpreview_item_if_preview(id);
+                self.unpreview_item_if_preview(id, cx);
             }
 
             match operation {
@@ -2704,9 +2725,9 @@ impl Pane {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, _, _| {
+                cx.listener(move |pane, event: &MouseDownEvent, _, cx| {
                     if event.click_count > 1 {
-                        pane.unpreview_item_if_preview(item_id);
+                        pane.unpreview_item_if_preview(item_id, cx);
                     }
                 }),
             )
@@ -3465,7 +3486,7 @@ impl Pane {
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
-        self.unpreview_item_if_preview(item_id);
+        self.unpreview_item_if_preview(item_id, cx);
 
         let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
@@ -3986,7 +4007,7 @@ impl Render for Pane {
                     cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, window, cx| {
                         if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
                             if pane.is_active_preview_item(active_item_id) {
-                                pane.unpreview_item_if_preview(active_item_id);
+                                pane.unpreview_item_if_preview(active_item_id, cx);
                             } else {
                                 pane.replace_preview_item_id(active_item_id, window, cx);
                             }

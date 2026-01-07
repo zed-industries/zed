@@ -26,7 +26,7 @@ use crate::{
 pub(crate) use server_tree::{LanguageServerTree, LanguageServerTreeNode, LaunchDisposition};
 
 struct WorktreeRoots {
-    roots: RootPathTrie<ManifestName>,
+    roots: RootPathTrie<ManifestName, LabelPresence>,
     worktree_store: Entity<WorktreeStore>,
     _worktree_subscription: Subscription,
 }
@@ -154,8 +154,10 @@ impl ManifestTree {
                 match root {
                     Some(known_root) => worktree_roots.update(cx, |this, _| {
                         let root = TriePath::from(&*known_root);
-                        this.roots
-                            .insert(&root, manifest_name.clone(), LabelPresence::Present);
+                        let _previous_value =
+                            this.roots
+                                .insert(&root, manifest_name.clone(), LabelPresence::Present);
+                        debug_assert_eq!(_previous_value, None);
                         current_presence = LabelPresence::Present;
                         marked_path = Some(ProjectPath {
                             worktree_id: *worktree_id,
@@ -163,8 +165,12 @@ impl ManifestTree {
                         });
                     }),
                     None => worktree_roots.update(cx, |this, _| {
-                        this.roots
-                            .insert(&key, manifest_name.clone(), LabelPresence::KnownAbsent);
+                        let _previous_value = this.roots.insert(
+                            &key,
+                            manifest_name.clone(),
+                            LabelPresence::KnownAbsent,
+                        );
+                        debug_assert_eq!(_previous_value, None);
                     }),
                 }
             }

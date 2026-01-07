@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, btree_map::Entry},
+    fmt::Debug,
     ops::ControlFlow,
     sync::Arc,
 };
@@ -14,10 +15,10 @@ use util::rel_path::RelPath;
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
 /// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories.
 #[derive(Clone)]
-pub struct RootPathTrie<Label> {
+pub struct RootPathTrie<Label, Value> {
     worktree_relative_path: Arc<RelPath>,
-    labels: BTreeMap<Label, LabelPresence>,
-    children: BTreeMap<Arc<str>, RootPathTrie<Label>>,
+    labels: BTreeMap<Label, Value>,
+    children: BTreeMap<Arc<str>, RootPathTrie<Label, Value>>,
 }
 
 /// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can be:
@@ -38,7 +39,7 @@ pub enum LabelPresence {
     Present,
 }
 
-impl<Label: Ord + Clone> RootPathTrie<Label> {
+impl<Label: Ord + Clone, Value: Debug + PartialEq + Clone> RootPathTrie<Label, Value> {
     pub fn new() -> Self {
         Self::new_with_key(Arc::from(RelPath::empty()))
     }
@@ -55,13 +56,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         self.children.len()
     }
 
-    // Internal implementation of inner that allows one to visit descendants of insertion point for a node.
-    fn insert_inner(
-        &mut self,
-        path: &TriePath,
-        value: Label,
-        presence: LabelPresence,
-    ) -> &mut Self {
+    pub fn insert(&mut self, path: &TriePath, label: Label, value: Value) -> Option<Value> {
         let mut current = self;
 
         let mut path_so_far = <Arc<RelPath>>::from(RelPath::empty());
@@ -74,13 +69,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             };
         }
-        let _previous_value = current.labels.insert(value, presence);
-        debug_assert_eq!(_previous_value, None);
-        current
-    }
-
-    pub fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
-        self.insert_inner(path, value, presence);
+        current.labels.insert(label, value)
     }
 
     pub(super) fn walk<'a>(
@@ -88,7 +77,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         path: &TriePath,
         callback: &mut dyn for<'b> FnMut(
             &'b Arc<RelPath>,
-            &'a BTreeMap<Label, LabelPresence>,
+            &'a BTreeMap<Label, Value>,
         ) -> ControlFlow<()>,
     ) {
         let mut current = self;
@@ -108,52 +97,86 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         }
     }
 
-    pub fn get(&self, path: &TriePath) -> Option<&BTreeMap<Label, LabelPresence>> {
+    pub fn get<'a>(&'a self, path: &TriePath) -> Option<&'a BTreeMap<Label, Value>> {
         let mut current = self;
         for key in path.0.iter() {
-            current = current.children.get(key)?
+            current = current.children.get(key)?;
         }
         Some(&current.labels)
     }
 
-    pub fn remove(&mut self, path: &TriePath) {
+    pub fn remove(&mut self, path: &TriePath) -> Option<RootPathTrie<Label, Value>> {
         let mut current = self;
         for path in path.0.iter().take(path.0.len().saturating_sub(1)) {
             current = match current.children.get_mut(path) {
                 Some(child) => child,
-                None => return,
+                None => return None,
             };
         }
-        if let Some(final_entry_name) = path.0.last() {
-            current.children.remove(final_entry_name);
+        match path.0.last() {
+            Some(last) => current.children.remove(last),
+            None => None,
         }
     }
 
-    // Remove path and resulting childless ancestors
-    pub fn prune(&mut self, path: &TriePath) {
-        let mut current = &self.children;
+    // Remove path and resulting monochild ancestors, return branch at path
+    pub fn prune(&mut self, path: &TriePath) -> Option<RootPathTrie<Label, Value>> {
+        let mut current = &mut self.children;
         let mut prune = 0;
         // Find nearest ancestor having multiple children
+        let max = path.0.len().saturating_sub(1);
         for (i, key) in path.0.iter().enumerate() {
             if current.len() > 1 {
                 prune = i;
             }
-            current = match current.get(key) {
-                Some(child) => &child.children,
-                None => return,
+            if i == max {
+                break;
+            }
+            current = match current.get_mut(key) {
+                Some(child) => &mut child.children,
+                None => return None,
             };
         }
+        let branch = match path.0.last() {
+            Some(last) => current.remove(last),
+            None => None,
+        };
         // Prune nearest ancestor having multiple children
         let mut ancestor = self;
-        for (i, key) in path.0.iter().enumerate() {
+        for (i, key) in path.0.iter().take(max).enumerate() {
             if i == prune {
                 ancestor.children.remove(key);
-                return;
+                break;
             }
             ancestor = match ancestor.children.get_mut(key) {
                 Some(child) => child,
-                None => return,
+                None => break,
             };
+        }
+        branch
+    }
+
+    // Insert branch at path, overwriting existing branch if any
+    pub fn graft(&mut self, path: &TriePath, branch: Option<RootPathTrie<Label, Value>>) {
+        let mut current = self;
+        let mut path_so_far = <Arc<RelPath>>::from(RelPath::empty());
+        let max = path.0.len().saturating_sub(1);
+        for (i, key) in path.0.iter().enumerate() {
+            path_so_far = path_so_far.join(RelPath::unix(key.as_ref()).unwrap());
+            if i == max
+                && let Some(mut branch) = branch
+            {
+                branch.worktree_relative_path = path_so_far.clone();
+                current.children.insert(key.clone(), branch);
+                return;
+            } else {
+                current = match current.children.entry(key.clone()) {
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(RootPathTrie::new_with_key(path_so_far.clone()))
+                    }
+                    Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                };
+            }
         }
     }
 }

@@ -313,8 +313,6 @@ pub enum Event {
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Entity<Buffer>),
-    EntryOpened(ProjectPath, ProjectEntryId),
-    EntryClosed(ProjectPath, ProjectEntryId),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
@@ -353,7 +351,20 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    EntryOpened {
+        path: ProjectPath,
+        preview: bool,
+    },
+    EntryClosed {
+        path: ProjectPath,
+        preview: bool,
+    },
+    EntryRenamed {
+        transaction: ProjectTransaction,
+        from_path: ProjectPath,
+        to_path: ProjectPath,
+        to_abs_path: PathBuf,
+    },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
 }
@@ -2343,11 +2354,15 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed(
+                    cx.emit(Event::EntryRenamed {
                         transaction,
-                        new_path.clone(),
-                        new_abs_path.clone(),
-                    ));
+                        from_path: ProjectPath {
+                            worktree_id: worktree_id,
+                            path: old_path,
+                        },
+                        to_path: new_path.clone(),
+                        to_abs_path: new_abs_path.clone(),
+                    });
                 })
                 .ok();
 
@@ -4445,24 +4460,12 @@ impl Project {
         });
     }
 
-    pub fn set_open_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
-        if let Some((project_path, entry_id)) = entry.and_then(|project_path| {
-            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-            let entry = worktree.read(cx).entry_for_path(&project_path.path)?;
-            Some((project_path, entry.id))
-        }) {
-            cx.emit(Event::EntryOpened(project_path, entry_id));
-        }
+    pub fn add_open_path(&mut self, path: ProjectPath, preview: bool, cx: &mut Context<Self>) {
+        cx.emit(Event::EntryOpened { path, preview });
     }
 
-    pub fn set_closed_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
-        if let Some((project_path, entry_id)) = entry.and_then(|project_path| {
-            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-            let entry = worktree.read(cx).entry_for_path(&project_path.path)?;
-            Some((project_path, entry.id))
-        }) {
-            cx.emit(Event::EntryClosed(project_path, entry_id));
-        }
+    pub fn remove_open_path(&mut self, path: ProjectPath, preview: bool, cx: &mut Context<Self>) {
+        cx.emit(Event::EntryClosed { path, preview });
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
