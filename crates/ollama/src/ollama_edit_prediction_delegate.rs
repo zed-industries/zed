@@ -251,9 +251,17 @@ impl EditPredictionDelegate for OllamaEditPredictionDelegate {
             }
 
             let edits: Arc<[(Range<Anchor>, Arc<str>)]> = buffer.read_with(cx, |buffer, _cx| {
+                // Clamp the requested offset to the current buffer snapshot length.
+                //
+                // `anchor_after` ultimately asserts that the offset is within the rope bounds
+                // (in debug builds), and our `cursor_position` may be stale vs. the snapshot
+                // we used to compute `cursor_offset`.
+                let snapshot = buffer.snapshot();
+                let clamped_cursor_offset = cursor_offset.min(snapshot.len());
+
                 // Use anchor_after (Right bias) so the cursor stays before the completion text,
                 // not at the end of it. This matches how Copilot handles edit predictions.
-                let position = buffer.anchor_after(cursor_offset);
+                let position = buffer.anchor_after(clamped_cursor_offset);
                 vec![(position..position, completion_text.into())].into()
             })?;
             let edit_preview = buffer
