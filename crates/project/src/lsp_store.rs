@@ -1037,8 +1037,9 @@ impl LocalLspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        this.update(&mut cx, |lsp_store, _| {
+                        this.update(&mut cx, |lsp_store, cx| {
                             lsp_store.pull_workspace_diagnostics(server_id);
+                            lsp_store.pull_document_diagnostics_for_server(server_id, cx);
                             lsp_store
                                 .downstream_client
                                 .as_ref()
@@ -12192,26 +12193,31 @@ impl LspStore {
         }
     }
 
-    pub fn pull_workspace_diagnostics_for_buffer(&mut self, buffer_id: BufferId, cx: &mut App) {
-        let Some(buffer) = self.buffer_store().read(cx).get_existing(buffer_id).ok() else {
-            return;
-        };
-        let Some(local) = self.as_local_mut() else {
-            return;
-        };
+    /// Refreshes `textDocument/diagnostic` for all open buffers associated with the given server.
+    /// This is called in response to `workspace/diagnostic/refresh` to comply with the LSP spec,
+    /// which requires refreshing both workspace and document diagnostics.
+    pub fn pull_document_diagnostics_for_server(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let buffers_to_pull: Vec<_> = self
+            .as_local()
+            .into_iter()
+            .flat_map(|local| {
+                self.buffer_store.read(cx).buffers().filter(|buffer| {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    local
+                        .buffers_opened_in_servers
+                        .get(&buffer_id)
+                        .is_some_and(|servers| servers.contains(&server_id))
+                })
+            })
+            .collect();
 
-        for server_id in buffer.update(cx, |buffer, cx| {
-            local.language_server_ids_for_buffer(buffer, cx)
-        }) {
-            if let Some(LanguageServerState::Running {
-                workspace_diagnostics_refresh_tasks,
-                ..
-            }) = local.language_servers.get_mut(&server_id)
-            {
-                for diagnostics in workspace_diagnostics_refresh_tasks.values_mut() {
-                    diagnostics.refresh_tx.try_send(()).ok();
-                }
-            }
+        for buffer in buffers_to_pull {
+            self.pull_diagnostics_for_buffer(buffer, cx)
+                .detach_and_log_err(cx);
         }
     }
 
@@ -12655,22 +12661,7 @@ impl LspStore {
 
                         notify_server_capabilities_updated(&server, cx);
 
-                        let buffers_to_pull: Vec<_> = self
-                            .as_local()
-                            .into_iter()
-                            .flat_map(|local| {
-                                self.buffer_store.read(cx).buffers().filter(|buffer| {
-                                    let buffer_id = buffer.read(cx).remote_id();
-                                    local
-                                        .buffers_opened_in_servers
-                                        .get(&buffer_id)
-                                        .is_some_and(|servers| servers.contains(&server_id))
-                                })
-                            })
-                            .collect();
-                        for buffer in buffers_to_pull {
-                            self.pull_diagnostics_for_buffer(buffer, cx).detach();
-                        }
+                        self.pull_document_diagnostics_for_server(server_id, cx);
                     }
                 }
                 "textDocument/documentColor" => {
