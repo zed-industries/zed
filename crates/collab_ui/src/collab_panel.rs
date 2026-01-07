@@ -31,9 +31,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, CopyButton, Facepile,
-    HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Indicator, Label,
-    ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
+    IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
