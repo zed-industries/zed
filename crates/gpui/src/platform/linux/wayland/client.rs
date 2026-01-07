@@ -496,7 +496,7 @@ impl WaylandClient {
                 move |event, _, _: &mut WaylandClientStatePtr| {
                     if let calloop::channel::Event::Msg(runnable) = event {
                         handle.insert_idle(move |_| {
-                            runnable.run_and_time();
+                            runnable.run_and_profile();
                         });
                     }
                 }

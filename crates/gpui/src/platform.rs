@@ -600,6 +600,7 @@ pub struct RunnableMeta {
 impl std::fmt::Debug for RunnableMeta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunnableMeta")
+            .field("priority", &self.priority)
             .field("location", &self.location)
             .field("app_alive", &self.is_app_alive())
             .finish()
@@ -628,8 +629,8 @@ pub enum GpuiRunnable {
 }
 
 impl GpuiRunnable {
-    fn run_and_time(self) -> Instant {
-        if !self.app_dropped() {
+    fn run_and_profile(self) -> Instant {
+        if self.app_dropped() {
             // optimizer will cut it out if it doesnt it does not really matter
             // cause we are closing the app anyway.
             return Instant::now();

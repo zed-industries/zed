@@ -42,7 +42,7 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let started = runnable.run_and_time();
+                            let started = runnable.run_and_profile();
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
                                 i,
@@ -73,7 +73,7 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            runnable.run_and_time();
+                                            runnable.run_and_profile();
                                         }
                                         TimeoutAction::Drop
                                     },

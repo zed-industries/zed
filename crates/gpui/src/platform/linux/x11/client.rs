@@ -313,7 +313,7 @@ impl X11Client {
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
                         handle.insert_idle(|_| {
-                            runnable.run_and_time();
+                            runnable.run_and_profile();
                         });
                     }
                 }
