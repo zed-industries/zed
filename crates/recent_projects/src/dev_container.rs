@@ -1,27 +1,26 @@
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
-use ::dev_container::get_templates;
-use gpui::http_client::AsyncBody;
+use ::dev_container::{DevContainerTemplate, get_template_text, get_templates};
+use editor::Editor;
 use gpui::{
     Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
+    WeakEntity,
 };
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
 use smol::fs;
-use smol::io::AsyncReadExt;
 use ui::{
     AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
     InteractiveElement, IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable,
     NavigableEntry, ParentElement, Render, Styled, StyledExt, Toggleable, Window, div, rems,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
-use crate::dev_container;
 use crate::remote_connections::Connection;
 
 #[derive(Debug, Deserialize)]
@@ -297,27 +296,31 @@ pub struct InitDevContainer;
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &InitDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| DevContainerModal::new(window, cx));
+            let weak_entity = cx.weak_entity();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                DevContainerModal::new(weak_entity, window, cx)
+            });
         });
     });
 }
 
 #[derive(Clone)]
 pub struct TemplateEntry {
-    name: String,
+    template: DevContainerTemplate,
     entry: NavigableEntry,
 }
 
+// TODO this could be better
 impl Eq for TemplateEntry {}
 impl PartialEq for TemplateEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.template.id == other.template.id
     }
 }
 impl Debug for TemplateEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TemplateEntry")
-            .field("name", &self.name)
+            .field("template", &self.template)
             .finish()
     }
 }
@@ -334,11 +337,13 @@ pub enum DevContainerState {
 #[derive(Debug, Clone)]
 pub enum DevContainerMessage {
     SearchTemplates,
-    TemplatesRetrieved(Vec<String>),
+    TemplatesRetrieved(Vec<DevContainerTemplate>),
+    TemplateSelected(DevContainerTemplate),
     GoBack,
 }
 
 pub struct DevContainerModal {
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     search_navigable_entry: NavigableEntry,
     back_entry: NavigableEntry,
@@ -346,8 +351,9 @@ pub struct DevContainerModal {
 }
 
 impl DevContainerModal {
-    pub fn new(_window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
         DevContainerModal {
+            workspace,
             state: DevContainerState::Initial,
             focus_handle: cx.focus_handle(),
             search_navigable_entry: NavigableEntry::focusable(cx),
@@ -409,10 +415,17 @@ impl DevContainerModal {
                     .children(items.iter().map(|template_entry| {
                         div()
                             .track_focus(&template_entry.entry.focus_handle)
-                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                // TODO
-                                this.accept_message(DevContainerMessage::GoBack, window, cx);
-                            }))
+                            .on_action({
+                                let template = template_entry.template.clone();
+                                cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                    // let entry = template_entry.clone();
+                                    this.accept_message(
+                                        DevContainerMessage::TemplateSelected(template.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                })
+                            })
                             .child(
                                 ListItem::new("li-todo")
                                     .inset(true)
@@ -424,7 +437,7 @@ impl DevContainerModal {
                                             .focus_handle
                                             .contains_focused(window, cx),
                                     )
-                                    .child(Label::new(template_entry.name.clone())),
+                                    .child(Label::new(template_entry.template.name.clone())),
                             )
                     }))
                     .child(ListSeparator)
@@ -446,12 +459,12 @@ impl DevContainerModal {
                             ),
                     )
                     .into_any_element(),
-            )
-            .entry(self.back_entry.clone());
+            );
 
         for item in items {
             view = view.entry(item.entry.clone());
         }
+        view = view.entry(self.back_entry.clone());
         view.render(window, cx).into_any_element()
     }
 
@@ -537,18 +550,12 @@ impl ElmLikeModalV2 for DevContainerModal {
     ) {
         let message = match message {
             DevContainerMessage::SearchTemplates => {
-                // Test for now, but basically demonstrating that a call must be made from the render side of things
-                dbg!("spawning");
                 cx.spawn_in(window, async move |this, cx| {
-                    // let timer = smol::Timer::after(Duration::from_millis(5000));
-                    // timer.await;
                     let client = cx.update(|_, cx| cx.http_client()).unwrap();
                     let Some(templates) = get_templates(client).await.log_err() else {
                         return;
                     };
-                    let message = DevContainerMessage::TemplatesRetrieved(
-                        templates.templates.iter().map(|t| t.name.clone()).collect(),
-                    );
+                    let message = DevContainerMessage::TemplatesRetrieved(templates.templates);
                     this.update_in(cx, |this, window, cx| {
                         this.accept_message(message, window, cx);
                     })
@@ -566,14 +573,71 @@ impl ElmLikeModalV2 for DevContainerModal {
                 if self.state == DevContainerState::QueryingTemplates {
                     Some(DevContainerState::TemplateQueryReturned(Ok(items
                         .into_iter()
+                        .filter(|item| item.id == "alpine".to_string()) // TODO just for simplicity, we'll keep it to one element
                         .map(|item| TemplateEntry {
-                            name: item,
+                            template: item,
                             entry: NavigableEntry::focusable(cx),
                         })
                         .collect())))
                 } else {
                     None
                 }
+            }
+            // Dismiss, open a buffer with the template, do a template expand to fill in the values.
+            DevContainerMessage::TemplateSelected(template) => {
+                let workspace = self.workspace.upgrade().expect("TODO");
+                workspace.update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+
+                    let worktree = project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+
+                    if let Some(worktree) = worktree {
+                        let tree_id = worktree.read(cx).id();
+                        let devcontainer_path =
+                            RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                        cx.spawn_in(window, async move |workspace, cx| {
+                            let template_text =
+                                get_template_text(&template).await.expect("Hard-coded");
+
+                            let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
+                                workspace.open_path(
+                                    (tree_id, devcontainer_path),
+                                    None,
+                                    true,
+                                    window,
+                                    cx,
+                                )
+                            }) else {
+                                return;
+                            };
+
+                            if let Ok(item) = open_task.await {
+                                if let Some(editor) = item.downcast::<Editor>() {
+                                    editor
+                                        .update_in(cx, |editor, window, cx| {
+                                            // Things we want to do today:
+                                            // - Make this a snippet-expansion workflow
+                                            // - Set up a warning if the file already exists - do we want to overwrite?
+                                            // - If time:
+                                            //   - Dive deeper into the actual call to get the content
+                                            editor.clear(window, cx);
+                                            editor.insert(&template_text, window, cx);
+                                        })
+                                        .log_err();
+                                };
+                            }
+                        })
+                        .detach();
+                    } else {
+                        return;
+                    }
+                });
+
+                self.dismiss(&menu::Cancel, window, cx);
+                None
             }
         };
         if let Some(state) = message {
@@ -621,7 +685,6 @@ pub trait ElmLikeModalV2: ModalView + EventEmitter<DismissEvent> + Render {
         cx.emit(DismissEvent);
     }
 
-    // Why can't I make this a default implementation of render?
     fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let element = self.render_for_state(&self.state(), window, cx);
         div()

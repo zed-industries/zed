@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use futures::AsyncReadExt;
-use http::{Method, Request};
+use http::Request;
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
 
@@ -24,6 +24,17 @@ fn devcontainer_templates_repository() -> &'static str {
 pub struct ManifestLayer {
     digest: String,
 }
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateOptions {
+    #[serde(rename = "type")]
+    pub option_type: String,
+    pub description: String,
+    pub proposals: Option<Vec<String>>,
+    #[serde(rename = "enum")]
+    pub enum_values: Option<Vec<String>>,
+    pub default: String,
+}
 
 // https://distribution.github.io/distribution/spec/api/#pulling-an-image-manifest
 #[derive(Debug, Deserialize)]
@@ -33,10 +44,13 @@ pub struct DockerManifestsResponse {
     media_type: String,
     layers: Vec<ManifestLayer>,
 }
-#[derive(Debug, Deserialize)]
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DevContainerTemplate {
+    pub id: String,
     pub name: String,
+    pub options: Option<HashMap<String, TemplateOptions>>,
 }
 
 // https://ghcr.io/v2/devcontainers/templates/blobs/sha256:035e9c9fd9bd61f6d3965fa4bf11f3ddfd2490a8cf324f152c13cc3724d67d09
@@ -44,6 +58,33 @@ pub struct DevContainerTemplate {
 #[serde(rename_all = "camelCase")]
 pub struct DevContainerTemplatesResponse {
     pub templates: Vec<DevContainerTemplate>,
+}
+
+pub async fn get_template_text(_template: &DevContainerTemplate) -> Result<String, String> {
+    Ok("
+        // For format details, see https://aka.ms/devcontainer.json. For config options, see the
+        // README at: https://github.com/devcontainers/templates/tree/main/src/alpine
+        {
+                \"name\": \"Alpine\",
+                // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+                \"image\": \"mcr.microsoft.com/devcontainers/base:alpine-${templateOption:imageVariant}\"
+
+                // Features to add to the dev container. More info: https://containers.dev/features.
+                // \"features\": {},
+
+                // Use 'forwardPorts' to make a list of ports inside the container available locally.
+                // \"forwardPorts\": [],
+
+                // Use 'postCreateCommand' to run commands after the container is created.
+                // \"postCreateCommand\": \"uname -a\",
+
+                // Configure tool-specific properties.
+                // \"customizations\": {},
+
+                // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+                // \"remoteUser\": \"root\"
+        }
+".trim().to_string())
 }
 
 pub async fn get_templates(
