@@ -81,6 +81,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `files.autoSave`            | `autosave`                     |
 | `files.autoSaveDelay`       | `autosave.milliseconds`        |
 | `files.insertFinalNewline`  | `ensure_final_newline_on_save` |
+| `files.trimFinalNewlines`   | `trim_final_newlines_on_save`  |
 | `files.associations`        | `file_types`                   |
 | `files.watcherExclude`      | `file_scan_exclusions`         |
 | `files.watcherInclude`      | `file_scan_inclusions`         |

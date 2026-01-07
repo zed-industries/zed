@@ -1536,6 +1536,13 @@ impl LocalLspStore {
             })?;
         }
 
+        if settings.trim_final_newlines_on_save {
+            zlog::trace!(logger => "trimming final newlines");
+            extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
+                buffer.trim_final_newlines(cx);
+            })?;
+        }
+
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {

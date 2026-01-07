@@ -1193,9 +1193,11 @@
   "extend_list_on_newline": true,
   // Whether to indent list items when pressing tab after a list marker.
   "indent_list_on_tab": true,
-  // Removes any lines containing only whitespace at the end of the file and
-  // ensures just one newline at the end.
+  // Ensures there's a newline at the end of the file.
   "ensure_final_newline_on_save": true,
+  // Removes extra trailing newline characters at the end of the file,
+  // leaving at most one final newline.
+  "trim_final_newlines_on_save": false,
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",

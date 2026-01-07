@@ -431,6 +431,7 @@ impl VsCodeSettings {
             edit_predictions_disabled_in: None,
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
+            trim_final_newlines_on_save: self.read_bool("files.trimFinalNewlines"),
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,
