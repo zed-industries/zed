@@ -108,7 +108,7 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
     std::os::windows::fs::symlink_dir(&*FAILED_EXAMPLES_DIR, &*LATEST_FAILED_EXAMPLES_DIR)?;
 
     let progress = Progress::global();
-    progress.set_total_examples(config.count);
+    progress.set_total_steps(config.count);
 
     let clone_progress = progress.start(Step::Synthesize, "clone");
     let repo_path = ensure_repo_cloned(&config.repo_url).await?;
@@ -687,7 +687,7 @@ async fn build_example(
 
     // Validate expected patch applies to intermediate state
     let expected_patch_with_header = ensure_diff_header(expected_patch, &cursor_file);
-    apply_diff_to_string(&intermediate_state, &expected_patch_with_header)
+    apply_diff_to_string(&expected_patch_with_header, &intermediate_state)
         .map_err(|e| format!("Expected patch failed to apply: {}", e))?;
 
     // Find where the expected patch edits would apply in the intermediate state
@@ -764,7 +764,7 @@ fn apply_edit_history_to_content(
         return Ok(content.to_string());
     }
 
-    apply_diff_to_string(content, &file_diff)
+    apply_diff_to_string(&file_diff, content)
         .map_err(|e| format!("Failed to apply edit history: {}", e))
 }
 

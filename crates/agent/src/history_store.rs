@@ -175,6 +175,20 @@ impl HistoryStore {
         })
     }
 
+    pub fn save_thread(
+        &mut self,
+        id: acp::SessionId,
+        thread: crate::DbThread,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.save_thread(id, thread).await?;
+            this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
     pub fn delete_thread(
         &mut self,
         id: acp::SessionId,

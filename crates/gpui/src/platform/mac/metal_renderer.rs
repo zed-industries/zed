@@ -11,6 +11,8 @@ use cocoa::{
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 
 use core_foundation::base::TCFType;
 use core_video::{
@@ -156,6 +158,9 @@ impl MetalRenderer {
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
         layer.set_maximum_drawable_count(3);
+        // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
+        #[cfg(any(test, feature = "test-support"))]
+        layer.set_framebuffer_only(false);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -428,6 +433,97 @@ impl MetalRenderer {
         }
     }
 
+    /// Renders the scene to a texture and returns the pixel data as an RGBA image.
+    /// This does not present the frame to screen - useful for visual testing
+    /// where we want to capture what would be rendered without displaying it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn render_to_image(&mut self, scene: &Scene) -> Result<RgbaImage> {
+        let layer = self.layer.clone();
+        let viewport_size = layer.drawable_size();
+        let viewport_size: Size<DevicePixels> = size(
+            (viewport_size.width.ceil() as i32).into(),
+            (viewport_size.height.ceil() as i32).into(),
+        );
+        let drawable = layer
+            .next_drawable()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
+
+        loop {
+            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+
+            let command_buffer =
+                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
+
+            match command_buffer {
+                Ok(command_buffer) => {
+                    let instance_buffer_pool = self.instance_buffer_pool.clone();
+                    let instance_buffer = Cell::new(Some(instance_buffer));
+                    let block = ConcreteBlock::new(move |_| {
+                        if let Some(instance_buffer) = instance_buffer.take() {
+                            instance_buffer_pool.lock().release(instance_buffer);
+                        }
+                    });
+                    let block = block.copy();
+                    command_buffer.add_completed_handler(&block);
+
+                    // Commit and wait for completion without presenting
+                    command_buffer.commit();
+                    command_buffer.wait_until_completed();
+
+                    // Read pixels from the texture
+                    let texture = drawable.texture();
+                    let width = texture.width() as u32;
+                    let height = texture.height() as u32;
+                    let bytes_per_row = width as usize * 4;
+                    let buffer_size = height as usize * bytes_per_row;
+
+                    let mut pixels = vec![0u8; buffer_size];
+
+                    let region = metal::MTLRegion {
+                        origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+                        size: metal::MTLSize {
+                            width: width as u64,
+                            height: height as u64,
+                            depth: 1,
+                        },
+                    };
+
+                    texture.get_bytes(
+                        pixels.as_mut_ptr() as *mut std::ffi::c_void,
+                        bytes_per_row as u64,
+                        region,
+                        0,
+                    );
+
+                    // Convert BGRA to RGBA (swap B and R channels)
+                    for chunk in pixels.chunks_exact_mut(4) {
+                        chunk.swap(0, 2);
+                    }
+
+                    return RgbaImage::from_raw(width, height, pixels).ok_or_else(|| {
+                        anyhow::anyhow!("Failed to create RgbaImage from pixel data")
+                    });
+                }
+                Err(err) => {
+                    log::error!(
+                        "failed to render: {}. retrying with larger instance buffer size",
+                        err
+                    );
+                    let mut instance_buffer_pool = self.instance_buffer_pool.lock();
+                    let buffer_size = instance_buffer_pool.buffer_size;
+                    if buffer_size >= 256 * 1024 * 1024 {
+                        anyhow::bail!("instance buffer size grew too large: {}", buffer_size);
+                    }
+                    instance_buffer_pool.reset(buffer_size * 2);
+                    log::info!(
+                        "increased instance buffer size to {}",
+                        instance_buffer_pool.buffer_size
+                    );
+                }
+            }
+        }
+    }
+
     fn draw_primitives(
         &mut self,
         scene: &Scene,
@@ -534,6 +630,7 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             };
             if !ok {
                 command_encoder.end_encoding();

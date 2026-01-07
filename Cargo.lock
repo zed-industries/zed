@@ -10,6 +10,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_settings",
  "anyhow",
+ "base64 0.22.1",
  "buffer_diff",
  "collections",
  "editor",
@@ -17,6 +18,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.31",
  "gpui",
+ "image",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -338,6 +340,7 @@ dependencies = [
  "assistant_text_thread",
  "async-fs",
  "audio",
+ "base64 0.22.1",
  "buffer_diff",
  "chrono",
  "client",
@@ -1400,7 +1403,6 @@ dependencies = [
  "client",
  "editor",
  "gpui",
- "http_client",
  "markdown_preview",
  "release_channel",
  "semver",
@@ -2187,8 +2189,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4deb8f595ce7f00dee3543ebf6fd9a20ea86fc421ab79600dac30876250bdae"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "ash",
  "ash-window",
@@ -2222,8 +2223,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27142319e2f4c264581067eaccb9f80acccdde60d8b4bf57cc50cd3152f109ca"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2233,8 +2233,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a6be3a82c001ba7a17b6f8e413ede5d1004e6047213f8efaf0ffc15b5c4904c"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2337,12 +2336,9 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "itertools 0.14.0",
- "settings",
  "theme",
  "ui",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -3287,7 +3283,10 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "agent",
+ "agent-client-protocol",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "assistant_slash_command",
  "assistant_text_thread",
@@ -4890,6 +4889,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.9.2",
+ "search",
  "serde",
  "serde_json",
  "settings",
@@ -4899,6 +4899,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+ "zed_actions",
  "zlog",
 ]
 
@@ -5295,12 +5296,14 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "rand 0.9.2",
  "release_channel",
  "reqwest_client",
  "serde",
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
+ "similar",
  "smol",
  "sqlez",
  "sqlez_macros",
@@ -5578,6 +5581,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "encoding_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "encoding_rs",
+ "gpui",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -7390,6 +7404,7 @@ dependencies = [
  "stacksafe",
  "strum 0.27.2",
  "sum_tree",
+ "swash",
  "taffy",
  "thiserror 2.0.17",
  "unicode-segmentation",
@@ -8981,6 +8996,7 @@ dependencies = [
  "open_ai",
  "open_router",
  "partial-json-fixer",
+ "pretty_assertions",
  "project",
  "release_channel",
  "schemars",
@@ -9440,6 +9456,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "audio",
+ "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -13881,9 +13898,9 @@ dependencies = [
 
 [[package]]
 name = "rsa"
-version = "0.9.9"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40a0376c50d0358279d9d643e4bf7b7be212f1f4ff1da9070a7b54d22ef75c88"
+checksum = "b8573f03f5883dcaebdfcf4725caa1ecb9c15b2ef50c43a07b816e06799bb12d"
 dependencies = [
  "const-oid",
  "digest",
@@ -15076,6 +15093,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simple_asn1"
@@ -20654,8 +20677,13 @@ dependencies = [
 name = "zed"
 version = "0.219.0"
 dependencies = [
+ "acp_thread",
  "acp_tools",
+ "action_log",
  "activity_indicator",
+ "agent",
+ "agent-client-protocol",
+ "agent_servers",
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",
@@ -20674,6 +20702,7 @@ dependencies = [
  "clap",
  "cli",
  "client",
+ "clock",
  "codestral",
  "collab_ui",
  "collections",
@@ -20692,6 +20721,7 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
+ "encoding_selector",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -20708,6 +20738,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "image",
  "image_viewer",
  "inspector_ui",
  "install_cli",
@@ -20774,6 +20805,7 @@ dependencies = [
  "task",
  "tasks_ui",
  "telemetry",
+ "tempfile",
  "terminal_view",
  "theme",
  "theme_extension",

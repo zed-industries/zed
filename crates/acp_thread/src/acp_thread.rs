@@ -483,6 +483,7 @@ pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
     ResourceLink { resource_link: acp::ResourceLink },
+    Image { image: Arc<gpui::Image> },
 }
 
 impl ContentBlock {
@@ -517,29 +518,50 @@ impl ContentBlock {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        if matches!(self, ContentBlock::Empty)
-            && let acp::ContentBlock::ResourceLink(resource_link) = block
-        {
-            *self = ContentBlock::ResourceLink { resource_link };
-            return;
-        }
-
-        let new_content = self.block_string_contents(block, path_style);
-
-        match self {
-            ContentBlock::Empty => {
+        match (&mut *self, &block) {
+            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
+                *self = ContentBlock::ResourceLink {
+                    resource_link: resource_link.clone(),
+                };
+            }
+            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
+                if let Some(image) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image };
+                } else {
+                    let new_content = Self::image_md(image_content);
+                    *self = Self::create_markdown_block(new_content, language_registry, cx);
+                }
+            }
+            (ContentBlock::Empty, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
-            ContentBlock::Markdown { markdown } => {
+            (ContentBlock::Markdown { markdown }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
-            ContentBlock::ResourceLink { resource_link } => {
+            (ContentBlock::ResourceLink { resource_link }, _) => {
                 let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
-
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+            (ContentBlock::Image { .. }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("`Image`\n{}", new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
         }
+    }
+
+    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+        use base64::Engine as _;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(image_content.data.as_bytes())
+            .ok()?;
+        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
     }
 
     fn create_markdown_block(
@@ -553,9 +575,9 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: acp::ContentBlock, path_style: PathStyle) -> String {
+    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
-            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
                 Self::resource_link_md(&resource_link.uri, path_style)
             }
@@ -566,8 +588,8 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_md(&uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(&image),
+            }) => Self::resource_link_md(uri, path_style),
+            acp::ContentBlock::Image(image) => Self::image_md(image),
             _ => String::new(),
         }
     }
@@ -589,6 +611,7 @@ impl ContentBlock {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
             ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
+            ContentBlock::Image { .. } => "`Image`",
         }
     }
 
@@ -597,12 +620,20 @@ impl ContentBlock {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
             ContentBlock::ResourceLink { .. } => None,
+            ContentBlock::Image { .. } => None,
         }
     }
 
     pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
         match self {
             ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            ContentBlock::Image { image } => Some(image),
             _ => None,
         }
     }
@@ -684,6 +715,13 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            Self::ContentBlock(content) => content.image(),
+            _ => None,
         }
     }
 }
@@ -3773,6 +3811,9 @@ mod tests {
                         ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
+                        }
+                        ContentBlock::Image { .. } => {
+                            panic!("Expected markdown content, got image")
                         }
                     }
                 } else {

@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display, Write},
     mem,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -14,6 +14,7 @@ use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_dif
 use postage::stream::Stream as _;
 use project::Project;
 use util::{paths::PathStyle, rel_path::RelPath};
+use worktree::Worktree;
 
 #[derive(Clone, Debug)]
 pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
@@ -28,23 +29,18 @@ pub async fn apply_diff(
         .read_with(cx, |project, cx| project.visible_worktrees(cx).next())?
         .context("project has no worktree")?;
 
-    // Ensure the files in the diff are loaded, since worktree scanning is disabled in
-    // edit prediction CLI.
-    let mut paths = Vec::new();
-    for line in diff_str.lines() {
-        if let DiffLine::OldPath { path } = DiffLine::parse(line) {
-            paths.push(RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc());
-        }
-    }
-    worktree
-        .update(cx, |worktree, _| {
-            worktree
-                .as_local()
-                .unwrap()
-                .refresh_entries_for_paths(paths)
-        })?
-        .recv()
-        .await;
+    let paths: Vec<_> = diff_str
+        .lines()
+        .filter_map(|line| {
+            if let DiffLine::OldPath { path } = DiffLine::parse(line) {
+                if path != "/dev/null" {
+                    return Some(PathBuf::from(path.as_ref()));
+                }
+            }
+            None
+        })
+        .collect();
+    refresh_worktree_entries(&worktree, paths.iter().map(|p| p.as_path()), cx).await?;
 
     let mut included_files = HashMap::default();
 
@@ -55,17 +51,27 @@ pub async fn apply_diff(
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { path, hunk } => {
+            DiffEvent::Hunk {
+                path,
+                hunk,
+                is_new_file,
+            } => {
                 let buffer = match current_file {
                     None => {
-                        let buffer = project
-                            .update(cx, |project, cx| {
-                                let project_path = project
-                                    .find_project_path(path.as_ref(), cx)
-                                    .context("no such path")?;
-                                anyhow::Ok(project.open_buffer(project_path, cx))
-                            })??
-                            .await?;
+                        let buffer = if is_new_file {
+                            project
+                                .update(cx, |project, cx| project.create_buffer(true, cx))?
+                                .await?
+                        } else {
+                            let project_path = project
+                                .update(cx, |project, cx| {
+                                    project.find_project_path(path.as_ref(), cx)
+                                })?
+                                .with_context(|| format!("no such path: {}", path))?;
+                            project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                                .await?
+                        };
                         included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()
@@ -75,7 +81,7 @@ pub async fn apply_diff(
 
                 buffer.read_with(cx, |buffer, _| {
                     edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice())
+                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), is_new_file)
                             .with_context(|| format!("Diff:\n{diff_str}"))?,
                     );
                     anyhow::Ok(())
@@ -116,6 +122,38 @@ pub async fn apply_diff(
     }
 
     Ok(OpenedBuffers(included_files))
+}
+
+pub async fn refresh_worktree_entries(
+    worktree: &Entity<Worktree>,
+    paths: impl IntoIterator<Item = &Path>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let mut rel_paths = Vec::new();
+    for path in paths {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+            rel_paths.push(rel_path.into_arc());
+        }
+
+        let path_without_root: PathBuf = path.components().skip(1).collect();
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+            rel_paths.push(rel_path.into_arc());
+        }
+    }
+
+    if !rel_paths.is_empty() {
+        worktree
+            .update(cx, |worktree, _| {
+                worktree
+                    .as_local()
+                    .unwrap()
+                    .refresh_entries_for_paths(rel_paths)
+            })?
+            .recv()
+            .await;
+    }
+
+    Ok(())
 }
 
 /// Extract the diff for a specific file from a multi-file diff.
@@ -165,7 +203,8 @@ pub fn strip_diff_metadata(diff: &str) -> String {
             | DiffLine::HunkHeader(_)
             | DiffLine::Context(_)
             | DiffLine::Deletion(_)
-            | DiffLine::Addition(_) => {
+            | DiffLine::Addition(_)
+            | DiffLine::NoNewlineAtEOF => {
                 result.push_str(line);
                 result.push('\n');
             }
@@ -184,7 +223,11 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { hunk, .. } => {
+            DiffEvent::Hunk {
+                hunk,
+                path: _,
+                is_new_file: _,
+            } => {
                 let hunk_offset = text
                     .find(&hunk.context)
                     .ok_or_else(|| anyhow!("couldn't resolve hunk {:?}", hunk.context))?;
@@ -210,7 +253,11 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { hunk, .. } => {
+            DiffEvent::Hunk {
+                hunk,
+                path: _,
+                is_new_file: _,
+            } => {
                 if hunk.context.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -259,8 +306,14 @@ struct DiffParser<'a> {
 
 #[derive(Debug, PartialEq)]
 enum DiffEvent<'a> {
-    Hunk { path: Cow<'a, str>, hunk: Hunk },
-    FileEnd { renamed_to: Option<Cow<'a, str>> },
+    Hunk {
+        path: Cow<'a, str>,
+        hunk: Hunk,
+        is_new_file: bool,
+    },
+    FileEnd {
+        renamed_to: Option<Cow<'a, str>>,
+    },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -305,9 +358,16 @@ impl<'a> DiffParser<'a> {
                 if let Some(file) = &self.current_file
                     && !self.hunk.is_empty()
                 {
+                    let is_new_file = file.old_path == "/dev/null";
+                    let path = if is_new_file {
+                        file.new_path.clone()
+                    } else {
+                        file.old_path.clone()
+                    };
                     return Ok(Some(DiffEvent::Hunk {
-                        path: file.old_path.clone(),
+                        path,
                         hunk: mem::take(&mut self.hunk),
+                        is_new_file,
                     }));
                 }
             }
@@ -315,7 +375,7 @@ impl<'a> DiffParser<'a> {
             if file_done {
                 if let Some(PatchFile { old_path, new_path }) = self.current_file.take() {
                     return Ok(Some(DiffEvent::FileEnd {
-                        renamed_to: if old_path != new_path {
+                        renamed_to: if old_path != new_path && old_path != "/dev/null" {
                             Some(new_path)
                         } else {
                             None
@@ -379,6 +439,23 @@ impl<'a> DiffParser<'a> {
                             }
                         }
                     }
+                    DiffLine::NoNewlineAtEOF => {
+                        if let Some(last_edit) = self.hunk.edits.last_mut() {
+                            if last_edit.text.ends_with('\n') {
+                                // Previous line was an addition (has trailing newline in text)
+                                last_edit.text.pop();
+                            } else if !last_edit.range.is_empty()
+                                && last_edit.range.end == self.hunk.context.len()
+                            {
+                                // Previous line was a deletion (non-empty range at end of context)
+                                self.hunk.context.pop();
+                                last_edit.range.end -= 1;
+                            }
+                        } else {
+                            // Previous line was context (no edits)
+                            self.hunk.context.pop();
+                        }
+                    }
                     DiffLine::Garbage(_) => {}
                 }
 
@@ -397,8 +474,9 @@ fn resolve_hunk_edits_in_buffer(
     hunk: Hunk,
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
+    is_new_file: bool,
 ) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
-    let context_offset = if hunk.context.is_empty() {
+    let context_offset = if is_new_file || hunk.context.is_empty() {
         Ok(0)
     } else {
         let mut offset = None;
@@ -412,7 +490,13 @@ fn resolve_hunk_edits_in_buffer(
                 offset = Some(range.start + ix);
             }
         }
-        offset.ok_or_else(|| anyhow!("Failed to match context:\n{}", hunk.context))
+        offset.ok_or_else(|| {
+            anyhow!(
+                "Failed to match context:\n\n```\n{}```\n\nBuffer contents:\n\n```\n{}```",
+                hunk.context,
+                buffer.text()
+            )
+        })
     }?;
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer
@@ -440,6 +524,7 @@ pub enum DiffLine<'a> {
     Context(&'a str),
     Deletion(&'a str),
     Addition(&'a str),
+    NoNewlineAtEOF,
     Garbage(&'a str),
 }
 
@@ -457,6 +542,9 @@ impl<'a> DiffLine<'a> {
     }
 
     fn try_parse(line: &'a str) -> Option<Self> {
+        if line.starts_with("\\ No newline") {
+            return Some(Self::NoNewlineAtEOF);
+        }
         if let Some(header) = line.strip_prefix("---").and_then(eat_required_whitespace) {
             let path = parse_header_path("a/", header);
             Some(Self::OldPath { path })
@@ -513,6 +601,7 @@ impl<'a> Display for DiffLine<'a> {
             DiffLine::Context(content) => write!(f, " {content}"),
             DiffLine::Deletion(content) => write!(f, "-{content}"),
             DiffLine::Addition(content) => write!(f, "+{content}"),
+            DiffLine::NoNewlineAtEOF => write!(f, "\\ No newline at end of file"),
             DiffLine::Garbage(line) => write!(f, "{line}"),
         }
     }
@@ -775,11 +864,99 @@ mod tests {
                             range: 4..4,
                             text: "AND\n".into()
                         }],
-                    }
+                    },
+                    is_new_file: false,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
         )
+    }
+
+    #[test]
+    fn test_no_newline_at_eof() {
+        let diff = indoc! {"
+            --- a/file.py
+            +++ b/file.py
+            @@ -55,7 +55,3 @@ class CustomDataset(Dataset):
+                         torch.set_rng_state(state)
+                         mask = self.transform(mask)
+
+            -        if self.mode == 'Training':
+            -            return (img, mask, name)
+            -        else:
+            -            return (img, mask, name)
+            \\ No newline at end of file
+        "};
+
+        let mut events = Vec::new();
+        let mut parser = DiffParser::new(diff);
+        while let Some(event) = parser.next().unwrap() {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events,
+            &[
+                DiffEvent::Hunk {
+                    path: "file.py".into(),
+                    hunk: Hunk {
+                        context: concat!(
+                            "            torch.set_rng_state(state)\n",
+                            "            mask = self.transform(mask)\n",
+                            "\n",
+                            "        if self.mode == 'Training':\n",
+                            "            return (img, mask, name)\n",
+                            "        else:\n",
+                            "            return (img, mask, name)",
+                        )
+                        .into(),
+                        edits: vec![Edit {
+                            range: 80..203,
+                            text: "".into()
+                        }],
+                    },
+                    is_new_file: false,
+                },
+                DiffEvent::FileEnd { renamed_to: None }
+            ],
+        );
+    }
+
+    #[test]
+    fn test_no_newline_at_eof_addition() {
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             context
+            -deleted
+            +added line
+            \\ No newline at end of file
+        "};
+
+        let mut events = Vec::new();
+        let mut parser = DiffParser::new(diff);
+        while let Some(event) = parser.next().unwrap() {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events,
+            &[
+                DiffEvent::Hunk {
+                    path: "file.txt".into(),
+                    hunk: Hunk {
+                        context: "context\ndeleted\n".into(),
+                        edits: vec![Edit {
+                            range: 8..16,
+                            text: "added line".into()
+                        }],
+                    },
+                    is_new_file: false,
+                },
+                DiffEvent::FileEnd { renamed_to: None }
+            ],
+        );
     }
 
     #[gpui::test]

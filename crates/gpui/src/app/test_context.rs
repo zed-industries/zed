@@ -125,14 +125,16 @@ impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
+        let liveness = std::sync::Arc::new(());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let foreground_executor =
+            ForegroundExecutor::new(arc_dispatcher, Arc::downgrade(&liveness));
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        let app = App::new_app(platform.clone(), liveness, asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -405,7 +407,6 @@ impl TestAppContext {
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
             app: Rc::downgrade(&self.app),
-            liveness_token: std::sync::Arc::downgrade(&self.app.borrow().liveness),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
