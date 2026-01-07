@@ -204,6 +204,17 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     let worktree_path = repo_name.worktree_path();
     let repo_lock = git::lock_repo(&repo_dir).await;
 
+    // Clean up any stale git lock files from previous crashed runs.
+    // Safe-ish since we have our own lock.
+    // WARNING: Can corrupt worktrees if multiple processes of the CLI are running.
+    let worktree_git_dir = repo_dir
+        .join(".git/worktrees")
+        .join(repo_name.name.as_ref());
+    let index_lock = worktree_git_dir.join("index.lock");
+    if index_lock.exists() {
+        fs::remove_file(&index_lock).ok();
+    }
+
     if !repo_dir.is_dir() {
         step_progress.set_substatus(format!("cloning {}", repo_name.name));
         fs::create_dir_all(&repo_dir)?;
