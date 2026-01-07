@@ -2784,18 +2784,13 @@ impl ToolCallEventStream {
             _ => (None, None),
         };
 
-        let mut options = vec![
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new("always_allow"),
-                "Always Allow",
-                acp::PermissionOptionKind::AllowAlways,
-            ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(format!("always_allow_{}", tool_name)),
-                format!("Always allow {}", tool_name.replace('_', " ")),
-                acp::PermissionOptionKind::AllowAlways,
-            ),
-        ];
+        // Build the options list. We only show "Always Allow" (global) as a fallback
+        // when we don't have tool-specific granular options.
+        let mut options = vec![acp::PermissionOption::new(
+            acp::PermissionOptionId::new(format!("always_allow_{}", tool_name)),
+            format!("Always allow {}", tool_name.replace('_', " ")),
+            acp::PermissionOptionKind::AllowAlways,
+        )];
 
         if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
             let button_text = match tool_name.as_str() {

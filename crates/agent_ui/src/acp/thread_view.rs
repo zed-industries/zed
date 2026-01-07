@@ -8373,4 +8373,431 @@ pub(crate) mod tests {
             assert_eq!(text, expected_txt);
         })
     }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Set up a terminal tool call with the new granular permission options
+        let tool_call_id = acp::ToolCallId::new("terminal-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
+            .kind(acp::ToolKind::Edit);
+
+        // These are the permission options that authorize_with_context generates for terminal
+        // Note: "Always Allow" is NOT shown when granular options are available
+        let permission_options = vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_terminal"),
+                "Always allow terminal",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_pattern:terminal:^cargo\\s"),
+                "Always allow `cargo` commands",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ];
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications to avoid popup windows
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run cargo build", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the tool call is in WaitingForConfirmation state with the expected options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            // Verify it's waiting for confirmation
+            assert!(
+                matches!(
+                    tool_call.status,
+                    acp_thread::ToolCallStatus::WaitingForConfirmation { .. }
+                ),
+                "Expected WaitingForConfirmation status, got {:?}",
+                tool_call.status
+            );
+
+            // Verify the options count (no "Always Allow" when granular options are shown)
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                assert_eq!(options.len(), 4, "Expected 4 permission options");
+
+                // Verify specific button labels
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    !labels.contains(&"Always Allow"),
+                    "'Always Allow' should not be shown when granular options are available"
+                );
+                assert!(
+                    labels.contains(&"Always allow terminal"),
+                    "Missing 'Always allow terminal' button"
+                );
+                assert!(
+                    labels.contains(&"Always allow `cargo` commands"),
+                    "Missing pattern button"
+                );
+                assert!(labels.contains(&"Allow"), "Missing 'Allow' button");
+                assert!(labels.contains(&"Deny"), "Missing 'Deny' button");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_edit_file_with_path_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Set up an edit_file tool call with path-based permission options
+        let tool_call_id = acp::ToolCallId::new("edit-file-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
+            .kind(acp::ToolKind::Edit);
+
+        // These are the permission options for edit_file with a path pattern
+        // Note: "Always Allow" is NOT shown when granular options are available
+        let permission_options = vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_edit_file"),
+                "Always allow edit file",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_pattern:edit_file:^src/"),
+                "Always allow in `src/`",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ];
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edit the main file", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    labels.contains(&"Always allow edit file"),
+                    "Missing 'Always allow edit file' button"
+                );
+                assert!(
+                    labels.contains(&"Always allow in `src/`"),
+                    "Missing path pattern button"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_fetch_with_domain_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Set up a fetch tool call with domain-based permission options
+        let tool_call_id = acp::ToolCallId::new("fetch-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
+            .kind(acp::ToolKind::Fetch);
+
+        // These are the permission options for fetch with a domain pattern
+        // Note: "Always Allow" is NOT shown when granular options are available
+        let permission_options = vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_fetch"),
+                "Always allow fetch",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_pattern:fetch:^https?://docs\\.rs"),
+                "Always allow fetching from `docs.rs`",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ];
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Fetch the docs", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    labels.contains(&"Always allow fetch"),
+                    "Missing 'Always allow fetch' button"
+                );
+                assert!(
+                    labels.contains(&"Always allow fetching from `docs.rs`"),
+                    "Missing domain pattern button"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_without_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Set up a terminal tool call where no pattern can be extracted (e.g., ./script.sh)
+        let tool_call_id = acp::ToolCallId::new("terminal-no-pattern-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
+            .kind(acp::ToolKind::Edit);
+
+        // Only 3 options when no pattern can be extracted (still no "Always Allow" since
+        // we have the tool-specific "Always allow terminal" button)
+        let permission_options = vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("always_allow_terminal"),
+                "Always allow terminal",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            // Note: No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ];
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run the deploy script", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify only 3 options (no pattern button, no "Always Allow")
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                assert_eq!(
+                    options.len(),
+                    3,
+                    "Expected 3 permission options (no pattern button, no Always Allow)"
+                );
+
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    !labels.contains(&"Always Allow"),
+                    "'Always Allow' should not be shown when granular options are available"
+                );
+                assert!(
+                    labels.contains(&"Always allow terminal"),
+                    "Missing 'Always allow terminal' button"
+                );
+                assert!(labels.contains(&"Allow"), "Missing 'Allow' button");
+                assert!(labels.contains(&"Deny"), "Missing 'Deny' button");
+                // Should NOT contain a pattern button
+                assert!(
+                    !labels.iter().any(|l| l.contains("commands")),
+                    "Should not have pattern button"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
 }
