@@ -53,9 +53,6 @@ const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
 /// Images must match at least this percentage to pass
 const MATCH_THRESHOLD: f64 = 0.99;
 
-/// Tolerance for pixel comparison - allows small differences due to anti-aliasing, font rendering, etc.
-const PIXEL_TOLERANCE: i16 = 2;
-
 /// Window size for workspace tests (project panel, editor)
 fn workspace_window_size() -> Size<Pixels> {
     Size {
@@ -473,7 +470,7 @@ fn compare_images(baseline: &RgbaImage, actual: &RgbaImage) -> ImageComparison {
             let baseline_pixel = baseline.get_pixel(x, y);
             let actual_pixel = actual.get_pixel(x, y);
 
-            if pixels_are_similar(baseline_pixel, actual_pixel) {
+            if pixels_match(baseline_pixel, actual_pixel) {
                 // Matching pixel - show as dimmed version of actual
                 diff_image.put_pixel(
                     x,
@@ -505,11 +502,8 @@ fn compare_images(baseline: &RgbaImage, actual: &RgbaImage) -> ImageComparison {
     }
 }
 
-fn pixels_are_similar(a: &image::Rgba<u8>, b: &image::Rgba<u8>) -> bool {
-    (a[0] as i16 - b[0] as i16).abs() <= PIXEL_TOLERANCE
-        && (a[1] as i16 - b[1] as i16).abs() <= PIXEL_TOLERANCE
-        && (a[2] as i16 - b[2] as i16).abs() <= PIXEL_TOLERANCE
-        && (a[3] as i16 - b[3] as i16).abs() <= PIXEL_TOLERANCE
+fn pixels_match(a: &image::Rgba<u8>, b: &image::Rgba<u8>) -> bool {
+    a == b
 }
 
 fn capture_screenshot(window: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Result<RgbaImage> {
