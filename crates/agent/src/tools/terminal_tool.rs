@@ -153,28 +153,12 @@ impl AgentTool for TerminalTool {
 
             let output = terminal.current_output(cx)?;
 
-            // Debug logging to see exactly what we're sending to the LLM
-            eprintln!("=== TERMINAL TOOL RESULT DEBUG ===");
-            eprintln!("Command: {}", input.command);
-            eprintln!("Timeout setting: {:?}", timeout);
-            eprintln!("Elapsed time: {:?}", started_at.elapsed());
-            eprintln!("timed_out: {}", timed_out);
-            eprintln!("exit_status.exit_code: {:?}", exit_status.exit_code);
-            eprintln!("exit_status.signal: {:?}", exit_status.signal);
-            eprintln!("output.truncated: {}", output.truncated);
-            eprintln!("output.output length: {}", output.output.len());
-            eprintln!(
-                "output.output (first 500 chars): {:?}",
-                output.output.chars().take(500).collect::<String>()
-            );
-
-            let result = process_content(output, &input.command, exit_status, timed_out);
-
-            eprintln!("=== FINAL RESULT TO LLM (first 1000 chars) ===");
-            eprintln!("{:?}", result.chars().take(1000).collect::<String>());
-            eprintln!("=== END DEBUG ===");
-
-            Ok(result)
+            Ok(process_content(
+                output,
+                &input.command,
+                exit_status,
+                timed_out,
+            ))
         })
     }
 }
@@ -198,47 +182,65 @@ fn process_content(
         content
     };
 
-    let content = match exit_status.exit_code {
-        Some(0) => {
-            if is_empty {
-                "Command executed successfully.".to_string()
-            } else {
+    // Check for kill signal FIRST - when a process is killed, the shell wrapper
+    // may still report an exit code (often 1), but the signal tells us it was killed.
+    // We need to check signal before exit_code to correctly detect user stops.
+    let was_killed = exit_status.signal.as_ref().map_or(false, |s| {
+        let s_lower = s.to_lowercase();
+        s_lower.contains("kill") || s_lower.contains("term")
+    });
+
+    let content = if was_killed && !timed_out {
+        // Process was killed (SIGKILL/SIGTERM) and we didn't time out - user stopped it
+        if is_empty {
+            "The user stopped this command. No output was captured before stopping.\n\n\
+            Since the user intentionally interrupted this command, ask them what they would like to do next \
+            rather than automatically retrying or assuming something went wrong.".to_string()
+        } else {
+            format!(
+                "The user stopped this command. Output captured before stopping:\n\n{}\n\n\
+                Since the user intentionally interrupted this command, ask them what they would like to do next \
+                rather than automatically retrying or assuming something went wrong.",
                 content
-            }
+            )
         }
-        Some(exit_code) => {
-            if is_empty {
-                format!("Command \"{command}\" failed with exit code {}.", exit_code)
-            } else {
-                format!(
-                    "Command \"{command}\" failed with exit code {}.\n\n{content}",
-                    exit_code
-                )
-            }
+    } else if was_killed && timed_out {
+        // Process was killed due to timeout
+        if is_empty {
+            format!("Command \"{command}\" timed out. No output was captured.")
+        } else {
+            format!(
+                "Command \"{command}\" timed out. Output captured before timeout:\n\n{}",
+                content
+            )
         }
-        None => {
-            // No exit code means the process was killed by a signal.
-            // We know whether WE killed it (due to timeout) or the user did.
-            if timed_out {
+    } else {
+        // Normal exit (no kill signal) - check exit code
+        match exit_status.exit_code {
+            Some(0) => {
                 if is_empty {
-                    format!("Command \"{command}\" timed out. No output was captured.")
+                    "Command executed successfully.".to_string()
+                } else {
+                    content
+                }
+            }
+            Some(exit_code) => {
+                if is_empty {
+                    format!("Command \"{command}\" failed with exit code {}.", exit_code)
                 } else {
                     format!(
-                        "Command \"{command}\" timed out. Output captured before timeout:\n\n{}",
-                        content
+                        "Command \"{command}\" failed with exit code {}.\n\n{content}",
+                        exit_code
                     )
                 }
-            } else {
-                // User manually stopped the command - make it very clear this was intentional
+            }
+            None => {
+                // No exit code and no kill signal - unexpected termination
                 if is_empty {
-                    "The user stopped this command. No output was captured before stopping.\n\n\
-                    Since the user intentionally interrupted this command, ask them what they would like to do next \
-                    rather than automatically retrying or assuming something went wrong.".to_string()
+                    "Command terminated unexpectedly. No output was captured.".to_string()
                 } else {
                     format!(
-                        "The user stopped this command. Output captured before stopping:\n\n{}\n\n\
-                        Since the user intentionally interrupted this command, ask them what they would like to do next \
-                        rather than automatically retrying or assuming something went wrong.",
+                        "Command terminated unexpectedly. Output captured:\n\n{}",
                         content
                     )
                 }
@@ -296,8 +298,9 @@ mod tests {
     #[test]
     fn test_process_content_user_stopped() {
         // User manually stopped the command (timed_out = false)
+        // When killed, the process has a signal like "Killed: 9"
         let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new();
+        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
 
         let result = process_content(output, "cargo build", exit_status, false);
 
@@ -326,8 +329,9 @@ mod tests {
     #[test]
     fn test_process_content_timed_out() {
         // Command timed out (timed_out = true)
+        // When killed by timeout, the process has a signal like "Killed: 9"
         let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new();
+        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
 
         let result = process_content(output, "cargo build", exit_status, true);
 
@@ -378,8 +382,9 @@ mod tests {
 
     #[test]
     fn test_process_content_stopped_with_empty_output() {
+        // When killed, the process has a signal like "Killed: 9"
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new();
+        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
 
         let result = process_content(output, "cargo build", exit_status, false);
 
@@ -397,8 +402,9 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out_with_empty_output() {
+        // When killed by timeout, the process has a signal like "Killed: 9"
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new();
+        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
 
         let result = process_content(output, "sleep 1000", exit_status, true);
 
