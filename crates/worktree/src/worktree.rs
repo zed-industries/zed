@@ -48,7 +48,7 @@ use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
-    borrow::Borrow as _,
+    borrow::{Borrow as _, Cow},
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
@@ -4098,22 +4098,42 @@ impl BackgroundScanner {
                     }
                 }
 
-                let relative_path = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
+                let relative_path: Cow<RelPath> = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
                 } else {
-                    if is_git_related {
-                        log::debug!(
-                            "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
-                        );
-                    } else {
-                        log::error!(
-                            "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
-                        );
+                    // Path is outside root - check if it's within a symlinked directory's canonical path
+                    // This handles events from the canonical path of symlinked directories (issue #35173)
+                    let mut found_symlink_match: Option<Cow<RelPath>> = None;
+                    for entry in snapshot.entries(true, 0) {
+                        if let Some(canonical_path) = &entry.canonical_path {
+                            let canonical_sanitized = SanitizedPath::new(canonical_path.as_ref());
+                            if let Ok(suffix) = abs_path.strip_prefix(&canonical_sanitized) {
+                                if let Ok(suffix_rel) = RelPath::new(suffix, PathStyle::local()) {
+                                    let full_path = entry.path.join(&suffix_rel);
+                                    found_symlink_match = Some(Cow::Owned(full_path.as_ref().to_owned()));
+                                    break;
+                                }
+                            }
+                        }
                     }
-                    skip_ix(&mut ranges_to_drop, ix);
-                    continue;
+
+                    if let Some(path) = found_symlink_match {
+                        path
+                    } else {
+                        if is_git_related {
+                            log::debug!(
+                                "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
+                            );
+                        } else {
+                            log::error!(
+                                "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
+                            );
+                        }
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
                 };
 
                 let absolute_path = abs_path.to_path_buf();
@@ -4593,7 +4613,23 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
-        self.watcher.add(job.abs_path.as_ref()).log_err();
+
+        // Check if the directory is a symlink and watch both the symlink and canonical paths
+        if let Ok(canonical_path) = self.fs.canonicalize(&job.abs_path).await {
+            let is_symlink = canonical_path != job.abs_path.as_ref();
+
+            if is_symlink {
+                // Watch both the symlink path and the canonical path
+                // Events may come from either path depending on how the file was created
+                self.watcher.add(job.abs_path.as_ref()).log_err();
+                self.watcher.add(&canonical_path).log_err();
+            } else {
+                self.watcher.add(job.abs_path.as_ref()).log_err();
+            }
+        } else {
+            // Not a symlink, watch the path as-is
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+        }
 
         for new_job in new_jobs.into_iter().flatten() {
             job.scan_queue
