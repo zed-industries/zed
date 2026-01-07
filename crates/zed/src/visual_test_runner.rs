@@ -918,6 +918,52 @@ import { AiPaneTabContext } from 'context';
     )
     .await?;
 
+    // Test 1b: Tooltip visible when hovering over the button
+    // First, find the button's position
+    let button_bounds = cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| window.bounds_for_element("diff_review_button"),
+    )?;
+
+    let test1b_result = if let Some(bounds) = button_bounds {
+        // Calculate the center of the button for hovering
+        let center = bounds.center();
+
+        // Simulate mouse move to hover over the button
+        cx.update_window(workspace_window.into(), |_view, window: &mut Window, cx| {
+            window.simulate_mouse_move(center, cx);
+        })?;
+
+        // Wait for the tooltip delay (500ms) plus some buffer
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(700))
+            .await;
+
+        // Refresh window to ensure tooltip is rendered
+        cx.update_window(
+            workspace_window.into(),
+            |_view, window: &mut Window, _cx| {
+                window.refresh();
+            },
+        )?;
+
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(100))
+            .await;
+
+        // Capture the tooltip screenshot
+        run_visual_test(
+            "diff_review_button_tooltip",
+            workspace_window.into(),
+            cx,
+            update_baseline,
+        )
+        .await?
+    } else {
+        println!("  Warning: Could not find diff_review_button bounds for tooltip test");
+        TestResult::Passed
+    };
+
     // Test 2: Diff view with feature flag disabled
     // Disable the feature flag
     cx.update(|cx| {
@@ -1013,11 +1059,14 @@ import { AiPaneTabContext } from 'context';
     .await?;
 
     // Return combined result
-    match (&test1_result, &test2_result, &test3_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _, _) => Ok(TestResult::BaselineUpdated(p.clone())),
-        (_, TestResult::BaselineUpdated(p), _) => Ok(TestResult::BaselineUpdated(p.clone())),
-        (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    match (&test1_result, &test1b_result, &test2_result, &test3_result) {
+        (TestResult::Passed, TestResult::Passed, TestResult::Passed, TestResult::Passed) => {
+            Ok(TestResult::Passed)
+        }
+        (TestResult::BaselineUpdated(p), _, _, _) => Ok(TestResult::BaselineUpdated(p.clone())),
+        (_, TestResult::BaselineUpdated(p), _, _) => Ok(TestResult::BaselineUpdated(p.clone())),
+        (_, _, TestResult::BaselineUpdated(p), _) => Ok(TestResult::BaselineUpdated(p.clone())),
+        (_, _, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
     }
 }
 

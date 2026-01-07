@@ -4791,9 +4791,12 @@ impl Window {
         &mut self,
         hitbox_id: HitboxId,
         inspector_id: Option<&crate::InspectorElementId>,
-        cx: &App,
+        _cx: &App,
     ) {
         self.invalidator.debug_assert_paint_or_prepaint();
+        // In test mode, always populate inspector_hitboxes to support bounds_for_element queries.
+        // In non-test mode, only populate when actively picking in the inspector.
+        #[cfg(not(any(test, feature = "test-support")))]
         if !self.is_inspector_picking(cx) {
             return;
         }
@@ -4894,6 +4897,55 @@ impl Window {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
+    }
+
+    /// For testing: simulate a mouse move event to the given position.
+    /// This dispatches the event through the normal event handling path,
+    /// which will trigger hover states and tooltips.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, cx: &mut App) {
+        let event = PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            modifiers: self.modifiers,
+            pressed_button: None,
+        });
+        let _ = self.dispatch_event(event, cx);
+    }
+
+    /// For testing: find the bounds of an element by its name.
+    /// This searches through the rendered frame's hitboxes to find an element
+    /// whose ID ends with the given name.
+    ///
+    /// Returns `Some(bounds)` if found, `None` otherwise.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn bounds_for_element(&self, name: &str) -> Option<Bounds<Pixels>> {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            let target_name = SharedString::from(name.to_string());
+            for (hitbox_id, inspector_id) in &self.rendered_frame.inspector_hitboxes {
+                let global_id = &inspector_id.path.global_id;
+                if let Some(last_id) = global_id.0.last() {
+                    if let ElementId::Name(element_name) = last_id {
+                        if *element_name == target_name {
+                            if let Some(hitbox) = self
+                                .rendered_frame
+                                .hitboxes
+                                .iter()
+                                .find(|h| h.id == *hitbox_id)
+                            {
+                                return Some(hitbox.bounds);
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
+            let _ = name;
+            None
+        }
     }
 }
 
