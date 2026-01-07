@@ -30,12 +30,21 @@ visual-tests = [
     "dep:image",
     "dep:semver",
     "dep:tempfile",
+    "dep:acp_thread",
+    "dep:action_log",
+    "dep:agent_servers",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
     "clock/test-support",
+    "acp_thread/test-support",
+    "agent_ui/test-support",
+    "db/test-support",
+    "agent/test-support",
+    "language_model/test-support",
+    "fs/test-support",
 ]
 
 [[bin]]
@@ -43,13 +52,15 @@ name = "zed"
 path = "src/main.rs"
 
 [[bin]]
-name = "visual_test_runner"
+name = "zed_visual_test_runner"
 path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 agent_ui_v2.workspace = true
@@ -105,6 +116,9 @@ image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
+acp_thread = { workspace = true, optional = true }
+action_log = { workspace = true, optional = true }
+agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 

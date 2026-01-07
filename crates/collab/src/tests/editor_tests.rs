@@ -3295,10 +3295,11 @@ async fn test_lsp_pull_diagnostics(
         editor.handle_input(":", window, cx);
     });
     pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        4,
+        5,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
-        "Client lib.rs edits should trigger another diagnostics pull for a buffer"
+        "Client lib.rs edits should trigger another diagnostics pull for open buffers"
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
@@ -3314,10 +3315,11 @@ async fn test_lsp_pull_diagnostics(
     });
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        6,
+        8,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
-        "Client main.rs edits should trigger another diagnostics pull by both client and host as they share the buffer"
+        "Client main.rs edits should trigger diagnostics pull by both client and host and an extra pull for the client's lib.rs"
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
@@ -3333,10 +3335,11 @@ async fn test_lsp_pull_diagnostics(
     });
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        8,
+        11,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
-        "Host main.rs edits should trigger another diagnostics pull by both client and host as they share the buffer"
+        "Host main.rs edits should trigger another diagnostics pull by both client and host and another pull for the client's lib.rs"
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
@@ -3363,10 +3366,13 @@ async fn test_lsp_pull_diagnostics(
         .await
         .into_response()
         .expect("workspace diagnostics refresh request failed");
+    // Workspace refresh now also triggers document diagnostic pulls for all open buffers
+    pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        8,
+        13,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
-        "No single file pulls should happen after the diagnostics refresh server request"
+        "Workspace refresh should trigger document pulls for all open buffers (main.rs and lib.rs)"
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
@@ -3375,10 +3381,9 @@ async fn test_lsp_pull_diagnostics(
         "Another workspace diagnostics pull should happen after the diagnostics refresh server request"
     );
     {
-        assert_eq!(
-            diagnostics_pulls_result_ids.lock().await.len(),
-            diagnostic_pulls_result_ids,
-            "Pulls should not happen hence no extra ids should appear"
+        assert!(
+            diagnostics_pulls_result_ids.lock().await.len() > diagnostic_pulls_result_ids,
+            "Document diagnostic pulls should happen after workspace refresh"
         );
         assert!(
             workspace_diagnostics_pulls_result_ids.lock().await.len() > workspace_pulls_result_ids,

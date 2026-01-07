@@ -418,6 +418,7 @@ pub enum InlayId {
     // LSP
     Hint(usize),
     Color(usize),
+    ReplResult(usize),
 }
 
 impl InlayId {
@@ -427,6 +428,7 @@ impl InlayId {
             Self::DebuggerValue(id) => *id,
             Self::Hint(id) => *id,
             Self::Color(id) => *id,
+            Self::ReplResult(id) => *id,
         }
     }
 }
@@ -4551,18 +4553,6 @@ impl Project {
             }
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
-                let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
-                    && let Ok(path) = RelPath::new(relative_path, path_style)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path: path.into_arc(),
-                    });
-                }
-            }
-
-            for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
                 if let Ok(rel_path) = RelPath::new(path, path_style) {
                     if let Some(entry) = worktree.entry_for_path(&rel_path) {
@@ -4571,6 +4561,18 @@ impl Project {
                             path: entry.path.clone(),
                         });
                     }
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_root_name = worktree.read(cx).root_name();
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: path.into_arc(),
+                    });
                 }
             }
         }

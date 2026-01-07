@@ -34,14 +34,14 @@ pub async fn run_scoring(
         .expected_patches
         .iter()
         .map(|patch| {
-            apply_diff_to_string(original_text, patch)
+            apply_diff_to_string(patch, original_text)
                 .with_context(|| format!("Expected patch did not apply for {}", example.spec.name))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut scores = vec![];
     for prediction in &example.predictions {
-        let actual_text = match apply_diff_to_string(original_text, &prediction.actual_patch) {
+        let actual_text = match apply_diff_to_string(&prediction.actual_patch, original_text) {
             Ok(text) => text,
             Err(_) => {
                 scores.push(ExampleScore { delta_chr_f: 0.0 });
