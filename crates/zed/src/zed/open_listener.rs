@@ -794,7 +794,7 @@ mod tests {
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
-    use std::{sync::Arc, task::Poll};
+    use std::{path::PathBuf, sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, Workspace};
 
@@ -1316,9 +1316,9 @@ mod tests {
 
         // Should return the folder paths from inside the workspace file
         assert_eq!(paths.len(), 3);
-        assert_eq!(paths[0].path, path!("/projects/frontend"));
-        assert_eq!(paths[1].path, path!("/projects/backend"));
-        assert_eq!(paths[2].path, path!("/shared"));
+        assert_eq!(paths[0].path, PathBuf::from(path!("/projects/frontend")));
+        assert_eq!(paths[1].path, PathBuf::from(path!("/projects/backend")));
+        assert_eq!(paths[2].path, PathBuf::from(path!("/shared")));
 
         // Should return a workspace file source
         let source = workspace_source.expect("Expected workspace file source");
@@ -1349,7 +1349,7 @@ mod tests {
             derive_paths_with_position(app_state.fs.as_ref(), vec!["/projects/my-project"]).await;
 
         assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0].path, path!("/projects/my-project"));
+        assert_eq!(paths[0].path, PathBuf::from(path!("/projects/my-project")));
 
         // Should not return a workspace file source
         assert!(workspace_source.is_none());
