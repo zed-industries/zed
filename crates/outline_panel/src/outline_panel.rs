@@ -4820,11 +4820,9 @@ impl OutlinePanel {
             )
             .child(
                 h_flex()
-                    .gap_0p5()
                     .when(has_query, |this| {
                         this.child(
                             IconButton::new("clear_filter", IconName::Close)
-                                .icon_color(Color::Muted)
                                 .shape(IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Clear Filter"))
                                 .on_click(cx.listener(|outline_panel, _, window, cx| {

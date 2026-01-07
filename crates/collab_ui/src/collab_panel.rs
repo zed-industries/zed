@@ -2442,7 +2442,7 @@ impl CollabPanel {
                     )
                     .child(self.render_filter_input(&self.filter_editor, cx))
                     .when(has_query, |this| {
-                        this.child(
+                        this.pr_2p5().child(
                             IconButton::new("clear_filter", IconName::Close)
                                 .shape(IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Clear Filter"))
