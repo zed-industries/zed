@@ -499,6 +499,14 @@ pub struct GitStatusEntry {
 }
 
 impl GitStatusEntry {
+    pub fn new(repo_path: RepoPath, status: FileStatus, staging: StageStatus) -> Self {
+        Self {
+            repo_path,
+            status,
+            staging,
+        }
+    }
+
     fn display_name(&self, path_style: PathStyle) -> String {
         self.repo_path
             .file_name()
