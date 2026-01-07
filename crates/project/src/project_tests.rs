@@ -246,6 +246,214 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/grandparent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 4\n",
+            "parent": {
+                ".editorconfig": "[*.rs]\nindent_size = 2\n",
+                "worktree": {
+                    ".editorconfig": "[*.md]\nindent_size = 3\n",
+                    "main.rs": "fn main() {}",
+                    "README.md": "# README",
+                    "other.txt": "other content",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/grandparent/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    language_registry.add(markdown_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let settings_for = |path: &str| {
+            let file_entry = tree.entry_for_path(rel_path(path)).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .load_language_for_file_path(file.path.as_std_path());
+            let file_language = cx.background_executor().block(file_language).ok();
+            let file = file as _;
+            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned()
+        };
+
+        let settings_rs = settings_for("main.rs");
+        let settings_md = settings_for("README.md");
+        let settings_txt = settings_for("other.txt");
+
+        // main.rs gets indent_size = 2 from parent's external .editorconfig
+        assert_eq!(Some(settings_rs.tab_size), NonZeroU32::new(2));
+
+        // README.md gets indent_size = 3 from internal worktree .editorconfig
+        assert_eq!(Some(settings_md.tab_size), NonZeroU32::new(3));
+
+        // other.txt gets indent_size = 4 from grandparent's external .editorconfig
+        assert_eq!(Some(settings_txt.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "worktree": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx.background_executor().block(file_language).ok();
+        let file = file as _;
+        let settings =
+            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+
+        // file.rs gets indent_size = 2 from worktree's root config, NOT 99 from parent
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/grandparent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "parent": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 4\n",
+                "worktree": {
+                    "file.rs": "fn main() {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/grandparent/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx.background_executor().block(file_language).ok();
+        let file = file as _;
+        let settings =
+            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+
+        // file.rs gets indent_size = 4 from parent's root config, NOT 99 from grandparent
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 5\n",
+            "worktree_a": {
+                "file.rs": "fn a() {}",
+            },
+            "worktree_b": {
+                "file.rs": "fn b() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            path!("/parent/worktree_a").as_ref(),
+            path!("/parent/worktree_b").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
+        assert_eq!(worktrees.len(), 2);
+
+        for worktree in worktrees {
+            let tree = worktree.read(cx);
+            let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .load_language_for_file_path(file.path.as_std_path());
+            let file_language = cx.background_executor().block(file_language).ok();
+            let file = file as _;
+            let settings =
+                language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+
+            // Both worktrees should get indent_size = 5 from shared parent .editorconfig
+            assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
@@ -10474,6 +10682,20 @@ fn js_lang() -> Arc<Language> {
             name: "JavaScript".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    ))
+}
+
+fn markdown_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".to_string()],
                 ..Default::default()
             },
             ..Default::default()
