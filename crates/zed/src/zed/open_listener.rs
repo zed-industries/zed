@@ -30,7 +30,9 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use workspace::{
+    AppState, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceFileSource,
+};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -523,6 +525,32 @@ async fn open_workspaces(
                         errored = true
                     }
                 }
+                SerializedWorkspaceLocation::LocalFromFile {
+                    workspace_file_path,
+                    workspace_file_kind: _,
+                } => {
+                    // Pass the workspace file path; derive_paths_with_position will detect
+                    // it by extension and parse out the folder paths automatically.
+                    let workspace_paths: Vec<String> =
+                        vec![workspace_file_path.to_string_lossy().into_owned()];
+
+                    let workspace_failed_to_open = open_local_workspace(
+                        workspace_paths,
+                        diff_paths.clone(),
+                        open_new_workspace,
+                        reuse,
+                        wait,
+                        responses,
+                        env.as_ref(),
+                        &app_state,
+                        cx,
+                    )
+                    .await;
+
+                    if workspace_failed_to_open {
+                        errored = true
+                    }
+                }
                 SerializedWorkspaceLocation::Remote(mut connection) => {
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection {
@@ -564,7 +592,7 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let paths_with_position =
+    let (paths_with_position, workspace_file_source) =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
 
     // If reuse flag is passed, open a new workspace in an existing window.
@@ -588,6 +616,7 @@ async fn open_local_workspace(
             replace_window,
             prefer_focused_window: wait,
             env: env.cloned(),
+            workspace_file_source,
             ..Default::default()
         },
         cx,
@@ -686,21 +715,68 @@ async fn open_local_workspace(
     errored
 }
 
+/// Derives paths with positions from path strings, detecting workspace files.
+///
+/// If exactly one `.code-workspace` file is provided (and no other paths), this function
+/// will parse it and return the folder paths from within, along with the workspace file source.
+///
+/// Returns a tuple of (paths_with_position, optional_workspace_file_source).
 pub async fn derive_paths_with_position(
     fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Vec<PathWithPosition> {
-    join_all(path_strings.into_iter().map(|path_str| async move {
-        let canonicalized = fs.canonicalize(Path::new(path_str.as_ref())).await;
+) -> (Vec<PathWithPosition>, Option<WorkspaceFileSource>) {
+    let path_strings: Vec<_> = path_strings
+        .into_iter()
+        .map(|s| s.as_ref().to_string())
+        .collect();
+
+    // Check if we have exactly one path and it's a workspace file
+    if path_strings.len() == 1 {
+        let path_str = &path_strings[0];
+        let path = Path::new(path_str);
+
+        // Try to detect if this is a workspace file
+        if let Some(workspace_source) = WorkspaceFileSource::from_path(path) {
+            // Canonicalize the workspace file path
+            if let Ok(canonical_path) = fs.canonicalize(path).await {
+                let workspace_source =
+                    WorkspaceFileSource::from_path(&canonical_path).unwrap_or(workspace_source);
+
+                // Try to load and parse the workspace file
+                if let Ok(content) = fs.load(&canonical_path).await {
+                    if let Ok(parsed) = workspace_source.parse(&content) {
+                        // Canonicalize folder paths
+                        let folder_paths =
+                            join_all(parsed.folders.into_iter().map(|folder| async {
+                                if let Ok(canonical) = fs.canonicalize(&folder).await {
+                                    PathWithPosition::from_path(canonical)
+                                } else {
+                                    PathWithPosition::from_path(folder)
+                                }
+                            }))
+                            .await;
+
+                        return (folder_paths, Some(workspace_source));
+                    }
+                }
+            }
+        }
+    }
+
+    // Normal path handling for non-workspace files
+    let paths: Vec<PathWithPosition> = join_all(path_strings.iter().map(|path_str| async move {
+        let canonicalized = fs.canonicalize(Path::new(path_str.as_str())).await;
         (path_str, canonicalized)
     }))
     .await
     .into_iter()
     .map(|(original, canonicalized)| match canonicalized {
         Ok(canonicalized) => PathWithPosition::from_path(canonicalized),
-        Err(_) => PathWithPosition::parse_str(original.as_ref()),
+        Err(_) => PathWithPosition::parse_str(original.as_str()),
     })
-    .collect()
+    .collect();
+
+    (paths, None)
 }
 
 #[cfg(test)]
@@ -1199,5 +1275,83 @@ mod tests {
             }
             _ => panic!("Expected GitClone kind"),
         }
+    }
+
+    #[gpui::test]
+    async fn test_derive_paths_with_workspace_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        // Create a .code-workspace file with relative folder paths
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/projects"),
+                json!({
+                    "my-workspace.code-workspace": r#"{
+                        "folders": [
+                            { "path": "frontend" },
+                            { "path": "backend" },
+                            { "path": "../shared" }
+                        ]
+                    }"#,
+                    "frontend": { "src": {} },
+                    "backend": { "src": {} },
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/shared"), json!({ "lib": {} }))
+            .await;
+
+        // Test that derive_paths_with_position detects and parses the workspace file
+        let (paths, workspace_source) = derive_paths_with_position(
+            app_state.fs.as_ref(),
+            vec!["/projects/my-workspace.code-workspace"],
+        )
+        .await;
+
+        // Should return the folder paths from inside the workspace file
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0].path, path!("/projects/frontend"));
+        assert_eq!(paths[1].path, path!("/projects/backend"));
+        assert_eq!(paths[2].path, path!("/shared"));
+
+        // Should return a workspace file source
+        let source = workspace_source.expect("Expected workspace file source");
+        assert_eq!(
+            source.path,
+            std::path::PathBuf::from("/projects/my-workspace.code-workspace")
+        );
+        assert_eq!(source.kind, workspace::WorkspaceFileKind::CodeWorkspace);
+    }
+
+    #[gpui::test]
+    async fn test_derive_paths_with_regular_directory(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/projects"),
+                json!({
+                    "my-project": { "src": {} },
+                }),
+            )
+            .await;
+
+        // Test that regular directories are handled normally
+        let (paths, workspace_source) =
+            derive_paths_with_position(app_state.fs.as_ref(), vec!["/projects/my-project"]).await;
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].path, path!("/projects/my-project"));
+
+        // Should not return a workspace file source
+        assert!(workspace_source.is_none());
     }
 }
