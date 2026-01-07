@@ -3,7 +3,7 @@ use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
+    kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
     },
