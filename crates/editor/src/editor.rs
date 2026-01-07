@@ -3502,10 +3502,17 @@ impl Editor {
                 // content that might change independently.
                 // start_fp: first min(32, fold_len) bytes of fold content
                 // end_fp: last min(32, fold_len) bytes of fold content
+                // Clip to character boundaries to handle multibyte UTF-8 characters.
                 let fold_len = end - start;
-                let start_fp_end = start + std::cmp::min(FINGERPRINT_LEN, fold_len);
+                let start_fp_end = snapshot.clip_offset(
+                    start + std::cmp::min(FINGERPRINT_LEN, fold_len),
+                    Bias::Left,
+                );
                 let start_fp: String = snapshot.text_for_range(start..start_fp_end).collect();
-                let end_fp_start = end.saturating_sub(FINGERPRINT_LEN).max(start);
+                let end_fp_start = snapshot.clip_offset(
+                    end.saturating_sub(FINGERPRINT_LEN).max(start),
+                    Bias::Right,
+                );
                 let end_fp: String = snapshot.text_for_range(end_fp_start..end).collect();
 
                 (start, end, start_fp, end_fp)
@@ -23120,10 +23127,23 @@ impl Editor {
 
                 // Helper: search for fingerprint in buffer, return offset if found
                 let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
-                    let fp_len = fingerprint.len();
-                    (search_start..snapshot_len.saturating_sub(fp_len)).find(|&offset| {
-                        snapshot.contains_str_at(MultiBufferOffset(offset), fingerprint)
-                    })
+                    // Ensure we start at a character boundary (defensive)
+                    let search_start = snapshot
+                        .clip_offset(MultiBufferOffset(search_start), Bias::Left)
+                        .0;
+                    let search_end = snapshot_len.saturating_sub(fingerprint.len());
+
+                    let mut byte_offset = search_start;
+                    for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
+                        if byte_offset > search_end {
+                            break;
+                        }
+                        if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
+                            return Some(byte_offset);
+                        }
+                        byte_offset += ch.len_utf8();
+                    }
+                    None
                 };
 
                 // Track search position to handle duplicate fingerprints correctly.
