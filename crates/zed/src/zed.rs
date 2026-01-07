@@ -554,8 +554,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
                     cx.quit();
-                })
-                .ok();
+                });
             }
         })
         .detach()
