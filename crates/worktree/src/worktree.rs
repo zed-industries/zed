@@ -354,7 +354,7 @@ struct UpdateObservationState {
     _maintain_remote_snapshot: Task<Option<()>>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),

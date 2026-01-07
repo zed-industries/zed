@@ -4854,11 +4854,6 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |project, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust(&project.worktree_store, worktree_id, cx)
-                });
-            }
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
@@ -4891,6 +4886,10 @@ impl Project {
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+            return Ok(proto::Ack {});
+        }
+
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
@@ -4914,6 +4913,10 @@ impl Project {
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+            return Ok(proto::Ack {});
+        }
+
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
