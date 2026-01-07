@@ -15,13 +15,11 @@ use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
 use google_ai::GoogleModelMode;
-use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
-};
+use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
@@ -30,6 +28,7 @@ use language_model::{
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
@@ -43,7 +42,9 @@ use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use util::{ResultExt as _, maybe};
 
-use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
+use crate::provider::anthropic::{
+    AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
+};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 use crate::provider::x_ai::count_xai_tokens;
@@ -303,8 +304,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiZed
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiZed)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -384,7 +385,7 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
-        app_version: Option<SemanticVersion>,
+        app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
@@ -396,7 +397,7 @@ impl CloudLanguageModel {
             let request = http_client::Request::builder()
                 .method(Method::POST)
                 .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
-                .when_some(app_version, |builder, app_version| {
+                .when_some(app_version.as_ref(), |builder, app_version| {
                     builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                 })
                 .header("Content-Type", "application/json")
@@ -603,6 +604,10 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_images
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        self.model.supports_streaming_tools
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -664,9 +669,9 @@ impl LanguageModel for CloudLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic => {
-                count_anthropic_tokens(request, cx)
-            }
+            cloud_llm_client::LanguageModelProvider::Anthropic => cx
+                .background_spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
+                .boxed(),
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,

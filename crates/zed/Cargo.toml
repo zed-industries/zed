@@ -2,27 +2,68 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.215.0"
+version = "0.219.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
+default-run = "zed"
 
 [lints]
 workspace = true
 
+[features]
+tracy = ["ztracing/tracy"]
+test-support = [
+    "gpui/test-support",
+    "gpui/screen-capture",
+    "dep:image",
+    "dep:semver",
+    "workspace/test-support",
+    "project/test-support",
+    "editor/test-support",
+    "terminal_view/test-support",
+    "image_viewer/test-support",
+]
+visual-tests = [
+    "gpui/test-support",
+    "gpui/screen-capture",
+    "dep:image",
+    "dep:semver",
+    "dep:tempfile",
+    "dep:acp_thread",
+    "dep:action_log",
+    "dep:agent_servers",
+    "workspace/test-support",
+    "project/test-support",
+    "editor/test-support",
+    "terminal_view/test-support",
+    "image_viewer/test-support",
+    "clock/test-support",
+    "acp_thread/test-support",
+    "agent_ui/test-support",
+    "db/test-support",
+    "agent/test-support",
+    "language_model/test-support",
+    "fs/test-support",
+]
+
 [[bin]]
 name = "zed"
-path = "src/zed-main.rs"
-
-[lib]
-name = "zed"
 path = "src/main.rs"
+
+[[bin]]
+name = "zed_visual_test_runner"
+path = "src/visual_test_runner.rs"
+required-features = ["visual-tests"]
 
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
+agent_ui_v2.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -41,6 +82,7 @@ collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 component.workspace = true
+component_preview.workspace = true
 copilot.workspace = true
 crashes.workspace = true
 dap_adapters.workspace = true
@@ -50,7 +92,7 @@ debugger_tools.workspace = true
 debugger_ui.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
-zeta2_tools.workspace = true
+encoding_selector.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true
@@ -71,10 +113,18 @@ gpui = { workspace = true, features = [
     "font-kit",
     "windows-manifest",
 ] }
+image = { workspace = true, optional = true }
+semver = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+clock = { workspace = true, optional = true }
+acp_thread = { workspace = true, optional = true }
+action_log = { workspace = true, optional = true }
+agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 
-edit_prediction_button.workspace = true
+edit_prediction.workspace = true
+edit_prediction_ui.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 inspector_ui.workspace = true
@@ -144,9 +194,10 @@ theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 title_bar.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
-ui_input.workspace = true
 ui_prompt.workspace = true
 url.workspace = true
 urlencoding.workspace = true
@@ -157,11 +208,10 @@ vim_mode_setting.workspace = true
 watch.workspace = true
 web_search.workspace = true
 web_search_providers.workspace = true
+which_key.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
-zeta.workspace = true
-zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
 chrono.workspace = true
@@ -180,16 +230,21 @@ ashpd.workspace = true
 call = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support", "screen-capture"] }
 image_viewer = { workspace = true, features = ["test-support"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+image.workspace = true
+agent_ui = { workspace = true, features = ["test-support"] }
+agent_ui_v2 = { workspace = true, features = ["test-support"] }
+search = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
@@ -224,4 +279,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling", "zstd"]
+ignored = ["profiling", "zstd", "tracing"]

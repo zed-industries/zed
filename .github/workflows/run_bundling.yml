@@ -13,7 +13,7 @@ jobs:
   bundle_linux_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
       CARGO_INCREMENTAL: 0
@@ -56,7 +56,7 @@ jobs:
   bundle_linux_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       CARGO_INCREMENTAL: 0
@@ -99,7 +99,7 @@ jobs:
   bundle_mac_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-mini-macos
     env:
       CARGO_INCREMENTAL: 0
@@ -145,7 +145,7 @@ jobs:
   bundle_mac_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-mini-macos
     env:
       CARGO_INCREMENTAL: 0
@@ -191,7 +191,7 @@ jobs:
   bundle_windows_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
@@ -229,7 +229,7 @@ jobs:
   bundle_windows_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0

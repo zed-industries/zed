@@ -11,7 +11,7 @@ use prompt_store::ProjectContext;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, SharedString, TestAppContext};
+use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
@@ -96,8 +96,11 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .await
         .unwrap();
 
-    diff.update(cx, |diff, _| {
-        assert_eq!(diff.base_text_string().unwrap(), "fn one() -> usize { 0 }");
+    diff.update(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text_string(cx).unwrap(),
+            "fn one() -> usize { 0 }"
+        );
     });
 
     buffer.update(cx, |buffer, cx| {
@@ -157,9 +160,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[("src/lib2.rs", "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    diff.update(cx, |diff, _| {
+    diff.update(cx, |diff, cx| {
         assert_eq!(
-            diff.base_text_string().unwrap(),
+            diff.base_text_string(cx).unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
@@ -211,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        let first_response = receiver.recv().await.unwrap();
+        let first_response = receiver.rx.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {
             panic!("incorrect result");
         };
@@ -222,7 +225,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        assert!(receiver.recv().await.is_err());
+        assert!(receiver.rx.recv().await.is_err());
         buffer
     }
 
@@ -452,7 +455,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("rust-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
@@ -476,7 +479,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
                 ..FakeLspAdapter::default()
             },
         );
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("fake-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
@@ -669,7 +672,7 @@ async fn test_remote_cancel_language_server_work(
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("rust-analyzer".into()),
             Default::default(),
             None,
@@ -1443,12 +1446,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
         .unwrap();
 
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_1
         );
@@ -1462,12 +1465,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1482,12 +1485,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_2);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1503,7 +1506,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         editor::init(cx);
     });
 
@@ -1588,12 +1591,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         .unwrap();
 
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_1
         );
@@ -1607,12 +1610,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1627,12 +1630,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_2);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1910,10 +1913,10 @@ pub async fn init_test(
 ) -> (Entity<Project>, Entity<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     server_cx.update(|cx| {
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
     init_logger();
 
@@ -1933,6 +1936,7 @@ pub async fn init_test(
                 languages,
                 extension_host_proxy: proxy,
             },
+            false,
             cx,
         )
     });
@@ -1977,5 +1981,5 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
         Project::init(&client, cx);
     });
 
-    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))
+    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, false, cx))
 }

@@ -16,7 +16,7 @@ use editor::{
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
-use language::{Language, LanguageConfig, Point};
+use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 use ui::Pixels;
@@ -2255,6 +2255,79 @@ async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_yank_paragraph_with_paste(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "
+        first paragraph
+        ˇstill first
+
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    })
+    .await;
+
+    cx.simulate_shared_keystrokes("y a p").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("first paragraph\nstill first\n\n");
+
+    cx.simulate_shared_keystrokes("j j p").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "
+        first paragraph
+        still first
+
+        ˇfirst paragraph
+        still first
+
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    });
+}
+
+#[perf]
+#[gpui::test]
+async fn test_change_paragraph(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "
+        first paragraph
+        ˇstill first
+
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    })
+    .await;
+
+    cx.simulate_shared_keystrokes("c a p").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("first paragraph\nstill first\n\n");
+
+    cx.simulate_shared_keystrokes("escape").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "
+        ˇ
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    });
+}
+
+#[perf]
+#[gpui::test]
 async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.set_state(
@@ -2326,7 +2399,7 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
             .end;
         editor.last_bounds().unwrap().origin
             + editor
-                .display_to_pixel_point(current_head, &snapshot, window)
+                .display_to_pixel_point(current_head, &snapshot, window, cx)
                 .unwrap()
     });
     pixel_position.x += px(100.);
@@ -2403,4 +2476,28 @@ async fn test_repeat_grouping_41735(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇaaaa");
     cx.simulate_shared_keystrokes("u").await;
     cx.shared_state().await.assert_eq("ˇaaa");
+}
+
+#[gpui::test]
+async fn test_deactivate(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.editor.cursor_shape = Some(settings::CursorShape::Underline);
+        });
+    });
+
+    // Assert that, while in `Normal` mode, the cursor shape is `Block` but,
+    // after deactivating vim mode, it should revert to the one specified in the
+    // user's settings, if set.
+    cx.update_editor(|editor, _window, _cx| {
+        assert_eq!(editor.cursor_shape(), CursorShape::Block);
+    });
+
+    cx.disable_vim();
+
+    cx.update_editor(|editor, _window, _cx| {
+        assert_eq!(editor.cursor_shape(), CursorShape::Underline);
+    });
 }

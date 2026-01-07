@@ -459,7 +459,7 @@ impl SyntaxTreeView {
                                         editor.clear_background_highlights::<Self>(cx);
                                         editor.highlight_background::<Self>(
                                             &[range],
-                                            |theme| {
+                                            |_, theme| {
                                                 theme
                                                     .colors()
                                                     .editor_document_highlight_write_background
@@ -507,11 +507,11 @@ impl Render for SyntaxTreeView {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.list_scroll_handle.clone())
+                        .track_scroll(&self.list_scroll_handle)
                         .text_bg(cx.theme().colors().background)
                         .into_any_element(),
                     )
-                    .vertical_scrollbar_for(self.list_scroll_handle.clone(), window, cx)
+                    .vertical_scrollbar_for(&self.list_scroll_handle, window, cx)
                     .into_any_element()
                 } else {
                     let inner_content = v_flex()
@@ -614,13 +614,14 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
-        let view = cx.entity();
+        let view = cx.weak_entity();
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
                 .menu(move |window, cx| {
-                    ContextMenu::build(window, cx, |mut menu, window, _| {
+                    ContextMenu::build(window, cx, |mut menu, _, _| {
                         for (layer_ix, layer) in active_buffer.syntax_layers().enumerate() {
+                            let view = view.clone();
                             menu = menu.entry(
                                 format!(
                                     "{} {}",
@@ -628,9 +629,12 @@ impl SyntaxTreeToolbarItemView {
                                     format_node_range(layer.node())
                                 ),
                                 None,
-                                window.handler_for(&view, move |view, window, cx| {
-                                    view.select_layer(layer_ix, window, cx);
-                                }),
+                                move |window, cx| {
+                                    view.update(cx, |view, cx| {
+                                        view.select_layer(layer_ix, window, cx);
+                                    })
+                                    .ok();
+                                },
                             );
                         }
                         menu
@@ -655,7 +659,7 @@ impl SyntaxTreeToolbarItemView {
             buffer_state.active_layer = Some(layer.to_owned());
             view.selected_descendant_ix = None;
             cx.notify();
-            view.focus_handle.focus(window);
+            view.focus_handle.focus(window, cx);
             Some(())
         })
     }

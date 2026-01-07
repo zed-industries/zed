@@ -138,14 +138,11 @@ pub struct ThemeSettings {
     pub unnecessary_code_fade: f32,
 }
 
-pub(crate) const DEFAULT_LIGHT_THEME: &'static str = "One Light";
-pub(crate) const DEFAULT_DARK_THEME: &'static str = "One Dark";
-
 /// Returns the name of the default theme for the given [`Appearance`].
 pub fn default_theme(appearance: Appearance) -> &'static str {
     match appearance {
-        Appearance::Light => DEFAULT_LIGHT_THEME,
-        Appearance::Dark => DEFAULT_DARK_THEME,
+        Appearance::Light => settings::DEFAULT_LIGHT_THEME,
+        Appearance::Dark => settings::DEFAULT_DARK_THEME,
     }
 }
 
@@ -304,31 +301,50 @@ impl IconThemeSelection {
     }
 }
 
-// impl ThemeSettingsContent {
 /// Sets the theme for the given appearance to the theme with the specified name.
+///
+/// The caller should make sure that the [`Appearance`] matches the theme associated with the name.
+///
+/// If the current [`ThemeAppearanceMode`] is set to [`System`] and the user's system [`Appearance`]
+/// is different than the new theme's [`Appearance`], this function will update the
+/// [`ThemeAppearanceMode`] to the new theme's appearance in order to display the new theme.
+///
+/// [`System`]: ThemeAppearanceMode::System
 pub fn set_theme(
     current: &mut SettingsContent,
     theme_name: impl Into<Arc<str>>,
-    appearance: Appearance,
+    theme_appearance: Appearance,
+    system_appearance: Appearance,
 ) {
-    if let Some(selection) = current.theme.theme.as_mut() {
-        let theme_to_update = match selection {
-            settings::ThemeSelection::Static(theme) => theme,
-            settings::ThemeSelection::Dynamic { mode, light, dark } => match mode {
-                ThemeAppearanceMode::Light => light,
-                ThemeAppearanceMode::Dark => dark,
-                ThemeAppearanceMode::System => match appearance {
-                    Appearance::Light => light,
-                    Appearance::Dark => dark,
-                },
-            },
-        };
+    let theme_name = ThemeName(theme_name.into());
 
-        *theme_to_update = ThemeName(theme_name.into());
-    } else {
-        current.theme.theme = Some(settings::ThemeSelection::Static(ThemeName(
-            theme_name.into(),
-        )));
+    let Some(selection) = current.theme.theme.as_mut() else {
+        current.theme.theme = Some(settings::ThemeSelection::Static(theme_name));
+        return;
+    };
+
+    match selection {
+        settings::ThemeSelection::Static(theme) => {
+            *theme = theme_name;
+        }
+        settings::ThemeSelection::Dynamic { mode, light, dark } => {
+            // Update the appropriate theme slot based on appearance.
+            match theme_appearance {
+                Appearance::Light => *light = theme_name,
+                Appearance::Dark => *dark = theme_name,
+            }
+
+            // Don't update the theme mode if it is set to system and the new theme has the same
+            // appearance.
+            let should_update_mode =
+                !(mode == &ThemeAppearanceMode::System && theme_appearance == system_appearance);
+
+            if should_update_mode {
+                // Update the mode to the specified appearance (otherwise we might set the theme and
+                // nothing gets updated because the system specified the other mode appearance).
+                *mode = ThemeAppearanceMode::from(theme_appearance);
+            }
+        }
     }
 }
 
@@ -381,8 +397,8 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     } else {
         theme.theme = Some(settings::ThemeSelection::Dynamic {
             mode,
-            light: ThemeName(DEFAULT_LIGHT_THEME.into()),
-            dark: ThemeName(DEFAULT_DARK_THEME.into()),
+            light: ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
+            dark: ThemeName(settings::DEFAULT_DARK_THEME.into()),
         });
     }
 

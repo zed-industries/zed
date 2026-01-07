@@ -23,6 +23,7 @@ pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
 pub const INDEX_LOCK: &str = "index.lock";
+pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(
     git,
@@ -43,6 +44,8 @@ actions!(
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
+        /// Shows the git history for the current file.
+        FileHistory,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.

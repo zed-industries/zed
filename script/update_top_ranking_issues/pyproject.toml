@@ -5,9 +5,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "mypy>=1.15.0",
-    "pygithub>=2.6.1",
     "pytz>=2025.1",
+    "requests>=2.32.0",
     "ruff>=0.9.7",
     "typer>=0.15.1",
     "types-pytz>=2025.1.0.20250204",
+    "types-requests>=2.32.0",
 ]

@@ -1,5 +1,5 @@
 use editor::{
-    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -10,7 +10,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::ops::Range;
+use std::{f64, ops::Range};
 use workspace::searchable::Direction;
 
 use crate::{
@@ -1018,7 +1018,7 @@ impl Motion {
             ),
             EndOfLine { display_lines } => (
                 end_of_line(map, *display_lines, point, times),
-                SelectionGoal::None,
+                SelectionGoal::HorizontalPosition(f64::INFINITY),
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
@@ -2262,28 +2262,18 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             .offset_to_point(excerpt.map_offset_from_buffer(BufferOffset(offset)));
         return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
     }
-    let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot().excerpts() {
         let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
             ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
+            let anchor = Anchor::in_buffer(excerpt, text_anchor);
             return anchor.to_display_point(map);
         } else if offset <= excerpt_range.start {
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), range.context.start);
+            let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
-        } else {
-            last_position = Some(Anchor::in_buffer(
-                excerpt,
-                buffer.remote_id(),
-                range.context.end,
-            ));
         }
     }
-
-    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot());
-    last_point.column = point.column;
 
     map.clip_point(
         map.point_to_display_point(
@@ -2392,10 +2382,16 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
-        if opening_range.contains(&offset) {
-            return closing_range.start.to_display_point(map);
-        } else if closing_range.contains(&offset) {
-            return opening_range.start.to_display_point(map);
+        let mut chars = map.buffer_snapshot().chars_at(offset);
+        match chars.next() {
+            Some('/') => {}
+            _ => {
+                if opening_range.contains(&offset) {
+                    return closing_range.start.to_display_point(map);
+                } else if closing_range.contains(&offset) {
+                    return opening_range.start.to_display_point(map);
+                }
+            }
         }
     }
 
@@ -3447,6 +3443,23 @@ mod test {
                 test = "test"
             />
         </a>"#});
+
+        // test nested closing tag
+        cx.set_shared_state(indoc! {r#"<html>
+            <bˇody>
+            </body>
+        </html>"#})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <body>
+            <ˇ/body>
+        </html>"#});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <ˇbody>
+            </body>
+        </html>"#});
     }
 
     #[gpui::test]
@@ -3552,6 +3565,60 @@ mod test {
         cx.shared_state().await.assert_eq(" onˇe \n two \nthree");
         cx.simulate_shared_keystrokes("2 g _").await;
         cx.shared_state().await.assert_eq(" one \n twˇo \nthree");
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_with_vertical_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // test $ followed by k maintains end-of-line position
+        cx.set_shared_state(indoc! {"
+            The quick brown
+            fˇox
+            jumps over the
+            lazy dog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick browˇn
+            fox
+            jumps over the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("j j").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox
+            jumps over thˇe
+            lazy dog
+            "});
+
+        // test horizontal movement resets the end-of-line behavior
+        cx.set_shared_state(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy ˇdog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over thˇe
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("b b").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps ˇover the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quˇick brown fox
+            jumps over the
+            lazy dog
+            "});
     }
 
     #[gpui::test]

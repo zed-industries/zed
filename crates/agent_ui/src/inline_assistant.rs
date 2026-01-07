@@ -1,8 +1,11 @@
+use language_model::AnthropicEventData;
+use language_model::report_anthropic_event;
 use std::cmp;
 use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
@@ -15,7 +18,6 @@ use crate::{
 use agent::HistoryStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::EditorSnapshot;
 use editor::MultiBufferOffset;
@@ -32,21 +34,19 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::FutureExt;
+use futures::{FutureExt, channel::mpsc};
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::{
-    ConfigurationError, ConfiguredModel, LanguageModelRegistry, report_assistant_event,
-};
+use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, DisableAiSettings, LspAction, Project, ProjectTransaction};
 use prompt_store::{PromptBuilder, PromptStore};
 use settings::{Settings, SettingsStore};
-use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
@@ -54,13 +54,8 @@ use util::{RangeExt, ResultExt, maybe};
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenSettings;
 
-pub fn init(
-    fs: Arc<dyn Fs>,
-    prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
-    cx: &mut App,
-) {
-    cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
+    cx.set_global(InlineAssistant::new(fs, prompt_builder));
 
     cx.observe_global::<SettingsStore>(|cx| {
         if DisableAiSettings::get_global(cx).disable_ai {
@@ -100,18 +95,14 @@ pub struct InlineAssistant {
     confirmed_assists: HashMap<InlineAssistId, Entity<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    _inline_assistant_completions: Option<mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>>,
 }
 
 impl Global for InlineAssistant {}
 
 impl InlineAssistant {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        prompt_builder: Arc<PromptBuilder>,
-        telemetry: Arc<Telemetry>,
-    ) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>) -> Self {
         Self {
             next_assist_id: InlineAssistId::default(),
             next_assist_group_id: InlineAssistGroupId::default(),
@@ -121,8 +112,8 @@ impl InlineAssistant {
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
-            telemetry,
             fs,
+            _inline_assistant_completions: None,
         }
     }
 
@@ -287,7 +278,7 @@ impl InlineAssistant {
                             action.prompt.clone(),
                             window,
                             cx,
-                        )
+                        );
                     })
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
@@ -301,8 +292,8 @@ impl InlineAssistant {
                             action.prompt.clone(),
                             window,
                             cx,
-                        )
-                    })
+                        );
+                    });
                 }
             };
 
@@ -377,17 +368,9 @@ impl InlineAssistant {
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
         for mut selection in initial_selections {
-            if selection.end > selection.start {
-                selection.start.column = 0;
-                // If the selection ends at the start of the line, we don't want to include it.
-                if selection.end.column == 0 {
-                    selection.end.row -= 1;
-                }
-                selection.end.column = snapshot
-                    .buffer_snapshot()
-                    .line_len(MultiBufferRow(selection.end.row));
-            } else if let Some(fold) =
-                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
+            if selection.end == selection.start
+                && let Some(fold) =
+                    snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
             {
                 selection.start = fold.range().start;
                 selection.end = fold.range().end;
@@ -414,6 +397,15 @@ impl InlineAssistant {
                         }
                     }
                 }
+            } else {
+                selection.start.column = 0;
+                // If the selection ends at the start of the line, we don't want to include it.
+                if selection.end.column == 0 && selection.start.row != selection.end.row {
+                    selection.end.row -= 1;
+                }
+                selection.end.column = snapshot
+                    .buffer_snapshot()
+                    .line_len(MultiBufferRow(selection.end.row));
             }
 
             if let Some(prev_selection) = selections.last_mut()
@@ -440,24 +432,31 @@ impl InlineAssistant {
         {
             let anchor_range = Anchor::range_in_buffer(
                 excerpt_id,
-                buffer.remote_id(),
                 buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
             );
 
             codegen_ranges.push(anchor_range);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
-                self.telemetry.report_assistant_event(AssistantEventData {
-                    conversation_id: None,
-                    kind: AssistantKind::Inline,
-                    phase: AssistantPhase::Invoked,
-                    message_id: None,
-                    model: model.model.telemetry_id(),
-                    model_provider: model.provider.id().to_string(),
-                    response_latency: None,
-                    error_message: None,
-                    language_name: buffer.language().map(|language| language.name().to_proto()),
-                });
+                telemetry::event!(
+                    "Assistant Invoked",
+                    kind = "inline",
+                    phase = "invoked",
+                    model = model.model.telemetry_id(),
+                    model_provider = model.provider.id().to_string(),
+                    language_name = buffer.language().map(|language| language.name().to_proto())
+                );
+
+                report_anthropic_event(
+                    &model.model,
+                    AnthropicEventData {
+                        completion_type: language_model::AnthropicCompletionType::Editor,
+                        event: language_model::AnthropicEventType::Invoked,
+                        language_name: buffer.language().map(|language| language.name().to_proto()),
+                        message_id: None,
+                    },
+                    cx,
+                );
             }
         }
 
@@ -481,6 +480,7 @@ impl InlineAssistant {
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
         let assist_group_id = self.next_assist_group_id.post_inc();
+        let session_id = Uuid::new_v4();
         let prompt_buffer = cx.new(|cx| {
             MultiBuffer::singleton(
                 cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx)),
@@ -498,7 +498,7 @@ impl InlineAssistant {
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     initial_transaction_id,
-                    self.telemetry.clone(),
+                    session_id,
                     self.prompt_builder.clone(),
                     cx,
                 )
@@ -512,6 +512,7 @@ impl InlineAssistant {
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
+                    session_id,
                     self.fs.clone(),
                     thread_store.clone(),
                     prompt_store.clone(),
@@ -535,14 +536,15 @@ impl InlineAssistant {
                 }
             }
 
-            let [prompt_block_id, end_block_id] =
-                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
+            let [prompt_block_id, tool_description_block_id, end_block_id] =
+                self.insert_assist_blocks(&editor, &range, &prompt_editor, cx);
 
             assists.push((
                 assist_id,
                 range.clone(),
                 prompt_editor,
                 prompt_block_id,
+                tool_description_block_id,
                 end_block_id,
             ));
         }
@@ -561,7 +563,15 @@ impl InlineAssistant {
         };
 
         let mut assist_group = InlineAssistGroup::new();
-        for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
+        for (
+            assist_id,
+            range,
+            prompt_editor,
+            prompt_block_id,
+            tool_description_block_id,
+            end_block_id,
+        ) in assists
+        {
             let codegen = prompt_editor.read(cx).codegen().clone();
 
             self.assists.insert(
@@ -572,6 +582,7 @@ impl InlineAssistant {
                     editor,
                     &prompt_editor,
                     prompt_block_id,
+                    tool_description_block_id,
                     end_block_id,
                     range,
                     codegen,
@@ -599,13 +610,13 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Option<InlineAssistId> {
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
         let Some((codegen_ranges, newest_selection)) =
             self.codegen_ranges(editor, &snapshot, window, cx)
         else {
-            return;
+            return None;
         };
 
         let assist_to_focus = self.batch_assist(
@@ -625,6 +636,8 @@ impl InlineAssistant {
         if let Some(assist_id) = assist_to_focus {
             self.focus_assist(assist_id, window, cx);
         }
+
+        assist_to_focus
     }
 
     pub fn suggest_assist(
@@ -678,7 +691,7 @@ impl InlineAssistant {
         range: &Range<Anchor>,
         prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         cx: &mut App,
-    ) -> [CustomBlockId; 2] {
+    ) -> [CustomBlockId; 3] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
             prompt_editor
                 .editor
@@ -690,6 +703,14 @@ impl InlineAssistant {
                 placement: BlockPlacement::Above(range.start),
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
+                priority: 0,
+            },
+            // Placeholder for tool description - will be updated dynamically
+            BlockProperties {
+                style: BlockStyle::Flex,
+                placement: BlockPlacement::Below(range.end),
+                height: Some(0),
+                render: Arc::new(|_cx| div().into_any_element()),
                 priority: 0,
             },
             BlockProperties {
@@ -710,7 +731,7 @@ impl InlineAssistant {
 
         editor.update(cx, |editor, cx| {
             let block_ids = editor.insert_blocks(assist_blocks, None, cx);
-            [block_ids[0], block_ids[1]]
+            [block_ids[0], block_ids[1], block_ids[2]]
         })
     }
 
@@ -1039,8 +1060,6 @@ impl InlineAssistant {
             }
 
             let active_alternative = assist.codegen.read(cx).active_alternative().clone();
-            let message_id = active_alternative.read(cx).message_id.clone();
-
             if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
@@ -1049,28 +1068,49 @@ impl InlineAssistant {
                     ranges
                         .first()
                         .and_then(|(buffer, _, _)| buffer.language())
-                        .map(|language| language.name())
+                        .map(|language| language.name().0.to_string())
                 });
-                report_assistant_event(
-                    AssistantEventData {
-                        conversation_id: None,
-                        kind: AssistantKind::Inline,
+
+                let codegen = assist.codegen.read(cx);
+                let session_id = codegen.session_id();
+                let message_id = active_alternative.read(cx).message_id.clone();
+                let model_telemetry_id = model.model.telemetry_id();
+                let model_provider_id = model.model.provider_id().to_string();
+
+                let (phase, event_type, anthropic_event_type) = if undo {
+                    (
+                        "rejected",
+                        "Assistant Response Rejected",
+                        language_model::AnthropicEventType::Reject,
+                    )
+                } else {
+                    (
+                        "accepted",
+                        "Assistant Response Accepted",
+                        language_model::AnthropicEventType::Accept,
+                    )
+                };
+
+                telemetry::event!(
+                    event_type,
+                    phase,
+                    session_id = session_id.to_string(),
+                    kind = "inline",
+                    model = model_telemetry_id,
+                    model_provider = model_provider_id,
+                    language_name = language_name,
+                    message_id = message_id.as_deref(),
+                );
+
+                report_anthropic_event(
+                    &model.model,
+                    language_model::AnthropicEventData {
+                        completion_type: language_model::AnthropicCompletionType::Editor,
+                        event: anthropic_event_type,
+                        language_name,
                         message_id,
-                        phase: if undo {
-                            AssistantPhase::Rejected
-                        } else {
-                            AssistantPhase::Accepted
-                        },
-                        model: model.model.telemetry_id(),
-                        model_provider: model.model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: language_name.map(|name| name.to_proto()),
                     },
-                    Some(self.telemetry.clone()),
-                    cx.http_client(),
-                    model.model.api_key(cx),
-                    cx.background_executor(),
+                    cx,
                 );
             }
 
@@ -1102,6 +1142,9 @@ impl InlineAssistant {
             let mut to_remove = decorations.removed_line_block_ids;
             to_remove.insert(decorations.prompt_block_id);
             to_remove.insert(decorations.end_block_id);
+            if let Some(tool_description_block_id) = decorations.model_explanation {
+                to_remove.insert(tool_description_block_id);
+            }
             editor.remove_blocks(to_remove, None, cx);
         });
 
@@ -1154,7 +1197,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
+            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
             .ok();
     }
 
@@ -1166,7 +1209,7 @@ impl InlineAssistant {
         if let Some(decorations) = assist.decorations.as_ref() {
             decorations.prompt_editor.update(cx, |prompt_editor, cx| {
                 prompt_editor.editor.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.select_all(&SelectAll, window, cx);
                 })
             });
@@ -1216,28 +1259,26 @@ impl InlineAssistant {
                 let bottom = top + 1.0;
                 (top, bottom)
             });
-            let mut scroll_target_top = scroll_target_range.0;
-            let mut scroll_target_bottom = scroll_target_range.1;
-
-            scroll_target_top -= editor.vertical_scroll_margin() as ScrollOffset;
-            scroll_target_bottom += editor.vertical_scroll_margin() as ScrollOffset;
-
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
+            let vertical_scroll_margin = editor.vertical_scroll_margin() as ScrollOffset;
+            let scroll_target_top = (scroll_target_range.0 - vertical_scroll_margin)
+                // Don't scroll up too far in the case of a large vertical_scroll_margin.
+                .max(scroll_target_range.0 - height_in_lines / 2.0);
+            let scroll_target_bottom = (scroll_target_range.1 + vertical_scroll_margin)
+                // Don't scroll down past where the top would still be visible.
+                .min(scroll_target_top + height_in_lines);
+
             let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
 
             if scroll_target_top < scroll_top {
                 editor.set_scroll_position(point(0., scroll_target_top), window, cx);
             } else if scroll_target_bottom > scroll_bottom {
-                if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
-                    editor.set_scroll_position(
-                        point(0., scroll_target_bottom - height_in_lines),
-                        window,
-                        cx,
-                    );
-                } else {
-                    editor.set_scroll_position(point(0., scroll_target_top), window, cx);
-                }
+                editor.set_scroll_position(
+                    point(0., scroll_target_bottom - height_in_lines),
+                    window,
+                    cx,
+                );
             }
         });
     }
@@ -1445,6 +1486,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
+                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
                             Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );
@@ -1456,6 +1498,7 @@ impl InlineAssistant {
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
+                    editor.set_offset_content(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
@@ -1539,6 +1582,27 @@ impl InlineAssistant {
                 .and_then(|item| item.act_as::<TerminalView>(cx))
                 .map(InlineAssistTarget::Terminal)
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_completion_receiver(
+        &mut self,
+        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
+    ) {
+        self._inline_assistant_completions = Some(sender);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_codegen(
+        &mut self,
+        assist_id: InlineAssistId,
+        cx: &mut App,
+    ) -> Option<Entity<CodegenAlternative>> {
+        self.assists.get(&assist_id).map(|inline_assist| {
+            inline_assist
+                .codegen
+                .update(cx, |codegen, _cx| codegen.active_alternative().clone())
+        })
     }
 }
 
@@ -1673,6 +1737,7 @@ impl InlineAssist {
         editor: &Entity<Editor>,
         prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         prompt_block_id: CustomBlockId,
+        tool_description_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Entity<BufferCodegen>,
@@ -1687,7 +1752,8 @@ impl InlineAssist {
             decorations: Some(InlineAssistDecorations {
                 prompt_block_id,
                 prompt_editor: prompt_editor.clone(),
-                removed_line_block_ids: HashSet::default(),
+                removed_line_block_ids: Default::default(),
+                model_explanation: Some(tool_description_block_id),
                 end_block_id,
             }),
             range,
@@ -1739,6 +1805,16 @@ impl InlineAssist {
                                 && assist.decorations.is_none()
                                 && let Some(workspace) = assist.workspace.upgrade()
                             {
+                                #[cfg(any(test, feature = "test-support"))]
+                                if let Some(sender) = &mut this._inline_assistant_completions {
+                                    sender
+                                        .unbounded_send(Err(anyhow::anyhow!(
+                                            "Inline assistant error: {}",
+                                            error
+                                        )))
+                                        .ok();
+                                }
+
                                 let error = format!("Inline assistant error: {}", error);
                                 workspace.update(cx, |workspace, cx| {
                                     struct InlineAssistantError;
@@ -1749,6 +1825,11 @@ impl InlineAssist {
 
                                     workspace.show_toast(Toast::new(id, error), cx);
                                 })
+                            } else {
+                                #[cfg(any(test, feature = "test-support"))]
+                                if let Some(sender) = &mut this._inline_assistant_completions {
+                                    sender.unbounded_send(Ok(assist_id)).ok();
+                                }
                             }
 
                             if assist.decorations.is_none() {
@@ -1776,6 +1857,7 @@ struct InlineAssistDecorations {
     prompt_block_id: CustomBlockId,
     prompt_editor: Entity<PromptEditor<BufferCodegen>>,
     removed_line_block_ids: HashSet<CustomBlockId>,
+    model_explanation: Option<CustomBlockId>,
     end_block_id: CustomBlockId,
 }
 
@@ -1939,6 +2021,390 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
             ranges.remove(ix + 1);
         } else {
             ix += 1;
+        }
+    }
+}
+
+#[cfg(any(test, feature = "unit-eval"))]
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod test {
+
+    use std::sync::Arc;
+
+    use agent::HistoryStore;
+    use assistant_text_thread::TextThreadStore;
+    use client::{Client, UserStore};
+    use editor::{Editor, MultiBuffer, MultiBufferOffset};
+    use fs::FakeFs;
+    use futures::channel::mpsc;
+    use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
+    use language::Buffer;
+    use project::Project;
+    use prompt_store::PromptBuilder;
+    use smol::stream::StreamExt as _;
+    use util::test::marked_text_ranges;
+    use workspace::Workspace;
+
+    use crate::InlineAssistant;
+
+    #[derive(Debug)]
+    pub enum InlineAssistantOutput {
+        Success {
+            completion: Option<String>,
+            description: Option<String>,
+            full_buffer_text: String,
+        },
+        Failure {
+            failure: String,
+        },
+        // These fields are used for logging
+        #[allow(unused)]
+        Malformed {
+            completion: Option<String>,
+            description: Option<String>,
+            failure: Option<String>,
+        },
+    }
+
+    pub fn run_inline_assistant_test<SetupF, TestF>(
+        base_buffer: String,
+        prompt: String,
+        setup: SetupF,
+        test: TestF,
+        cx: &mut TestAppContext,
+    ) -> InlineAssistantOutput
+    where
+        SetupF: FnOnce(&mut gpui::VisualTestContext),
+        TestF: FnOnce(&mut gpui::VisualTestContext),
+    {
+        let fs = FakeFs::new(cx.executor());
+        let app_state = cx.update(|cx| workspace::AppState::test(cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let http = Arc::new(reqwest_client::ReqwestClient::user_agent("agent tests").unwrap());
+        let client = cx.update(|cx| {
+            cx.set_http_client(http);
+            Client::production(cx)
+        });
+        let mut inline_assistant = InlineAssistant::new(fs.clone(), prompt_builder);
+
+        let (tx, mut completion_rx) = mpsc::unbounded();
+        inline_assistant.set_completion_receiver(tx);
+
+        // Initialize settings and client
+        cx.update(|cx| {
+            gpui_tokio::init(cx);
+            settings::init(cx);
+            client::init(&client, cx);
+            workspace::init(app_state.clone(), cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
+
+            cx.set_global(inline_assistant);
+        });
+
+        let project = cx
+            .executor()
+            .block_test(async { Project::test(fs.clone(), [], cx).await });
+
+        // Create workspace with window
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            window.activate_window();
+            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+        });
+
+        setup(cx);
+
+        let (_editor, buffer) = cx.update(|window, cx| {
+            let buffer = cx.new(|cx| Buffer::local("", cx));
+            let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+            let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
+            editor.update(cx, |editor, cx| {
+                let (unmarked_text, selection_ranges) = marked_text_ranges(&base_buffer, true);
+                editor.set_text(unmarked_text, window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(
+                        selection_ranges.into_iter().map(|range| {
+                            MultiBufferOffset(range.start)..MultiBufferOffset(range.end)
+                        }),
+                    )
+                })
+            });
+
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+            // Add editor to workspace
+            workspace.update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            });
+
+            // Call assist method
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                let assist_id = inline_assistant
+                    .assist(
+                        &editor,
+                        workspace.downgrade(),
+                        project.downgrade(),
+                        history_store, // thread_store
+                        None,          // prompt_store
+                        Some(prompt),
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+
+                inline_assistant.start_assist(assist_id, window, cx);
+            });
+
+            (editor, buffer)
+        });
+
+        cx.run_until_parked();
+
+        test(cx);
+
+        let assist_id = cx
+            .executor()
+            .block_test(async { completion_rx.next().await })
+            .unwrap()
+            .unwrap();
+
+        let (completion, description, failure) = cx.update(|_, cx| {
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                let codegen = inline_assistant.get_codegen(assist_id, cx).unwrap();
+
+                let completion = codegen.read(cx).current_completion();
+                let description = codegen.read(cx).current_description();
+                let failure = codegen.read(cx).current_failure();
+
+                (completion, description, failure)
+            })
+        });
+
+        if failure.is_some() && (completion.is_some() || description.is_some()) {
+            InlineAssistantOutput::Malformed {
+                completion,
+                description,
+                failure,
+            }
+        } else if let Some(failure) = failure {
+            InlineAssistantOutput::Failure { failure }
+        } else {
+            InlineAssistantOutput::Success {
+                completion,
+                description,
+                full_buffer_text: buffer.read_with(cx, |buffer, _| buffer.text()),
+            }
+        }
+    }
+}
+
+#[cfg(any(test, feature = "unit-eval"))]
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod evals {
+    use std::str::FromStr;
+
+    use eval_utils::{EvalOutput, NoProcessor};
+    use gpui::TestAppContext;
+    use language_model::{LanguageModelRegistry, SelectedModel};
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_single_cursor_edit() {
+        run_eval(
+            20,
+            1.0,
+            "Rename this variable to buffer_text".to_string(),
+            indoc::indoc! {"
+                struct EvalExampleStruct {
+                    text: Strˇing,
+                    prompt: String,
+                }
+            "}
+            .to_string(),
+            exact_buffer_match(indoc::indoc! {"
+                struct EvalExampleStruct {
+                    buffer_text: String,
+                    prompt: String,
+                }
+            "}),
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_cant_do() {
+        run_eval(
+            20,
+            0.95,
+            "Rename the struct to EvalExampleStructNope",
+            indoc::indoc! {"
+                struct EvalExampleStruct {
+                    text: Strˇing,
+                    prompt: String,
+                }
+            "},
+            uncertain_output,
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_unclear() {
+        run_eval(
+            20,
+            0.95,
+            "Make exactly the change I want you to make",
+            indoc::indoc! {"
+                struct EvalExampleStruct {
+                    text: Strˇing,
+                    prompt: String,
+                }
+            "},
+            uncertain_output,
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_empty_buffer() {
+        run_eval(
+            20,
+            1.0,
+            "Write a Python hello, world program".to_string(),
+            "ˇ".to_string(),
+            |output| match output {
+                InlineAssistantOutput::Success {
+                    full_buffer_text, ..
+                } => {
+                    if full_buffer_text.is_empty() {
+                        EvalOutput::failed("expected some output".to_string())
+                    } else {
+                        EvalOutput::passed(format!("Produced {full_buffer_text}"))
+                    }
+                }
+                o @ InlineAssistantOutput::Failure { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+                o @ InlineAssistantOutput::Malformed { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+            },
+        );
+    }
+
+    fn run_eval(
+        iterations: usize,
+        expected_pass_ratio: f32,
+        prompt: impl Into<String>,
+        buffer: impl Into<String>,
+        judge: impl Fn(InlineAssistantOutput) -> eval_utils::EvalOutput<()> + Send + Sync + 'static,
+    ) {
+        let buffer = buffer.into();
+        let prompt = prompt.into();
+
+        eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
+            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+            let mut cx = TestAppContext::build(dispatcher, None);
+            cx.skip_drawing();
+
+            let output = run_inline_assistant_test(
+                buffer.clone(),
+                prompt.clone(),
+                |cx| {
+                    // Reconfigure to use a real model instead of the fake one
+                    let model_name = std::env::var("ZED_AGENT_MODEL")
+                        .unwrap_or("anthropic/claude-sonnet-4-latest".into());
+
+                    let selected_model = SelectedModel::from_str(&model_name)
+                        .expect("Invalid model format. Use 'provider/model-id'");
+
+                    log::info!("Selected model: {selected_model:?}");
+
+                    cx.update(|_, cx| {
+                        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                            registry.select_inline_assistant_model(Some(&selected_model), cx);
+                        });
+                    });
+                },
+                |_cx| {
+                    log::info!("Waiting for actual response from the LLM...");
+                },
+                &mut cx,
+            );
+
+            cx.quit();
+
+            judge(output)
+        });
+    }
+
+    fn uncertain_output(output: InlineAssistantOutput) -> EvalOutput<()> {
+        match &output {
+            o @ InlineAssistantOutput::Success {
+                completion,
+                description,
+                ..
+            } => {
+                if description.is_some() && completion.is_none() {
+                    EvalOutput::passed(format!(
+                        "Assistant produced no completion, but a description:\n{}",
+                        description.as_ref().unwrap()
+                    ))
+                } else {
+                    EvalOutput::failed(format!("Assistant produced a completion:\n{:?}", o))
+                }
+            }
+            InlineAssistantOutput::Failure {
+                failure: error_message,
+            } => EvalOutput::passed(format!(
+                "Assistant produced a failure message: {}",
+                error_message
+            )),
+            o @ InlineAssistantOutput::Malformed { .. } => {
+                EvalOutput::failed(format!("Assistant produced a malformed response:\n{:?}", o))
+            }
+        }
+    }
+
+    fn exact_buffer_match(
+        correct_output: impl Into<String>,
+    ) -> impl Fn(InlineAssistantOutput) -> EvalOutput<()> {
+        let correct_output = correct_output.into();
+        move |output| match output {
+            InlineAssistantOutput::Success {
+                description,
+                full_buffer_text,
+                ..
+            } => {
+                if full_buffer_text == correct_output && description.is_none() {
+                    EvalOutput::passed("Assistant output matches")
+                } else if full_buffer_text == correct_output {
+                    EvalOutput::failed(format!(
+                        "Assistant output produced an unescessary description description:\n{:?}",
+                        description
+                    ))
+                } else {
+                    EvalOutput::failed(format!(
+                        "Assistant output does not match expected output:\n{:?}\ndescription:\n{:?}",
+                        full_buffer_text, description
+                    ))
+                }
+            }
+            o @ InlineAssistantOutput::Failure { .. } => EvalOutput::failed(format!(
+                "Assistant output does not match expected output: {:?}",
+                o
+            )),
+            o @ InlineAssistantOutput::Malformed { .. } => EvalOutput::failed(format!(
+                "Assistant output does not match expected output: {:?}",
+                o
+            )),
         }
     }
 }

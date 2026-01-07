@@ -12,6 +12,9 @@ mod move_path_tool;
 mod now_tool;
 mod open_tool;
 mod read_file_tool;
+mod restore_file_from_disk_tool;
+mod save_file_tool;
+
 mod terminal_tool;
 mod thinking_tool;
 mod web_search_tool;
@@ -33,6 +36,9 @@ pub use move_path_tool::*;
 pub use now_tool::*;
 pub use open_tool::*;
 pub use read_file_tool::*;
+pub use restore_file_from_disk_tool::*;
+pub use save_file_tool::*;
+
 pub use terminal_tool::*;
 pub use thinking_tool::*;
 pub use web_search_tool::*;
@@ -88,6 +94,8 @@ tools! {
     NowTool,
     OpenTool,
     ReadFileTool,
+    RestoreFileFromDiskTool,
+    SaveFileTool,
     TerminalTool,
     ThinkingTool,
     WebSearchTool,

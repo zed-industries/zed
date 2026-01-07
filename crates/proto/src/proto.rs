@@ -115,8 +115,6 @@ messages!(
     (GetReferencesResponse, Background),
     (GetSignatureHelp, Background),
     (GetSignatureHelpResponse, Background),
-    (GetSupermavenApiKey, Background),
-    (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -276,7 +274,6 @@ messages!(
     (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateGitBranch, Background),
-    (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
     (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),
@@ -290,9 +287,12 @@ messages!(
     (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
     (GitReset, Background),
+    (GitDeleteBranch, Background),
     (GitCheckoutFiles, Background),
     (GitShow, Background),
     (GitCommitDetails, Background),
+    (GitFileHistory, Background),
+    (GitFileHistoryResponse, Background),
     (SetIndexText, Background),
     (Push, Background),
     (Fetch, Background),
@@ -302,9 +302,13 @@ messages!(
     (RemoteMessageResponse, Background),
     (AskPassRequest, Background),
     (AskPassResponse, Background),
+    (GitCreateRemote, Background),
+    (GitRemoveRemote, Background),
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
     (GitRenameBranch, Background),
+    (TrustWorktrees, Background),
+    (RestrictWorktrees, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -338,7 +342,10 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (ShareAgentThread, Foreground),
+    (GetSharedAgentThread, Foreground),
+    (GetSharedAgentThreadResponse, Foreground)
 );
 
 request_messages!(
@@ -381,7 +388,6 @@ request_messages!(
     (GetSignatureHelp, GetSignatureHelpResponse),
     (OpenUnstagedDiff, OpenUnstagedDiffResponse),
     (OpenUncommittedDiff, OpenUncommittedDiffResponse),
-    (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
@@ -438,6 +444,8 @@ request_messages!(
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
+    (ShareAgentThread, Ack),
+    (GetSharedAgentThread, GetSharedAgentThreadResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
@@ -491,7 +499,9 @@ request_messages!(
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
     (GitShow, GitCommitDetails),
+    (GitFileHistory, GitFileHistoryResponse),
     (GitReset, Ack),
+    (GitDeleteBranch, Ack),
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
     (Push, RemoteMessageResponse),
@@ -499,6 +509,8 @@ request_messages!(
     (GetRemotes, GetRemotesResponse),
     (Pull, RemoteMessageResponse),
     (AskPassRequest, AskPassResponse),
+    (GitCreateRemote, Ack),
+    (GitRemoveRemote, Ack),
     (GitCreateBranch, Ack),
     (GitChangeBranch, Ack),
     (GitRenameBranch, Ack),
@@ -520,7 +532,9 @@ request_messages!(
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
     (GitGetWorktrees, GitWorktreesResponse),
-    (GitCreateWorktree, Ack)
+    (GitCreateWorktree, Ack),
+    (TrustWorktrees, Ack),
+    (RestrictWorktrees, Ack),
 );
 
 lsp_messages!(
@@ -655,7 +669,9 @@ entity_messages!(
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,
+    GitFileHistory,
     GitReset,
+    GitDeleteBranch,
     GitCheckoutFiles,
     SetIndexText,
     ToggleLspLogs,
@@ -669,6 +685,8 @@ entity_messages!(
     GitChangeBranch,
     GitRenameBranch,
     GitCreateBranch,
+    GitCreateRemote,
+    GitRemoveRemote,
     CheckForPushedCommits,
     GitDiff,
     GitInit,
@@ -689,7 +707,9 @@ entity_messages!(
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
     GitGetWorktrees,
-    GitCreateWorktree
+    GitCreateWorktree,
+    TrustWorktrees,
+    RestrictWorktrees,
 );
 
 entity_messages!(

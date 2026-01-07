@@ -11,7 +11,7 @@ use gpui::{
     InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
     Window, canvas, div, fill, img, opaque_grey, point, size,
 };
-use language::{DiskState, File as _};
+use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
@@ -44,7 +44,7 @@ impl ImageView {
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
             if let Some(image) = image_data.clone().get_render_image(window, cx) {
-                cx.drop_image(image, None);
+                cx.drop_image(image, Some(window));
             }
             image_data.remove_asset(cx);
         })
@@ -195,7 +195,7 @@ impl Item for ImageView {
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
-        self.image_item.read(cx).file.disk_state() == DiskState::Deleted
+        self.image_item.read(cx).file.disk_state().is_deleted()
     }
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
         workspace::item::ItemBufferKind::Singleton

@@ -26,6 +26,8 @@ anyhow.workspace = true
 askpass.workspace = true
 clap.workspace = true
 client.workspace = true
+collections.workspace = true
+crashes.workspace = true
 dap_adapters.workspace = true
 debug_adapter_extension.workspace = true
 env_logger.workspace = true
@@ -55,6 +57,7 @@ remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true
 rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -69,7 +72,6 @@ thiserror.workspace = true
 rayon.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
-crashes.workspace = true
 crash-handler.workspace = true
 fork.workspace = true
 libc.workspace = true
@@ -80,7 +82,6 @@ action_log.workspace = true
 agent = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
-collections.workspace = true
 dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

@@ -142,6 +142,11 @@ pub enum Operator {
     HelixPrevious {
         around: bool,
     },
+    HelixSurroundAdd,
+    HelixSurroundReplace {
+        replaced_char: Option<char>,
+    },
+    HelixSurroundDelete,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -217,6 +222,7 @@ pub struct VimGlobals {
     pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
+    pub recording_count: Option<usize>,
     pub recorded_count: Option<usize>,
     pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
@@ -549,6 +555,10 @@ impl MarksState {
         let buffer = multibuffer.read(cx).as_singleton();
         let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
+        if self.is_global_mark(&name) && self.global_marks.contains_key(&name) {
+            self.delete_mark(name.clone(), multibuffer, cx);
+        }
+
         let Some(abs_path) = abs_path else {
             self.multibuffer_marks
                 .entry(multibuffer.entity_id())
@@ -572,7 +582,7 @@ impl MarksState {
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name,
+            name.clone(),
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -580,6 +590,10 @@ impl MarksState {
         );
         if !self.watched_buffers.contains_key(&buffer_id) {
             self.watch_buffer(MarkLocation::Path(abs_path.clone()), &buffer, cx)
+        }
+        if self.is_global_mark(&name) {
+            self.global_marks
+                .insert(name, MarkLocation::Path(abs_path.clone()));
         }
         self.serialize_buffer_marks(abs_path, &buffer, cx)
     }
@@ -605,7 +619,7 @@ impl MarksState {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
+                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -898,6 +912,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -924,6 +939,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -1032,6 +1048,9 @@ impl Operator {
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixSurroundAdd => "helix_ms",
+            Operator::HelixSurroundReplace { .. } => "helix_mr",
+            Operator::HelixSurroundDelete => "helix_md",
         }
     }
 
@@ -1056,6 +1075,14 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixSurroundAdd => "ms".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: None,
+            } => "mr".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: Some(c),
+            } => format!("mr{}", c),
+            Operator::HelixSurroundDelete => "md".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1100,6 +1127,9 @@ impl Operator {
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
+            Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
         }
     }
 
@@ -1125,7 +1155,10 @@ impl Operator {
             | Operator::DeleteSurrounds
             | Operator::Exchange
             | Operator::HelixNext { .. }
-            | Operator::HelixPrevious { .. } => true,
+            | Operator::HelixPrevious { .. }
+            | Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }

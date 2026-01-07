@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::{runners::Platform, vars};
+use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
 pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
@@ -15,6 +15,16 @@ pub fn checkout_repo() -> Step<Use> {
     // prevent checkout action from running `git clean -ffdx` which
     // would delete the target directory
     .add_with(("clean", false))
+}
+
+pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
+    named::uses(
+        "actions",
+        "checkout",
+        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
+    )
+    .add_with(("clean", false))
+    .add_with(("token", token.to_string()))
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -44,6 +54,10 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier")
+}
+
 pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
@@ -53,10 +67,7 @@ pub fn cargo_install_nextest() -> Step<Use> {
 }
 
 pub fn cargo_nextest(platform: Platform) -> Step<Run> {
-    named::run(
-        platform,
-        "cargo nextest run --workspace --no-fail-fast --failure-output immediate-final",
-    )
+    named::run(platform, "cargo nextest run --workspace --no-fail-fast")
 }
 
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
@@ -131,9 +142,9 @@ pub fn script(name: &str) -> Step<Run> {
     }
 }
 
-pub struct NamedJob {
+pub struct NamedJob<J: JobType = RunJob> {
     pub name: String,
-    pub job: Job,
+    pub job: Job<J>,
 }
 
 // impl NamedJob {
@@ -145,9 +156,13 @@ pub struct NamedJob {
 //     }
 // }
 
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
+    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+
 pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
     Expression::new(format!(
-        "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'){}",
+        "{}{}",
+        DEFAULT_REPOSITORY_OWNER_GUARD,
         trigger_always.then_some(" && always()").unwrap_or_default()
     ))
 }
@@ -179,6 +194,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
+impl FluentBuilder for Input {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -251,8 +267,10 @@ pub mod named {
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub fn bash(script: &str) -> Step<Run> {
-        Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+    pub fn bash(script: impl AsRef<str>) -> Step<Run> {
+        Step::new(function_name(1))
+            .run(script.as_ref())
+            .shell(BASH_SHELL)
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
@@ -279,15 +297,19 @@ pub mod named {
         Workflow::default().name(
             named::function_name(1)
                 .split("::")
-                .next()
-                .unwrap()
-                .to_owned(),
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .skip(1)
+                .rev()
+                .collect::<Vec<_>>()
+                .join("::"),
         )
     }
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub fn job(job: Job) -> NamedJob {
+    pub fn job<J: JobType>(job: Job<J>) -> NamedJob<J> {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,
@@ -325,4 +347,17 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(&format!(
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))
+}
+
+pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    )
+    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
 }

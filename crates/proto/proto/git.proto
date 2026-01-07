@@ -124,6 +124,8 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
+    optional string remote_upstream_url = 14;
+    optional string remote_origin_url = 15;
 }
 
 message RemoveRepository {
@@ -188,6 +190,25 @@ message GitRenameBranch {
     uint64 repository_id = 2;
     string branch = 3;
     string new_name = 4;
+}
+
+message GitCreateRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+    string remote_url = 4;
+}
+
+message GitRemoveRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+}
+
+message GitDeleteBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string branch_name = 3;
 }
 
 message GitDiff {
@@ -284,6 +305,29 @@ message GitCheckoutFiles {
     repeated string paths = 5;
 }
 
+message GitFileHistory {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string path = 4;
+    uint64 skip = 5;
+    optional uint64 limit = 6;
+}
+
+message GitFileHistoryResponse {
+    repeated FileHistoryEntry entries = 1;
+    string path = 2;
+}
+
+message FileHistoryEntry {
+    string sha = 1;
+    string subject = 2;
+    string message = 3;
+    int64 commit_timestamp = 4;
+    string author_name = 5;
+    string author_email = 6;
+}
+
 // Move to `git.proto` once collab's min version is >=0.171.0.
 message StatusEntry {
     string repo_path = 1;
@@ -369,6 +413,7 @@ message Push {
     string branch_name = 5;
     optional PushOptions options = 6;
     uint64 askpass_id = 7;
+    string remote_branch_name = 8;
 
     enum PushOptions {
         SET_UPSTREAM = 0;
@@ -389,6 +434,7 @@ message GetRemotes {
     reserved 2;
     uint64 repository_id = 3;
     optional string branch_name = 4;
+    bool is_push = 5;
 }
 
 message GetRemotesResponse {
@@ -457,8 +503,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        optional string remote_url = 4;
         reserved 3;
+        reserved 4;
     }
 
     optional BlameResponse blame_response = 5;
@@ -535,6 +581,7 @@ message GitCreateWorktree {
 message RunGitHook {
     enum GitHook {
         PRE_COMMIT = 0;
+        reserved 1;
     }
 
     uint64 project_id = 1;

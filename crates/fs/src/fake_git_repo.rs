@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
+use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -50,6 +51,8 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    /// List of remotes, keys are names and values are URLs
+    pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
 }
@@ -68,6 +71,7 @@ impl FakeGitRepositoryState {
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
+            remotes: HashMap::default(),
         }
     }
 }
@@ -138,6 +142,7 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         content: Option<String>,
         _env: Arc<HashMap<String, String>>,
+        _is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
             if let Some(message) = &state.simulated_index_write_error_message {
@@ -151,8 +156,16 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, _name: &str) -> Option<String> {
-        None
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let name = name.to_string();
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .remotes
+                .get(&name)
+                .context("remote not found")
+                .cloned()
+        });
+        async move { fut.await.ok() }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -196,6 +209,7 @@ impl GitRepository for FakeGitRepository {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
+                message: "initial commit".into(),
                 ..Default::default()
             })
         }
@@ -377,11 +391,18 @@ impl GitRepository for FakeGitRepository {
             Ok(state
                 .branches
                 .iter()
-                .map(|branch_name| Branch {
-                    is_head: Some(branch_name) == current_branch.as_ref(),
-                    ref_name: branch_name.into(),
-                    most_recent_commit: None,
-                    upstream: None,
+                .map(|branch_name| {
+                    let ref_name = if branch_name.starts_with("refs/") {
+                        branch_name.into()
+                    } else {
+                        format!("refs/heads/{branch_name}").into()
+                    };
+                    Branch {
+                        is_head: Some(branch_name) == current_branch.as_ref(),
+                        ref_name,
+                        most_recent_commit: None,
+                        upstream: None,
+                    }
                 })
                 .collect())
         })
@@ -431,7 +452,21 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            if !state.branches.remove(&name) {
+                bail!("no such branch: {name}");
+            }
+            Ok(())
+        })
+    }
+
+    fn blame(
+        &self,
+        path: RepoPath,
+        _content: Rope,
+        _line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames
@@ -439,6 +474,25 @@ impl GitRepository for FakeGitRepository {
                 .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
+    }
+
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        async move {
+            Ok(git::repository::FileHistory {
+                entries: Vec::new(),
+                path,
+            })
+        }
+        .boxed()
     }
 
     fn stage_paths(
@@ -529,7 +583,7 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn run_hook(
@@ -537,12 +591,13 @@ impl GitRepository for FakeGitRepository {
         _hook: RunHook,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn push(
         &self,
         _branch: String,
+        _remote_branch: String,
         _remote: String,
         _options: Option<PushOptions>,
         _askpass: AskPassDelegate,
@@ -574,7 +629,24 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn get_remotes(&self, _branch: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
+        self.with_state_async(false, move |state| {
+            let remotes = state
+                .remotes
+                .keys()
+                .map(|r| Remote {
+                    name: r.clone().into(),
+                })
+                .collect::<Vec<_>>();
+            Ok(remotes)
+        })
+    }
+
+    fn get_push_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
+        unimplemented!()
+    }
+
+    fn get_branch_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
         unimplemented!()
     }
 
@@ -650,6 +722,20 @@ impl GitRepository for FakeGitRepository {
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         async { Ok(Some("main".into())) }.boxed()
+    }
+
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            state.remotes.insert(name, url);
+            Ok(())
+        })
+    }
+
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            state.remotes.remove(&name);
+            Ok(())
+        })
     }
 }
 

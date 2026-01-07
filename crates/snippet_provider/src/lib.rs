@@ -22,7 +22,7 @@ pub fn init(cx: &mut App) {
     extension_snippet::init(cx);
 }
 
-// Is `None` if the snippet file is global.
+/// Language name, or `None` if the snippet file is global.
 type SnippetKind = Option<String>;
 fn file_stem_to_key(stem: &str) -> SnippetKind {
     if stem == "snippets" {

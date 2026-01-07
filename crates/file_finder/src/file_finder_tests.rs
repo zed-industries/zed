@@ -1598,7 +1598,7 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
         assert_eq!(file_label.highlight_indices(), &[0, 1, 2]);
         assert_eq!(
             path_label.text(),
-            format!("test{}", PathStyle::local().separator())
+            format!("test{}", PathStyle::local().primary_separator())
         );
         assert_eq!(path_label.highlight_indices(), &[] as &[usize]);
     });

@@ -1,4 +1,4 @@
-# Configuring supported languages
+# Configuring Supported Languages
 
 Zed offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
 
@@ -123,7 +123,7 @@ You can specify your preference using the `language_servers` setting:
 ```json [settings]
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
     }
   }
 ```
@@ -454,7 +454,7 @@ Use the `editor: Hover` command to display information about the symbol under th
 
 ### Workspace Symbol Search
 
-The `workspace: Open Symbol` command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
+The {#action project_symbols::Toggle} command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
 
 ### Code Completion
 
@@ -462,4 +462,4 @@ Zed provides intelligent code completion suggestions as you type. You can manual
 
 ### Diagnostics
 
-Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the `diagnostics: Toggle` command.
+Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the {#action diagnostics::Deploy} command.

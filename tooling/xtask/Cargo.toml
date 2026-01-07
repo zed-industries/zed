@@ -18,5 +18,6 @@ toml.workspace = true
 indoc.workspace = true
 indexmap.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml_edit.workspace = true
 gh-workflow.workspace = true

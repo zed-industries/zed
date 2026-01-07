@@ -13,6 +13,14 @@ on:
 jobs:
   cron_unit_evals:
     runs-on: namespace-profile-16x32-ubuntu-2204
+    strategy:
+      matrix:
+        model:
+        - anthropic/claude-sonnet-4-5-latest
+        - anthropic/claude-opus-4-5-latest
+        - google/gemini-3-pro
+        - openai/gpt-5
+      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -49,6 +57,7 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
         GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        ZED_AGENT_MODEL: ${{ matrix.model }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
