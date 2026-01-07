@@ -3210,6 +3210,10 @@ mod test {
     use language::Point;
     use multi_buffer::MultiBufferRow;
 
+    fn cursor_at(base: &str, target: &str) -> String {
+        base.replacen(&target.replacen("ˇ", "", 1), &target, 1)
+    }
+
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -3654,6 +3658,36 @@ mod test {
         cx.shared_state().await.assert_eq("oneˇ two three four");
         cx.simulate_shared_keystrokes(",").await;
         cx.shared_state().await.assert_eq("one two thˇree four");
+    }
+
+    #[gpui::test]
+    async fn test_t_and_repeat_t(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        let s = "wow_this_line_has_a_whole_lot_of_underscores";
+        cx.set_shared_state(&cursor_at(s, "_lˇine_")).await;
+        cx.simulate_shared_keystrokes("t _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_linˇe_"));
+        cx.simulate_shared_keystrokes("t _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_linˇe_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_haˇs_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇa_"));
+        cx.simulate_shared_keystrokes(",").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇhas_"));
+
+        cx.set_shared_state(&cursor_at(s, "_lˇot_")).await;
+        cx.simulate_shared_keystrokes("T _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇlot_"));
+        cx.simulate_shared_keystrokes("T _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇlot_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇwhole_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇa_"));
+        cx.simulate_shared_keystrokes(",").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_wholˇe_"));
     }
 
     #[gpui::test]
