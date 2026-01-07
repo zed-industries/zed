@@ -10,7 +10,7 @@ use rope::Rope;
 use std::{
     cmp::Ordering,
     iter,
-    ops::{Deref, Range},
+    ops::Range,
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
@@ -1080,6 +1080,20 @@ fn process_patch_hunk(
         buffer_word_diffs,
         syntax_diff: None,
     }
+}
+
+fn build_syntax_tree(
+    snapshot: &language::BufferSnapshot,
+    byte_range: Range<usize>,
+) -> Option<SyntaxTree> {
+    let source = &snapshot.text();
+    let syntax_layer = snapshot.smallest_syntax_layer_containing(byte_range.clone());
+    let ts_tree = syntax_layer
+        .map(|layer| layer.node())
+        .and_then(|tree| tree.descendant_for_byte_range(byte_range.start, byte_range.end))
+        .map(|tree| syntax_diff::build_tree(tree.walk(), source));
+
+    ts_tree
 }
 
 impl std::fmt::Debug for BufferDiff {
