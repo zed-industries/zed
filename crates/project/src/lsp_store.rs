@@ -11754,7 +11754,7 @@ impl LspStore {
                     );
                     store.register_handler(config);
                 }
-            })?;
+            });
         }
 
         anyhow::Ok(())
