@@ -27,8 +27,10 @@ pub async fn run_load_project(
 
     let project = setup_project(example, &app_state, &progress, &mut cx).await?;
 
+    progress.set_substatus("applying edit history");
     let open_buffers = apply_edit_history(example, &project, &mut cx).await?;
 
+    progress.set_substatus("resolving cursor");
     let (buffer, cursor_position) =
         cursor_position(example, &project, &open_buffers, &mut cx).await?;
     let (example_buffer, language_name) = buffer.read_with(&cx, |buffer, _cx| {

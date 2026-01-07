@@ -23,10 +23,11 @@ pub async fn run_format_prompt(
 ) -> Result<()> {
     run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
+    let step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
 
     match prompt_format {
         PromptFormat::Teacher => {
+            step_progress.set_substatus("formatting teacher prompt");
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -40,7 +41,10 @@ pub async fn run_format_prompt(
             });
         }
         PromptFormat::Zeta2 => {
+            step_progress.set_substatus("loading project");
             run_load_project(example, app_state, cx.clone()).await?;
+
+            step_progress.set_substatus("formatting zeta2 prompt");
 
             let ep_store = cx.update(|cx| {
                 EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
