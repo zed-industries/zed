@@ -37,7 +37,7 @@
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
       "b": "vim::PreviousWordStart",
-      "g e": "vim::PreviousWordEnd",
+      "g e": "vim::PreviousSubwordEnd",
       // Subword motions
       // "w": "vim::NextSubwordStart",
       // "b": "vim::PreviousSubwordStart",
@@ -50,7 +50,7 @@
       "/": "vim::Search",
       "g /": "pane::DeploySearch",
       "?": ["vim::Search", { "backwards": true }],
-      "*": "vim::MoveToNext",
+      "*": "vim::SearchUnderCursor",
       "#": "vim::MoveToPrevious",
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPreviousMatch",
