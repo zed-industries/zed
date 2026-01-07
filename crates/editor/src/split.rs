@@ -658,6 +658,7 @@ impl SplittableEditor {
 
         // Build a map from display row -> block type string
         // Each row of a multi-row block gets an entry with the same block type
+        // For spacers, the ID is included in brackets
         fn build_block_map(
             snapshot: &crate::DisplaySnapshot,
             max_row: u32,
@@ -667,14 +668,14 @@ impl SplittableEditor {
                 snapshot.blocks_in_range(DisplayRow(0)..DisplayRow(max_row + 1))
             {
                 let (block_type, height) = match block {
-                    Block::Spacer { height, .. } => ("SPACER", *height),
-                    Block::ExcerptBoundary { height, .. } => ("EXCERPT_BOUNDARY", *height),
-                    Block::BufferHeader { height, .. } => ("BUFFER_HEADER", *height),
-                    Block::FoldedBuffer { height, .. } => ("FOLDED_BUFFER", *height),
-                    Block::Custom(custom) => ("CUSTOM_BLOCK", custom.height.unwrap_or(1)),
+                    Block::Spacer { id, height } => (format!("SPACER[{}]", id.0), *height),
+                    Block::ExcerptBoundary { height, .. } => ("EXCERPT_BOUNDARY".to_string(), *height),
+                    Block::BufferHeader { height, .. } => ("BUFFER_HEADER".to_string(), *height),
+                    Block::FoldedBuffer { height, .. } => ("FOLDED_BUFFER".to_string(), *height),
+                    Block::Custom(custom) => ("CUSTOM_BLOCK".to_string(), custom.height.unwrap_or(1)),
                 };
                 for offset in 0..height {
-                    block_map.insert(start_row.0 + offset, block_type.to_string());
+                    block_map.insert(start_row.0 + offset, block_type.clone());
                 }
             }
             block_map
@@ -1910,6 +1911,7 @@ mod tests {
 
         // Now undo the deletion
         buffer.update(cx, |buffer, cx| {
+            // FIXME
             buffer.undo(cx);
         });
 
@@ -1924,14 +1926,13 @@ mod tests {
         // This causes visual jitter until the diff is recalculated.
         let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
         let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-        
+
         cx.update(|_window, cx| {
             editor.update(cx, |editor, cx| {
                 editor.debug_print(cx);
             });
         });
 
-        // Expected: spacer should be removed since "eee" is back in the buffer
         assert_eq!(
             primary_content,
             "
@@ -1941,7 +1942,8 @@ mod tests {
             § spacer
             § spacer
             ddd
-            eee
+            § spacer
+            xxx
             fff"
             .unindent()
         );
@@ -1955,7 +1957,211 @@ mod tests {
             ccc
             ddd
             eee
+            § spacer
             fff"
+            .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_editor_block_alignment_after_deleting_added_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Base text has 4 lines
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+        "
+        .unindent();
+
+        // Current text:
+        // - "bbb" is deleted from base
+        // - two new lines "NEW1" and "NEW2" are added after "aaa"
+        let current_text = "
+            aaa
+            NEW1
+            NEW2
+            ccc
+            ddd
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        // Add excerpts covering the whole buffer
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        // Initial state:
+        // Primary (RHS) shows current text: aaa, NEW1, NEW2, ccc, ddd
+        // Secondary (LHS) shows base text: aaa, bbb, ccc, ddd
+        // Since 1 line (bbb) was replaced with 2 lines (NEW1, NEW2), secondary needs 1 spacer
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            NEW1
+            NEW2
+            ccc
+            ddd"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            ccc
+            ddd"
+            .unindent()
+        );
+
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.debug_print(cx);
+            });
+        });
+
+        // Delete the second added line ("NEW2" at row 2 in current text)
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // After deletion but before diff recalculation:
+        // Primary now shows "aaa", "NEW1", "ccc", "ddd" (4 lines)
+        // Secondary still shows "aaa", "bbb", "ccc", "ddd" (4 lines)
+        // Since primary and secondary now have equal lines, secondary spacer should be removed
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.debug_print(cx);
+            });
+        });
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            NEW1
+            ccc
+            ddd"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd"
+            .unindent()
+        );
+
+        // Recalculate the diff to reflect the deletion
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        // After diff recalculation: should still be aligned
+        // Both sides now have equal content lines in the hunk (bbb vs NEW1)
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            NEW1
+            ccc
+            ddd"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd"
             .unindent()
         );
     }

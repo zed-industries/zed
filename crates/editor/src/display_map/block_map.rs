@@ -906,7 +906,7 @@ impl BlockMap {
                 let rows_before_block;
                 match block_placement {
                     BlockPlacement::Above(position) => {
-                        rows_before_block = position - new_transforms.summary().input_rows;
+                        rows_before_block = dbg!(position) - dbg!(new_transforms.summary().input_rows);
                         just_processed_folded_buffer = false;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
@@ -1060,6 +1060,11 @@ impl BlockMap {
         companion: &Companion,
         display_map_id: EntityId,
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
+        if display_map_id == companion.rhs_display_map_id {
+            dbg!("SYNCING RHS");
+        } else {
+            dbg!("SYNCING LHS");
+        };
         dbg!(&new_buffer_range);
 
         // This function calculates which spacer blocks should appear for the
@@ -1161,7 +1166,7 @@ impl BlockMap {
                 companion_buffer,
                 our_buffer,
                 MultiBufferRow(checkpoint_row),
-                Bias::Right,
+                Bias::Left,
             );
             let companion_wrap_row = companion_snapshot
                 .make_wrap_point(Point::new(companion_buffer_row.0, 0), Bias::Left)
@@ -1178,7 +1183,7 @@ impl BlockMap {
                 dbg!(spacer_height, our_wrap_row);
                 let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
                 result.push((
-                    BlockPlacement::Above(our_wrap_row),
+                    BlockPlacement::Above(dbg!(our_wrap_row)),
                     Block::Spacer {
                         id: spacer_id,
                         height: spacer_height,
