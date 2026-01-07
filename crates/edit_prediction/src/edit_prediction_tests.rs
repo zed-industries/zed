@@ -16,7 +16,7 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Point, ToOffset as _};
+use language::Point;
 use lsp::LanguageServerId;
 use open_ai::Usage;
 use parking_lot::Mutex;
