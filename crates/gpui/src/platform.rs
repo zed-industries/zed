@@ -620,7 +620,7 @@ impl RunnableMeta {
 /// Both of these need meta for priority
 #[doc(hidden)]
 pub enum GpuiRunnable {
-    /// Spawned by us, we set usefull metadata for profiling and scheduling.
+    /// Spawned by us, we set useful metadata for profiling and scheduling.
     /// Yay we have nice things!
     GpuiSpawned(Runnable<RunnableMeta>),
     /// Spawned by a dependency through runtimelib. We only have the
