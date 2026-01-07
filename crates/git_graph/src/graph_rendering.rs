@@ -87,6 +87,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                     };
 
                     let line_color = accent_colors.color_for_index(line.color_idx as u32);
+                    // dbg!(&line);
                     let line_x = lane_center_x(bounds, left_padding, start_column as f32);
 
                     let start_row = line.full_interval.start as i32 - first_visible_row as i32;
@@ -129,7 +130,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                 on_row,
                                 curve_kind,
                             } => {
-                                let to_column =
+                                let mut to_column =
                                     lane_center_x(bounds, left_padding, *to_column as f32);
 
                                 let mut to_row = to_row_center(
@@ -150,9 +151,12 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
 
                                 let control = match curve_kind {
                                     CurveKind::Checkout => {
+                                        if is_last {
+                                            to_column -= column_shift;
+                                        }
                                         builder.move_to(point(
                                             current_column,
-                                            current_row + COMMIT_CIRCLE_RADIUS,
+                                            current_row - COMMIT_CIRCLE_RADIUS, // - COMMIT_CIRCLE_STROKE_WIDTH,
                                         ));
                                         point(to_column, to_row)
                                     }
@@ -197,6 +201,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                         }
                     }
 
+                    builder.close();
                     if let Ok(path) = builder.build() {
                         window.paint_path(path, line_color);
                     }
