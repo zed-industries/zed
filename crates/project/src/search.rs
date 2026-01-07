@@ -180,6 +180,10 @@ impl SearchQuery {
         }
 
         let multiline = query.contains('\n') || query.contains("\\n");
+        if multiline {
+            query.insert_str(0, "(?m)");
+        }
+
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
             .build()?;
