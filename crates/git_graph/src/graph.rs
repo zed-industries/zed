@@ -1,4 +1,4 @@
-use std::{iter, ops::Range, path::PathBuf, rc::Rc, str::FromStr};
+use std::{iter, ops::Range, path::PathBuf, rc::Rc, str::FromStr, usize::MAX};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -132,6 +132,7 @@ struct LaneStateChild {
     color: BranchColor,
     starting_row: usize,
     starting_col: usize,
+    destination_column: Option<usize>,
     segments: SmallVec<[CommitLineSegment; 1]>,
 }
 
@@ -160,6 +161,19 @@ impl LaneState {
                             child.segments.first()
                             && *on_row == ending_row
                         {
+                            child.segments
+                        } else if let Some(parent_column) = child.destination_column {
+                            // if ending_row.saturating_sub(1) > child.starting_row {
+                            //     child.segments.push(CommitLineSegment::Straight {
+                            //         to_row: ending_row - 1,
+                            //     });
+                            // }
+
+                            // child.segments.push(CommitLineSegment::Curve {
+                            //     to_column: parent_column,
+                            //     on_row: ending_row,
+                            //     curve_kind: CurveKind::Checkout,
+                            // });
                             child.segments
                         } else {
                             child
@@ -212,9 +226,20 @@ impl AllCommitCount {
     }
 }
 
+pub(crate) enum CurveKind {
+    Merge,
+    Checkout,
+}
+
 pub(crate) enum CommitLineSegment {
-    Straight { to_row: usize },
-    Curve { to_column: usize, on_row: usize },
+    Straight {
+        to_row: usize,
+    },
+    Curve {
+        to_column: usize,
+        on_row: usize,
+        curve_kind: CurveKind,
+    },
 }
 
 pub struct CommitLine {
@@ -246,7 +271,9 @@ impl CommitLine {
                         return Some((idx, current_column));
                     }
                 }
-                CommitLineSegment::Curve { to_column, on_row } => {
+                CommitLineSegment::Curve {
+                    to_column, on_row, ..
+                } => {
                     if *on_row >= first_visible_row {
                         return Some((idx, current_column));
                     }
@@ -334,8 +361,6 @@ impl GitGraph {
                 .iter()
                 .position(|lane: &LaneState| lane.is_parent_commit(&commit.sha));
 
-            let branch_continued = commit_lane.is_some();
-
             if let Some(commit_lane) = commit_lane {
                 self.lane_states[commit_lane]
                     .to_commit_lines(commit_row)
@@ -374,38 +399,9 @@ impl GitGraph {
                             color: commit_color,
                             starting_row: commit_row,
                             starting_col: commit_lane,
-                            segments: smallvec![CommitLineSegment::Curve {
-                                to_column: parent_lane,
-                                on_row: commit_row + 1,
-                            }],
+                            destination_column: Some(parent_lane),
+                            segments: smallvec![],
                         });
-
-                        // todo! This means that the branch was checked out
-
-                        // let line_idx = self.lines.len();
-                        // self.lines.push(CommitLine {
-                        //     child: commit.sha,
-                        //     child_column: commit_lane,
-                        //     parent: *parent,
-                        //     full_interval: commit_row..usize::MAX,
-                        //     segments: SmallVec::from_iter([CommitLineSegment::Curve {
-                        //         to_column: parent_lane,
-                        //         on_row: commit_row,
-                        //     }]),
-                        // });
-
-                        // self.active_commit_lines.insert(
-                        //     CommitLineKey {
-                        //         child: commit.sha,
-                        //         parent: *parent,
-                        //     },
-                        //     line_idx,
-                        // );
-                        // self.active_commit_lines_by_parent
-                        //     .entry(*parent)
-                        //     .or_default()
-                        //     .push(line_idx);
-                        // base commit
                     } else if parent_idx == 0 {
                         self.lane_states[commit_lane] = LaneState::Active {
                             parent: *parent,
@@ -414,6 +410,7 @@ impl GitGraph {
                                 color: commit_color,
                                 starting_col: commit_lane,
                                 starting_row: commit_row,
+                                destination_column: None,
                                 segments: SmallVec::new(),
                             }],
                         };
@@ -428,9 +425,11 @@ impl GitGraph {
                                 color: parent_color,
                                 starting_col: commit_lane,
                                 starting_row: commit_row,
+                                destination_column: None,
                                 segments: smallvec![CommitLineSegment::Curve {
                                     to_column: parent_lane,
                                     on_row: commit_row + 1,
+                                    curve_kind: CurveKind::Merge,
                                 },],
                             }],
                         };

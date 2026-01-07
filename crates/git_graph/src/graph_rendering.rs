@@ -2,10 +2,14 @@ use gpui::{
     App, Bounds, Hsla, IntoElement, PathBuilder, PathStyle, Pixels, Point, StrokeOptions, Styled,
     Window, canvas, point, px,
 };
+use project::debugger::dap_store::DapAdapterDelegate;
 use theme::AccentColors;
 use ui::ActiveTheme as _;
 
-use crate::{GitGraph, graph::CommitLineSegment};
+use crate::{
+    GitGraph,
+    graph::{CommitLineSegment, CurveKind},
+};
 
 const LANE_WIDTH: Pixels = px(16.0);
 const LINE_WIDTH: Pixels = px(1.5);
@@ -116,10 +120,15 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
 
                                 let dest_point = point(current_column, dest_row);
 
+                                current_row = dest_point.y;
                                 builder.line_to(dest_point);
                                 builder.move_to(dest_point);
                             }
-                            CommitLineSegment::Curve { to_column, on_row } => {
+                            CommitLineSegment::Curve {
+                                to_column,
+                                on_row,
+                                curve_kind,
+                            } => {
                                 let to_column =
                                     lane_center_x(bounds, left_padding, *to_column as f32);
 
@@ -133,63 +142,54 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
 
                                 // This means that this branch was a checkout
                                 let going_right = to_column > current_column;
-                                if segment_idx == 0 {
-                                    let column_shift = if going_right {
-                                        COMMIT_CIRCLE_RADIUS + COMMIT_CIRCLE_STROKE_WIDTH
-                                    } else {
-                                        -COMMIT_CIRCLE_RADIUS - COMMIT_CIRCLE_STROKE_WIDTH
-                                    };
+                                let column_shift = if going_right {
+                                    COMMIT_CIRCLE_RADIUS + COMMIT_CIRCLE_STROKE_WIDTH
+                                } else {
+                                    -COMMIT_CIRCLE_RADIUS - COMMIT_CIRCLE_STROKE_WIDTH
+                                };
 
-                                    builder.move_to(point(
-                                        current_column + column_shift,
-                                        current_row - COMMIT_CIRCLE_RADIUS,
-                                    ));
-                                }
-
-                                if is_last {
-                                    to_row -= COMMIT_CIRCLE_RADIUS;
-                                }
+                                let control = match curve_kind {
+                                    CurveKind::Checkout => {
+                                        builder.move_to(point(
+                                            current_column,
+                                            current_row + COMMIT_CIRCLE_RADIUS,
+                                        ));
+                                        point(to_column, to_row)
+                                    }
+                                    CurveKind::Merge => {
+                                        if is_last {
+                                            to_row -= COMMIT_CIRCLE_RADIUS;
+                                        }
+                                        builder.move_to(point(
+                                            current_column + column_shift,
+                                            current_row - COMMIT_CIRCLE_RADIUS,
+                                        ));
+                                        point(to_column, current_row)
+                                    }
+                                };
 
                                 if (to_column - current_column).abs() > LANE_WIDTH {
                                     let column_shift =
                                         if going_right { LANE_WIDTH } else { -LANE_WIDTH };
 
                                     // todo! we should only subtract the commit circle radius if this is the first segment
-                                    let start_curve = point(
-                                        current_column + column_shift,
-                                        current_row - COMMIT_CIRCLE_RADIUS,
-                                    );
+
+                                    let start_curve = match curve_kind {
+                                        CurveKind::Checkout => point(
+                                            current_column,
+                                            to_row - (row_height / 2.0).into(),
+                                        ),
+                                        CurveKind::Merge => point(
+                                            current_column + column_shift,
+                                            current_row - COMMIT_CIRCLE_RADIUS,
+                                        ),
+                                    };
+
                                     builder.line_to(start_curve);
                                     builder.move_to(start_curve);
                                 }
 
-                                // Draw a sharp right-angle corner:
-                                // 1. Horizontal line to just before the corner
-                                // 2. Small quadratic curve around the corner
-                                // 3. Vertical line down to destination
-                                let corner_radius = px(5.0);
-
-                                let corner_x = to_column;
-                                let corner_y = current_row;
-
-                                // Determine direction of horizontal movement
-                                let horizontal_end_x = if going_right {
-                                    corner_x - corner_radius
-                                } else {
-                                    corner_x + corner_radius
-                                };
-
-                                // // 2. Small curve around the corner
-                                // let curve_end = point(to_row, to_column);
-                                // let control = point(corner_x, corner_y);
-                                // builder.curve_to(curve_end, control);
-                                //
-
-                                // 3. Vertical line down to destination
-                                builder.curve_to(
-                                    point(to_column, to_row),
-                                    point(to_column, current_row),
-                                );
+                                builder.curve_to(point(to_column, to_row), control);
                                 current_row = to_row;
                                 current_column = to_column;
                                 builder.move_to(point(current_column, current_row));
