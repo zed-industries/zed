@@ -448,10 +448,19 @@ message Envelope {
 
         TrustWorktrees trust_worktrees = 404;
         RestrictWorktrees restrict_worktrees = 405;
-        
+
         ShareAgentThread share_agent_thread = 406;
         GetSharedAgentThread get_shared_agent_thread = 407;
-        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; // current max
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
+
+        GitCheckpoint git_checkpoint = 409;
+        GitCheckpointResponse git_checkpoint_response = 410;
+        GitRestoreCheckpoint git_restore_checkpoint = 411;
+        GitRestoreCheckpointResponse git_restore_checkpoint_response = 412;
+        GitCompareCheckpoints git_compare_checkpoints = 413;
+        GitCompareCheckpointsResponse git_compare_checkpoints_response = 414;
+        GitDiffCheckpoints git_diff_checkpoints = 415;
+        GitDiffCheckpointsResponse git_diff_checkpoints_response = 416; // current max
     }
 
     reserved 87 to 88;

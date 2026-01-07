@@ -488,6 +488,10 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
+        client.add_entity_request_handler(Self::handle_checkpoint);
+        client.add_entity_request_handler(Self::handle_restore_checkpoint);
+        client.add_entity_request_handler(Self::handle_compare_checkpoints);
+        client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_file_history);
@@ -2440,6 +2444,94 @@ impl GitStore {
             })?
             .await??;
         Ok(proto::Ack {})
+    }
+
+    async fn handle_checkpoint(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCheckpointResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let checkpoint = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.checkpoint()
+            })?
+            .await??;
+
+        Ok(proto::GitCheckpointResponse {
+            commit_sha: checkpoint.commit_sha.as_bytes().to_vec(),
+        })
+    }
+
+    async fn handle_restore_checkpoint(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRestoreCheckpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitRestoreCheckpointResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let oid = Oid::from_bytes(&envelope.payload.commit_sha)?;
+        let checkpoint = GitRepositoryCheckpoint { commit_sha: oid };
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.restore_checkpoint(checkpoint)
+            })?
+            .await??;
+        Ok(proto::GitRestoreCheckpointResponse {})
+    }
+
+    async fn handle_compare_checkpoints(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCompareCheckpoints>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCompareCheckpointsResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let left_oid = Oid::from_bytes(&envelope.payload.left_commit_sha)?;
+        let right_oid = Oid::from_bytes(&envelope.payload.right_commit_sha)?;
+        let left = GitRepositoryCheckpoint {
+            commit_sha: left_oid,
+        };
+        let right = GitRepositoryCheckpoint {
+            commit_sha: right_oid,
+        };
+
+        let equal = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.compare_checkpoints(left, right)
+            })?
+            .await??;
+        Ok(proto::GitCompareCheckpointsResponse { equal })
+    }
+
+    async fn handle_diff_checkpoints(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDiffCheckpoints>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitDiffCheckpointsResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let base_oid = Oid::from_bytes(&envelope.payload.base_commit_sha)?;
+        let target_oid = Oid::from_bytes(&envelope.payload.target_commit_sha)?;
+        let base = GitRepositoryCheckpoint {
+            commit_sha: base_oid,
+        };
+        let target = GitRepositoryCheckpoint {
+            commit_sha: target_oid,
+        };
+
+        let diff = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.diff_checkpoints(base, target)
+            })?
+            .await??;
+        Ok(proto::GitDiffCheckpointsResponse { diff })
     }
 
     async fn handle_checkout_files(
@@ -5421,12 +5513,23 @@ impl Repository {
     }
 
     pub fn checkpoint(&mut self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
-        self.send_job(None, |repo, _cx| async move {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.checkpoint().await
                 }
-                RepositoryState::Remote(..) => anyhow::bail!("not implemented yet"),
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitCheckpoint {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+
+                    let commit_sha = Oid::from_bytes(&response.commit_sha)?;
+                    Ok(GitRepositoryCheckpoint { commit_sha })
+                }
             }
         })
     }
@@ -5435,12 +5538,22 @@ impl Repository {
         &mut self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.restore_checkpoint(checkpoint).await
                 }
-                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitRestoreCheckpoint {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            commit_sha: checkpoint.commit_sha.as_bytes().to_vec(),
+                        })
+                        .await?;
+                    Ok(())
+                }
             }
         })
     }
@@ -5516,12 +5629,23 @@ impl Repository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<bool>> {
-        self.send_job(None, move |repo, _cx| async move {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.compare_checkpoints(left, right).await
                 }
-                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitCompareCheckpoints {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            left_commit_sha: left.commit_sha.as_bytes().to_vec(),
+                            right_commit_sha: right.commit_sha.as_bytes().to_vec(),
+                        })
+                        .await?;
+                    Ok(response.equal)
+                }
             }
         })
     }
@@ -5531,14 +5655,25 @@ impl Repository {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<String>> {
-        self.send_job(None, move |repo, _cx| async move {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend
                         .diff_checkpoints(base_checkpoint, target_checkpoint)
                         .await
                 }
-                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitDiffCheckpoints {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            base_commit_sha: base_checkpoint.commit_sha.as_bytes().to_vec(),
+                            target_commit_sha: target_checkpoint.commit_sha.as_bytes().to_vec(),
+                        })
+                        .await?;
+                    Ok(response.diff)
+                }
             }
         })
     }
