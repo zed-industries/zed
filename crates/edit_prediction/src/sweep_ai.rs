@@ -417,7 +417,7 @@ fn to_sweep_user_action(record: &UserActionRecord, file_path: &str) -> UserActio
         line_number: record.line_number as usize,
         offset: record.offset,
         file_path: file_path.to_string(),
-        timestamp: record.timestamp.elapsed().as_millis() as u64,
+        timestamp: record.timestamp_epoch_ms,
     }
 }
 

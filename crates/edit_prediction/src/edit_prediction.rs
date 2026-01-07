@@ -42,7 +42,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, mem};
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
@@ -252,7 +252,7 @@ pub struct UserActionRecord {
     pub buffer_id: EntityId,
     pub line_number: u32,
     pub offset: usize,
-    pub timestamp: Instant,
+    pub timestamp_epoch_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1060,12 +1060,16 @@ impl EditPredictionStore {
 
             if let Some(offset) = last_offset {
                 let point = new_snapshot.offset_to_point(offset);
+                let timestamp_epoch_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
                 project_state.record_user_action(UserActionRecord {
                     action_type,
                     buffer_id: buffer.entity_id(),
                     line_number: point.row,
                     offset,
-                    timestamp: cx.background_executor().now(),
+                    timestamp_epoch_ms,
                 });
             }
         }
@@ -1694,12 +1698,16 @@ impl EditPredictionStore {
             if last_action.buffer_id == active_buffer.entity_id()
                 && current_offset != last_action.offset
             {
+                let timestamp_epoch_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
                 user_actions.push(UserActionRecord {
                     action_type: UserActionType::CursorMovement,
                     buffer_id: active_buffer.entity_id(),
                     line_number: cursor_point.row,
                     offset: current_offset,
-                    timestamp: cx.background_executor().now(),
+                    timestamp_epoch_ms,
                 });
             }
         }
