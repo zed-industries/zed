@@ -435,8 +435,6 @@ fn get_baseline_path(test_name: &str) -> PathBuf {
 struct ImageComparison {
     match_percentage: f64,
     diff_image: Option<RgbaImage>,
-    diff_pixel_count: u64,
-    total_pixels: u64,
 }
 
 fn compare_images(baseline: &RgbaImage, actual: &RgbaImage) -> ImageComparison {
@@ -445,8 +443,6 @@ fn compare_images(baseline: &RgbaImage, actual: &RgbaImage) -> ImageComparison {
         return ImageComparison {
             match_percentage: 0.0,
             diff_image: None,
-            diff_pixel_count: baseline.width() as u64 * baseline.height() as u64,
-            total_pixels: baseline.width() as u64 * baseline.height() as u64,
         };
     }
 
@@ -489,8 +485,6 @@ fn compare_images(baseline: &RgbaImage, actual: &RgbaImage) -> ImageComparison {
     ImageComparison {
         match_percentage,
         diff_image: Some(diff_image),
-        diff_pixel_count: diff_count,
-        total_pixels,
     }
 }
 
