@@ -349,13 +349,13 @@ pub enum ToolPermissionMode {
         },
         // MCP tools: simple default_mode, no regex
         // Tool IDs are prefixed with server ID to avoid collisions
-        "mcp__filesystem__read_file": {
+        "mcp:filesystem:read_file": {
           "default_mode": "allow", // Trust this MCP tool
         },
-        "mcp__github__create_issue": {
+        "mcp:github:create_issue": {
           "default_mode": "confirm", // Always ask before creating issues
         },
-        "mcp__dangerous-server__delete_everything": {
+        "mcp:dangerous-server:delete_everything": {
           "default_mode": "deny", // Block this MCP tool entirely
         },
       },
@@ -774,16 +774,16 @@ fn get_settings_for_worktree(
 
 **Why no pattern button for MCP tools?** Built-in tools like `terminal` and `edit_file` have well-known input schemas where we can extract meaningful patterns (command prefix, file path directory). MCP tools have arbitrary schemas defined by the context server, so we can't reliably extract patterns.
 
-**Tool ID Format**: To avoid collisions with built-in tools, MCP tool IDs in settings are prefixed with the server ID: `mcp__<server_id>__<tool_name>` (e.g., `mcp__filesystem__read_file`, `mcp__github__create_issue`).
+**Tool ID Format**: To avoid collisions with built-in tools, MCP tool IDs in settings are prefixed with the server ID: `mcp:<server_id>:<tool_name>` (e.g., `mcp:filesystem:read_file`, `mcp:github:create_issue`).
 
 #### Files to Modify
 
 | File | Changes |
 |------|---------|
-| `crates/agent/src/tools/context_server_registry.rs` | Update `ContextServerTool::run()` to use `authorize_with_context` with tool-specific options |
+| `crates/agent/src/tools/context_server_registry.rs` | Add `mcp_tool_id()` helper and update `ContextServerTool::run()` to use `authorize_third_party_tool` |
 | `crates/agent/src/thread.rs` | Add `authorize_third_party_tool()` method that generates options without pattern button |
-| `crates/settings/src/settings_content/agent.rs` | Ensure `ToolRulesContent` accepts any string key (already does via `HashMap<Arc<str>, ...>`) |
-| `crates/agent_settings/src/agent_settings.rs` | Add helper to get/set permissions for arbitrary tool IDs |
+| `crates/settings/src/settings_content/agent.rs` | Add `set_tool_default_mode()` helper method |
+| `crates/agent/src/tool_permissions.rs` | Add tests for MCP tool permission evaluation |
 
 #### Implementation Details
 
@@ -792,22 +792,28 @@ fn get_settings_for_worktree(
 pub fn authorize_third_party_tool(
     &self,
     title: impl Into<String>,
-    tool_id: String,      // e.g., "mcp__filesystem__read_file"
+    tool_id: String,      // e.g., "mcp:filesystem:read_file"
     display_name: String, // e.g., "read_file" (shown in button)
     cx: &mut App,
 ) -> Task<Result<()>>
 ```
 
 This method generates only 3 options:
-- "Always allow <display_name>" → sets `tools.<tool_id>.default_mode = "allow"`
+- "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
 - "Allow" → approve once
 - "Deny" → reject once
 
-**2. Update `ContextServerTool::run()`**:
+**2. Add `mcp_tool_id` helper and update `ContextServerTool::run()`**:
 ```rust
+/// Generates a tool ID for an MCP tool that can be used in settings.
+/// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
+pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
+    format!("mcp:{}:{}", server_id, tool_name)
+}
+
 fn run(...) -> Task<Result<AgentToolOutput>> {
     // Build tool_id with server prefix to avoid collisions
-    let tool_id = format!("mcp__{}_{}", self.server_id, self.tool.name);
+    let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
     let display_name = self.tool.name.clone();
     
     let authorize = event_stream.authorize_third_party_tool(
@@ -835,27 +841,30 @@ if let Some(rules) = settings.tool_permissions.tools.get(&tool_id) {
 
 #### Tasks
 
-- [ ] Add `authorize_third_party_tool()` method to `ToolCallEventStream` in `thread.rs`
-- [ ] Add helper method `tool_id_for_mcp()` to generate prefixed tool IDs
-- [ ] Update `ContextServerTool::run()` to use new authorization method
-- [ ] Add `set_third_party_tool_default_mode()` helper in settings
-- [ ] Write unit tests:
-  - `test_mcp_tool_shows_tool_specific_button`
-  - `test_mcp_tool_respects_default_mode_allow`
-  - `test_mcp_tool_respects_default_mode_deny`
-  - `test_mcp_tool_id_includes_server_prefix`
-- [ ] Write visual test for MCP tool permission dialog
+- [x] Add `authorize_third_party_tool()` method to `ToolCallEventStream` in `thread.rs`
+- [x] Add helper method `mcp_tool_id()` to generate prefixed tool IDs
+- [x] Update `ContextServerTool::run()` to use new authorization method
+- [x] Add `set_tool_default_mode()` helper in settings
+- [x] Write unit tests:
+  - `test_mcp_tool_id_format`
+  - `test_mcp_tool_id_with_underscores_in_names`
+  - `test_mcp_tool_id_does_not_collide_with_builtin_tools`
+  - `test_mcp_tool_with_default_mode_allow`
+  - `test_mcp_tool_with_default_mode_deny`
+  - `test_mcp_tool_with_default_mode_confirm`
+  - `test_mcp_tool_not_configured_uses_fallback`
+  - `test_mcp_tool_id_format_does_not_collide_with_builtin`
 - [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
 
 **Verification**:
 
-- MCP tools show exactly 3 buttons: "Always allow <tool_name>", "Allow", "Deny"
+- MCP tools show exactly 3 buttons: "Always allow <tool_name> MCP tool", "Allow", "Deny"
 - No pattern-based button appears for MCP tools
 - No global "Always Allow" button appears
-- Clicking "Always allow <tool_name>" updates settings with `tools.mcp__<server>__<tool>.default_mode = "allow"`
+- Clicking "Always allow <tool_name> MCP tool" updates settings with `tools.mcp:<server>:<tool>.default_mode = "allow"`
 - MCP tools with `default_mode = "allow"` auto-approve without dialog
 - MCP tools with `default_mode = "deny"` fail with clear error message
-- Tool IDs are properly namespaced to avoid collisions with built-in tools (e.g., an MCP tool named `terminal` becomes `mcp__<server>__terminal`, not `terminal`)
+- Tool IDs are properly namespaced to avoid collisions with built-in tools (e.g., an MCP tool named `terminal` becomes `mcp:<server>:terminal`, not `terminal`)
 
 ### PR 4: UI Updates (Behind Feature Flag)
 

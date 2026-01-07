@@ -3,7 +3,7 @@ use crate::{
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ThinkingTool, WebSearchTool,
+    ThinkingTool, ToolPermissionDecision, WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -41,7 +41,7 @@ use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings, update_settings_file};
+use settings::{LanguageModelSelection, Settings, ToolPermissionMode, update_settings_file};
 use smol::stream::StreamExt;
 use std::{
     collections::BTreeMap,
@@ -2657,6 +2657,89 @@ impl ToolCallEventStream {
             }
             "allow" => Ok(()),
             _ => Err(anyhow!("Permission to run tool denied by user")),
+        })
+    }
+
+    /// Authorize a third-party tool (e.g., MCP tool from a context server).
+    ///
+    /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
+    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    ///
+    /// Shows 3 buttons:
+    /// - "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
+    /// - "Allow" → approve once
+    /// - "Deny" → reject once
+    pub fn authorize_third_party_tool(
+        &self,
+        title: impl Into<String>,
+        tool_id: String,
+        display_name: String,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+
+        let decision = decide_permission_from_settings(&tool_id, "", &settings);
+
+        match decision {
+            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Deny(reason) => return Task::ready(Err(anyhow!(reason))),
+            ToolPermissionDecision::Confirm => {}
+        }
+
+        let (response_tx, response_rx) = oneshot::channel();
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                ToolCallAuthorization {
+                    tool_call: acp::ToolCallUpdate::new(
+                        self.tool_use_id.to_string(),
+                        acp::ToolCallUpdateFields::new().title(title.into()),
+                    ),
+                    options: vec![
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new(format!("always_allow_mcp:{}", tool_id)),
+                            format!("Always allow {} MCP tool", display_name),
+                            acp::PermissionOptionKind::AllowAlways,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("deny"),
+                            "Deny",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
+                    ],
+                    response: response_tx,
+                },
+            )))
+            .ok();
+
+        let fs = self.fs.clone();
+        cx.spawn(async move |cx| {
+            let response_str = response_rx.await?.0.to_string();
+
+            if response_str == format!("always_allow_mcp:{}", tool_id) {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
+                        });
+                    })?;
+                }
+                return Ok(());
+            }
+
+            if response_str == "allow" {
+                return Ok(());
+            }
+
+            Err(anyhow!("Permission to run tool denied by user"))
         })
     }
 }

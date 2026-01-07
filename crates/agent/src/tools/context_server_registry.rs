@@ -8,6 +8,13 @@ use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
 
+/// Generates a tool ID for an MCP tool that can be used in settings.
+///
+/// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
+pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
+    format!("mcp:{}:{}", server_id, tool_name)
+}
+
 pub struct ContextServerPrompt {
     pub server_id: ContextServerId,
     pub prompt: context_server::types::Prompt,
@@ -331,7 +338,14 @@ impl AnyAgentTool for ContextServerTool {
             return Task::ready(Err(anyhow!("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
-        let authorize = event_stream.authorize(self.initial_title(input.clone(), cx), cx);
+        let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
+        let display_name = self.tool.name.clone();
+        let authorize = event_stream.authorize_third_party_tool(
+            self.initial_title(input.clone(), cx),
+            tool_id,
+            display_name,
+            cx,
+        );
 
         cx.spawn(async move |_cx| {
             authorize.await?;
@@ -430,4 +444,41 @@ pub fn get_prompt(
 
         Ok(response)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_tool_id_format() {
+        assert_eq!(
+            mcp_tool_id("filesystem", "read_file"),
+            "mcp:filesystem:read_file"
+        );
+        assert_eq!(
+            mcp_tool_id("github", "create_issue"),
+            "mcp:github:create_issue"
+        );
+        assert_eq!(
+            mcp_tool_id("my-custom-server", "do_something"),
+            "mcp:my-custom-server:do_something"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_id_with_underscores_in_names() {
+        assert_eq!(mcp_tool_id("my_server", "my_tool"), "mcp:my_server:my_tool");
+    }
+
+    #[test]
+    fn test_mcp_tool_id_does_not_collide_with_builtin_tools() {
+        let tool_id = mcp_tool_id("some-server", "terminal");
+        assert_eq!(tool_id, "mcp:some-server:terminal");
+        assert_ne!(tool_id, "terminal");
+
+        let tool_id = mcp_tool_id("some-server", "edit_file");
+        assert_eq!(tool_id, "mcp:some-server:edit_file");
+        assert_ne!(tool_id, "edit_file");
+    }
 }
