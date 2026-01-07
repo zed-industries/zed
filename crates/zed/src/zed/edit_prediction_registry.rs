@@ -9,6 +9,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
 use settings::{
+    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore,
 };
@@ -144,23 +145,6 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
             },
         ))
         .detach();
-    editor
-        .register_action(cx.listener(
-            |editor, _: &copilot::NextSuggestion, window: &mut Window, cx: &mut Context<Editor>| {
-                editor.next_edit_prediction(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
-    editor
-        .register_action(cx.listener(
-            |editor,
-             _: &copilot::PreviousSuggestion,
-             window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.previous_edit_prediction(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
 }
 
 fn assign_edit_prediction_provider(
@@ -219,6 +203,10 @@ fn assign_edit_prediction_provider(
                             && cx.has_flag::<Zeta2FeatureFlag>()
                         {
                             edit_prediction::EditPredictionModel::Zeta2
+                        } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
+                            && cx.has_flag::<Zeta2FeatureFlag>()
+                        {
+                            edit_prediction::EditPredictionModel::Mercury
                         } else {
                             return false;
                         }

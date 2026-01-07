@@ -4,22 +4,26 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
-use open_ai::{ResponseStreamEvent, stream_completion};
+use open_ai::{
+    ResponseStreamEvent,
+    responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
+    stream_completion,
+};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::EnvVar;
 
-use crate::api_key::ApiKeyState;
-use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+use crate::provider::open_ai::{
+    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -38,7 +42,6 @@ pub struct OpenAiCompatibleLanguageModelProvider {
 
 pub struct State {
     id: Arc<str>,
-    api_key_env_var: EnvVar,
     api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
 }
@@ -56,12 +59,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = SharedString::new(self.settings.api_url.clone());
-        self.api_key_state.load_if_needed(
-            api_url,
-            &self.api_key_env_var,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -83,7 +82,6 @@ impl OpenAiCompatibleLanguageModelProvider {
                     let api_url = SharedString::new(settings.api_url.as_str());
                     this.api_key_state.handle_url_change(
                         api_url,
-                        &this.api_key_env_var,
                         |this| &mut this.api_key_state,
                         cx,
                     );
@@ -95,8 +93,10 @@ impl OpenAiCompatibleLanguageModelProvider {
             let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
             State {
                 id: id.clone(),
-                api_key_env_var: EnvVar::new(api_key_env_var_name),
-                api_key_state: ApiKeyState::new(SharedString::new(settings.api_url.as_str())),
+                api_key_state: ApiKeyState::new(
+                    SharedString::new(settings.api_url.as_str()),
+                    EnvVar::new(api_key_env_var_name),
+                ),
                 settings,
             }
         });
@@ -139,8 +139,8 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.name.clone()
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenAiCompat
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenAiCompat)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -230,6 +230,43 @@ impl OpenAiCompatibleLanguageModel {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
             let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_response(
+        &self,
+        request: ResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            (
+                state.api_key_state.key(api_url),
+                state.settings.api_url.clone(),
+            )
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let provider = self.provider_name.clone();
+        let future = self.request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = stream_response(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
@@ -333,20 +370,37 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(
-            request,
-            &self.model.name,
-            self.model.capabilities.parallel_tool_calls,
-            self.model.capabilities.prompt_cache_key,
-            self.max_output_tokens(),
-            None,
-        );
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+        if self.model.capabilities.chat_completions {
+            let request = into_open_ai(
+                request,
+                &self.model.name,
+                self.model.capabilities.parallel_tool_calls,
+                self.model.capabilities.prompt_cache_key,
+                self.max_output_tokens(),
+                None,
+            );
+            let completions = self.stream_completion(request, cx);
+            async move {
+                let mapper = OpenAiEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
+        } else {
+            let request = into_open_ai_response(
+                request,
+                &self.model.name,
+                self.model.capabilities.parallel_tool_calls,
+                self.model.capabilities.prompt_cache_key,
+                self.max_output_tokens(),
+                None,
+            );
+            let completions = self.stream_response(request, cx);
+            async move {
+                let mapper = OpenAiResponseEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
         }
-        .boxed()
     }
 }
 
@@ -437,7 +491,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let env_var_set = state.api_key_state.is_from_env_var();
-        let env_var_name = &state.api_key_env_var.name;
+        let env_var_name = state.api_key_state.env_var_name();
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
@@ -450,7 +504,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {env_var_name} environment variable and restart Zed."),
+                        format!("You can also set the {env_var_name} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )

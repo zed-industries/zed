@@ -84,6 +84,8 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
+ztracing.workspace = true
+tracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
@@ -94,6 +96,7 @@ uuid.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zlog.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

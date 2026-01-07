@@ -413,6 +413,7 @@ message Push {
     string branch_name = 5;
     optional PushOptions options = 6;
     uint64 askpass_id = 7;
+    string remote_branch_name = 8;
 
     enum PushOptions {
         SET_UPSTREAM = 0;
@@ -580,7 +581,7 @@ message GitCreateWorktree {
 message RunGitHook {
     enum GitHook {
         PRE_COMMIT = 0;
-        PRE_PUSH = 1;
+        reserved 1;
     }
 
     uint64 project_id = 1;

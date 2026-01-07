@@ -1343,6 +1343,7 @@ fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<EditEvalMetadata> {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await
     });
+    cx.quit();
     match result {
         Ok(output) => eval_utils::EvalOutput {
             data: output.to_string(),

@@ -236,11 +236,11 @@ fn check_style() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
-            .add_step(steps::script("./script/prettier"))
+            .add_step(steps::prettier())
+            .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos())
-            .add_step(steps::cargo_fmt()),
+            .add_step(check_for_typos()),
     )
 }
 
@@ -368,6 +368,8 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .runs_on(runners::LINUX_DEFAULT)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
+            .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
+            .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
             .add_step(steps::checkout_repo().with(("fetch-depth", 0))) // fetch full history
             .add_step(remove_untracked_files())
             .add_step(ensure_fresh_merge())
@@ -446,6 +448,7 @@ fn check_docs() -> NamedJob {
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )
             .map(steps::install_linux_dependencies)
+            .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(

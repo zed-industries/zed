@@ -408,6 +408,12 @@ pub fn remote_servers_dir() -> &'static PathBuf {
     REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
 }
 
+/// Returns the path to the directory where the devcontainer CLI is installed.
+pub fn devcontainer_dir() -> &'static PathBuf {
+    static DEVCONTAINER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
+}
+
 /// Returns the relative path to a `.zed` folder within a project.
 pub fn local_settings_folder_name() -> &'static str {
     ".zed"

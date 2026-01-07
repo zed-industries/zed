@@ -306,20 +306,39 @@ impl AgentTool for EditFileTool {
 
             // Check if the file has been modified since the agent last read it
             if let Some(abs_path) = abs_path.as_ref() {
-                let (last_read_mtime, current_mtime, is_dirty) = self.thread.update(cx, |thread, cx| {
+                let (last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool) = self.thread.update(cx, |thread, cx| {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let dirty = buffer.read(cx).is_dirty();
-                    (last_read, current, dirty)
+                    let has_save = thread.has_tool("save_file");
+                    let has_restore = thread.has_tool("restore_file_from_disk");
+                    (last_read, current, dirty, has_save, has_restore)
                 })?;
 
                 // Check for unsaved changes first - these indicate modifications we don't know about
                 if is_dirty {
-                    anyhow::bail!(
-                        "This file cannot be written to because it has unsaved changes. \
-                         Please end the current conversation immediately by telling the user you want to write to this file (mention its path explicitly) but you can't write to it because it has unsaved changes. \
-                         Ask the user to save that buffer's changes and to inform you when it's ok to proceed."
-                    );
+                    let message = match (has_save_tool, has_restore_tool) {
+                        (true, true) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                             If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                             If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
+                        }
+                        (true, false) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                             If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                             If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
+                        }
+                        (false, true) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                             If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
+                             If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
+                        }
+                        (false, false) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
+                             then ask them to save or revert the file manually and inform you when it's ok to proceed."
+                        }
+                    };
+                    anyhow::bail!("{}", message);
                 }
 
                 // Check if the file was modified on disk since we last read it
@@ -384,11 +403,7 @@ impl AgentTool for EditFileTool {
                                 range.start.to_point(&buffer.snapshot()).row
                             }).ok();
                             if let Some(abs_path) = abs_path.clone() {
-                                let mut location = ToolCallLocation::new(abs_path);
-                                if let Some(line) = line {
-                                    location = location.line(line);
-                                }
-                                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
+                                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path).line(line)]));
                             }
                             emitted_location = true;
                         }
@@ -2206,8 +2221,20 @@ mod tests {
         assert!(result.is_err(), "Edit should fail when buffer is dirty");
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("cannot be written to because it has unsaved changes"),
+            error_msg.contains("This file has unsaved changes."),
             "Error should mention unsaved changes, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("keep or discard"),
+            "Error should ask whether to keep or discard changes, got: {}",
+            error_msg
+        );
+        // Since save_file and restore_file_from_disk tools aren't added to the thread,
+        // the error message should ask the user to manually save or revert
+        assert!(
+            error_msg.contains("save or revert the file manually"),
+            "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error_msg
         );
     }

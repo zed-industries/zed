@@ -87,7 +87,7 @@ impl ConfigureContextServerToolsModal {
                             v_flex()
                                 .child(
                                     h_flex()
-                                        .id(SharedString::from(format!("tool-header-{}", index)))
+                                        .id(format!("tool-header-{}", index))
                                         .py_1()
                                         .pl_1()
                                         .pr_2()

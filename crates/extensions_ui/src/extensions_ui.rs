@@ -1472,8 +1472,7 @@ impl ExtensionsPage {
                                                             },
                                                         );
                                                     },
-                                                ))
-                                                .color(ui::SwitchColor::Accent),
+                                                )),
                                             ),
                                     ),
                             )

@@ -1,4 +1,5 @@
 use crate::{
+    RemoteArch, RemoteOs, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
 };
@@ -11,19 +12,68 @@ use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
 use smol::process::Child;
 
+pub mod docker;
 pub mod ssh;
 pub mod wsl;
 
+/// Parses the output of `uname -sm` to determine the remote platform.
+/// Takes the last line to skip possible shell initialization output.
+fn parse_platform(output: &str) -> Result<RemotePlatform> {
+    let output = output.trim();
+    let uname = output.rsplit_once('\n').map_or(output, |(_, last)| last);
+    let Some((os, arch)) = uname.split_once(" ") else {
+        anyhow::bail!("unknown uname: {uname:?}")
+    };
+
+    let os = match os {
+        "Darwin" => RemoteOs::MacOs,
+        "Linux" => RemoteOs::Linux,
+        _ => anyhow::bail!(
+            "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+        ),
+    };
+
+    // exclude armv5,6,7 as they are 32-bit.
+    let arch = if arch.starts_with("armv8")
+        || arch.starts_with("armv9")
+        || arch.starts_with("arm64")
+        || arch.starts_with("aarch64")
+    {
+        RemoteArch::Aarch64
+    } else if arch.starts_with("x86") {
+        RemoteArch::X86_64
+    } else {
+        anyhow::bail!(
+            "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+        )
+    };
+
+    Ok(RemotePlatform { os, arch })
+}
+
+/// Parses the output of `echo $SHELL` to determine the remote shell.
+/// Takes the last line to skip possible shell initialization output.
+fn parse_shell(output: &str, fallback_shell: &str) -> String {
+    let output = output.trim();
+    let shell = output.rsplit_once('\n').map_or(output, |(_, last)| last);
+    if shell.is_empty() {
+        log::error!("$SHELL is not set, falling back to {fallback_shell}");
+        fallback_shell.to_owned()
+    } else {
+        shell.to_owned()
+    }
+}
+
 fn handle_rpc_messages_over_child_process_stdio(
-    mut ssh_proxy_process: Child,
+    mut remote_proxy_process: Child,
     incoming_tx: UnboundedSender<Envelope>,
     mut outgoing_rx: UnboundedReceiver<Envelope>,
     mut connection_activity_tx: Sender<()>,
     cx: &AsyncApp,
 ) -> Task<Result<i32>> {
-    let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
-    let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();
-    let mut child_stdin = ssh_proxy_process.stdin.take().unwrap();
+    let mut child_stderr = remote_proxy_process.stderr.take().unwrap();
+    let mut child_stdout = remote_proxy_process.stdout.take().unwrap();
+    let mut child_stdin = remote_proxy_process.stdin.take().unwrap();
 
     let mut stdin_buffer = Vec::new();
     let mut stdout_buffer = Vec::new();
@@ -107,7 +157,10 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-        let status = ssh_proxy_process.status().await?.code().unwrap_or(1);
+        let status = remote_proxy_process.status().await?.code().unwrap_or(1);
+        if status != 0 {
+            anyhow::bail!("Remote server exited with status {status}");
+        }
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),
@@ -143,7 +196,8 @@ async fn build_remote_server_from_source(
             .await?;
         anyhow::ensure!(
             output.status.success(),
-            "Failed to run command: {command:?}"
+            "Failed to run command: {command:?}: output: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
     }
@@ -153,14 +207,15 @@ async fn build_remote_server_from_source(
         "{}-{}",
         platform.arch,
         match platform.os {
-            "linux" =>
+            RemoteOs::Linux =>
                 if use_musl {
                     "unknown-linux-musl"
                 } else {
                     "unknown-linux-gnu"
                 },
-            "macos" => "apple-darwin",
-            _ => anyhow::bail!("can't cross compile for: {:?}", platform),
+            RemoteOs::MacOs => "apple-darwin",
+            RemoteOs::Windows if cfg!(windows) => "pc-windows-msvc",
+            RemoteOs::Windows => "pc-windows-gnu",
         }
     );
     let mut rust_flags = match std::env::var("RUSTFLAGS") {
@@ -171,7 +226,7 @@ async fn build_remote_server_from_source(
             String::new()
         }
     };
-    if platform.os == "linux" && use_musl {
+    if platform.os == RemoteOs::Linux && use_musl {
         rust_flags.push_str(" -C target-feature=+crt-static");
 
         if let Ok(path) = std::env::var("ZED_ZSTD_MUSL_LIB") {
@@ -182,7 +237,9 @@ async fn build_remote_server_from_source(
         rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
     }
 
-    if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+    if platform.arch.as_str() == std::env::consts::ARCH
+        && platform.os.as_str() == std::env::consts::OS
+    {
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
         run_cmd(
@@ -258,7 +315,8 @@ async fn build_remote_server_from_source(
         .join("remote_server")
         .join(&triple)
         .join("debug")
-        .join("remote_server");
+        .join("remote_server")
+        .with_extension(if platform.os.is_windows() { "exe" } else { "" });
 
     let path = if !build_remote_server.contains("nocompress") {
         delegate.set_status(Some("Compressing binary"), cx);
@@ -314,5 +372,74 @@ async fn which(
         Err(err) => Err(anyhow::anyhow!(
             "Failed to run 'which' to find the binary '{binary_name}': {err}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_platform() {
+        let result = parse_platform("Linux x86_64\n").unwrap();
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::X86_64);
+
+        let result = parse_platform("Darwin arm64\n").unwrap();
+        assert_eq!(result.os, RemoteOs::MacOs);
+        assert_eq!(result.arch, RemoteArch::Aarch64);
+
+        let result = parse_platform("Linux x86_64").unwrap();
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::X86_64);
+
+        let result = parse_platform("some shell init output\nLinux aarch64\n").unwrap();
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::Aarch64);
+
+        let result = parse_platform("some shell init output\nLinux aarch64").unwrap();
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::Aarch64);
+
+        assert_eq!(
+            parse_platform("Linux armv8l\n").unwrap().arch,
+            RemoteArch::Aarch64
+        );
+        assert_eq!(
+            parse_platform("Linux aarch64\n").unwrap().arch,
+            RemoteArch::Aarch64
+        );
+        assert_eq!(
+            parse_platform("Linux x86_64\n").unwrap().arch,
+            RemoteArch::X86_64
+        );
+
+        let result = parse_platform(
+            r#"Linux x86_64 - What you're referring to as Linux, is in fact, GNU/Linux...\n"#,
+        )
+        .unwrap();
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::X86_64);
+
+        assert!(parse_platform("Windows x86_64\n").is_err());
+        assert!(parse_platform("Linux armv7l\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_shell() {
+        assert_eq!(parse_shell("/bin/bash\n", "sh"), "/bin/bash");
+        assert_eq!(parse_shell("/bin/zsh\n", "sh"), "/bin/zsh");
+
+        assert_eq!(parse_shell("/bin/bash", "sh"), "/bin/bash");
+        assert_eq!(
+            parse_shell("some shell init output\n/bin/bash\n", "sh"),
+            "/bin/bash"
+        );
+        assert_eq!(
+            parse_shell("some shell init output\n/bin/bash", "sh"),
+            "/bin/bash"
+        );
+        assert_eq!(parse_shell("", "sh"), "sh");
+        assert_eq!(parse_shell("\n", "sh"), "sh");
     }
 }

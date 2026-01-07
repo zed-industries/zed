@@ -14,6 +14,7 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
@@ -142,6 +143,12 @@ impl Upstream {
 
     pub fn stripped_ref_name(&self) -> Option<&str> {
         self.ref_name.strip_prefix("refs/remotes/")
+    }
+
+    pub fn branch_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split_once('/').map(|(_, name)| name))
     }
 }
 
@@ -487,7 +494,12 @@ pub trait GitRepository: Send + Sync {
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
     fn file_history_paginated(
         &self,
@@ -561,6 +573,7 @@ pub trait GitRepository: Send + Sync {
     fn push(
         &self,
         branch_name: String,
+        remote_branch_name: String,
         upstream_name: String,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
@@ -652,6 +665,7 @@ pub struct RealGitRepository {
     pub repository: Arc<Mutex<git2::Repository>>,
     pub system_git_binary_path: Option<PathBuf>,
     pub any_git_binary_path: PathBuf,
+    any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
 }
 
@@ -670,6 +684,7 @@ impl RealGitRepository {
             system_git_binary_path,
             any_git_binary_path,
             executor,
+            any_git_binary_help_output: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -679,6 +694,27 @@ impl RealGitRepository {
             .workdir()
             .context("failed to read git work directory")
             .map(Path::to_path_buf)
+    }
+
+    async fn any_git_binary_help_output(&self) -> SharedString {
+        if let Some(output) = self.any_git_binary_help_output.lock().clone() {
+            return output;
+        }
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
+        let working_directory = self.working_directory();
+        let output: SharedString = self
+            .executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(["help", "-a"])
+                    .await
+            })
+            .await
+            .unwrap_or_default()
+            .into();
+        *self.any_git_binary_help_output.lock() = Some(output.clone());
+        output
     }
 }
 
@@ -1489,7 +1525,12 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
@@ -1501,6 +1542,7 @@ impl GitRepository for RealGitRepository {
                     &working_directory?,
                     &path,
                     &content,
+                    line_ending,
                 )
                 .await
             })
@@ -1845,6 +1887,7 @@ impl GitRepository for RealGitRepository {
     fn push(
         &self,
         branch_name: String,
+        remote_branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
         ask_pass: AskPassDelegate,
@@ -1869,7 +1912,7 @@ impl GitRepository for RealGitRepository {
                     PushOptions::Force => "--force-with-lease",
                 }))
                 .arg(remote_name)
-                .arg(format!("{}:{}", branch_name, branch_name))
+                .arg(format!("{}:{}", branch_name, remote_branch_name))
                 .stdin(smol::process::Stdio::null())
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
@@ -2290,18 +2333,47 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
+        let repository = self.repository.clone();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor)
-                    .envs(HashMap::clone(&env));
-                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                    .await?;
-                Ok(())
-            })
-            .boxed()
+        let help_output = self.any_git_binary_help_output();
+
+        // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
+        async move {
+            let working_directory = working_directory?;
+            if !help_output
+                .await
+                .lines()
+                .any(|line| line.trim().starts_with("hook "))
+            {
+                let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
+                if hook_abs_path.is_file() {
+                    let output = new_smol_command(&hook_abs_path)
+                        .envs(env.iter())
+                        .current_dir(&working_directory)
+                        .output()
+                        .await?;
+
+                    if !output.status.success() {
+                        return Err(GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                            status: output.status,
+                        }
+                        .into());
+                    }
+                }
+
+                return Ok(());
+            }
+
+            let git = GitBinary::new(git_binary_path, working_directory, executor)
+                .envs(HashMap::clone(&env));
+            git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                .await?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 
@@ -3061,6 +3133,46 @@ mod tests {
                 }
             ]
         )
+    }
+
+    #[test]
+    fn test_upstream_branch_name() {
+        let upstream = Upstream {
+            ref_name: "refs/remotes/origin/feature/branch".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), Some("feature/branch"));
+
+        let upstream = Upstream {
+            ref_name: "refs/remotes/upstream/main".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), Some("main"));
+
+        let upstream = Upstream {
+            ref_name: "refs/heads/local".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), None);
+
+        // Test case where upstream branch name differs from what might be the local branch name
+        let upstream = Upstream {
+            ref_name: "refs/remotes/origin/feature/git-pull-request".into(),
+            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }),
+        };
+        assert_eq!(upstream.branch_name(), Some("feature/git-pull-request"));
     }
 
     impl RealGitRepository {

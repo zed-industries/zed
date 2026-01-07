@@ -3,22 +3,21 @@ mod channel_tests;
 mod contributor_tests;
 mod db_tests;
 mod extension_tests;
+mod migrations;
 
-use crate::migrations::run_database_migrations;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
+use std::time::Duration;
 
-use super::*;
 use gpui::BackgroundExecutor;
 use parking_lot::Mutex;
 use rand::prelude::*;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicI32, Ordering::SeqCst},
-    },
-    time::Duration,
-};
+
+use self::migrations::run_database_migrations;
+
+use super::*;
 
 pub struct TestDb {
     pub db: Option<Arc<Database>>,

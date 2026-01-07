@@ -202,6 +202,7 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
+            false,
             cx,
         );
 
@@ -625,6 +626,15 @@ impl agent::TerminalHandle for EvalTerminalHandle {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
     }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
+    }
 }
 
 impl agent::ThreadEnvironment for EvalThreadEnvironment {
@@ -892,7 +902,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(buffer, cx)
+                    .running_language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })

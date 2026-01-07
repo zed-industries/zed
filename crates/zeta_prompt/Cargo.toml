@@ -1,0 +1,15 @@
+[package]
+name = "zeta_prompt"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zeta_prompt.rs"
+
+[dependencies]
+serde.workspace = true

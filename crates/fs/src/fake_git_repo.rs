@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
+use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -155,8 +156,16 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, _name: &str) -> BoxFuture<'_, Option<String>> {
-        async move { None }.boxed()
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let name = name.to_string();
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .remotes
+                .get(&name)
+                .context("remote not found")
+                .cloned()
+        });
+        async move { fut.await.ok() }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -200,6 +209,7 @@ impl GitRepository for FakeGitRepository {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
+                message: "initial commit".into(),
                 ..Default::default()
             })
         }
@@ -451,7 +461,12 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        _content: Rope,
+        _line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames
@@ -568,7 +583,7 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn run_hook(
@@ -576,12 +591,13 @@ impl GitRepository for FakeGitRepository {
         _hook: RunHook,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn push(
         &self,
         _branch: String,
+        _remote_branch: String,
         _remote: String,
         _options: Option<PushOptions>,
         _askpass: AskPassDelegate,

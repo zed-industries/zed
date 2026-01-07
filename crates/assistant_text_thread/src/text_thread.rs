@@ -5,7 +5,7 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
+use client::{self, ModelRequestUsage, RequestUsage, proto};
 use clock::ReplicaId;
 use cloud_llm_client::{CompletionIntent, UsageLimit};
 use collections::{HashMap, HashSet};
@@ -14,15 +14,16 @@ use fs::{Fs, RenameOptions};
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
-    Task,
+    Task, WeakEntity,
 };
 use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
-    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelImage,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolUseId, MessageContent, PaymentRequiredError, Role, StopReason,
-    report_assistant_event,
+    report_anthropic_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::text_threads_dir;
@@ -40,7 +41,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
@@ -686,9 +687,8 @@ pub struct TextThread {
     pending_cache_warming_task: Task<Option<()>>,
     path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
-    telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<Entity<Project>>,
+    project: Option<WeakEntity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
     completion_mode: agent_settings::CompletionMode,
 }
@@ -708,8 +708,7 @@ impl EventEmitter<TextThreadEvent> for TextThread {}
 impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Entity<Project>>,
-        telemetry: Option<Arc<Telemetry>>,
+        project: Option<WeakEntity<Project>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         cx: &mut Context<Self>,
@@ -722,7 +721,6 @@ impl TextThread {
             prompt_builder,
             slash_commands,
             project,
-            telemetry,
             cx,
         )
     }
@@ -742,8 +740,7 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<Entity<Project>>,
-        telemetry: Option<Arc<Telemetry>>,
+        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|_cx| {
@@ -784,7 +781,6 @@ impl TextThread {
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
-            telemetry,
             project,
             language_registry,
             slash_commands,
@@ -873,8 +869,7 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<Entity<Project>>,
-        telemetry: Option<Arc<Telemetry>>,
+        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(TextThreadId::new);
@@ -886,7 +881,6 @@ impl TextThread {
             prompt_builder,
             slash_commands,
             project,
-            telemetry,
             cx,
         );
         this.path = Some(path);
@@ -1165,10 +1159,6 @@ impl TextThread {
 
     pub fn language_registry(&self) -> Arc<LanguageRegistry> {
         self.language_registry.clone()
-    }
-
-    pub fn project(&self) -> Option<Entity<Project>> {
-        self.project.clone()
     }
 
     pub fn prompt_builder(&self) -> Arc<PromptBuilder> {
@@ -2216,23 +2206,25 @@ impl TextThread {
                         .read(cx)
                         .language()
                         .map(|language| language.name());
-                    report_assistant_event(
-                        AssistantEventData {
-                            conversation_id: Some(this.id.0.clone()),
-                            kind: AssistantKind::Panel,
-                            phase: AssistantPhase::Response,
-                            message_id: None,
-                            model: model.telemetry_id(),
-                            model_provider: model.provider_id().to_string(),
-                            response_latency,
-                            error_message,
-                            language_name: language_name.map(|name| name.to_proto()),
-                        },
-                        this.telemetry.clone(),
-                        cx.http_client(),
-                        model.api_key(cx),
-                        cx.background_executor(),
+
+                    telemetry::event!(
+                        "Assistant Responded",
+                        conversation_id = this.id.0.clone(),
+                        kind = "panel",
+                        phase = "response",
+                        model =  model.telemetry_id(),
+                        model_provider = model.provider_id().to_string(),
+                        response_latency,
+                        error_message,
+                        language_name = language_name.as_ref().map(|name| name.to_proto()),
                     );
+
+                    report_anthropic_event(&model, AnthropicEventData {
+                        completion_type: AnthropicCompletionType::Panel,
+                        event: AnthropicEventType::Response,
+                        language_name: language_name.map(|name| name.to_proto()),
+                        message_id: None,
+                    }, cx);
 
                     if let Ok(stop_reason) = result {
                         match stop_reason {
@@ -2967,7 +2959,7 @@ impl TextThread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
-        let Some(project) = &self.project else {
+        let Some(project) = self.project.as_ref().and_then(|project| project.upgrade()) else {
             return;
         };
         project.read(cx).user_store().update(cx, |user_store, cx| {

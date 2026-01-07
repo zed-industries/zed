@@ -115,8 +115,6 @@ messages!(
     (GetReferencesResponse, Background),
     (GetSignatureHelp, Background),
     (GetSignatureHelpResponse, Background),
-    (GetSupermavenApiKey, Background),
-    (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -276,7 +274,6 @@ messages!(
     (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateGitBranch, Background),
-    (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
     (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),
@@ -310,6 +307,8 @@ messages!(
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
     (GitRenameBranch, Background),
+    (TrustWorktrees, Background),
+    (RestrictWorktrees, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -343,7 +342,10 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (ShareAgentThread, Foreground),
+    (GetSharedAgentThread, Foreground),
+    (GetSharedAgentThreadResponse, Foreground)
 );
 
 request_messages!(
@@ -386,7 +388,6 @@ request_messages!(
     (GetSignatureHelp, GetSignatureHelpResponse),
     (OpenUnstagedDiff, OpenUnstagedDiffResponse),
     (OpenUncommittedDiff, OpenUncommittedDiffResponse),
-    (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
@@ -443,6 +444,8 @@ request_messages!(
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
+    (ShareAgentThread, Ack),
+    (GetSharedAgentThread, GetSharedAgentThreadResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
@@ -529,7 +532,9 @@ request_messages!(
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
     (GitGetWorktrees, GitWorktreesResponse),
-    (GitCreateWorktree, Ack)
+    (GitCreateWorktree, Ack),
+    (TrustWorktrees, Ack),
+    (RestrictWorktrees, Ack),
 );
 
 lsp_messages!(
@@ -702,7 +707,9 @@ entity_messages!(
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
     GitGetWorktrees,
-    GitCreateWorktree
+    GitCreateWorktree,
+    TrustWorktrees,
+    RestrictWorktrees,
 );
 
 entity_messages!(

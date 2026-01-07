@@ -1,16 +1,19 @@
 use crate::{SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
-    AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, svg,
+    AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task,
+    TextStyleRefinement, UnderlineStyle, svg,
 };
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
+use settings::Settings;
+use theme::ThemeSettings;
 
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{Tooltip, prelude::*};
+use ui::{CopyButton, Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -41,7 +44,7 @@ pub enum NotificationId {
 
 impl NotificationId {
     /// Returns a unique [`NotificationId`] for the given type.
-    pub fn unique<T: 'static>() -> Self {
+    pub const fn unique<T: 'static>() -> Self {
         Self::Unique(TypeId::of::<T>())
     }
 
@@ -216,6 +219,7 @@ pub struct LanguageServerPrompt {
     focus_handle: FocusHandle,
     request: Option<project::LanguageServerPromptRequest>,
     scroll_handle: ScrollHandle,
+    markdown: Entity<Markdown>,
 }
 
 impl Focusable for LanguageServerPrompt {
@@ -228,10 +232,13 @@ impl Notification for LanguageServerPrompt {}
 
 impl LanguageServerPrompt {
     pub fn new(request: project::LanguageServerPromptRequest, cx: &mut App) -> Self {
+        let markdown = cx.new(|cx| Markdown::new(request.message.clone().into(), None, None, cx));
+
         Self {
             focus_handle: cx.focus_handle(),
             request: Some(request),
             scroll_handle: ScrollHandle::new(),
+            markdown,
         }
     }
 
@@ -262,7 +269,7 @@ impl Render for LanguageServerPrompt {
         };
 
         let (icon, color) = match request.level {
-            PromptLevel::Info => (IconName::Info, Color::Accent),
+            PromptLevel::Info => (IconName::Info, Color::Muted),
             PromptLevel::Warning => (IconName::Warning, Color::Warning),
             PromptLevel::Critical => (IconName::XCircle, Color::Error),
         };
@@ -291,41 +298,34 @@ impl Render for LanguageServerPrompt {
                     .child(
                         h_flex()
                             .justify_between()
-                            .items_start()
                             .child(
                                 h_flex()
                                     .gap_2()
-                                    .child(Icon::new(icon).color(color))
+                                    .child(Icon::new(icon).color(color).size(IconSize::Small))
                                     .child(Label::new(request.lsp_name.clone())),
                             )
                             .child(
                                 h_flex()
-                                    .gap_2()
+                                    .gap_1()
                                     .child(
-                                        IconButton::new("copy", IconName::Copy)
-                                            .on_click({
-                                                let message = request.message.clone();
-                                                move |_, _, cx| {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(message.clone()),
-                                                    )
-                                                }
-                                            })
-                                            .tooltip(Tooltip::text("Copy Description")),
+                                        CopyButton::new(request.message.clone())
+                                            .tooltip_label("Copy Description"),
                                     )
                                     .child(
                                         IconButton::new(close_id, close_icon)
                                             .tooltip(move |_window, cx| {
                                                 if suppress {
-                                                    Tooltip::for_action(
-                                                        "Suppress.\nClose with click.",
-                                                        &SuppressNotification,
+                                                    Tooltip::with_meta(
+                                                        "Suppress",
+                                                        Some(&SuppressNotification),
+                                                        "Click to close",
                                                         cx,
                                                     )
                                                 } else {
-                                                    Tooltip::for_action(
-                                                        "Close.\nSuppress with shift-click.",
-                                                        &menu::Cancel,
+                                                    Tooltip::with_meta(
+                                                        "Close",
+                                                        Some(&menu::Cancel),
+                                                        "Suppress with shift-click",
                                                         cx,
                                                     )
                                                 }
@@ -342,7 +342,16 @@ impl Render for LanguageServerPrompt {
                                     ),
                             ),
                     )
-                    .child(Label::new(request.message.to_string()).size(LabelSize::Small))
+                    .child(
+                        MarkdownElement::new(self.markdown.clone(), markdown_style(window, cx))
+                            .text_size(TextSize::Small.rems(cx))
+                            .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                                copy_button_on_hover: false,
+                                border: false,
+                            })
+                            .on_url_click(|link, _, cx| cx.open_url(&link)),
+                    )
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.entity();
                         Button::new(ix, action.title.clone())
@@ -367,6 +376,42 @@ impl EventEmitter<SuppressEvent> for LanguageServerPrompt {}
 fn workspace_error_notification_id() -> NotificationId {
     struct WorkspaceErrorNotification;
     NotificationId::unique::<WorkspaceErrorNotification>()
+}
+
+fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
+    let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+
+    let mut base_text_style = window.text_style();
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(ui_font_family),
+        font_fallbacks: ui_font_fallbacks,
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style,
+        selection_background_color: cx.theme().colors().element_selection_background,
+        inline_code: TextStyleRefinement {
+            background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
+            font_family: Some(buffer_font_family),
+            font_fallbacks: buffer_font_fallbacks,
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            underline: Some(UnderlineStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().text_accent),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 #[derive(Debug, Clone)]

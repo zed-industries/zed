@@ -905,7 +905,7 @@ async fn install_prettier_packages(
                     .with_context(|| {
                         format!("fetching latest npm version for package {returned_package_name}")
                     })?;
-                anyhow::Ok((returned_package_name, latest_version))
+                anyhow::Ok((returned_package_name, latest_version.to_string()))
             }),
     )
     .await

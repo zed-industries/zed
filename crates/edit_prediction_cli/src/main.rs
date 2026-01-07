@@ -1,507 +1,533 @@
-mod evaluate;
+mod anthropic_client;
+mod distill;
 mod example;
+mod format_prompt;
+mod git;
 mod headless;
+mod load_project;
 mod metrics;
 mod paths;
 mod predict;
-mod source_location;
-mod util;
-
-use crate::{
-    evaluate::run_evaluate,
-    example::{ExampleFormat, NamedExample},
-    headless::ZetaCliAppState,
-    predict::run_predict,
-    source_location::SourceLocation,
-    util::{open_buffer, open_buffer_with_language_server},
-};
-use ::util::paths::PathStyle;
-use anyhow::{Result, anyhow};
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use cloud_llm_client::predict_edits_v3;
-use edit_prediction::udiff::DiffLine;
-use edit_prediction_context::EditPredictionExcerptOptions;
-use gpui::{Application, AsyncApp, Entity, prelude::*};
-use language::{Bias, Buffer, BufferSnapshot, Point};
-use metrics::delta_chr_f;
-use project::{Project, Worktree, lsp_store::OpenLspBufferHandle};
+mod progress;
+mod pull_examples;
+mod reorder_patch;
+mod retrieve_context;
+mod score;
+mod split_commit;
+mod synthesize;
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use edit_prediction::EditPredictionStore;
+use gpui::Application;
 use reqwest_client::ReqwestClient;
-use std::io::{self};
-use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::fmt::Display;
+use std::{path::PathBuf, sync::Arc};
+
+use crate::distill::run_distill;
+use crate::example::{Example, group_examples_by_repo, read_example_files, write_examples};
+use crate::format_prompt::run_format_prompt;
+use crate::load_project::run_load_project;
+use crate::paths::FAILED_EXAMPLES_DIR;
+use crate::predict::run_prediction;
+use crate::progress::Progress;
+use crate::retrieve_context::run_context_retrieval;
+use crate::score::run_scoring;
+use crate::split_commit::SplitCommitArgs;
+use crate::synthesize::{SynthesizeConfig, run_synthesize};
 
 #[derive(Parser, Debug)]
-#[command(name = "zeta")]
-struct ZetaCliArgs {
+#[command(name = "ep")]
+struct EpArgs {
     #[arg(long, default_value_t = false)]
     printenv: bool,
+    #[clap(long, default_value_t = 10, global = true)]
+    max_parallelism: usize,
+    #[clap(long, global = true)]
+    limit: Option<usize>,
+    /// Filter examples by name
+    #[clap(long, global = true)]
+    name: Option<String>,
+    /// Filter examples by repository
+    #[clap(long, global = true)]
+    repo: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
+    #[clap(global = true, help = INPUTS_HELP)]
+    inputs: Vec<PathBuf>,
+    #[arg(long, short, global = true)]
+    output: Option<PathBuf>,
+    #[arg(long, short, global = true)]
+    in_place: bool,
+    #[arg(long, short, global = true)]
+    failfast: bool,
 }
 
-#[derive(Subcommand, Debug)]
+const INPUTS_HELP: &str = r#"
+Inputs can be file paths or special specifiers:
+
+  path
+      Path to an example(s) file (.md, .json, or .jsonl)
+
+  captured-after:{timestamp}
+      Fetch captured examples from Snowflake after the given RFC3339 timestamp.
+
+      You can specify this multiple times and mix it with file inputs.
+
+      Required environment variables to connect to Snowflake:
+          EP_SNOWFLAKE_API_KEY
+          EP_SNOWFLAKE_BASE_URL
+
+      Optional:
+          EP_SNOWFLAKE_ROLE
+
+Examples:
+
+  # Predict from a file
+  ep predict examples.jsonl
+
+  # Predict from captured examples after a timestamp
+  ep predict captured-after:2025-01-01T00:00:00Z
+
+  # Mix file inputs and captured-after in the same invocation
+  ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
+"#;
+
+#[derive(Subcommand, Debug, Clone)]
 enum Command {
-    Context(ContextArgs),
-    Predict(PredictArguments),
-    Eval(EvaluateArguments),
-    ConvertExample {
-        path: PathBuf,
-        #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
-        output_format: ExampleFormat,
-    },
-    Score {
-        golden_patch: PathBuf,
-        actual_patch: PathBuf,
-    },
+    /// Parse markdown examples and output a combined .jsonl file
+    ParseExample,
+    /// Create git worktrees for each example and load file contents
+    LoadProject,
+    /// Retrieve context for input examples.
+    Context,
+    /// Generate a prompt string for a specific model
+    FormatPrompt(FormatPromptArgs),
+    /// Runs edit prediction
+    Predict(PredictArgs),
+    /// Computes a score based on actual and expected patches
+    Score(PredictArgs),
+    /// Prepares a distillation dataset by copying expected outputs to
+    /// predicted outputs and removing actual outputs and prompts.
+    Distill,
+    /// Print aggregated scores
+    Eval(PredictArgs),
+    /// Generate eval examples by analyzing git commits from a repository
+    Synthesize(SynthesizeArgs),
+    /// Remove git repositories and worktrees
     Clean,
+    /// Generate an evaluation example by splitting a chronologically-ordered commit
+    SplitCommit(SplitCommitArgs),
 }
 
-#[derive(Debug, Args)]
-struct ContextArgs {
-    #[arg(long)]
-    provider: ContextProvider,
-    #[arg(long)]
-    worktree: PathBuf,
-    #[arg(long)]
-    cursor: SourceLocation,
-    #[arg(long)]
-    use_language_server: bool,
-    #[arg(long)]
-    edit_history: Option<FileOrStdin>,
-    #[clap(flatten)]
-    zeta2_args: Zeta2Args,
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::ParseExample => write!(f, "parse-example"),
+            Command::LoadProject => write!(f, "load-project"),
+            Command::Context => write!(f, "context"),
+            Command::FormatPrompt(format_prompt_args) => write!(
+                f,
+                "format-prompt --prompt-format={}",
+                format_prompt_args
+                    .prompt_format
+                    .to_possible_value()
+                    .unwrap()
+                    .get_name()
+            ),
+            Command::Predict(predict_args) => {
+                write!(
+                    f,
+                    "predict --provider={:?}",
+                    predict_args
+                        .provider
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                )
+            }
+            Command::Score(predict_args) => {
+                write!(
+                    f,
+                    "score --provider={:?}",
+                    predict_args
+                        .provider
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                )
+            }
+            Command::Distill => write!(f, "distill"),
+            Command::Eval(predict_args) => write!(
+                f,
+                "eval --provider={:?}",
+                predict_args
+                    .provider
+                    .to_possible_value()
+                    .unwrap()
+                    .get_name()
+            ),
+            Command::Synthesize(args) => {
+                write!(f, "synthesize --repo={}", args.repo)
+            }
+            Command::Clean => write!(f, "clean"),
+            Command::SplitCommit(_) => write!(f, "split-commit"),
+        }
+    }
 }
 
-#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
-enum ContextProvider {
-    Zeta1,
-    #[default]
+#[derive(Debug, Args, Clone)]
+struct FormatPromptArgs {
+    #[clap(long)]
+    prompt_format: PromptFormat,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
+enum PromptFormat {
+    Teacher,
     Zeta2,
 }
 
-#[derive(Clone, Debug, Args)]
-struct Zeta2Args {
-    #[arg(long, default_value_t = 8192)]
-    max_prompt_bytes: usize,
-    #[arg(long, default_value_t = 2048)]
-    max_excerpt_bytes: usize,
-    #[arg(long, default_value_t = 1024)]
-    min_excerpt_bytes: usize,
-    #[arg(long, default_value_t = 0.66)]
-    target_before_cursor_over_total_bytes: f32,
-    #[arg(long, default_value_t = 1024)]
-    max_diagnostic_bytes: usize,
-    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
-    prompt_format: PromptFormat,
-    #[arg(long, value_enum, default_value_t = Default::default())]
-    output_format: OutputFormat,
-    #[arg(long, default_value_t = 42)]
-    file_indexing_parallelism: usize,
-    #[arg(long, default_value_t = false)]
-    disable_imports_gathering: bool,
-    #[arg(long, default_value_t = u8::MAX)]
-    max_retrieved_definitions: u8,
-}
-
-#[derive(Debug, Args)]
-pub struct PredictArguments {
-    #[clap(long, short, value_enum, default_value_t = PredictionsOutputFormat::Md)]
-    format: PredictionsOutputFormat,
-    example_path: PathBuf,
-    #[clap(flatten)]
-    options: PredictionOptions,
-}
-
-#[derive(Clone, Debug, Args)]
-pub struct PredictionOptions {
-    #[clap(flatten)]
-    zeta2: Zeta2Args,
+#[derive(Debug, Args, Clone)]
+struct PredictArgs {
     #[clap(long)]
     provider: PredictionProvider,
-    #[clap(long, value_enum, default_value_t = CacheMode::default())]
-    cache: CacheMode,
+    #[clap(long, default_value_t = 1)]
+    repetitions: usize,
 }
 
-#[derive(Debug, ValueEnum, Default, Clone, Copy, PartialEq)]
-pub enum CacheMode {
-    /// Use cached LLM requests and responses, except when multiple repetitions are requested
-    #[default]
-    Auto,
-    /// Use cached LLM requests and responses, based on the hash of the prompt and the endpoint.
-    #[value(alias = "request")]
-    Requests,
-    /// Ignore existing cache entries for both LLM and search.
-    Skip,
-    /// Use cached LLM responses AND search results for full determinism. Fails if they haven't been cached yet.
-    /// Useful for reproducing results and fixing bugs outside of search queries
-    Force,
-}
-
-impl CacheMode {
-    fn use_cached_llm_responses(&self) -> bool {
-        self.assert_not_auto();
-        matches!(self, CacheMode::Requests | CacheMode::Force)
-    }
-
-    fn use_cached_search_results(&self) -> bool {
-        self.assert_not_auto();
-        matches!(self, CacheMode::Force)
-    }
-
-    fn assert_not_auto(&self) {
-        assert_ne!(
-            *self,
-            CacheMode::Auto,
-            "Cache mode should not be auto at this point!"
-        );
-    }
-}
-
-#[derive(clap::ValueEnum, Debug, Clone)]
-pub enum PredictionsOutputFormat {
-    Json,
-    Md,
-    Diff,
-}
-
-#[derive(Debug, Args)]
-pub struct EvaluateArguments {
-    example_paths: Vec<PathBuf>,
-    #[clap(flatten)]
-    options: PredictionOptions,
-    #[clap(short, long, default_value_t = 1, alias = "repeat")]
-    repetitions: u16,
-    #[arg(long)]
-    skip_prediction: bool,
-}
-
-#[derive(clap::ValueEnum, Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum, Serialize, Deserialize)]
 enum PredictionProvider {
-    Zeta1,
-    #[default]
-    Zeta2,
     Sweep,
+    Mercury,
+    Zeta1,
+    Zeta2,
+    Teacher,
+    TeacherNonBatching,
 }
 
-fn zeta2_args_to_options(args: &Zeta2Args) -> edit_prediction::ZetaOptions {
-    edit_prediction::ZetaOptions {
-        context: EditPredictionExcerptOptions {
-            max_bytes: args.max_excerpt_bytes,
-            min_bytes: args.min_excerpt_bytes,
-            target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
-        },
-        max_prompt_bytes: args.max_prompt_bytes,
-        prompt_format: args.prompt_format.into(),
-    }
+#[derive(Debug, Args, Clone)]
+struct SynthesizeArgs {
+    /// Repository URL (git@github.com:owner/repo or https://...)
+    #[clap(long)]
+    repo: String,
+
+    /// Number of examples to generate
+    #[clap(long, default_value_t = 5)]
+    count: usize,
+
+    /// Maximum commits to scan before giving up
+    #[clap(long, default_value_t = 100)]
+    max_commits: usize,
+
+    /// Ignore state file and reprocess all commits
+    #[clap(long)]
+    fresh: bool,
 }
 
-#[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
-enum PromptFormat {
-    OnlySnippets,
-    #[default]
-    OldTextNewText,
-    Minimal,
-    MinimalQwen,
-    SeedCoder1120,
-}
-
-impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
-    fn into(self) -> predict_edits_v3::PromptFormat {
-        match self {
-            Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
-            Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
-            Self::Minimal => predict_edits_v3::PromptFormat::Minimal,
-            Self::MinimalQwen => predict_edits_v3::PromptFormat::MinimalQwen,
-            Self::SeedCoder1120 => predict_edits_v3::PromptFormat::SeedCoder1120,
-        }
-    }
-}
-
-#[derive(clap::ValueEnum, Default, Debug, Clone)]
-enum OutputFormat {
-    #[default]
-    Prompt,
-    Request,
-    Full,
-}
-
-#[derive(Debug, Clone)]
-enum FileOrStdin {
-    File(PathBuf),
-    Stdin,
-}
-
-impl FileOrStdin {
-    async fn read_to_string(&self) -> Result<String, std::io::Error> {
-        match self {
-            FileOrStdin::File(path) => smol::fs::read_to_string(path).await,
-            FileOrStdin::Stdin => smol::unblock(|| std::io::read_to_string(std::io::stdin())).await,
-        }
-    }
-}
-
-impl FromStr for FileOrStdin {
-    type Err = <PathBuf as FromStr>::Err;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "-" => Ok(Self::Stdin),
-            _ => Ok(Self::File(PathBuf::from_str(s)?)),
-        }
-    }
-}
-
-struct LoadedContext {
-    full_path_str: String,
-    snapshot: BufferSnapshot,
-    clipped_cursor: Point,
-    worktree: Entity<Worktree>,
-    project: Entity<Project>,
-    buffer: Entity<Buffer>,
-    lsp_open_handle: Option<OpenLspBufferHandle>,
-}
-
-async fn load_context(
-    args: &ContextArgs,
-    app_state: &Arc<ZetaCliAppState>,
-    cx: &mut AsyncApp,
-) -> Result<LoadedContext> {
-    let ContextArgs {
-        worktree: worktree_path,
-        cursor,
-        use_language_server,
-        ..
-    } = args;
-
-    let worktree_path = worktree_path.canonicalize()?;
-
-    let project = cx.update(|cx| {
-        Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            cx,
-        )
-    })?;
-
-    let worktree = project
-        .update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
-        })?
-        .await?;
-
-    let mut ready_languages = HashSet::default();
-    let (lsp_open_handle, buffer) = if *use_language_server {
-        let (lsp_open_handle, _, buffer) = open_buffer_with_language_server(
-            project.clone(),
-            worktree.clone(),
-            cursor.path.clone(),
-            &mut ready_languages,
-            cx,
-        )
-        .await?;
-        (Some(lsp_open_handle), buffer)
-    } else {
-        let buffer =
-            open_buffer(project.clone(), worktree.clone(), cursor.path.clone(), cx).await?;
-        (None, buffer)
-    };
-
-    let full_path_str = worktree
-        .read_with(cx, |worktree, _| worktree.root_name().join(&cursor.path))?
-        .display(PathStyle::local())
-        .to_string();
-
-    let snapshot = cx.update(|cx| buffer.read(cx).snapshot())?;
-    let clipped_cursor = snapshot.clip_point(cursor.point, Bias::Left);
-    if clipped_cursor != cursor.point {
-        let max_row = snapshot.max_point().row;
-        if cursor.point.row < max_row {
-            return Err(anyhow!(
-                "Cursor position {:?} is out of bounds (line length is {})",
-                cursor.point,
-                snapshot.line_len(cursor.point.row)
-            ));
+impl EpArgs {
+    fn output_path(&self) -> Option<PathBuf> {
+        if self.in_place {
+            if self.inputs.len() == 1 {
+                self.inputs.first().cloned()
+            } else {
+                panic!("--in-place requires exactly one input file")
+            }
         } else {
-            return Err(anyhow!(
-                "Cursor position {:?} is out of bounds (max row is {})",
-                cursor.point,
-                max_row
-            ));
+            self.output.clone()
+        }
+    }
+}
+
+async fn load_examples(
+    http_client: Arc<dyn http_client::HttpClient>,
+    args: &EpArgs,
+) -> anyhow::Result<Vec<Example>> {
+    let mut captured_after_timestamps = Vec::new();
+    let mut file_inputs = Vec::new();
+
+    for input in &args.inputs {
+        let input_string = input.to_string_lossy();
+        if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
+            captured_after_timestamps.push(timestamp.to_string());
+        } else {
+            file_inputs.push(input.clone());
         }
     }
 
-    Ok(LoadedContext {
-        full_path_str,
-        snapshot,
-        clipped_cursor,
-        worktree,
-        project,
-        buffer,
-        lsp_open_handle,
-    })
-}
+    let mut examples = read_example_files(&file_inputs);
 
-async fn zeta2_context(
-    args: ContextArgs,
-    app_state: &Arc<ZetaCliAppState>,
-    cx: &mut AsyncApp,
-) -> Result<String> {
-    let LoadedContext {
-        worktree,
-        project,
-        buffer,
-        clipped_cursor,
-        lsp_open_handle: _handle,
-        ..
-    } = load_context(&args, app_state, cx).await?;
+    let total_steps = examples.len() + captured_after_timestamps.len();
+    Progress::global().set_total_steps(total_steps);
 
-    // wait for worktree scan before starting zeta2 so that wait_for_initial_indexing waits for
-    // the whole worktree.
-    worktree
-        .read_with(cx, |worktree, _cx| {
-            worktree.as_local().unwrap().scan_complete()
-        })?
-        .await;
-    let output = cx
-        .update(|cx| {
-            let store = cx.new(|cx| {
-                edit_prediction::EditPredictionStore::new(
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    cx,
-                )
-            });
-            store.update(cx, |store, cx| {
-                store.set_options(zeta2_args_to_options(&args.zeta2_args));
-                store.register_buffer(&buffer, &project, cx);
-            });
-            cx.spawn(async move |cx| {
-                let updates_rx = store.update(cx, |store, cx| {
-                    let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
-                    store.set_use_context(true);
-                    store.refresh_context(&project, &buffer, cursor, cx);
-                    store.project_context_updates(&project).unwrap()
-                })?;
+    let remaining_limit_for_snowflake =
+        args.limit.map(|limit| limit.saturating_sub(examples.len()));
 
-                updates_rx.recv().await.ok();
+    if let Some(0) = remaining_limit_for_snowflake {
+        log::info!(
+            "skipping captured-after inputs because --limit is already satisfied by example files"
+        );
+    } else if !captured_after_timestamps.is_empty() {
+        captured_after_timestamps.sort();
 
-                let context = store.update(cx, |store, cx| {
-                    store.context_for_project(&project, cx).to_vec()
-                })?;
+        let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
 
-                anyhow::Ok(serde_json::to_string_pretty(&context).unwrap())
-            })
-        })?
-        .await?;
-
-    Ok(output)
-}
-
-async fn zeta1_context(
-    args: ContextArgs,
-    app_state: &Arc<ZetaCliAppState>,
-    cx: &mut AsyncApp,
-) -> Result<edit_prediction::zeta1::GatherContextOutput> {
-    let LoadedContext {
-        full_path_str,
-        snapshot,
-        clipped_cursor,
-        ..
-    } = load_context(&args, app_state, cx).await?;
-
-    let events = match args.edit_history {
-        Some(events) => events.read_to_string().await?,
-        None => String::new(),
-    };
-
-    let prompt_for_events = move || (events, 0);
-    cx.update(|cx| {
-        edit_prediction::zeta1::gather_context(
-            full_path_str,
-            &snapshot,
-            clipped_cursor,
-            prompt_for_events,
-            cloud_llm_client::PredictEditsRequestTrigger::Cli,
-            cx,
+        let mut captured_examples = pull_examples::fetch_captured_examples_after(
+            http_client,
+            &captured_after_timestamps,
+            max_rows_per_timestamp,
         )
-    })?
-    .await
+        .await?;
+        examples.append(&mut captured_examples);
+    }
+
+    crate::example::sort_examples_by_repo_and_rev(&mut examples);
+
+    if let Some(name_filter) = &args.name {
+        examples.retain(|example| example.spec.name.contains(name_filter));
+    }
+    if let Some(repo_filter) = &args.repo {
+        examples.retain(|example| example.spec.repository_url.contains(repo_filter));
+    }
+
+    if let Some(limit) = args.limit {
+        if examples.len() > limit {
+            examples.truncate(limit);
+        }
+    }
+
+    Progress::global().set_total_steps(examples.len() + captured_after_timestamps.len());
+
+    Ok(examples)
 }
 
 fn main() {
-    zlog::init();
-    zlog::init_output_stderr();
-    let args = ZetaCliArgs::parse();
+    let args = EpArgs::parse();
+
+    if args.printenv {
+        ::util::shell_env::print_env();
+        return;
+    }
+
+    let output = args.output_path();
+    let command = match &args.command {
+        Some(cmd) => cmd.clone(),
+        None => {
+            EpArgs::command().print_help().unwrap();
+            return;
+        }
+    };
+
+    match &command {
+        Command::Clean => {
+            std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
+            return;
+        }
+        Command::Synthesize(synth_args) => {
+            let Some(output_dir) = args.output else {
+                panic!("output dir is required");
+            };
+            let config = SynthesizeConfig {
+                repo_url: synth_args.repo.clone(),
+                count: synth_args.count,
+                max_commits: synth_args.max_commits,
+                output_dir,
+                fresh: synth_args.fresh,
+            };
+            smol::block_on(async {
+                if let Err(e) = run_synthesize(config).await {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
+        Command::SplitCommit(split_commit_args) => {
+            if let Err(error) =
+                split_commit::run_split_commit(split_commit_args, &args.inputs, output.as_ref())
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        _ => {}
+    }
+
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client);
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
+        EditPredictionStore::global(&app_state.client, &app_state.user_store, cx);
+
         cx.spawn(async move |cx| {
-            match args.command {
-                None => {
-                    if args.printenv {
-                        ::util::shell_env::print_env();
-                    } else {
-                        panic!("Expected a command");
-                    }
+            let result = async {
+                let mut examples = load_examples(app_state.client.http_client(), &args).await?;
+
+                if let Command::Predict(args) = &command {
+                    predict::sync_batches(&args.provider).await?;
                 }
-                Some(Command::Context(context_args)) => {
-                    let result = match context_args.provider {
-                        ContextProvider::Zeta1 => {
-                            let context =
-                                zeta1_context(context_args, &app_state, cx).await.unwrap();
-                            serde_json::to_string_pretty(&context.body).unwrap()
+
+                let failfast_on_single_example = examples.len() == 1;
+
+                let mut grouped_examples = group_examples_by_repo(&mut examples);
+                let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
+
+                for example_batch in example_batches {
+                    let futures = example_batch.into_iter().map(|repo_examples| async {
+                        for example in repo_examples.iter_mut() {
+                            let result = async {
+                                match &command {
+                                    Command::ParseExample => {}
+                                    Command::LoadProject => {
+                                        run_load_project(example, app_state.clone(), cx.clone())
+                                            .await?;
+                                    }
+                                    Command::Context => {
+                                        run_context_retrieval(
+                                            example,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    }
+                                    Command::FormatPrompt(args) => {
+                                        run_format_prompt(
+                                            example,
+                                            args.prompt_format,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    }
+                                    Command::Predict(args) => {
+                                        run_prediction(
+                                            example,
+                                            Some(args.provider),
+                                            args.repetitions,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    }
+                                    Command::Distill => {
+                                        run_distill(example).await?;
+                                    }
+                                    Command::Score(args) | Command::Eval(args) => {
+                                        run_scoring(example, &args, app_state.clone(), cx.clone())
+                                            .await?;
+                                    }
+                                    Command::Clean
+                                    | Command::Synthesize(_)
+                                    | Command::SplitCommit(_) => {
+                                        unreachable!()
+                                    }
+                                }
+                                anyhow::Ok(())
+                            }
+                            .await;
+
+                            if let Err(error) = result {
+                                handle_error(
+                                    error,
+                                    &args,
+                                    &command,
+                                    &app_state,
+                                    failfast_on_single_example,
+                                    example,
+                                )
+                                .await;
+                            }
                         }
-                        ContextProvider::Zeta2 => {
-                            zeta2_context(context_args, &app_state, cx).await.unwrap()
-                        }
-                    };
-                    println!("{}", result);
+                    });
+                    futures::future::join_all(futures).await;
                 }
-                Some(Command::Predict(arguments)) => {
-                    run_predict(arguments, &app_state, cx).await;
-                }
-                Some(Command::Eval(arguments)) => {
-                    run_evaluate(arguments, &app_state, cx).await;
-                }
-                Some(Command::ConvertExample {
-                    path,
-                    output_format,
-                }) => {
-                    let example = NamedExample::load(path).unwrap();
-                    example.write(output_format, io::stdout()).unwrap();
-                }
-                Some(Command::Score {
-                    golden_patch,
-                    actual_patch,
-                }) => {
-                    let golden_content = std::fs::read_to_string(golden_patch).unwrap();
-                    let actual_content = std::fs::read_to_string(actual_patch).unwrap();
+                Progress::global().finalize();
 
-                    let golden_diff: Vec<DiffLine> = golden_content
-                        .lines()
-                        .map(|line| DiffLine::parse(line))
-                        .collect();
-
-                    let actual_diff: Vec<DiffLine> = actual_content
-                        .lines()
-                        .map(|line| DiffLine::parse(line))
-                        .collect();
-
-                    let score = delta_chr_f(&golden_diff, &actual_diff);
-                    println!("{:.2}", score);
+                if args.output.is_some() || !matches!(command, Command::Eval(_)) {
+                    write_examples(&examples, output.as_ref());
                 }
-                Some(Command::Clean) => {
-                    std::fs::remove_dir_all(&*crate::paths::TARGET_ZETA_DIR).unwrap()
-                }
-            };
+
+                match &command {
+                    Command::Predict(args) => predict::sync_batches(&args.provider).await?,
+                    Command::Eval(_) => score::print_report(&examples),
+                    _ => (),
+                };
+
+                anyhow::Ok(())
+            }
+            .await;
+
+            if let Err(e) = result {
+                panic!("Fatal error: {:?}", e);
+            }
 
             let _ = cx.update(|cx| cx.quit());
         })
         .detach();
     });
+}
+
+async fn handle_error(
+    error: anyhow::Error,
+    args: &EpArgs,
+    command: &Command,
+    app_state: &Arc<headless::EpAppState>,
+    failfast_on_single_example: bool,
+    example: &Example,
+) {
+    Progress::global().increment_failed();
+    let example_name = example.spec.filename();
+    let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
+    app_state
+        .fs
+        .write(
+            &failed_example_path,
+            &serde_json::to_vec_pretty(&example).unwrap(),
+        )
+        .await
+        .unwrap();
+    let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
+    app_state
+        .fs
+        .write(&err_path, format!("{error:?}").as_bytes())
+        .await
+        .unwrap();
+
+    let file_path = example
+        .repo_name()
+        .unwrap()
+        .worktree_path()
+        .join(&example.spec.cursor_path);
+
+    let msg = format!(
+        indoc::indoc! {"
+            While processing \"{}\":
+
+            {:?}
+
+            Written to: \x1b[36m{}\x1b[0m
+
+            Cursor File: \x1b[36m{}\x1b[0m
+
+            Explore this example data with:
+            fx \x1b[36m{}\x1b[0m
+
+            Re-run this example with:
+            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+        "},
+        example.spec.name,
+        error,
+        err_path.display(),
+        file_path.display(),
+        failed_example_path.display(),
+        command,
+        failed_example_path.display(),
+    );
+    if args.failfast || failfast_on_single_example {
+        Progress::global().finalize();
+        panic!("{}", msg);
+    } else {
+        log::error!("{}", msg);
+    }
 }

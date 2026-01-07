@@ -335,12 +335,11 @@ impl FileHandle for std::fs::File {
         let mut path_buf = MaybeUninit::<[u8; libc::PATH_MAX as usize]>::uninit();
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the path buffer.
         let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr().cast()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -372,12 +371,11 @@ impl FileHandle for std::fs::File {
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the kif.
         let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -398,18 +396,21 @@ impl FileHandle for std::fs::File {
         // Query required buffer size (in wide chars)
         let required_len =
             unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
-        if required_len == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
-        }
+        anyhow::ensure!(
+            required_len != 0,
+            "GetFinalPathNameByHandleW returned 0 length"
+        );
 
         // Allocate buffer and retrieve the path
         let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
         let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
-        if written == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
-        }
+        anyhow::ensure!(
+            written != 0,
+            "GetFinalPathNameByHandleW failed to write path"
+        );
 
         let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        anyhow::ensure!(!os_str.is_empty(), "Could find a path for the file handle");
         Ok(PathBuf::from(os_str))
     }
 }
@@ -434,7 +435,18 @@ impl RealFs {
         for component in path.components() {
             match component {
                 std::path::Component::Prefix(_) => {
-                    let canonicalized = std::fs::canonicalize(component)?;
+                    let component = component.as_os_str();
+                    let canonicalized = if component
+                        .to_str()
+                        .map(|e| e.ends_with("\\"))
+                        .unwrap_or(false)
+                    {
+                        std::fs::canonicalize(component)
+                    } else {
+                        let mut component = component.to_os_string();
+                        component.push("\\");
+                        std::fs::canonicalize(component)
+                    }?;
 
                     let mut strip = PathBuf::new();
                     for component in canonicalized.components() {
@@ -641,6 +653,8 @@ impl Fs for RealFs {
         use objc::{class, msg_send, sel, sel_impl};
 
         unsafe {
+            /// Allow NSString::alloc use here because it sets autorelease
+            #[allow(clippy::disallowed_methods)]
             unsafe fn ns_string(string: &str) -> id {
                 unsafe { NSString::alloc(nil).init_str(string).autorelease() }
             }
@@ -803,7 +817,7 @@ impl Fs for RealFs {
         }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
+        for chunk in text::chunks_with_line_ending(text, line_ending) {
             writer.write_all(chunk.as_bytes()).await?;
         }
         writer.flush().await?;
@@ -1844,6 +1858,18 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_remote_for_repo(
+        &self,
+        dot_git: &Path,
+        name: impl Into<String>,
+        url: impl Into<String>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.remotes.insert(name.into(), url.into());
+        })
+        .unwrap();
+    }
+
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
         self.with_git_state(dot_git, true, |state| {
             if let Some(first) = branches.first()
@@ -2555,7 +2581,7 @@ impl Fs for FakeFs {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let content = chunks(text, line_ending).collect::<String>();
+        let content = text::chunks_with_line_ending(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
@@ -2771,25 +2797,6 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }
-}
-
-fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
-    rope.chunks().flat_map(move |chunk| {
-        let mut newline = false;
-        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
-        chunk
-            .lines()
-            .flat_map(move |line| {
-                let ending = if newline {
-                    Some(line_ending.as_str())
-                } else {
-                    None
-                };
-                newline = true;
-                ending.into_iter().chain([line])
-            })
-            .chain(end_with_newline)
-    })
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -3409,6 +3416,26 @@ mod tests {
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "Hello");
+    }
+
+    #[gpui::test]
+    #[cfg(target_os = "windows")]
+    async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
+        use util::paths::SanitizedPath;
+
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("test (1).txt");
+        let file = SanitizedPath::new(&file);
+        std::fs::write(&file, "test").unwrap();
+
+        let canonicalized = fs.canonicalize(file.as_path()).await;
+        assert!(canonicalized.is_ok());
     }
 
     #[gpui::test]

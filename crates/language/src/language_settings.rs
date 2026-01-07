@@ -51,7 +51,7 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +122,10 @@ pub struct LanguageSettings {
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Whether to continue markdown lists when pressing enter.
+    pub extend_list_on_newline: bool,
+    /// Whether to indent list items when pressing tab after a list marker.
+    pub indent_list_on_tab: bool,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
@@ -388,6 +392,8 @@ pub struct EditPredictionSettings {
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
+    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -567,6 +573,8 @@ impl settings::Settings for AllLanguageSettings {
                     tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
                 },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
+                extend_list_on_newline: settings.extend_list_on_newline.unwrap(),
+                indent_list_on_tab: settings.indent_list_on_tab.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
                     show_value_hints: inlay_hints.show_value_hints.unwrap(),
@@ -656,7 +664,7 @@ impl settings::Settings for AllLanguageSettings {
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
-        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
             let mut builder = GlobSetBuilder::new();
@@ -665,7 +673,10 @@ impl settings::Settings for AllLanguageSettings {
                 builder.add(Glob::new(pattern).unwrap());
             }
 
-            file_types.insert(language.clone(), builder.build().unwrap());
+            file_types.insert(
+                language.clone(),
+                (builder.build().unwrap(), patterns.0.clone()),
+            );
         }
 
         Self {
@@ -690,6 +701,8 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
+                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

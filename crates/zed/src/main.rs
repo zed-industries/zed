@@ -1,9 +1,14 @@
+// Disable command line from opening on release mode
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod reliability;
 mod zed;
 
+use agent::{HistoryStore, SharedThread};
+use agent_client_protocol;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
@@ -15,11 +20,13 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
+use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
+use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
@@ -27,16 +34,19 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::project_settings::ProjectSettings;
-use recent_projects::{SshSettings, open_remote_project};
+use project::{project_settings::ProjectSettings, trusted_worktrees};
+use proto;
+use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
+    cell::RefCell,
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
+    rc::Rc,
     sync::{Arc, OnceLock},
     time::Instant,
 };
@@ -130,6 +140,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         process::exit(1);
     }
 
+    // Maybe unify this with gpui::platform::linux::platform::ResultExt::notify_err(..)?
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
@@ -162,10 +173,9 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
+static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
-pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
-
-pub fn main() {
+fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     #[cfg(unix)]
@@ -240,6 +250,7 @@ pub fn main() {
     }
 
     zlog::init();
+
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
@@ -249,6 +260,7 @@ pub fn main() {
             zlog::init_output_stdout();
         };
     }
+    ztracing::init();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -404,6 +416,14 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees() {
+            Ok(trusted_paths) => trusted_paths,
+            Err(e) => {
+                log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                HashMap::default()
+            }
+        };
+        trusted_worktrees::init(db_trusted_paths, None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -472,6 +492,7 @@ pub fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
+
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
@@ -595,6 +616,7 @@ pub fn main() {
             false,
             cx,
         );
+        agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -644,6 +666,7 @@ pub fn main() {
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
+        which_key::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -657,6 +680,18 @@ pub fn main() {
                         })
                         .ok();
                 }
+
+                cx.set_text_rendering_mode(
+                    match WorkspaceSettings::get_global(cx).text_rendering_mode {
+                        settings::TextRenderingMode::PlatformDefault => {
+                            gpui::TextRenderingMode::PlatformDefault
+                        }
+                        settings::TextRenderingMode::Subpixel => gpui::TextRenderingMode::Subpixel,
+                        settings::TextRenderingMode::Grayscale => {
+                            gpui::TextRenderingMode::Grayscale
+                        }
+                    },
+                );
 
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -754,7 +789,7 @@ pub fn main() {
 
         let app_state = app_state.clone();
 
-        crate::zed::component_preview::init(app_state.clone(), cx);
+        component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
@@ -799,9 +834,76 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window);
+                            panel.focus_handle(cx).focus(window, cx);
                         }
                     })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::SharedAgentThread { session_id } => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state.clone(), cx.clone()).await?;
+
+                    let (client, history_store) =
+                        workspace.update(cx, |workspace, _window, cx| {
+                            let client = workspace.project().read(cx).client();
+                            let history_store: Option<gpui::Entity<HistoryStore>> = workspace
+                                .panel::<AgentPanel>(cx)
+                                .map(|panel| panel.read(cx).thread_store().clone());
+                            (client, history_store)
+                        })?;
+
+                    let Some(history_store): Option<gpui::Entity<HistoryStore>> = history_store
+                    else {
+                        anyhow::bail!("Agent panel not available");
+                    };
+
+                    let response = client
+                        .request(proto::GetSharedAgentThread {
+                            session_id: session_id.clone(),
+                        })
+                        .await
+                        .context("Failed to fetch shared thread")?;
+
+                    let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
+                    let db_thread = shared_thread.to_db_thread();
+                    let session_id = agent_client_protocol::SessionId::new(session_id);
+
+                    history_store
+                        .update(&mut cx.clone(), |store, cx| {
+                            store.save_thread(session_id.clone(), db_thread, cx)
+                        })?
+                        .await?;
+
+                    let thread_metadata = agent::DbThreadMetadata {
+                        id: session_id,
+                        title: format!("🔗 {}", response.title).into(),
+                        updated_at: chrono::Utc::now(),
+                    };
+
+                    workspace.update(cx, |workspace, window, cx| {
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.open_thread(thread_metadata, window, cx);
+                            });
+                            panel.focus_handle(cx).focus(window, cx);
+                        }
+                    })?;
+
+                    workspace.update(cx, |workspace, _window, cx| {
+                        struct ImportedThreadToast;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<ImportedThreadToast>(),
+                                format!("Imported shared thread from {}", response.sharer_username),
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    })?;
+
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -813,12 +915,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     cx.spawn_in(window, async move |workspace, cx| {
                         let res = async move {
                             let json = app_state.languages.language_for_name("JSONC").await.ok();
+                            let lsp_store = workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .update(cx, |project, _| project.lsp_store())
+                            })?;
                             let json_schema_content =
                                 json_schema_store::resolve_schema_request_inner(
                                     &app_state.languages,
+                                    lsp_store,
                                     &schema_path,
                                     cx,
-                                )?;
+                                )
+                                .await?;
                             let json_schema_content =
                                 serde_json::to_string_pretty(&json_schema_content)
                                     .context("Failed to serialize JSON Schema as JSON")?;
@@ -877,6 +986,79 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             cx,
                         ),
                     })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::GitClone { repo_url } => {
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    if window.is_window_active() {
+                        clone_and_open(
+                            repo_url,
+                            cx.weak_entity(),
+                            window,
+                            cx,
+                            Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                                workspace.focus_panel::<ProjectPanel>(window, cx);
+                            }),
+                        );
+                        return;
+                    }
+
+                    let subscription = Rc::new(RefCell::new(None));
+                    subscription.replace(Some(cx.observe_in(&cx.entity(), window, {
+                        let subscription = subscription.clone();
+                        let repo_url = repo_url;
+                        move |_, workspace_entity, window, cx| {
+                            if window.is_window_active() && subscription.take().is_some() {
+                                clone_and_open(
+                                    repo_url.clone(),
+                                    workspace_entity.downgrade(),
+                                    window,
+                                    cx,
+                                    Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                                        workspace.focus_panel::<ProjectPanel>(window, cx);
+                                    }),
+                                );
+                            }
+                        }
+                    })));
+                });
+            }
+            OpenRequestKind::GitCommit { sha } => {
+                cx.spawn(async move |cx| {
+                    let paths_with_position =
+                        derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+                    let (workspace, _results) = open_paths_with_positions(
+                        &paths_with_position,
+                        &[],
+                        app_state,
+                        workspace::OpenOptions::default(),
+                        cx,
+                    )
+                    .await?;
+
+                    workspace
+                        .update(cx, |workspace, window, cx| {
+                            let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                            else {
+                                log::error!("no active repository found for commit view");
+                                return Err(anyhow::anyhow!("no active repository found"));
+                            };
+
+                            git_ui::commit_view::CommitView::open(
+                                sha,
+                                repo.downgrade(),
+                                workspace.weak_handle(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                            Ok(())
+                        })
+                        .log_err();
+
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -1075,7 +1257,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
                         cx.update(|cx| {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
                         })?;
                     }
@@ -1154,7 +1336,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
+                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
+                    match restore_on_startup {
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
+                        _ => {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
+                        }
+                    }
                 },
             )
         })?
@@ -1244,7 +1432,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-pub fn stdout_is_a_pty() -> bool {
+fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
 
@@ -1490,14 +1678,14 @@ fn dump_all_gpui_actions() {
     struct ActionDef {
         name: &'static str,
         human_name: String,
-        aliases: &'static [&'static str],
+        deprecated_aliases: &'static [&'static str],
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.deprecated_aliases,
+            deprecated_aliases: action.deprecated_aliases,
             documentation: action.documentation,
         })
         .collect::<Vec<ActionDef>>();

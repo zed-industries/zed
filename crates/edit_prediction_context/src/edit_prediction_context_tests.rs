@@ -2,12 +2,12 @@ use super::*;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
-use language::{Language, LanguageConfig, LanguageMatcher, Point, ToPoint as _, tree_sitter_rust};
+use language::{Point, ToPoint as _, rust_lang};
 use lsp::FakeLanguageServer;
 use project::{FakeFs, LocationLink, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{fmt::Write as _, sync::Arc};
+use std::fmt::Write as _;
 use util::{path, test::marked_text_ranges};
 
 #[gpui::test]
@@ -48,7 +48,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
             &excerpts,
             &[
                 (
-                    "src/company.rs",
+                    "root/src/company.rs",
                     &[indoc! {"
                         pub struct Company {
                             owner: Arc<Person>,
@@ -56,7 +56,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                         }"}],
                 ),
                 (
-                    "src/main.rs",
+                    "root/src/main.rs",
                     &[
                         indoc! {"
                         pub struct Session {
@@ -71,7 +71,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                     ],
                 ),
                 (
-                    "src/person.rs",
+                    "root/src/person.rs",
                     &[
                         indoc! {"
                         impl Person {
@@ -446,7 +446,7 @@ fn assert_related_files(actual_files: &[RelatedFile], expected_files: &[(&str, &
                 .iter()
                 .map(|excerpt| excerpt.text.to_string())
                 .collect::<Vec<_>>();
-            (file.path.path.as_unix_str(), excerpts)
+            (file.path.to_str().unwrap(), excerpts)
         })
         .collect::<Vec<_>>();
     let expected_excerpts = expected_files
@@ -492,10 +492,10 @@ fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
         if excerpt.text.is_empty() {
             continue;
         }
-        if current_row < excerpt.point_range.start.row {
+        if current_row < excerpt.row_range.start {
             writeln!(&mut output, "…").unwrap();
         }
-        current_row = excerpt.point_range.start.row;
+        current_row = excerpt.row_range.start;
 
         for line in excerpt.text.to_string().lines() {
             output.push_str(line);
@@ -507,24 +507,4 @@ fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
         writeln!(&mut output, "…").unwrap();
     }
     output
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    first_line_pattern: None,
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(include_str!("../../languages/src/rust/highlights.scm"))
-        .unwrap()
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap(),
-    )
 }
