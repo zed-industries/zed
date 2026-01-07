@@ -315,6 +315,16 @@ impl WelcomePage {
                     .unwrap_or_else(|| "Untitled".to_string());
                 (IconName::Folder, name)
             }
+            SerializedWorkspaceLocation::LocalFromFile {
+                workspace_file_path,
+                ..
+            } => {
+                let name = workspace_file_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Workspace".to_string());
+                (IconName::FileTree, name)
+            }
             SerializedWorkspaceLocation::Remote(_) => {
                 (IconName::Server, "Remote Project".to_string())
             }
