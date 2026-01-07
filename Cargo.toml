@@ -846,7 +846,7 @@ ui_input = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]
-debug = "limited"
+debug = "line-tables-only"
 lto = "thin"
 codegen-units = 1
 

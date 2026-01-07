@@ -4617,6 +4617,7 @@ impl Project {
         )
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,

@@ -489,11 +489,13 @@ impl GitBlame {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
             return;
         }
+        // let buffers_to_blame: Vec<WeakEntity<language::Buffer>> = Vec::new();
         let buffers_to_blame = self
             .multi_buffer
             .update(cx, |multi_buffer, _| {
@@ -507,10 +509,14 @@ impl GitBlame {
         let project = self.project.downgrade();
 
         self.task = cx.spawn(async move |this, cx| {
+            let span = ztracing::info_span!("blame_task");
+            let _enter = span.enter();
             let mut all_results = Vec::new();
             let mut all_errors = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
+                let span = ztracing::info_span!("blame_task_for_buffers");
+                let _enter = span.enter();
                 let blame = cx.update(|cx| {
                     buffers
                         .iter()
@@ -590,6 +596,8 @@ impl GitBlame {
 
             this.update(cx, |this, cx| {
                 this.buffers.clear();
+                let span = ztracing::info_span!("blame_task_update_buffers");
+                let _enter = span.enter();
                 for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
                     let Some(entries) = entries else {
                         continue;

@@ -1525,6 +1525,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn blame(
         &self,
         path: RepoPath,

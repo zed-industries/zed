@@ -21,6 +21,7 @@ pub struct Blame {
 }
 
 impl Blame {
+    #[ztracing::instrument(skip_all)]
     pub async fn for_path(
         git_binary: &Path,
         working_directory: &Path,

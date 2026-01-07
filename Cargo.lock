@@ -7099,11 +7099,13 @@ dependencies = [
  "text",
  "thiserror 2.0.17",
  "time",
+ "tracing",
  "unindent",
  "url",
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
