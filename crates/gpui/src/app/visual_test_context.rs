@@ -293,22 +293,6 @@ impl VisualTestAppContext {
         self.run_until_parked();
     }
 
-    /// Finds the bounds of an element by its name.
-    /// This searches through the rendered frame's hitboxes to find an element
-    /// whose ID ends with the given name.
-    ///
-    /// Returns `Some(bounds)` if found, `None` otherwise.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn bounds_for_element(
-        &mut self,
-        window: AnyWindowHandle,
-        name: &str,
-    ) -> Option<Bounds<Pixels>> {
-        self.update_window(window, |_, window, _cx| window.bounds_for_element(name))
-            .ok()
-            .flatten()
-    }
-
     /// Dispatches an action to the given window.
     pub fn dispatch_action(&mut self, window: AnyWindowHandle, action: impl Action) {
         self.update_window(window, |_, window, cx| {

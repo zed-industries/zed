@@ -1267,7 +1267,11 @@ impl EditorElement {
             }
         }
 
-        let breakpoint_indicator = if gutter_hovered {
+        // Check if we're on the row where the diff review button is shown
+        let is_on_diff_review_button_row = editor.show_diff_review_button()
+            && valid_point.row() == position_map.snapshot.display_snapshot.max_point().row();
+
+        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -3014,7 +3018,7 @@ impl EditorElement {
                     let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -3054,11 +3058,26 @@ impl EditorElement {
         let max_point = snapshot.display_snapshot.max_point();
         let last_row = max_point.row();
 
+        let element_bg = cx.theme().colors().element_background;
+        let border_color = cx.theme().colors().border;
+
+        // Use IconButton for proper tooltip/hover handling, wrapped in a styled container
         let button = IconButton::new("diff_review_button", IconName::Plus)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::Compact)
-            .style(ButtonStyle::Filled)
-            .tooltip(Tooltip::text("Add Review"));
+            .style(ButtonStyle::Subtle)
+            .tooltip(Tooltip::text("Add Review"))
+            .into_any_element();
+
+        // Wrap in a container that provides the background and hover border
+        let button = div()
+            .rounded_sm()
+            .bg(element_bg)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .hover(move |style| style.border_color(border_color))
+            .child(button)
+            .into_any_element();
 
         let button = prepaint_gutter_button(
             button,
@@ -3170,7 +3189,7 @@ impl EditorElement {
                     );
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -8246,7 +8265,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    button: IconButton,
+    mut button: AnyElement,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
@@ -8256,8 +8275,6 @@ fn prepaint_gutter_button(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let mut button = button.into_any_element();
-
     let available_space = size(
         AvailableSpace::MinContent,
         AvailableSpace::Definite(line_height),

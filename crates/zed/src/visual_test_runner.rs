@@ -919,50 +919,71 @@ import { AiPaneTabContext } from 'context';
     .await?;
 
     // Test 1b: Tooltip visible when hovering over the button
-    // First, find the button's position
-    let button_bounds = cx.update_window(
+    // The button is positioned in the gutter at the last row of the diff (row 5, 0-indexed as 4).
+    // Based on the window layout:
+    // - Window is 600x400 logical pixels (1200x800 at 2x scale)
+    // - Gutter is approximately 50px wide, button centered around x=27
+    // - Each line is approximately 22px tall
+    // - There's a toolbar/header area of roughly 130px at the top
+    // - Row 4 (5th line) would be at y = 130 + (4 * 22) + 11 = ~229px
+    // Adjusted position to be more centered on the button
+    let button_position = point(px(27.0), px(232.0));
+
+    // Simulate mouse move to hover over the button
+    cx.update_window(workspace_window.into(), |_view, window: &mut Window, cx| {
+        window.simulate_mouse_move(button_position, cx);
+    })?;
+
+    // Refresh to process the mouse move event
+    cx.update_window(
         workspace_window.into(),
-        |_view, window: &mut Window, _cx| window.bounds_for_element("diff_review_button"),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
     )?;
 
-    let test1b_result = if let Some(bounds) = button_bounds {
-        // Calculate the center of the button for hovering
-        let center = bounds.center();
+    // Wait for the tooltip delay (500ms) plus buffer
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(600))
+        .await;
 
-        // Simulate mouse move to hover over the button
-        cx.update_window(workspace_window.into(), |_view, window: &mut Window, cx| {
-            window.simulate_mouse_move(center, cx);
-        })?;
+    // Simulate another mouse move to keep hover active and trigger tooltip
+    cx.update_window(workspace_window.into(), |_view, window: &mut Window, cx| {
+        window.simulate_mouse_move(button_position, cx);
+    })?;
 
-        // Wait for the tooltip delay (500ms) plus some buffer
-        cx.background_executor()
-            .timer(std::time::Duration::from_millis(700))
-            .await;
+    // Refresh to render the tooltip
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
 
-        // Refresh window to ensure tooltip is rendered
-        cx.update_window(
-            workspace_window.into(),
-            |_view, window: &mut Window, _cx| {
-                window.refresh();
-            },
-        )?;
+    // Additional wait and refresh for tooltip to fully render
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(200))
+        .await;
 
-        cx.background_executor()
-            .timer(std::time::Duration::from_millis(100))
-            .await;
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
 
-        // Capture the tooltip screenshot
-        run_visual_test(
-            "diff_review_button_tooltip",
-            workspace_window.into(),
-            cx,
-            update_baseline,
-        )
-        .await?
-    } else {
-        println!("  Warning: Could not find diff_review_button bounds for tooltip test");
-        TestResult::Passed
-    };
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    // Capture the tooltip screenshot
+    let test1b_result = run_visual_test(
+        "diff_review_button_tooltip",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await?;
 
     // Test 2: Diff view with feature flag disabled
     // Disable the feature flag
