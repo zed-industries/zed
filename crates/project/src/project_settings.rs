@@ -20,16 +20,11 @@ use serde::{Deserialize, Serialize};
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
-    DapSettingsContent, Editorconfig, InvalidSettingsError, LocalSettingsKind, RegisterSetting,
-    Settings, SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
+    DapSettingsContent, EditorconfigStore, InvalidSettingsError, LocalSettingsKind,
+    RegisterSetting, Settings, SettingsLocation, SettingsStore, parse_json_with_comments,
+    watch_config_file,
 };
-use std::{
-    cell::OnceCell,
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
@@ -819,7 +814,10 @@ impl SettingsObserver {
                     })
                     .log_err();
             }
-            for (path, content, _) in store.local_internal_editorconfigs(worktree.read(cx).id()) {
+            for (path, content, _) in store
+                .editorconfig_settings
+                .local_internal_configs(worktree.read(cx).id())
+            {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -923,57 +921,27 @@ impl SettingsObserver {
         let worktree_abs_path = worktree.abs_path();
         let fs = fs.clone();
 
-        let cached_configs = cx.global::<SettingsStore>().local_external_editorconfigs();
+        let cached_configs = cx
+            .global::<SettingsStore>()
+            .editorconfig_settings
+            .local_external_configs();
 
         cx.spawn(async move |_, cx| {
-            let mut external_paths = Vec::new();
-            let mut new_configs = Vec::new();
-
-            let mut current = worktree_abs_path.parent().map(|p| p.to_path_buf());
-
-            while let Some(dir) = current {
-                let dir_path: Arc<Path> = Arc::from(dir.as_path());
-                if let Some(cached) = cached_configs.get(&dir_path) {
-                    let is_root = cached.is_root;
-                    external_paths.push(dir_path);
-                    if is_root {
-                        break;
-                    }
-                } else {
-                    let editorconfig_path = dir.join(EDITORCONFIG_NAME);
-                    if let Ok(content) = fs.load(&editorconfig_path).await {
-                        match content.parse::<Editorconfig>() {
-                            Ok(parsed) => {
-                                let is_root = parsed.is_root;
-                                external_paths.push(dir_path.clone());
-                                new_configs.push((dir_path, parsed));
-                                if is_root {
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to parse external editorconfig at {:?}: {}",
-                                    editorconfig_path,
-                                    err
-                                );
-                            }
-                        }
-                    }
-                }
-                current = dir.parent().map(|p| p.to_path_buf());
-            }
+            let (external_paths, new_configs) =
+                EditorconfigStore::load_external_configs(&fs, worktree_abs_path, cached_configs)
+                    .await;
 
             if external_paths.is_empty() {
                 return;
             }
 
-            external_paths.reverse();
-            new_configs.reverse();
-
             cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store.set_local_external_editorconfigs(new_configs);
-                store.set_external_editorconfig_paths_for_worktree(worktree_id, external_paths);
+                store
+                    .editorconfig_settings
+                    .set_local_external_configs(new_configs);
+                store
+                    .editorconfig_settings
+                    .set_external_paths_for_worktree(worktree_id, external_paths);
             })
             .ok();
         })

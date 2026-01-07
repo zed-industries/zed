@@ -450,7 +450,8 @@ impl AllLanguageSettings {
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
-                .editorconfig_properties(location.worktree_id, location.path)
+                .editorconfig_settings
+                .properties(location.worktree_id, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
             let mut settings = settings.clone();

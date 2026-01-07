@@ -1,5 +1,6 @@
 mod base_keymap_setting;
 mod editable_setting_control;
+mod editorconfig_store;
 mod fallible_options;
 mod keymap_file;
 pub mod merge_from;
@@ -25,6 +26,9 @@ use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
+pub use editorconfig_store::{
+    Editorconfig, EditorconfigProperties, EditorconfigStore, WorktreeEditorconfigs,
+};
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -33,9 +37,9 @@ pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    Editorconfig, InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind,
-    MigrationStatus, ParseStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey,
-    SettingsLocation, SettingsParseResult, SettingsStore,
+    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, MigrationStatus,
+    ParseStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
+    SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
