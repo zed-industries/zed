@@ -1026,13 +1026,16 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
             OpenRequestKind::GitCommit { sha } => {
                 cx.spawn(async move |cx| {
-                    let paths_with_position =
+                    let (paths_with_position, workspace_file_source) =
                         derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
                     let (workspace, _results) = open_paths_with_positions(
                         &paths_with_position,
                         &[],
                         app_state,
-                        workspace::OpenOptions::default(),
+                        workspace::OpenOptions {
+                            workspace_file_source,
+                            ..Default::default()
+                        },
                         cx,
                     )
                     .await?;
@@ -1087,13 +1090,16 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(async move |cx| {
-            let paths_with_position =
+            let (paths_with_position, workspace_file_source) =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
                 &request.diff_paths,
                 app_state,
-                workspace::OpenOptions::default(),
+                workspace::OpenOptions {
+                    workspace_file_source,
+                    ..Default::default()
+                },
                 cx,
             )
             .await?;
@@ -1247,6 +1253,47 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
 
                     // If we're using system window tabs and this is the first workspace,
                     // wait for it to finish so that the other windows can be added as tabs.
+                    if use_system_window_tabs && index == 0 {
+                        results.push(task.await);
+                    } else {
+                        tasks.push(task);
+                    }
+                }
+                SerializedWorkspaceLocation::LocalFromFile {
+                    workspace_file_path,
+                    workspace_file_kind,
+                } => {
+                    let app_state = app_state.clone();
+                    let task = cx.spawn(async move |cx| {
+                        let workspace_source = workspace::WorkspaceFileSource {
+                            path: workspace_file_path.clone(),
+                            kind: workspace_file_kind
+                                .parse()
+                                .unwrap_or(workspace::WorkspaceFileKind::CodeWorkspace),
+                        };
+                        let content = app_state
+                            .fs
+                            .load(&workspace_file_path)
+                            .await
+                            .context("Failed to read workspace file")?;
+                        let parsed = workspace_source
+                            .parse(&content)
+                            .context("Failed to parse workspace file")?;
+                        let paths: Vec<PathBuf> = parsed.folders;
+                        let open_task = cx.update(|cx| {
+                            workspace::open_paths(
+                                &paths,
+                                app_state,
+                                workspace::OpenOptions {
+                                    workspace_file_source: Some(workspace_source),
+                                    ..Default::default()
+                                },
+                                cx,
+                            )
+                        })?;
+                        open_task.await.map(|_| ())
+                    });
+
                     if use_system_window_tabs && index == 0 {
                         results.push(task.await);
                     } else {
