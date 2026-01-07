@@ -1144,7 +1144,7 @@ pub async fn location_links_from_lsp(
                     target_position,
                     cx,
                 )
-            })?
+            })
             .await?;
 
         cx.update(|cx| {
@@ -1206,7 +1206,7 @@ pub async fn location_link_from_lsp(
                 target_position,
                 cx,
             )
-        })?
+        })
         .await?;
 
     Ok(cx.update(|cx| {
