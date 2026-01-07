@@ -28,7 +28,7 @@ use ui::{
     ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
     prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
@@ -1452,7 +1452,7 @@ impl ExtensionsPage {
                                             .child(
                                                 Switch::new(
                                                     "enable-vim",
-                                                    if VimModeSetting::get_global(cx).0 {
+                                                    if ModalEditing::get_global(cx).is_vim() {
                                                         ui::ToggleState::Selected
                                                     } else {
                                                         ui::ToggleState::Unselected
@@ -1468,7 +1468,13 @@ impl ExtensionsPage {
                                                             selection,
                                                             cx,
                                                             |setting, value| {
-                                                                setting.vim_mode = Some(value)
+                                                                setting.modal_editing = Some(if value {
+                                                                    settings::ModalEditingContent::Vim
+                                                                } else {
+                                                                    settings::ModalEditingContent::None
+                                                                });
+                                                                setting.vim_mode = None;
+                                                                setting.helix_mode = None;
                                                             },
                                                         );
                                                     },

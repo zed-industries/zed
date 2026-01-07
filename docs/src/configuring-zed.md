@@ -39,7 +39,7 @@ This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed.
 Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling.
-For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+For example you can set `tab_size`, `formatter` etc. but not `theme`, `modal_editing` and similar.
 
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
@@ -52,10 +52,10 @@ They are merged into the base configuration with settings from these keys taking
 ```json [settings]
 {
   "theme": "sunset",
-  "vim_mode": false,
+  "modal_editing": "none",
   "nightly": {
     "theme": "cave-light",
-    "vim_mode": true
+    "modal_editing": "vim"
   },
   "preview": {
     "theme": "zed-dark"
@@ -63,7 +63,7 @@ They are merged into the base configuration with settings from these keys taking
 }
 ```
 
-With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
+With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim-style modal editing with a different theme.
 
 Changing settings in the Settings Editorwill always apply the change across all channels.
 
@@ -2325,15 +2325,37 @@ Example:
 
 `boolean` values
 
-## Helix Mode
+## Modal Editing
 
-- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
-- Setting: `helix_mode`
-- Default: `false`
+- Description: Selects the modal editing mode. See the [Vim documentation](./vim.md) and [Helix documentation](./helix.md) for more details.
+- Setting: `modal_editing`
+- Default: `"none"`
 
 **Options**
 
-`boolean` values
+1. Disable modal editing:
+
+```json [settings]
+{
+  "modal_editing": "none"
+}
+```
+
+2. Enable Vim-style modal editing:
+
+```json [settings]
+{
+  "modal_editing": "vim"
+}
+```
+
+3. Enable Helix-style modal editing:
+
+```json [settings]
+{
+  "modal_editing": "helix"
+}
+```
 
 ## Indent Guides
 
@@ -4419,12 +4441,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 
-## Vim
-
-- Description: Whether or not to enable vim mode.
-- Setting: `vim_mode`
-- Default: `false`
-
 ## When Closing With No Tabs
 
 - Description: Whether the window should be closed when using 'close active item' on a window with no tabs
@@ -5073,7 +5089,7 @@ To preview and enable a settings profile, open the command palette via {#kb comm
 
   "autosave": "on_focus_change",
   "format_on_save": "off",
-  "vim_mode": false,
+  "modal_editing": "none",
   "projects_online_by_default": true,
   "terminal": {
     "font_family": "FiraCode Nerd Font Mono",

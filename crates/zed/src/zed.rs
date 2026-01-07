@@ -80,7 +80,7 @@ use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
@@ -1600,21 +1600,15 @@ pub fn handle_keymap_file_changes(
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
-    let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
-    let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+    let mut old_modal_editing = *ModalEditing::get_global(cx);
 
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
-        let new_vim_enabled = VimModeSetting::get_global(cx).0;
-        let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+        let new_modal_editing = *ModalEditing::get_global(cx);
 
-        if new_base_keymap != old_base_keymap
-            || new_vim_enabled != old_vim_enabled
-            || new_helix_enabled != old_helix_enabled
-        {
+        if new_base_keymap != old_base_keymap || new_modal_editing != old_modal_editing {
             old_base_keymap = new_base_keymap;
-            old_vim_enabled = new_vim_enabled;
-            old_helix_enabled = new_helix_enabled;
+            old_modal_editing = new_modal_editing;
 
             base_keymap_tx.unbounded_send(()).unwrap();
         }
@@ -1832,7 +1826,7 @@ pub fn load_default_keymap(cx: &mut App) {
         cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
-    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+    if ModalEditing::get_global(cx).is_enabled() {
         cx.bind_keys(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );

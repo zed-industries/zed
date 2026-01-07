@@ -2466,10 +2466,10 @@ impl Editor {
                     }
                 }
                 EditorEvent::Edited { .. } => {
-                    let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
-                        .map(|vim_mode| vim_mode.0)
+                    let modal_editing_enabled = vim_mode_setting::ModalEditing::try_get(cx)
+                        .map(|m| m.is_enabled())
                         .unwrap_or(false);
-                    if !vim_mode {
+                    if !modal_editing_enabled {
                         let display_map = editor.display_snapshot(cx);
                         let selections = editor.selections.all_adjusted_display(&display_map);
                         let pop_state = editor
@@ -22687,8 +22687,8 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
-            .map(|vim_mode| vim_mode.0)
+        let vim_mode = vim_mode_setting::ModalEditing::try_get(cx)
+            .map(|m| m.is_enabled())
             .unwrap_or(false);
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;

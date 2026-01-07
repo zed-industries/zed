@@ -1127,29 +1127,16 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Modal Editing"),
-                // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
-                // behavior to have them both enabled at the same time
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Vim Mode",
-                    description: "Enable Vim mode and key bindings.",
+                    title: "Modal Editing",
+                    description: "Choose a modal editing mode: None for standard editing, Vim for Vim-style or Helix for Helix-style modal editing.",
                     field: Box::new(SettingField {
-                        json_path: Some("vim_mode"),
-                        pick: |settings_content| settings_content.vim_mode.as_ref(),
+                        json_path: Some("modal_editing"),
+                        pick: |settings_content| settings_content.modal_editing.as_ref(),
                         write: |settings_content, value| {
-                            settings_content.vim_mode = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Helix Mode",
-                    description: "Enable Helix mode and key bindings.",
-                    field: Box::new(SettingField {
-                        json_path: Some("helix_mode"),
-                        pick: |settings_content| settings_content.helix_mode.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.helix_mode = value;
+                            settings_content.modal_editing = value;
+                            settings_content.vim_mode = None;
+                            settings_content.helix_mode = None;
                         },
                     }),
                     metadata: None,

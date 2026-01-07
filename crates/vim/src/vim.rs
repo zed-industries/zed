@@ -41,6 +41,7 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::ModalEditingContent;
 use settings::RegisterSetting;
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
@@ -50,8 +51,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use vim_mode_setting::HelixModeSetting;
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::{self, Pane, Workspace};
 
 use crate::{
@@ -281,23 +281,31 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled = VimModeSetting::get_global(cx).0;
+            let current = ModalEditing::get_global(cx);
+            let new_mode = if current.is_vim() {
+                ModalEditingContent::None
+            } else {
+                ModalEditingContent::Vim
+            };
             update_settings_file(fs, cx, move |setting, _| {
-                setting.vim_mode = Some(!currently_enabled);
-                if let Some(helix_mode) = &mut setting.helix_mode {
-                    *helix_mode = false;
-                }
+                setting.modal_editing = Some(new_mode);
+                setting.vim_mode = None;
+                setting.helix_mode = None;
             })
         });
 
         workspace.register_action(|workspace, _: &ToggleHelixMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled = HelixModeSetting::get_global(cx).0;
+            let current = ModalEditing::get_global(cx);
+            let new_mode = if current.is_helix() {
+                ModalEditingContent::None
+            } else {
+                ModalEditingContent::Helix
+            };
             update_settings_file(fs, cx, move |setting, _| {
-                setting.helix_mode = Some(!currently_enabled);
-                if let Some(vim_mode) = &mut setting.vim_mode {
-                    *vim_mode = false;
-                }
+                setting.modal_editing = Some(new_mode);
+                setting.vim_mode = None;
+                setting.helix_mode = None;
             })
         });
 
@@ -542,7 +550,7 @@ impl Vim {
         let editor = cx.entity();
 
         let initial_vim_mode = VimSettings::get_global(cx).default_mode;
-        let (mode, last_mode) = if HelixModeSetting::get_global(cx).0 {
+        let (mode, last_mode) = if ModalEditing::get_global(cx).is_helix() {
             let initial_helix_mode = match initial_vim_mode {
                 Mode::Normal => Mode::HelixNormal,
                 Mode::Insert => Mode::Insert,
@@ -1005,7 +1013,7 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
+        ModalEditing::get_global(cx).is_enabled()
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
@@ -1176,7 +1184,7 @@ impl Vim {
                 editor.set_relative_line_number(Some(is_relative), cx)
             });
         }
-        if HelixModeSetting::get_global(cx).0 {
+        if ModalEditing::get_global(cx).is_helix() {
             if self.mode == Mode::Normal {
                 self.mode = Mode::HelixNormal
             } else if self.mode == Mode::Visual {
@@ -1999,7 +2007,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            let collapse_matches = !HelixModeSetting::get_global(cx).0;
+            let collapse_matches = !ModalEditing::get_global(cx).is_helix();
             editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
