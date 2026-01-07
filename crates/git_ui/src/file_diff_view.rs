@@ -148,7 +148,7 @@ impl FileDiffView {
                         diff.set_base_text(
                             Some(old_snapshot.text().as_str().into()),
                             old_snapshot.language().cloned(),
-                            new_snapshot.text.clone(),
+                            new_snapshot.clone(),
                             cx,
                         )
                     })?
@@ -176,7 +176,7 @@ async fn build_buffer_diff(
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                new_buffer_snapshot.text.clone(),
+                new_buffer_snapshot.clone(),
                 Some(old_buffer_snapshot.text().into()),
                 true,
                 new_buffer_snapshot.language().cloned(),
