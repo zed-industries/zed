@@ -71,6 +71,16 @@ struct StateInner {
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
+    pending_scroll: Option<PendingScrollFraction>,
+}
+
+/// Keeps track of a fractional scroll position within an item for restoration
+/// after remeasurement.
+struct PendingScrollFraction {
+    /// The index of the item to scroll within.
+    item_ix: usize,
+    /// Fractional offset (0.0 to 1.0) within the item's height.
+    fraction: f32,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -225,6 +235,7 @@ impl ListState {
             reset: false,
             scrollbar_drag_start_height: None,
             measuring_behavior: ListMeasuringBehavior::default(),
+            pending_scroll: None,
         })));
         this.splice(0..0, item_count);
         this
@@ -252,6 +263,45 @@ impl ListState {
         };
 
         self.splice(0..old_count, element_count);
+    }
+
+    /// Remeasure all items while preserving proportional scroll position.
+    ///
+    /// Use this when item heights may have changed (e.g., font size changes)
+    /// but the number and identity of items remains the same.
+    pub fn remeasure(&self) {
+        let state = &mut *self.0.borrow_mut();
+
+        let new_items = state.items.iter().map(|item| ListItem::Unmeasured {
+            focus_handle: item.focus_handle(),
+        });
+
+        // If there's a `logical_scroll_top`, we need to keep track of it as a
+        // `PendingScrollFraction`, so we can later preserve that scroll
+        // position proportionally to the item, in case the item's height
+        // changes.
+        if let Some(scroll_top) = state.logical_scroll_top {
+            let mut cursor = state.items.cursor::<Count>(());
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+
+            if let Some(item) = cursor.item() {
+                if let Some(size) = item.size() {
+                    let fraction = if size.height.0 > 0.0 {
+                        (scroll_top.offset_in_item.0 / size.height.0).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+
+                    state.pending_scroll = Some(PendingScrollFraction {
+                        item_ix: scroll_top.item_ix,
+                        fraction,
+                    });
+                }
+            }
+        }
+
+        state.items = SumTree::from_iter(new_items, ());
+        state.measuring_behavior.reset();
     }
 
     /// The number of items in this list.
@@ -644,6 +694,20 @@ impl StateInner {
                 let mut element = render_item(item_index, window, cx);
                 let element_size = element.layout_as_root(available_item_space, window, cx);
                 size = Some(element_size);
+
+                // If there's a pending scroll adjustment for the scroll-top
+                // item, apply it, ensuring proportional scroll position is
+                // maintained after re-measuring.
+                if ix == 0 {
+                    if let Some(pending_scroll) = self.pending_scroll.take() {
+                        if pending_scroll.item_ix == scroll_top.item_ix {
+                            scroll_top.offset_in_item =
+                                Pixels(pending_scroll.fraction * element_size.height.0);
+                            self.logical_scroll_top = Some(scroll_top);
+                        }
+                    }
+                }
+
                 if visible_height < available_height {
                     item_layouts.push_back(ItemLayout {
                         index: item_index,
@@ -1184,16 +1248,16 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
 mod test {
 
     use gpui::{ScrollDelta, ScrollWheelEvent};
+    use std::cell::Cell;
+    use std::rc::Rc;
 
-    use crate::{self as gpui, TestAppContext};
+    use crate::{
+        self as gpui, AppContext, Context, Element, IntoElement, ListState, Render, Styled,
+        TestAppContext, Window, div, list, point, px, size,
+    };
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
-        use crate::{
-            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
-            list, point, px, size,
-        };
-
         let cx = cx.add_empty_window();
 
         let state = ListState::new(5, crate::ListAlignment::Top, px(10.));
@@ -1237,11 +1301,6 @@ mod test {
 
     #[gpui::test]
     fn test_scroll_by_positive_and_negative_distance(cx: &mut TestAppContext) {
-        use crate::{
-            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
-            list, point, px, size,
-        };
-
         let cx = cx.add_empty_window();
 
         let state = ListState::new(5, crate::ListAlignment::Top, px(10.));
@@ -1283,5 +1342,69 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_remeasure(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // Create a list with 10 items, each 100px tall. We'll keep a reference
+        // to the item height so we can later change the height and assert how
+        // `ListState` handles it.
+        let item_height = Rc::new(Cell::new(100usize));
+        let state = ListState::new(10, crate::ListAlignment::Top, px(10.));
+
+        struct TestView {
+            state: ListState,
+            item_height: Rc<Cell<usize>>,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let height = self.item_height.get();
+                list(self.state.clone(), move |_, _, _| {
+                    div().h(px(height as f32)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let state_clone = state.clone();
+        let item_height_clone = item_height.clone();
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state_clone,
+                item_height: item_height_clone,
+            })
+        });
+
+        // Simulate scrolling 40px inside the element with index 2. Since the
+        // original item height is 100px, this equates to 40% inside the item.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(40.),
+        });
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone()
+        });
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 2);
+        assert_eq!(offset.offset_in_item, px(40.));
+
+        // Update the `item_height` to be 50px instead of 100px so we can assert
+        // that the scroll position is proportionally preserved, that is,
+        // instead of 40px from the top of item 2, it should be 20px, since the
+        // item's height has been halved.
+        item_height.set(50);
+        state.remeasure();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| view);
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 2);
+        assert_eq!(offset.offset_in_item, px(20.));
     }
 }
