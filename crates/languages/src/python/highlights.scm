@@ -245,7 +245,6 @@
 ] @keyword.operator
 
 [
-  "as"
   "assert"
   "async"
   "await"
@@ -260,10 +259,8 @@
   "exec"
   "finally"
   "for"
-  "from"
   "global"
   "if"
-  "import"
   "lambda"
   "nonlocal"
   "pass"
@@ -277,6 +274,14 @@
   "match"
   "case"
 ] @keyword
+
+[
+  "from"
+  "as"
+  "import"
+]
+@keyword.import
+
 
 ; Definition keywords def, class, async def, lambda
 [
