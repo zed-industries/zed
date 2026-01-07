@@ -124,7 +124,7 @@ impl AgentTool for TerminalTool {
 
             let timeout = input.timeout_ms.map(Duration::from_millis);
 
-            let exit_status = match timeout {
+            let (exit_status, timed_out) = match timeout {
                 Some(timeout) => {
                     let wait_for_exit = terminal.wait_for_exit(cx)?;
                     let timeout_task = cx.background_spawn(async move {
@@ -132,19 +132,24 @@ impl AgentTool for TerminalTool {
                     });
 
                     futures::select! {
-                        status = wait_for_exit.clone().fuse() => status,
+                        status = wait_for_exit.clone().fuse() => (status, false),
                         _ = timeout_task.fuse() => {
                             terminal.kill(cx)?;
-                            wait_for_exit.await
+                            (wait_for_exit.await, true)
                         }
                     }
                 }
-                None => terminal.wait_for_exit(cx)?.await,
+                None => (terminal.wait_for_exit(cx)?.await, false),
             };
 
             let output = terminal.current_output(cx)?;
 
-            Ok(process_content(output, &input.command, exit_status))
+            Ok(process_content(
+                output,
+                &input.command,
+                exit_status,
+                timed_out,
+            ))
         })
     }
 }
@@ -153,6 +158,7 @@ fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
     exit_status: acp::TerminalExitStatus,
+    timed_out: bool,
 ) -> String {
     let content = output.output.trim();
     let is_empty = content.is_empty();
@@ -186,32 +192,25 @@ fn process_content(
             }
         }
         None => {
-            // When exit_code is None, check if there's a signal indicating how the process ended.
-            // strsignal() returns names like "Killed: 9" for SIGKILL, "Terminated: 15" for SIGTERM.
-            // The user stopping a command typically results in SIGKILL or SIGTERM.
-            let was_stopped_by_user = exit_status.signal.as_ref().map_or(false, |s| {
-                let s_lower = s.to_lowercase();
-                s_lower.contains("kill") || s_lower.contains("term")
-            });
-
-            if was_stopped_by_user {
-                // User manually stopped the command - just show the output without error framing
+            // No exit code means the process was killed by a signal.
+            // We know whether WE killed it (due to timeout) or the user did.
+            if timed_out {
+                if is_empty {
+                    format!("Command \"{command}\" timed out. No output was captured.")
+                } else {
+                    format!(
+                        "Command \"{command}\" timed out. Output captured before timeout:\n\n{}",
+                        content
+                    )
+                }
+            } else {
+                // User manually stopped the command - just show the output
                 if is_empty {
                     "Command was stopped. No output was captured.".to_string()
                 } else {
                     format!(
                         "Command was stopped. Output captured before stopping:\n\n{}",
                         content
-                    )
-                }
-            } else {
-                // Unknown termination reason
-                if is_empty {
-                    "Command terminated unexpectedly. No output was captured.".to_string()
-                } else {
-                    format!(
-                        "Command terminated unexpectedly. Output captured:\n\n{}",
-                        content,
                     )
                 }
             }
@@ -266,16 +265,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_process_content_with_sigkill() {
-        // When a process is killed with SIGKILL, strsignal returns "Killed: 9"
+    fn test_process_content_user_stopped() {
+        // User manually stopped the command (timed_out = false)
         let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
+        let exit_status = acp::TerminalExitStatus::new();
 
-        let result = process_content(output, "cargo build", exit_status);
+        let result = process_content(output, "cargo build", exit_status, false);
 
         assert!(
             result.contains("Command was stopped"),
-            "Expected 'Command was stopped' message for SIGKILL, got: {}",
+            "Expected 'Command was stopped' message when user stops, got: {}",
             result
         );
         assert!(
@@ -283,19 +282,29 @@ mod tests {
             "Expected output to be included, got: {}",
             result
         );
+        assert!(
+            !result.contains("timed out"),
+            "User stop should not mention timeout, got: {}",
+            result
+        );
     }
 
     #[test]
-    fn test_process_content_with_sigterm() {
-        // When a process is killed with SIGTERM, strsignal returns "Terminated: 15"
+    fn test_process_content_timed_out() {
+        // Command timed out (timed_out = true)
         let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new().signal("Terminated: 15".to_string());
+        let exit_status = acp::TerminalExitStatus::new();
 
-        let result = process_content(output, "cargo build", exit_status);
+        let result = process_content(output, "cargo build", exit_status, true);
 
         assert!(
-            result.contains("Command was stopped"),
-            "Expected 'Command was stopped' message for SIGTERM, got: {}",
+            result.contains("timed out"),
+            "Expected 'timed out' message for timeout, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("was stopped"),
+            "Timeout should not say 'was stopped', got: {}",
             result
         );
     }
@@ -305,7 +314,7 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("success output".to_string(), false);
         let exit_status = acp::TerminalExitStatus::new().exit_code(0);
 
-        let result = process_content(output, "echo hello", exit_status);
+        let result = process_content(output, "echo hello", exit_status, false);
 
         assert!(
             !result.contains("Command was stopped"),
@@ -324,7 +333,7 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("error output".to_string(), false);
         let exit_status = acp::TerminalExitStatus::new().exit_code(1);
 
-        let result = process_content(output, "false", exit_status);
+        let result = process_content(output, "false", exit_status, false);
 
         assert!(
             result.contains("failed with exit code 1"),
@@ -334,27 +343,31 @@ mod tests {
     }
 
     #[test]
-    fn test_process_content_with_unknown_signal() {
-        // Some other signal that's not SIGKILL or SIGTERM
-        let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new().signal("Hangup: 1".to_string());
+    fn test_process_content_stopped_with_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new();
 
-        let result = process_content(output, "some command", exit_status);
+        let result = process_content(output, "cargo build", exit_status, false);
 
         assert!(
-            result.contains("terminated unexpectedly"),
-            "Unknown signal should say 'terminated unexpectedly', got: {}",
+            result.contains("No output was captured"),
+            "Expected 'No output was captured' for empty output, got: {}",
             result
         );
     }
 
     #[test]
-    fn test_process_content_stopped_with_empty_output() {
+    fn test_process_content_timed_out_with_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
-        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
+        let exit_status = acp::TerminalExitStatus::new();
 
-        let result = process_content(output, "cargo build", exit_status);
+        let result = process_content(output, "sleep 1000", exit_status, true);
 
+        assert!(
+            result.contains("timed out"),
+            "Expected 'timed out' for timeout, got: {}",
+            result
+        );
         assert!(
             result.contains("No output was captured"),
             "Expected 'No output was captured' for empty output, got: {}",
