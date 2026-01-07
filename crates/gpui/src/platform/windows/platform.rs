@@ -635,7 +635,14 @@ impl Platform for WindowsPlatform {
                 UserName: PWSTR::from_raw(username.as_mut_ptr()),
                 ..CREDENTIALW::default()
             };
-            unsafe { CredWriteW(&credentials, 0) }?;
+            unsafe {
+                CredWriteW(&credentials, 0).map_err(|err| {
+                    anyhow!(
+                        "Failed to write credentials to Windows Credential Manager: {}",
+                        err,
+                    )
+                })?;
+            }
             Ok(())
         })
     }
