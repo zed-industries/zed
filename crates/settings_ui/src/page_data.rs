@@ -2836,6 +2836,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Active Encoding Button",
+                    description: "Control when to show the active encoding in the status bar.",
+                    field: Box::new(SettingField {
+                        json_path: Some("status_bar.active_encoding_button"),
+                        pick: |settings_content| {
+                            settings_content
+                                .status_bar
+                                .as_ref()?
+                                .active_encoding_button
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .status_bar
+                                .get_or_insert_default()
+                                .active_encoding_button = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Position Button",
                     description: "Show the cursor position button in the status bar.",
                     field: Box::new(SettingField {
