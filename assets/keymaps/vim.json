@@ -51,7 +51,7 @@
       "g /": "pane::DeploySearch",
       "?": ["vim::Search", { "backwards": true }],
       "*": "vim::SearchUnderCursor",
-      "#": "vim::MoveToPrevious",
+      "#": "vim::SearchUnderCursorPrevious",
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPreviousMatch",
       "%": "vim::Matching",

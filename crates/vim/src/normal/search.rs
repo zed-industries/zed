@@ -55,6 +55,19 @@ pub(crate) struct SearchUnderCursor {
     regex: bool,
 }
 
+/// Searches for the word under the cursor without moving (backwards).
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SearchUnderCursorPrevious {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
+    #[serde(default)]
+    partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
+}
+
 /// Initiates a search operation with the specified parameters.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
@@ -109,6 +122,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
     Vim::action(editor, cx, Vim::move_to_previous);
     Vim::action(editor, cx, Vim::search_under_cursor);
+    Vim::action(editor, cx, Vim::search_under_cursor_previous);
     Vim::action(editor, cx, Vim::move_to_next_match);
     Vim::action(editor, cx, Vim::move_to_previous_match);
     Vim::action(editor, cx, Vim::search);
@@ -126,6 +140,23 @@ impl Vim {
     ) {
         self.move_to_internal(
             Direction::Next,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            false,
+            window,
+            cx,
+        )
+    }
+
+    fn search_under_cursor_previous(
+        &mut self,
+        action: &SearchUnderCursorPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_internal(
+            Direction::Prev,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
