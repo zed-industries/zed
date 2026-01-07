@@ -7,7 +7,7 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture, stream::BoxStream
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -127,8 +127,8 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiDeepSeek
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiDeepSeek)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -635,7 +635,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(format!(
-                        "Or set the {API_KEY_ENV_VAR_NAME} environment variable."
+                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
                     ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),

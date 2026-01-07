@@ -73,6 +73,7 @@ fn main() -> Result<(), anyhow::Error> {
             registry,
             fs,
             Some(Default::default()),
+            false,
             cx,
         );
 
@@ -106,7 +107,7 @@ fn main() -> Result<(), anyhow::Error> {
                     .unwrap();
                 let mut matched_files = 0;
                 let mut matched_chunks = 0;
-                while let Ok(match_result) = matches.recv().await {
+                while let Ok(match_result) = matches.rx.recv().await {
                     if first_match.is_none() {
                         let time = timer.elapsed();
                         first_match = Some(time);

@@ -158,6 +158,9 @@ pub struct SettingsContent {
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
 
+    /// Settings for the which-key popup.
+    pub which_key: Option<WhichKeySettingsContent>,
+
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
 }
@@ -974,6 +977,28 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 128
     pub max_columns: Option<usize>,
+    /// Whether to show small single-line outputs inline instead of in a block.
+    ///
+    /// Default: true
+    pub inline_output: Option<bool>,
+    /// Maximum number of characters for an output to be shown inline.
+    /// Only applies when `inline_output` is true.
+    ///
+    /// Default: 50
+    pub inline_output_max_length: Option<usize>,
+}
+
+/// Settings for configuring the which-key popup behaviour.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct WhichKeySettingsContent {
+    /// Whether to show the which-key popup when holding down key combinations
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Delay in milliseconds before showing the which-key popup.
+    ///
+    /// Default: 700
+    pub delay_ms: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -332,12 +332,11 @@ impl FileHandle for std::fs::File {
         let mut path_buf = MaybeUninit::<[u8; libc::PATH_MAX as usize]>::uninit();
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the path buffer.
         let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr().cast()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -369,12 +368,11 @@ impl FileHandle for std::fs::File {
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the kif.
         let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -395,18 +393,21 @@ impl FileHandle for std::fs::File {
         // Query required buffer size (in wide chars)
         let required_len =
             unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
-        if required_len == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
-        }
+        anyhow::ensure!(
+            required_len != 0,
+            "GetFinalPathNameByHandleW returned 0 length"
+        );
 
         // Allocate buffer and retrieve the path
         let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
         let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
-        if written == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
-        }
+        anyhow::ensure!(
+            written != 0,
+            "GetFinalPathNameByHandleW failed to write path"
+        );
 
         let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        anyhow::ensure!(!os_str.is_empty(), "Could find a path for the file handle");
         Ok(PathBuf::from(os_str))
     }
 }
@@ -431,7 +432,18 @@ impl RealFs {
         for component in path.components() {
             match component {
                 std::path::Component::Prefix(_) => {
-                    let canonicalized = std::fs::canonicalize(component)?;
+                    let component = component.as_os_str();
+                    let canonicalized = if component
+                        .to_str()
+                        .map(|e| e.ends_with("\\"))
+                        .unwrap_or(false)
+                    {
+                        std::fs::canonicalize(component)
+                    } else {
+                        let mut component = component.to_os_string();
+                        component.push("\\");
+                        std::fs::canonicalize(component)
+                    }?;
 
                     let mut strip = PathBuf::new();
                     for component in canonicalized.components() {
@@ -1839,6 +1851,18 @@ impl FakeFs {
             let branch = branch.map(Into::into);
             state.branches.extend(branch.clone());
             state.current_branch_name = branch
+        })
+        .unwrap();
+    }
+
+    pub fn set_remote_for_repo(
+        &self,
+        dot_git: &Path,
+        name: impl Into<String>,
+        url: impl Into<String>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.remotes.insert(name.into(), url.into());
         })
         .unwrap();
     }
@@ -3389,6 +3413,26 @@ mod tests {
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "Hello");
+    }
+
+    #[gpui::test]
+    #[cfg(target_os = "windows")]
+    async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
+        use util::paths::SanitizedPath;
+
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("test (1).txt");
+        let file = SanitizedPath::new(&file);
+        std::fs::write(&file, "test").unwrap();
+
+        let canonicalized = fs.canonicalize(file.as_path()).await;
+        assert!(canonicalized.is_ok());
     }
 
     #[gpui::test]

@@ -24,7 +24,7 @@
     },
   },
   {
-    "context": "InlineAssistEditor",
+    "context": "InlineAssistant > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-backspace": "editor::Cancel",
@@ -71,7 +71,8 @@
     "context": "Editor && mode == full && edit_prediction",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-right": "editor::AcceptPartialEditPrediction",
+      "cmd-right": "editor::AcceptNextWordEditPrediction",
+      "cmd-down": "editor::AcceptNextLineEditPrediction",
     },
   },
   {

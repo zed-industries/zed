@@ -1,6 +1,7 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
-use gpui::{App, Entity, SharedString, Task};
+use futures::FutureExt as _;
+use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 use util::markdown::MarkdownInlineCode;
 
@@ -25,13 +27,17 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
+/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute.
-    command: String,
+    pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
-    cd: String,
+    pub cd: String,
+    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    pub timeout_ms: Option<u64>,
 }
 
 pub struct TerminalTool {
@@ -116,7 +122,26 @@ impl AgentTool for TerminalTool {
                 acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
             ]));
 
-            let exit_status = terminal.wait_for_exit(cx)?.await;
+            let timeout = input.timeout_ms.map(Duration::from_millis);
+
+            let exit_status = match timeout {
+                Some(timeout) => {
+                    let wait_for_exit = terminal.wait_for_exit(cx)?;
+                    let timeout_task = cx.background_spawn(async move {
+                        smol::Timer::after(timeout).await;
+                    });
+
+                    futures::select! {
+                        status = wait_for_exit.clone().fuse() => status,
+                        _ = timeout_task.fuse() => {
+                            terminal.kill(cx)?;
+                            wait_for_exit.await
+                        }
+                    }
+                }
+                None => terminal.wait_for_exit(cx)?.await,
+            };
+
             let output = terminal.current_output(cx)?;
 
             Ok(process_content(output, &input.command, exit_status))

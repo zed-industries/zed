@@ -228,7 +228,6 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("brackets", |q| &mut q.brackets),
     ("outline", |q| &mut q.outline),
     ("indents", |q| &mut q.indents),
-    ("embedding", |q| &mut q.embedding),
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
@@ -245,7 +244,6 @@ pub struct LanguageQueries {
     pub brackets: Option<Cow<'static, str>>,
     pub indents: Option<Cow<'static, str>>,
     pub outline: Option<Cow<'static, str>>,
-    pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
@@ -408,6 +406,12 @@ impl LanguageRegistry {
         let load_lsp_adapter = state.available_lsp_adapters.get(name)?;
 
         Some(load_lsp_adapter())
+    }
+
+    /// Checks if a language server adapter with the given name is available to be loaded.
+    pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
+        let state = self.state.read();
+        state.available_lsp_adapters.contains_key(name)
     }
 
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {

@@ -5,8 +5,7 @@ use std::{
 
 use fs::RealFs;
 use gpui::Application;
-use settings::Settings;
-use worktree::{Worktree, WorktreeSettings};
+use worktree::Worktree;
 
 fn main() {
     let Some(worktree_root_path) = std::env::args().nth(1) else {
@@ -27,6 +26,7 @@ fn main() {
                 true,
                 fs,
                 Arc::new(AtomicUsize::new(0)),
+                true,
                 cx,
             )
             .await

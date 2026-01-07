@@ -68,8 +68,10 @@
     "bindings": {
       "cmd-f12": "outline::Toggle",
       "cmd-r": ["buffer_search::Deploy", { "replace_enabled": true }],
-      "cmd-shift-o": "file_finder::Toggle",
       "cmd-l": "go_to_line::Toggle",
+      "cmd-e": "file_finder::Toggle",
+      "cmd-shift-o": "file_finder::Toggle",
+      "cmd-shift-n": "file_finder::Toggle",
       "alt-enter": "editor::ToggleCodeActions",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-j": "editor::Hover",

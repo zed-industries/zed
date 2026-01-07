@@ -46,6 +46,8 @@ use crate::{
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -90,43 +92,45 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
-    current_platform(true).background_executor()
+    // For standalone background executor, use a dead liveness since there's no App.
+    // Weak::new() creates a weak reference that always returns None on upgrade.
+    current_platform(true, std::sync::Weak::new()).background_executor()
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new(headless))
+pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless, liveness))
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
     #[cfg(feature = "x11")]
     use anyhow::Context as _;
 
     if headless {
-        return Rc::new(HeadlessClient::new());
+        return Rc::new(HeadlessClient::new(liveness));
     }
 
     match guess_compositor() {
         #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new()),
+        "Wayland" => Rc::new(WaylandClient::new(liveness)),
 
         #[cfg(feature = "x11")]
         "X11" => Rc::new(
-            X11Client::new()
+            X11Client::new(liveness)
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
         ),
 
-        "Headless" => Rc::new(HeadlessClient::new()),
+        "Headless" => Rc::new(HeadlessClient::new(liveness)),
         _ => unreachable!(),
     }
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
     Rc::new(
-        WindowsPlatform::new()
+        WindowsPlatform::new(liveness)
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
@@ -262,12 +266,18 @@ pub(crate) trait Platform: 'static {
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn write_to_primary(&self, item: ClipboardItem);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn write_to_clipboard(&self, item: ClipboardItem);
+
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
-    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn write_to_primary(&self, item: ClipboardItem);
+
+    #[cfg(target_os = "macos")]
+    fn read_from_find_pasteboard(&self) -> Option<ClipboardItem>;
+    #[cfg(target_os = "macos")]
+    fn write_to_find_pasteboard(&self, item: ClipboardItem);
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
@@ -491,6 +501,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
+    fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
@@ -510,6 +521,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn is_subpixel_rendering_supported(&self) -> bool;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -564,6 +576,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
+
+    /// Renders the given scene to a texture and returns the pixel data as an RGBA image.
+    /// This does not present the frame to screen - useful for visual testing where we want
+    /// to capture what would be rendered without displaying it or requiring the window to be visible.
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
+        anyhow::bail!("render_to_image not implemented for this platform")
+    }
 }
 
 /// Type alias for runnables with metadata.
@@ -607,6 +627,8 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
+    -> TextRenderingMode;
 }
 
 pub(crate) struct NoopTextSystem;
@@ -727,6 +749,14 @@ impl PlatformTextSystem for NoopTextSystem {
             len: text.len(),
         }
     }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
+    }
 }
 
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
@@ -784,6 +814,8 @@ impl AtlasKey {
             AtlasKey::Glyph(params) => {
                 if params.is_emoji {
                     AtlasTextureKind::Polychrome
+                } else if params.subpixel_rendering {
+                    AtlasTextureKind::Subpixel
                 } else {
                     AtlasTextureKind::Monochrome
                 }
@@ -885,6 +917,7 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
+    Subpixel = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1337,6 +1370,10 @@ pub enum WindowKind {
     /// docks, notifications or wallpapers.
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     LayerShell(layer_shell::LayerShellOptions),
+
+    /// A window that appears on top of its parent window and blocks interaction with it
+    /// until the modal window is closed
+    Dialog,
 }
 
 /// The appearance of the window, as defined by the operating system.
@@ -1390,6 +1427,18 @@ pub enum WindowBackgroundAppearance {
     MicaBackdrop,
     /// The Mica Alt backdrop material, supported on Windows 11.
     MicaAltBackdrop,
+}
+
+/// The text rendering mode to use for drawing glyphs.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TextRenderingMode {
+    /// Use the platform's default text rendering mode.
+    #[default]
+    PlatformDefault,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 /// The options that can be configured for a file dialog prompt

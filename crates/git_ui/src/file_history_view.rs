@@ -633,9 +633,9 @@ impl Item for FileHistoryView {
         &mut self,
         _workspace: &mut Workspace,
         window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
     }
 
     fn show_toolbar(&self) -> bool {

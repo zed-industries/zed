@@ -502,6 +502,11 @@
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem", // not a helix default
       "g .": "vim::HelixGotoLastModification",
+      "g o": "editor::ToggleSelectedDiffHunks", // Zed specific
+      "g shift-o": "git::ToggleStaged", // Zed specific
+      "g shift-r": "git::Restore", // Zed specific
+      "g u": "git::StageAndNext", // Zed specific
+      "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
       "space w v": "pane::SplitDown",
@@ -638,6 +643,9 @@
     "context": "vim_operator == helix_m",
     "bindings": {
       "m": "vim::Matching",
+      "s": "vim::PushHelixSurroundAdd",
+      "r": "vim::PushHelixSurroundReplace",
+      "d": "vim::PushHelixSurroundDelete",
     },
   },
   {
@@ -1090,6 +1098,15 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+    },
+  },
+  {
+    "context": "FileHistoryView",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
     },
   },
 ]

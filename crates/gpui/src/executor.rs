@@ -63,6 +63,30 @@ impl<T> Task<T> {
     pub fn from_scheduler(task: scheduler::Task<T>) -> Self {
         Task(task)
     }
+
+    /// Converts this task into a fallible task that returns `Option<T>`.
+    ///
+    /// Unlike the standard `Task<T>`, a [`FallibleTask`] will return `None`
+    /// if the app was dropped while the task is executing.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Background task that gracefully handles app shutdown:
+    /// cx.background_spawn(async move {
+    ///     let result = foreground_task.fallible().await;
+    ///     if let Some(value) = result {
+    ///         // Process the value
+    ///     }
+    ///     // If None, app was shut down - just exit gracefully
+    /// }).detach();
+    /// ```
+    pub fn fallible(self) -> FallibleTask<T> {
+        FallibleTask(match self.0 {
+            TaskState::Ready(val) => FallibleTaskState::Ready(val),
+            TaskState::Spawned(task) => FallibleTaskState::Spawned(task.fallible()),
+        })
+    }
 }
 
 impl<T, E> Task<Result<T, E>>
@@ -183,7 +207,10 @@ impl BackgroundExecutor {
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -603,5 +630,198 @@ impl Drop for Scope<'_> {
         // Wait until the channel is closed, which means that all of the spawned
         // futures have resolved.
         self.executor.block(self.rx.next());
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{App, TestDispatcher, TestPlatform};
+    use rand::SeedableRng;
+    use std::cell::RefCell;
+
+    /// Helper to create test infrastructure.
+    /// Returns (dispatcher, background_executor, app) where app's foreground_executor has liveness.
+    fn create_test_app() -> (TestDispatcher, BackgroundExecutor, Rc<crate::AppCell>) {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        // Create liveness for task cancellation
+        let liveness = std::sync::Arc::new(());
+        let liveness_weak = std::sync::Arc::downgrade(&liveness);
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher, liveness_weak);
+
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor);
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, liveness, asset_source, http_client);
+        (dispatcher, background_executor, app)
+    }
+
+    #[test]
+    fn sanity_test_tasks_run() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+
+        let task_ran = Rc::new(RefCell::new(false));
+
+        foreground_executor
+            .spawn({
+                let task_ran = Rc::clone(&task_ran);
+                async move {
+                    *task_ran.borrow_mut() = true;
+                }
+            })
+            .detach();
+
+        // Run dispatcher while app is still alive
+        dispatcher.run_until_parked();
+
+        // Task should have run
+        assert!(
+            *task_ran.borrow(),
+            "Task should run normally when app is alive"
+        );
+    }
+
+    #[test]
+    fn test_task_cancelled_when_app_dropped() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let task_ran = Rc::new(RefCell::new(false));
+        let task_ran_clone = Rc::clone(&task_ran);
+
+        foreground_executor
+            .spawn(async move {
+                *task_ran_clone.borrow_mut() = true;
+            })
+            .detach();
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        // The task should have been cancelled, not run
+        assert!(
+            !*task_ran.borrow(),
+            "Task should have been cancelled when app was dropped, but it ran!"
+        );
+    }
+
+    #[test]
+    fn test_nested_tasks_both_cancel() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let outer_completed = Rc::new(RefCell::new(false));
+        let inner_completed = Rc::new(RefCell::new(false));
+        let reached_await = Rc::new(RefCell::new(false));
+
+        let outer_flag = Rc::clone(&outer_completed);
+        let inner_flag = Rc::clone(&inner_completed);
+        let await_flag = Rc::clone(&reached_await);
+
+        // Channel to block the inner task until we're ready
+        let (tx, rx) = futures::channel::oneshot::channel::<()>();
+
+        let inner_executor = foreground_executor.clone();
+
+        foreground_executor
+            .spawn(async move {
+                let inner_task = inner_executor.spawn({
+                    let inner_flag = Rc::clone(&inner_flag);
+                    async move {
+                        rx.await.ok();
+                        *inner_flag.borrow_mut() = true;
+                    }
+                });
+
+                *await_flag.borrow_mut() = true;
+
+                inner_task.await;
+
+                *outer_flag.borrow_mut() = true;
+            })
+            .detach();
+
+        // Run dispatcher until outer task reaches the await point
+        // The inner task will be blocked on the channel
+        dispatcher.run_until_parked();
+
+        // Verify we actually reached the await point before dropping the app
+        assert!(
+            *reached_await.borrow(),
+            "Outer task should have reached the await point"
+        );
+
+        // Neither task should have completed yet
+        assert!(
+            !*outer_completed.borrow(),
+            "Outer task should not have completed yet"
+        );
+        assert!(
+            !*inner_completed.borrow(),
+            "Inner task should not have completed yet"
+        );
+
+        // Drop the channel sender and app while outer is awaiting inner
+        drop(tx);
+        drop(app);
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        // Run dispatcher - both tasks should be cancelled
+        dispatcher.run_until_parked();
+
+        // Neither task should have completed (both were cancelled)
+        assert!(
+            !*outer_completed.borrow(),
+            "Outer task should have been cancelled, not completed"
+        );
+        assert!(
+            !*inner_completed.borrow(),
+            "Inner task should have been cancelled, not completed"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_polling_cancelled_task_panics() {
+        let (dispatcher, background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let task = foreground_executor.spawn(async move { 42 });
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        background_executor.block(task);
+    }
+
+    #[test]
+    fn test_polling_cancelled_task_returns_none_with_fallible() {
+        let (dispatcher, background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let task = foreground_executor.spawn(async move { 42 }).fallible();
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        let result = background_executor.block(task);
+        assert_eq!(result, None, "Cancelled task should return None");
     }
 }

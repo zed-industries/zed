@@ -62,7 +62,7 @@ pub fn derive_visual_context(input: TokenStream) -> TokenStream {
                 V: gpui::Focusable,
             {
                 let focus_handle = gpui::Focusable::focus_handle(entity, self.#app_variable);
-                self.#window_variable.focus(&focus_handle)
+                self.#window_variable.focus(&focus_handle, self.#app_variable)
             }
         }
     };

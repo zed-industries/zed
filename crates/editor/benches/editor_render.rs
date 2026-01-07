@@ -29,7 +29,7 @@ fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext
             );
             editor
         });
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
         editor
     });
 
@@ -72,7 +72,7 @@ fn open_editor_with_one_long_line(bencher: &mut Bencher<'_>, args: &(String, Tes
                 editor.set_style(editor::EditorStyle::default(), window, cx);
                 editor
             });
-            window.focus(&editor.focus_handle(cx));
+            window.focus(&editor.focus_handle(cx), cx);
             editor
         });
     });
@@ -100,7 +100,7 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor
         });
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
         editor
     });
 
