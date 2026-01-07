@@ -2314,7 +2314,7 @@ impl Pane {
                     .flatten();
                 let save_task = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
-                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
                     let new_path = ProjectPath { worktree_id, path };
 
                     pane.update_in(cx, |pane, window, cx| {

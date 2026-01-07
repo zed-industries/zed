@@ -249,15 +249,13 @@ impl OpenAiCompatibleLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
             (
                 state.api_key_state.key(api_url),
                 state.settings.api_url.clone(),
             )
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {

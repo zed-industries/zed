@@ -177,7 +177,7 @@ async fn wait_for_language_servers_to_start(
                     .is_some_and(|status| status.has_pending_diagnostic_updates)
             })
             .collect::<HashSet<_>>()
-    })?;
+    });
     while !pending_language_server_ids.is_empty() {
         futures::select! {
             language_server_id = rx.next() => {

@@ -8721,8 +8721,8 @@ impl LspStore {
                         })
                     })?
                     .await?;
-                let worktree_root = worktree.read_with(cx, |worktree, _| worktree.abs_path())?;
-                let source_ws = if worktree.read_with(cx, |worktree, _| worktree.is_local())? {
+                let worktree_root = worktree.read_with(cx, |worktree, _| worktree.abs_path());
+                let source_ws = if worktree.read_with(cx, |worktree, _| worktree.is_local()) {
                     lsp_store
                         .update(cx, |lsp_store, cx| {
                             if let Some(local) = lsp_store.as_local_mut() {
@@ -8779,7 +8779,7 @@ impl LspStore {
                     if is_read_only {
                         buffer.set_capability(Capability::ReadOnly, cx);
                     }
-                })?;
+                });
             }
             Ok(buffer)
         })

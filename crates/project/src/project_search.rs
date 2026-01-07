@@ -256,16 +256,14 @@ impl Search {
                         });
                         let weak_buffer_store = self.buffer_store.downgrade();
                         let buffer_store = self.buffer_store;
-                        let Ok(guard) = cx.update(|cx| {
+                        let guard = cx.update(|cx| {
                             Project::retain_remotely_created_models_impl(
                                 &models,
                                 &buffer_store,
                                 &self.worktree_store,
                                 cx,
                             )
-                        }) else {
-                            return;
-                        };
+                        });
 
                         let issue_remote_buffers_request = cx
                             .spawn(async move |cx| {

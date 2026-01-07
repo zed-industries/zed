@@ -630,7 +630,7 @@ impl HeadlessProject {
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
-        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.clone())?;
+        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.clone());
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             trusted_worktrees.trust(
                 &worktree_store,
@@ -655,7 +655,7 @@ impl HeadlessProject {
             .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
         let worktree_store =
-            this.read_with(&cx, |project, _| project.worktree_store.downgrade())?;
+            this.read_with(&cx, |project, _| project.worktree_store.downgrade());
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             let restricted_paths = envelope
                 .payload
@@ -665,7 +665,7 @@ impl HeadlessProject {
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
-        })?;
+        });
         Ok(proto::Ack {})
     }
 
@@ -805,7 +805,7 @@ impl HeadlessProject {
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone());
 
         while let Ok(buffer) = results.rx.recv().await {
-            let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id())?;
+            let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id());
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {

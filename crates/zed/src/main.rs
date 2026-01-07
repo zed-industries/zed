@@ -872,7 +872,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     history_store
                         .update(&mut cx.clone(), |store, cx| {
                             store.save_thread(session_id.clone(), db_thread, cx)
-                        })?
+                        })
                         .await?;
 
                     let thread_metadata = agent::DbThreadMetadata {

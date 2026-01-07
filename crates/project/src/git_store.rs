@@ -1883,7 +1883,7 @@ impl GitStore {
                     askpass,
                     cx,
                 )
-            })?
+            })
             .await??;
         Ok(proto::RemoteMessageResponse {
             stdout: remote_output.stdout,
@@ -2659,8 +2659,8 @@ impl GitStore {
                 .entry(request.original_sender_id.unwrap_or(request.sender_id))
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().unstaged = Some(diff.clone());
-        })?;
-        let staged_text = diff.read_with(&cx, |diff, cx| diff.base_text_string(cx))?;
+        });
+        let staged_text = diff.read_with(&cx, |diff, cx| diff.base_text_string(cx));
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -3108,7 +3108,7 @@ impl BufferGitState {
                             language.clone(),
                             cx,
                         )
-                    })?
+                    })
                     .await,
                 );
             }
@@ -3131,7 +3131,7 @@ impl BufferGitState {
                                 language.clone(),
                                 cx,
                             )
-                        })?
+                        })
                         .await,
                     )
                 }
@@ -3174,7 +3174,7 @@ impl BufferGitState {
                         diff.language_changed(language.clone(), language_registry.clone(), cx);
                     }
                     diff.set_snapshot(new_unstaged_diff, &buffer, cx)
-                })?;
+                });
                 Some(task.await)
             } else {
                 None
@@ -3197,7 +3197,7 @@ impl BufferGitState {
                             true,
                             cx,
                         )
-                    })?
+                    })
                     .await;
             }
 

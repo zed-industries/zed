@@ -247,12 +247,10 @@ impl OpenAiLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let provider = PROVIDER_NAME;
         let future = self.request_limiter.stream(async move {

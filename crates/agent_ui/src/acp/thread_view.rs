@@ -985,7 +985,7 @@ impl AcpThreadView {
                         );
                     });
                 }
-            })?;
+            });
 
             anyhow::Ok(())
         })
@@ -1019,7 +1019,7 @@ impl AcpThreadView {
             history_store
                 .update(&mut cx.clone(), |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, cx)
-                })?
+                })
                 .await?;
 
             let thread_metadata = agent::DbThreadMetadata {

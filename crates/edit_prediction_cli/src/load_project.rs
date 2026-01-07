@@ -123,7 +123,7 @@ async fn cursor_position(
 
     let (cursor_excerpt, cursor_offset_within_excerpt) = example.spec.cursor_excerpt()?;
 
-    let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
+    let excerpt_offset = cursor_buffer.read_with(&*cx, |buffer, _cx| {
         let text = buffer.text();
 
         let mut matches = text.match_indices(&cursor_excerpt);
@@ -142,7 +142,8 @@ async fn cursor_position(
     })?;
 
     let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
-    let cursor_anchor = cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset));
+    let cursor_anchor =
+        cursor_buffer.read_with(&*cx, |buffer, _| buffer.anchor_after(cursor_offset));
 
     Ok((cursor_buffer, cursor_anchor))
 }

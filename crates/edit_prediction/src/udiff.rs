@@ -32,7 +32,7 @@ pub async fn apply_diff(
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {
     let worktree = project
-        .read_with(cx, |project, cx| project.visible_worktrees(cx).next())?
+        .read_with(cx, |project, cx| project.visible_worktrees(cx).next())
         .context("project has no worktree")?;
 
     let paths: Vec<_> = diff_str
@@ -174,7 +174,7 @@ pub async fn refresh_worktree_entries(
                     .as_local()
                     .unwrap()
                     .refresh_entries_for_paths(rel_paths)
-            })?
+            })
             .recv()
             .await;
     }

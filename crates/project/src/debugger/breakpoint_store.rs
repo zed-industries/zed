@@ -276,12 +276,12 @@ impl BreakpointStore {
                 this.worktree_store
                     .read(cx)
                     .project_path_for_absolute_path(message.payload.path.as_ref(), cx)
-            })?
+            })
             .context("Could not resolve provided abs path")?;
         let buffer = this
             .update(&mut cx, |this, cx| {
                 this.buffer_store.read(cx).get_by_path(&path)
-            })?
+            })
             .context("Could not find buffer for a given path")?;
         let breakpoint = message
             .payload
@@ -792,7 +792,7 @@ impl BreakpointStore {
                     let (worktree, relative_path) = worktree_store
                         .update(cx, |this, cx| {
                             this.find_or_create_worktree(&path, false, cx)
-                        })
+                        })?
                         .await?;
                     let buffer = buffer_store
                         .update(cx, |this, cx| {
@@ -801,7 +801,7 @@ impl BreakpointStore {
                                 path: relative_path,
                             };
                             this.open_buffer(path, cx)
-                        })
+                        })?
                         .await;
                     let Ok(buffer) = buffer else {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");

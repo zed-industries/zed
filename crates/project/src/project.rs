@@ -1596,7 +1596,7 @@ impl Project {
         });
 
         let environment =
-            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
         let breakpoint_store = cx.new(|_| {
             BreakpointStore::remote(
                 remote_id,
@@ -1604,7 +1604,7 @@ impl Project {
                 buffer_store.clone(),
                 worktree_store.clone(),
             )
-        })?;
+        });
         let dap_store = cx.new(|cx| {
             DapStore::new_collab(
                 remote_id,
@@ -4920,7 +4920,7 @@ impl Project {
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
-        })?;
+        });
         Ok(proto::Ack {})
     }
 

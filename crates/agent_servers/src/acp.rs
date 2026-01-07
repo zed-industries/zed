@@ -343,7 +343,7 @@ impl AgentConnection for AcpConnection {
                     }
                 })?;
 
-            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>())?;
+            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
 
             // Config options take precedence over legacy modes/models
             let (modes, models, config_options) = if use_config_options && let Some(opts) = response.config_options {

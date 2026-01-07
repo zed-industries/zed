@@ -786,10 +786,10 @@ async fn build_buffer_diff(
         LineEnding::normalize(old_text);
     }
 
-    let language = cx.update(|cx| buffer.read(cx).language().cloned())?;
-    let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
+    let language = cx.update(|cx| buffer.read(cx).language().cloned());
+    let buffer = cx.update(|cx| buffer.read(cx).snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx))?;
+    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
 
     let update = diff
         .update(cx, |diff, cx| {
@@ -806,7 +806,7 @@ async fn build_buffer_diff(
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, Some(language_registry.clone()), cx);
         diff.set_snapshot(update, &buffer.text, cx)
-    })?
+    })
     .await;
 
     Ok(diff)
