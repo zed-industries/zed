@@ -97,15 +97,46 @@ Use Zed's `VisualTestContext` system to verify UI changes:
 
 4. **Iterate based on visual feedback** - if something looks wrong, fix it before moving on
 
+### Branch Stacking Strategy
+
+All PRs in this feature are **stacked on top of each other**:
+
+```
+origin/main
+  └── tool-permission-granularity (PR 1)
+        └── tool-permission-2 (PR 2)
+              └── tool-permission-3 (PR 3)
+                    └── tool-permission-4 (PR 4, future)
+                          └── tool-permission-5 (PR 5, future)
+```
+
+This ensures clean diffs for reviewers - each PR only shows its own changes, not changes from previous PRs.
+
 ### Before Pushing Each PR
 
-1. **Fetch and merge origin/main**:
+1. **Update the entire stack with origin/main**:
 
    ```bash
+   # First, update the base branch with origin/main
+   git checkout tool-permission-granularity
    git fetch origin
    git merge origin/main
-   # Resolve conflicts if any
+   git push
+   
+   # Then rebase each branch on top of the previous one
+   git checkout tool-permission-2
+   git rebase tool-permission-granularity
+   
+   git checkout tool-permission-3
+   git rebase tool-permission-2
+   
+   # Continue for any additional branches...
+   
+   # Force push all rebased branches
+   git push --force-with-lease origin tool-permission-2 tool-permission-3
    ```
+
+   **Why this matters**: If you just merge origin/main into each branch independently, the PRs will show duplicate commits and messy diffs. Rebasing maintains the clean stack.
 
 2. **Run tests locally**:
 
@@ -140,9 +171,18 @@ Use Zed's `VisualTestContext` system to verify UI changes:
 - "Always Allow" sets `always_allow_tool_actions = true` globally (affects ALL tools)
 - No per-tool granularity, no regex matching for terminal commands
 
+## Target State
+
+After all PRs land:
+- The global "Always Allow" button is **never shown** in the permission dialog
+- All "Always allow" actions are **tool-specific** (sets `tools.<tool_id>.default_mode = "allow"`)
+- Built-in granular tools also get pattern-based "Always allow `<pattern>`" buttons
+- Third-party tools (MCP, custom) get simple per-tool permissions (no regex)
+- `always_allow_tool_actions` becomes a legacy setting only settable via manual JSON editing
+
 ## Tools Requiring Granular Permissions
 
-These tools get the full regex-based permission system:
+These **built-in tools** get the full regex-based permission system:
 
 | Tool               | Regex Matches Against        |
 | ------------------ | ---------------------------- |
@@ -155,7 +195,21 @@ These tools get the full regex-based permission system:
 | `fetch`            | URL                          |
 | `web_search`       | Search query                 |
 
-Other tools (`read_file`, `list_directory`, `grep`, `find_path`, `now`, `thinking`, `diagnostics`, `open`, `restore_file_from_disk`, `copy_path`) do not get granular permissions.
+Other built-in tools (`read_file`, `list_directory`, `grep`, `find_path`, `now`, `thinking`, `diagnostics`, `open`, `restore_file_from_disk`, `copy_path`) do not get granular permissions.
+
+## Third-Party Tools (MCP Tools from Context Servers)
+
+MCP tools (from context servers like filesystem, GitHub, etc.) get **simple per-tool permissions** without regex support:
+
+For these tools:
+- `default_mode` can be set to `allow`, `deny`, or `confirm`
+- No `always_allow`, `always_deny`, or `always_confirm` regex lists (no predictable input format)
+- The permission dialog shows only 3 buttons:
+  1. **Always allow <tool_name>** - Sets `tools.<tool_id>.default_mode = "allow"`
+  2. **Allow** - Approve once
+  3. **Deny** - Reject once
+
+This ensures users can grant per-tool permissions without needing to configure regex patterns, while still eliminating the global "Always Allow" button.
 
 **Note**: This permission system applies only to the native Zed agent. External agent servers (Claude Code, Gemini CLI, etc.) have their own permission systems and are not affected by these settings.
 
@@ -292,6 +346,17 @@ pub enum ToolPermissionMode {
             { "pattern": "^https://docs\\.rs" },
             { "pattern": "^https://crates\\.io" },
           ],
+        },
+        // MCP tools: simple default_mode, no regex
+        // Tool IDs are prefixed with server ID to avoid collisions
+        "mcp:filesystem:read_file": {
+          "default_mode": "allow", // Trust this MCP tool
+        },
+        "mcp:github:create_issue": {
+          "default_mode": "confirm", // Always ask before creating issues
+        },
+        "mcp:dangerous-server:delete_everything": {
+          "default_mode": "deny", // Block this MCP tool entirely
         },
       },
     },
@@ -494,31 +559,35 @@ pub fn decide_permission(
 
 ### New Behavior (behind `tool-permissions` feature flag)
 
-When showing permission dialog, include tool-specific buttons:
+When showing permission dialog, show tool-specific buttons instead of the global "Always Allow".
 
-#### For Terminal Tool
+**Key Design Decision**: The global "Always Allow" button is **hidden** when tool-specific granular options are available. This encourages users to make tool-specific decisions rather than blanket approvals.
 
-Show four options:
+#### For Built-in Granular Tools (terminal, edit_file, etc.)
 
-1. **Allow** - Approve this command once
-2. **Always allow terminal** - Sets `tools.terminal.default_mode = "allow"`
-3. **Always allow `<prefix>` commands** - Adds pattern to `tools.terminal.always_allow`
-   - Extract prefix from command (e.g., `sed ` → adds `^sed\\s`)
-   - Button text: "Always allow `sed` commands"
-4. **Deny** - Reject this command once
+Show up to four options:
 
-#### For Other Granular Tools
-
-Show four options (similar to terminal):
-
-1. **Allow** - Approve once
-2. **Always allow <tool_name>** - Sets `tools.<name>.default_mode = "allow"`
-3. **Always allow `<pattern>`** - Adds pattern to `tools.<name>.always_allow`
-   - For `edit_file`, `delete_path`, etc.: extract directory or file pattern from path
-   - For `fetch`: extract domain from URL (e.g., `github.com` → adds `^https?://github\\.com`)
-   - For `web_search`: extract key terms from query
-   - Button text examples: "Always allow edits to `src/`", "Always allow fetching from `github.com`"
+1. **Always allow <tool_name>** - Sets `tools.<name>.default_mode = "allow"`
+2. **Always allow `<pattern>`** - Adds pattern to `tools.<name>.always_allow` (only shown when pattern can be extracted)
+   - For `terminal`: extract command name (e.g., `cargo` → `^cargo\\s`)
+   - For `edit_file`, `delete_path`, etc.: extract parent directory (e.g., `src/main.rs` → `^src/`)
+   - For `fetch`: extract domain from URL (e.g., `github.com` → `^https?://github\\.com`)
+3. **Allow** - Approve once
 4. **Deny** - Reject once
+
+Button counts:
+- With extractable pattern: 4 buttons
+- Without extractable pattern (e.g., `./script.sh`): 3 buttons
+
+#### For Third-Party Tools (MCP tools, custom tools from Settings)
+
+Third-party tools get simple per-tool permissions without regex support:
+
+1. **Always allow <tool_name>** - Sets `tools.<tool_id>.default_mode = "allow"`
+2. **Allow** - Approve once
+3. **Deny** - Reject once
+
+This ensures that **all** "Always Allow" actions are tool-specific, never global. The `always_allow_tool_actions` setting becomes a legacy/power-user option that can only be set manually in settings.
 
 ### Pattern Extraction Logic
 
@@ -647,63 +716,177 @@ fn get_settings_for_worktree(
 - Settings can be added to `settings.json` without errors
 - Invalid regexes are logged and skipped
 
-### PR 2: Permission Evaluation + Terminal Tool
+### PR 2: Permission Evaluation + Terminal Tool ✅ COMPLETE
+
+**Status**: Draft PR #46155 - CI green, awaiting review
 
 **Goal**: Terminal tool respects new permission rules
 
-- [ ] Create `crates/agent/src/tool_permissions.rs` with `decide_permission()`
-- [ ] Write unit tests for `decide_permission()`:
+- [x] Create `crates/agent/src/tool_permissions.rs` with `decide_permission()`
+- [x] Write unit tests for `decide_permission()` (15 tests):
   - Test deny > confirm > allow precedence
   - Test case sensitivity flag
   - Test regex matching anywhere in string
-- [ ] Integrate with `terminal_tool.rs`
-- [ ] Write integration test with `VisualTestContext`
-- [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
+  - Test default mode handling
+  - Test fork bomb pattern matching
+- [x] Integrate with `terminal_tool.rs`
+- [x] Write integration tests:
+  - `test_terminal_tool_deny_rule_blocks_command`
+  - `test_terminal_tool_allow_rule_skips_confirmation`
+- [x] Commit with `Co-Authored-By: Claude Opus 4.5`
 
-**Verification**:
+**Verification**: ✅
 
 - Terminal commands matching deny rules are rejected
 - Terminal commands matching allow rules auto-approve
 - Default behavior unchanged when no rules configured
 
-### PR 3: Other Tool Integrations
+### PR 3: Other Tool Integrations ✅ COMPLETE
+
+**Status**: Draft PR #46164 - CI green, awaiting review
 
 **Goal**: All 8 tools respect new permission rules
 
-- [ ] Integrate with `edit_file_tool.rs`
-- [ ] Integrate with `delete_path_tool.rs`
-- [ ] Integrate with `move_path_tool.rs` (check both paths)
-- [ ] Integrate with `create_directory_tool.rs`
-- [ ] Integrate with `save_file_tool.rs`
-- [ ] Integrate with `fetch_tool.rs`
-- [ ] Integrate with `web_search_tool.rs`
-- [ ] Write tests for each tool
-- [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
+- [x] Integrate with `edit_file_tool.rs`
+- [x] Integrate with `delete_path_tool.rs`
+- [x] Integrate with `move_path_tool.rs` (check both paths)
+- [x] Integrate with `create_directory_tool.rs`
+- [x] Integrate with `save_file_tool.rs`
+- [x] Integrate with `fetch_tool.rs`
+- [x] Integrate with `web_search_tool.rs`
+- [x] Fixed save_file_tool test to set always_allow_tool_actions
+- [x] Commit with `Co-Authored-By: Claude Opus 4.5`
 
-**Verification**:
+**Verification**: ✅
 
 - Each tool respects its permission rules
 - Path-based tools match against file paths
 - URL-based tools match against URLs
 
-### PR 4: UI Updates (Behind Feature Flag)
+### PR 3.5: MCP Tool Permissions
 
-**Goal**: New permission dialog buttons visible when flag enabled
+**Goal**: MCP tools (from context servers) get per-tool default_mode support (no regex)
 
-- [ ] Update `ToolCallEventStream::authorize` to accept tool name
-- [ ] Update permission dialog in `thread_view.rs` (behind feature flag):
-  - Add "Always allow terminal" button
-  - Add "Always allow `<command>` commands" button for terminal
-  - Add "Always allow <tool_name>" button for other tools
-- [ ] Implement `extract_command_prefix()` for terminal
-- [ ] Write UI tests with `VisualTestContext`
+**Background**: Currently, MCP tools call `event_stream.authorize()` which shows the old global "Always Allow" button. We need to:
+1. Make them use the new tool-specific authorization flow
+2. Support arbitrary tool IDs in settings (not just the 8 built-in tools)
+3. Show only 3 buttons: "Always allow <tool_name>", "Allow", "Deny" (no pattern button, since MCP tools don't have predictable input formats that we can extract patterns from)
+
+**Why no pattern button for MCP tools?** Built-in tools like `terminal` and `edit_file` have well-known input schemas where we can extract meaningful patterns (command prefix, file path directory). MCP tools have arbitrary schemas defined by the context server, so we can't reliably extract patterns.
+
+**Tool ID Format**: To avoid collisions with built-in tools, MCP tool IDs in settings are prefixed with the server ID: `mcp:<server_id>:<tool_name>` (e.g., `mcp:filesystem:read_file`, `mcp:github:create_issue`).
+
+#### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `crates/agent/src/tools/context_server_registry.rs` | Add `mcp_tool_id()` helper and update `ContextServerTool::run()` to use `authorize_third_party_tool` |
+| `crates/agent/src/thread.rs` | Add `authorize_third_party_tool()` method that generates options without pattern button |
+| `crates/settings/src/settings_content/agent.rs` | Add `set_tool_default_mode()` helper method |
+| `crates/agent/src/tool_permissions.rs` | Add tests for MCP tool permission evaluation |
+
+#### Implementation Details
+
+**1. Add `authorize_third_party_tool` to `ToolCallEventStream`**:
+```rust
+pub fn authorize_third_party_tool(
+    &self,
+    title: impl Into<String>,
+    tool_id: String,      // e.g., "mcp:filesystem:read_file"
+    display_name: String, // e.g., "read_file" (shown in button)
+    cx: &mut App,
+) -> Task<Result<()>>
+```
+
+This method generates only 3 options:
+- "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
+- "Allow" → approve once
+- "Deny" → reject once
+
+**2. Add `mcp_tool_id` helper and update `ContextServerTool::run()`**:
+```rust
+/// Generates a tool ID for an MCP tool that can be used in settings.
+/// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
+pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
+    format!("mcp:{}:{}", server_id, tool_name)
+}
+
+fn run(...) -> Task<Result<AgentToolOutput>> {
+    // Build tool_id with server prefix to avoid collisions
+    let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
+    let display_name = self.tool.name.clone();
+    
+    let authorize = event_stream.authorize_third_party_tool(
+        self.initial_title(input.clone(), cx),
+        tool_id,
+        display_name,
+        cx,
+    );
+    // ... rest of implementation
+}
+```
+
+**3. Check permissions before showing dialog**:
+```rust
+// In authorize_third_party_tool, check if already allowed
+let settings = AgentSettings::get_global(cx);
+if let Some(rules) = settings.tool_permissions.tools.get(&tool_id) {
+    match rules.default_mode {
+        ToolPermissionMode::Allow => return Task::ready(Ok(())),
+        ToolPermissionMode::Deny => return Task::ready(Err(anyhow!("Tool {} is disabled", display_name))),
+        ToolPermissionMode::Confirm => { /* show dialog */ }
+    }
+}
+```
+
+#### Tasks
+
+- [x] Add `authorize_third_party_tool()` method to `ToolCallEventStream` in `thread.rs`
+- [x] Add helper method `mcp_tool_id()` to generate prefixed tool IDs
+- [x] Update `ContextServerTool::run()` to use new authorization method
+- [x] Add `set_tool_default_mode()` helper in settings
+- [x] Write unit tests:
+  - `test_mcp_tool_id_format`
+  - `test_mcp_tool_id_with_underscores_in_names`
+  - `test_mcp_tool_id_does_not_collide_with_builtin_tools`
+  - `test_mcp_tool_with_default_mode_allow`
+  - `test_mcp_tool_with_default_mode_deny`
+  - `test_mcp_tool_with_default_mode_confirm`
+  - `test_mcp_tool_not_configured_uses_fallback`
+  - `test_mcp_tool_id_format_does_not_collide_with_builtin`
 - [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
 
 **Verification**:
 
-- With feature flag: new buttons appear
+- MCP tools show exactly 3 buttons: "Always allow <tool_name> MCP tool", "Allow", "Deny"
+- No pattern-based button appears for MCP tools
+- No global "Always Allow" button appears
+- Clicking "Always allow <tool_name> MCP tool" updates settings with `tools.mcp:<server>:<tool>.default_mode = "allow"`
+- MCP tools with `default_mode = "allow"` auto-approve without dialog
+- MCP tools with `default_mode = "deny"` fail with clear error message
+- Tool IDs are properly namespaced to avoid collisions with built-in tools (e.g., an MCP tool named `terminal` becomes `mcp:<server>:terminal`, not `terminal`)
+
+### PR 4: UI Updates (Behind Feature Flag)
+
+**Goal**: New permission dialog buttons visible when flag enabled; global "Always Allow" eliminated
+
+- [x] Update `ToolCallEventStream::authorize_with_context` to generate tool-specific options
+- [x] Hide global "Always Allow" button when granular options are available
+- [x] Implement pattern extraction for built-in tools (`extract_terminal_pattern`, `extract_path_pattern`, `extract_url_pattern`)
+- [x] Write visual tests with screenshots for permission buttons UI
+- [x] Write unit tests for permission button options
+- [ ] Update permission dialog in `thread_view.rs` (behind feature flag)
+- [ ] Ensure all tools (including third-party) use tool-specific "Always allow" instead of global
+- [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
+
+**Verification**:
+
+- With feature flag: new buttons appear, no global "Always Allow"
 - Without feature flag: old behavior unchanged
+- Built-in tools show pattern button when pattern extractable
+- Third-party tools show only tool-specific "Always allow" (no pattern button)
 - Buttons correctly update settings when clicked
+- Visual tests capture correct button layouts
 
 ### PR 5: Settings UI
 
