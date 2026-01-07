@@ -284,7 +284,6 @@ impl GitGraph {
                     .flex_shrink_0()
                     .child(Label::new(short_sha).color(Color::Accent).single_line()),
             )
-            .debug()
             .into_any_element()
     }
 }

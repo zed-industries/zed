@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::HashMap;
 use git::Oid;
 use gpui::SharedString;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
 use util::command::new_smol_command;
 
@@ -146,40 +146,46 @@ struct BranchColor(u8);
 enum LaneState {
     Empty,
     Active {
-        sha: Oid,
+        child: Oid,
+        parent: Oid,
         color: BranchColor,
         starting_row: usize,
         starting_col: usize,
+        segments: SmallVec<[CommitLineSegment; 1]>,
     },
 }
 
 impl LaneState {
-    fn to_commit_line(&mut self, parent: Oid, ending_row: usize) -> Option<CommitLine> {
+    fn to_commit_line(&mut self, ending_row: usize) -> Option<CommitLine> {
         let state = std::mem::replace(self, LaneState::Empty);
 
         match state {
             LaneState::Active {
-                // todo! there's a bug where we use the same sha as both the parent and child commit
-                sha,
+                child,
+                parent,
                 color,
                 starting_row,
                 starting_col,
+                mut segments,
             } => Some(CommitLine {
-                child: sha,
-                child_column: starting_col,
+                child,
                 parent,
+                child_column: starting_col,
                 full_interval: starting_row..ending_row,
                 color_idx: color.0 as usize,
-                segments: SmallVec::new(),
+                segments: {
+                    segments.push(CommitLineSegment::Straight { to_row: ending_row });
+                    segments
+                },
             }),
             _ => None,
         }
     }
 
-    fn is_commit(&self, other: &Oid) -> bool {
+    fn is_parent_commit(&self, other: &Oid) -> bool {
         match self {
             LaneState::Empty => false,
-            LaneState::Active { sha, .. } => sha == other,
+            LaneState::Active { parent, .. } => parent == other,
         }
     }
 
@@ -214,8 +220,8 @@ impl AllCommitCount {
     }
 }
 
-enum CommitLineSegment {
-    Straight,
+pub(crate) enum CommitLineSegment {
+    Straight { to_row: usize },
     Curve { to_column: usize, on_row: usize },
 }
 
@@ -225,7 +231,40 @@ pub struct CommitLine {
     pub parent: Oid,
     pub full_interval: Range<usize>,
     pub color_idx: usize,
-    segments: SmallVec<[CommitLineSegment; 1]>,
+    pub segments: SmallVec<[CommitLineSegment; 1]>,
+}
+
+impl CommitLine {
+    pub fn get_first_visible_segment_idx(
+        &self,
+        first_visible_row: usize,
+    ) -> Option<(usize, usize)> {
+        if first_visible_row > self.full_interval.end {
+            return None;
+        } else if first_visible_row <= self.full_interval.start {
+            return Some((0, self.child_column));
+        }
+
+        let mut current_column = self.child_column;
+
+        for (idx, segment) in self.segments.iter().enumerate() {
+            match segment {
+                CommitLineSegment::Straight { to_row } => {
+                    if *to_row >= first_visible_row {
+                        return Some((idx, current_column));
+                    }
+                }
+                CommitLineSegment::Curve { to_column, on_row } => {
+                    if *on_row >= first_visible_row {
+                        return Some((idx, current_column));
+                    }
+                    current_column = *to_column;
+                }
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -301,11 +340,11 @@ impl GitGraph {
             let commit_lane = self
                 .lane_states
                 .iter()
-                .position(|lane: &LaneState| lane.is_commit(&commit.sha));
+                .position(|lane: &LaneState| lane.is_parent_commit(&commit.sha));
 
             let branch_continued = commit_lane.is_some();
-            if let Some(commit_line) = commit_lane
-                .and_then(|lane| self.lane_states[lane].to_commit_line(commit.sha, commit_row))
+            if let Some(commit_line) =
+                commit_lane.and_then(|lane| self.lane_states[lane].to_commit_line(commit_row))
             {
                 self.lines.push(Rc::new(commit_line));
             }
@@ -325,9 +364,11 @@ impl GitGraph {
                             .iter()
                             .enumerate()
                             .find_map(|(lane_idx, lane_state)| match lane_state {
-                                LaneState::Active { sha, color, .. } if sha == parent => {
-                                    Some((lane_idx, color))
-                                }
+                                LaneState::Active {
+                                    parent: parent_sha,
+                                    color,
+                                    ..
+                                } if parent_sha == parent => Some((lane_idx, color)),
                                 _ => None,
                             });
 
@@ -363,10 +404,12 @@ impl GitGraph {
                         // base commit
                     } else if parent_idx == 0 {
                         self.lane_states[commit_lane] = LaneState::Active {
-                            sha: *parent,
+                            child: commit.sha,
+                            parent: *parent,
                             color: commit_color,
                             starting_col: commit_lane,
                             starting_row: commit_row,
+                            segments: SmallVec::new(),
                         };
 
                         let line_idx = self.lines.len();
@@ -394,10 +437,15 @@ impl GitGraph {
                         let parent_color = self.get_lane_color(parent_lane);
 
                         self.lane_states[parent_lane] = LaneState::Active {
-                            sha: *parent,
+                            child: commit.sha,
+                            parent: *parent,
                             color: parent_color,
-                            starting_col: parent_lane,
+                            starting_col: commit_lane,
                             starting_row: commit_row,
+                            segments: smallvec![CommitLineSegment::Curve {
+                                to_column: parent_lane,
+                                on_row: commit_row + 1,
+                            },],
                         };
 
                         // lines.push(GraphLine {
