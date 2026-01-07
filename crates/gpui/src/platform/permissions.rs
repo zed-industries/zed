@@ -19,6 +19,8 @@ pub enum PermissionStatus {
 pub enum PermissionKind {
     /// Permission to capture the screen content.
     ScreenCapture,
+    /// Permission to use the microphone
+    Microphone,
 }
 
 /// Platform-specific handler for checking and requesting system permissions.
@@ -30,9 +32,6 @@ pub trait PlatformPermissionsHandler {
     /// Requests the specified permission from the user.
     /// This may show a system dialog prompting the user to grant access.
     fn request(&self, kind: PermissionKind);
-
-    /// Opens the system settings page for the specified permission type.
-    fn open_settings(&self, kind: PermissionKind);
 }
 
 /// A no-op permissions handler for platforms that don't support permission management.
@@ -45,6 +44,4 @@ impl PlatformPermissionsHandler for DummyPermissionsHandler {
     }
 
     fn request(&self, _kind: PermissionKind) {}
-
-    fn open_settings(&self, _kind: PermissionKind) {}
 }
