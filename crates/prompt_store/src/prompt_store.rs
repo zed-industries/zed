@@ -37,7 +37,7 @@ pub fn init(cx: &mut App) {
         .spawn(async move |cx| {
             prompt_store_task
                 .await
-                .and_then(|prompt_store| cx.new(|_cx| prompt_store))
+                .map(|prompt_store| cx.new(|_cx| prompt_store))
                 .map_err(Arc::new)
         })
         .shared();

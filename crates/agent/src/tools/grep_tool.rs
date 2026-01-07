@@ -191,7 +191,7 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let Ok((Some(path), mut parse_status)) = buffer.read_with(cx, |buffer, cx| {
+                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
                     (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
                 }) else {
                     continue;
@@ -200,20 +200,21 @@ impl AgentTool for GrepTool {
                 // Check if this file should be excluded based on its worktree settings
                 if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
                     project.find_project_path(&path, cx)
-                })
-                    && cx.update(|cx| {
+                }) {
+                    if cx.update(|cx| {
                         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
-                    }).unwrap_or(false) {
+                    }) {
                         continue;
                     }
+                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
                 }
 
-                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let mut ranges = ranges
                     .into_iter()

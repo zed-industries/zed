@@ -47,12 +47,12 @@ impl FileDiffView {
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
             let old_buffer = project
-                .update(cx, |project, cx| project.open_local_buffer(&old_path, cx))?
+                .update(cx, |project, cx| project.open_local_buffer(&old_path, cx))
                 .await?;
             let new_buffer = project
-                .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))?
+                .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))
                 .await?;
-            let languages = project.update(cx, |project, _| project.languages().clone())?;
+            let languages = project.update(cx, |project, _| project.languages().clone());
 
             let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, languages, cx).await?;
 
@@ -151,7 +151,7 @@ impl FileDiffView {
                             new_snapshot.text.clone(),
                             cx,
                         )
-                    })?
+                    })
                     .await
                     .ok();
                     log::trace!("finish recalculating");
@@ -168,10 +168,10 @@ async fn build_buffer_diff(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx))?;
+    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
 
     let update = diff
         .update(cx, |diff, cx| {
@@ -182,7 +182,7 @@ async fn build_buffer_diff(
                 new_buffer_snapshot.language().cloned(),
                 cx,
             )
-        })?
+        })
         .await;
 
     diff.update(cx, |diff, cx| {
@@ -192,7 +192,7 @@ async fn build_buffer_diff(
             cx,
         );
         diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
-    })?
+    })
     .await;
 
     Ok(diff)

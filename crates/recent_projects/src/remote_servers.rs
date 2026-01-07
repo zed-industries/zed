@@ -273,11 +273,9 @@ impl ProjectPicker {
                         .read_with(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
 
-                    let remote_connection = project
-                        .read_with(cx, |project, cx| {
-                            project.remote_client()?.read(cx).connection()
-                        })
-                        .ok()??;
+                    let remote_connection = project.read_with(cx, |project, cx| {
+                        project.remote_client()?.read(cx).connection()
+                    })?;
 
                     let (paths, paths_with_positions) =
                         determine_paths_with_positions(&remote_connection, paths).await;
@@ -1020,7 +1018,7 @@ impl RemoteServerProjects {
                     })?;
 
                     let home_dir = project
-                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))?
+                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))
                         .await
                         .and_then(|path| path.into_abs_path())
                         .map(|path| RemotePathBuf::new(path, path_style))
@@ -2113,17 +2111,13 @@ impl RemoteServerProjects {
 
                 cx.spawn(async move |cx| {
                     if confirmation.await.ok() == Some(0) {
-                        remote_servers
-                            .update(cx, |this, cx| {
-                                this.delete_wsl_distro(index, cx);
-                            })
-                            .ok();
-                        remote_servers
-                            .update(cx, |this, cx| {
-                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                cx.notify();
-                            })
-                            .ok();
+                        remote_servers.update(cx, |this, cx| {
+                            this.delete_wsl_distro(index, cx);
+                        });
+                        remote_servers.update(cx, |this, cx| {
+                            this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                            cx.notify();
+                        });
                     }
                     anyhow::Ok(())
                 })
@@ -2269,17 +2263,13 @@ impl RemoteServerProjects {
 
                     cx.spawn(async move |cx| {
                         if confirmation.await.ok() == Some(0) {
-                            remote_servers
-                                .update(cx, |this, cx| {
-                                    this.delete_ssh_server(index, cx);
-                                })
-                                .ok();
-                            remote_servers
-                                .update(cx, |this, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                    cx.notify();
-                                })
-                                .ok();
+                            remote_servers.update(cx, |this, cx| {
+                                this.delete_ssh_server(index, cx);
+                            });
+                            remote_servers.update(cx, |this, cx| {
+                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                cx.notify();
+                            });
                         }
                         anyhow::Ok(())
                     })
