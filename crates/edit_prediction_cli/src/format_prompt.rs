@@ -128,20 +128,19 @@ impl TeacherPrompt {
         // 2. Context retriever just didn't include cursor line.
         //
         // In that case, fallback to using `cursor_position` as excerpt.
-        let cursor_file = &example
+        let example_buffer = example
             .buffer
             .as_ref()
-            .context("`buffer` should be filled in in the context collection step")?
-            .content;
+            .context("`buffer` should be filled in in the context collection step")?;
+        let cursor_file = &example_buffer.content;
 
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
         let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
 
-        // Reconstruct old editable region we sent to the model
-        let old_editable_region = Self::format_editable_region(example);
-        let old_editable_region = Self::extract_editable_region(&old_editable_region);
+        let old_editable_region =
+            example_buffer.content[example_buffer.editable_range.clone()].to_string();
 
         // Normalize leading newlines: if old starts with newline but new doesn't,
         // prepend newline to new to preserve whitespace structure.
@@ -203,19 +202,29 @@ impl TeacherPrompt {
     fn format_editable_region(example: &Example) -> String {
         let mut result = String::new();
 
+        let example_buffer = example.buffer.as_ref().unwrap();
+
         let path_str = example.spec.cursor_path.to_string_lossy();
         result.push_str(&format!("`````path=\"{path_str}\"\n"));
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.context_range.start..example_buffer.editable_range.start],
+        );
         result.push_str(Self::EDITABLE_REGION_START);
-
-        // TODO: control number of lines around cursor
-        let (mut excerpt, offset) = example.spec.cursor_excerpt().unwrap();
-        excerpt.insert_str(offset, Self::USER_CURSOR_MARKER);
-        result.push_str(&excerpt);
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.editable_range.start..example_buffer.cursor_offset],
+        );
+        result.push_str(Self::USER_CURSOR_MARKER);
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.cursor_offset..example_buffer.editable_range.end],
+        );
         result.push_str(Self::EDITABLE_REGION_END);
+        result.push_str(
+            &example_buffer.content
+                [example_buffer.editable_range.end..example_buffer.context_range.end],
+        );
         result.push_str("\n`````");
 
         result

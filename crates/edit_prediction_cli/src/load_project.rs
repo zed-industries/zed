@@ -5,11 +5,13 @@ use crate::{
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::EditPredictionStore;
 use edit_prediction::udiff::{OpenedBuffers, refresh_worktree_entries};
+use edit_prediction::{
+    EditPredictionStore, cursor_excerpt::editable_and_context_ranges_for_cursor_position, zeta2,
+};
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, OffsetRangeExt as _, ToOffset, ToPoint};
 use project::Project;
 use project::buffer_store::BufferStoreEvent;
 use std::{fs, path::PathBuf, sync::Arc};
@@ -33,8 +35,20 @@ pub async fn run_load_project(
     progress.set_substatus("resolving cursor");
     let (buffer, cursor_position) =
         cursor_position(example, &project, &open_buffers, &mut cx).await?;
+    buffer
+        .read_with(&cx, |buffer, _| buffer.parsing_idle())?
+        .await;
     let (example_buffer, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let cursor_point = cursor_position.to_point(&buffer);
+        let snapshot = buffer.snapshot();
+        let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+            cursor_point,
+            &snapshot,
+            zeta2::MAX_REWRITE_TOKENS,
+            zeta2::MAX_CONTEXT_TOKENS,
+        );
+        let editable_range = editable_range.to_offset(&snapshot);
+        let context_range = context_range.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
@@ -45,6 +59,8 @@ pub async fn run_load_project(
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
                 cursor_offset: cursor_position.to_offset(&buffer),
+                context_range,
+                editable_range,
             },
             language_name,
         )

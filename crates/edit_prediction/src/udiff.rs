@@ -57,17 +57,29 @@ pub async fn apply_diff(
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk {
-                path,
-                hunk,
-                is_new_file,
-            } => {
+            DiffEvent::Hunk { path, hunk, status } => {
+                if status == FileStatus::Deleted {
+                    let delete_task = project.update(cx, |project, cx| {
+                        if let Some(path) = project.find_project_path(path.as_ref(), cx) {
+                            project.delete_file(path, false, cx)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                    if let Some(delete_task) = delete_task {
+                        delete_task.await?;
+                    };
+
+                    continue;
+                }
+
                 let buffer = match current_file {
                     None => {
                         let buffer = match included_files.entry(path.to_string()) {
                             Entry::Occupied(entry) => entry.get().clone(),
                             Entry::Vacant(entry) => {
-                                let buffer = if is_new_file {
+                                let buffer = if status == FileStatus::Created {
                                     project
                                         .update(cx, |project, cx| project.create_buffer(true, cx))?
                                         .await?
@@ -95,7 +107,7 @@ pub async fn apply_diff(
 
                 buffer.read_with(cx, |buffer, _| {
                     edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), is_new_file)
+                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), status)
                             .with_context(|| format!("Diff:\n{diff_str}"))?,
                     );
                     anyhow::Ok(())
@@ -260,7 +272,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
             DiffEvent::Hunk {
                 hunk,
                 path: _,
-                is_new_file: _,
+                status: _,
             } => {
                 // Find all matches of the context in the text
                 let candidates: Vec<usize> = text
@@ -299,7 +311,7 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
             DiffEvent::Hunk {
                 hunk,
                 path: _,
-                is_new_file: _,
+                status: _,
             } => {
                 if hunk.context.is_empty() {
                     return Ok(Vec::new());
@@ -367,11 +379,18 @@ enum DiffEvent<'a> {
     Hunk {
         path: Cow<'a, str>,
         hunk: Hunk,
-        is_new_file: bool,
+        status: FileStatus,
     },
     FileEnd {
         renamed_to: Option<Cow<'a, str>>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FileStatus {
+    Created,
+    Modified,
+    Deleted,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -420,8 +439,14 @@ impl<'a> DiffParser<'a> {
                 if let Some(file) = &self.current_file
                     && !self.hunk.is_empty()
                 {
-                    let is_new_file = file.old_path == "/dev/null";
-                    let path = if is_new_file {
+                    let status = if file.old_path == "/dev/null" {
+                        FileStatus::Created
+                    } else if file.new_path == "/dev/null" {
+                        FileStatus::Deleted
+                    } else {
+                        FileStatus::Modified
+                    };
+                    let path = if status == FileStatus::Created {
                         file.new_path.clone()
                     } else {
                         file.old_path.clone()
@@ -430,11 +455,7 @@ impl<'a> DiffParser<'a> {
                     hunk.start_line = self.pending_start_line.take();
                     self.processed_no_newline = false;
                     self.last_diff_op = LastDiffOp::None;
-                    return Ok(Some(DiffEvent::Hunk {
-                        path,
-                        hunk,
-                        is_new_file,
-                    }));
+                    return Ok(Some(DiffEvent::Hunk { path, hunk, status }));
                 }
             }
 
@@ -554,9 +575,9 @@ fn resolve_hunk_edits_in_buffer(
     hunk: Hunk,
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
-    is_new_file: bool,
+    status: FileStatus,
 ) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
-    let context_offset = if is_new_file || hunk.context.is_empty() {
+    let context_offset = if status == FileStatus::Created || hunk.context.is_empty() {
         0
     } else {
         let mut candidates: Vec<usize> = Vec::new();
@@ -583,6 +604,11 @@ fn resolve_hunk_edits_in_buffer(
             }
         })?
     };
+
+    if let Some(edit) = hunk.edits.iter().find(|edit| edit.range.end > buffer.len()) {
+        return Err(anyhow!("Edit range {:?} exceeds buffer length", edit.range));
+    }
+
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer
             .text_for_range(context_offset + edit.range.start..context_offset + edit.range.end)
@@ -951,7 +977,7 @@ mod tests {
                         }],
                         start_line: None,
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1002,7 +1028,7 @@ mod tests {
                         }],
                         start_line: Some(54), // @@ -55,7 -> line 54 (0-indexed)
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1040,7 +1066,7 @@ mod tests {
                         }],
                         start_line: Some(0), // @@ -1,2 -> line 0 (0-indexed)
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1081,7 +1107,7 @@ mod tests {
                         }],
                         start_line: Some(0),
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1124,7 +1150,7 @@ mod tests {
                         }],
                         start_line: Some(0),
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
