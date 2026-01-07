@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
     BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
     language_settings::language_settings, word_diff_ranges,
@@ -256,7 +256,13 @@ impl BufferDiffSnapshot {
 
         let hunks = cx.background_executor().spawn({
             let buffer = buffer.clone();
-            async move { compute_hunks(base_text_pair, buffer, diff_options) }
+            async move {
+                compute_hunks(
+                    base_text_pair.map(|(s, r)| (Arc::<str>::from(&**s), r)),
+                    buffer,
+                    diff_options,
+                )
+            }
         });
 
         async move {
@@ -288,7 +294,7 @@ impl BufferDiffSnapshot {
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| {
             debug_assert_eq!(&*text, &base_text_snapshot.text());
-            (text, base_text_snapshot.as_rope().clone())
+            (Arc::<str>::from(&**text), base_text_snapshot.as_rope().clone())
         });
         cx.background_executor().spawn(async move {
             Self {
@@ -1360,7 +1366,7 @@ impl BufferDiff {
         );
 
         cx.background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
+            .spawn(async move {
                 let base_text_rope = if let Some(base_text) = &base_text {
                     if base_text_changed {
                         Rope::from(base_text.as_ref())
