@@ -1405,21 +1405,33 @@ impl Motion {
         use Motion::*;
 
         let base = match *self {
-            RepeatFindReversed { ref last_find } => last_find
+            RepeatFindReversed { ref last_find } => &last_find
                 .reversed()
                 .unwrap_or_else(|| (**last_find).clone()),
-            RepeatFind { ref last_find } => (**last_find).clone(),
+            RepeatFind { ref last_find } => &*last_find,
 
-            _ => return self._move_point(map, point, goal, maybe_times, text_layout_details),
+            _ => self,
         };
 
-        if let Some(ret) = base._move_point(map, point, goal, maybe_times, text_layout_details) {
-            return Some(ret);
+        let mut ret = base._move_point(map, point, goal, maybe_times, text_layout_details);
+
+        // We want `t _ ;` to advance the cursor by two underscores.
+        // However, `t` moves the cursor BEFORE the target character, so
+        // without this we would only advance by one.
+        if ret.map(|x| x.0) == Some(point) {
+            let is_repeat_t = self.discriminant().is_repeat()
+                && matches!(
+                    *base,
+                    Motion::FindForward { before: true, .. }
+                        | Motion::FindBackward { after: true, .. }
+                );
+            if is_repeat_t {
+                let times_succ = maybe_times.unwrap_or(1) + 1;
+                ret = base._move_point(map, point, goal, Some(times_succ), text_layout_details);
+            }
         }
 
-        // TODO: Explain why this is necessary
-        let times_succ = maybe_times.unwrap_or(1) + 1;
-        base._move_point(map, point, goal, Some(times_succ), text_layout_details)
+        ret
     }
 
     // Get the range value after self is applied to the specified selection.
