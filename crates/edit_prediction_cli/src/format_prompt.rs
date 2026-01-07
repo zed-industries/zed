@@ -243,16 +243,16 @@ fn extract_last_codeblock(text: &str) -> String {
         }
 
         let backtick_count = backtick_end - start;
-        let closing_backticks = "`".repeat(backtick_count);
+        let closing_pattern = format!("\n{}", "`".repeat(backtick_count));
 
         while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
             backtick_end += 1;
         }
 
-        if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
+        if let Some(end_pos) = text[backtick_end..].find(&closing_pattern) {
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos + 1];
             last_block = Some(code_block.to_string());
-            search_start = backtick_end + end_pos + backtick_count;
+            search_start = backtick_end + end_pos + closing_pattern.len();
         } else {
             break;
         }
@@ -283,6 +283,37 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_codeblock_with_nested_fences() {
+        let text = indoc::indoc! {"
+            `````
+            content with ``` inline
+            and ```python nested
+            more content
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "content with ``` inline\nand ```python nested\nmore content\n"
+        );
+    }
+
+    #[test]
+    fn test_extract_codeblock_ignores_inline_backticks() {
+        let text = indoc::indoc! {"
+            `````
+            here is some `code` with inline backticks
+            and here```more```stuff
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "here is some `code` with inline backticks\nand here```more```stuff\n"
+        );
+    }
+
+    #[test]
     fn test_extract_editable_region() {
         let text = indoc::indoc! {"
             some lines
@@ -302,7 +333,6 @@ mod tests {
             indoc::indoc! {"
             one
             two three
-
             "}
         );
     }
