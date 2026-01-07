@@ -3327,7 +3327,8 @@ Non-negative `integer` values
   "case_sensitive": false,
   "include_ignored": false,
   "regex": false,
-  "center_on_match": false
+  "center_on_match": false,
+  "search_on_input": false
 },
 ```
 

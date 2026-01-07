@@ -450,6 +450,7 @@
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex",
+      "alt-cmd-q": "search::ToggleSearchOnInput",
     },
   },
   {
@@ -478,6 +479,7 @@
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex",
+      "alt-cmd-q": "search::ToggleSearchOnInput",
     },
   },
   {
@@ -508,6 +510,7 @@
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-cmd-f": "project_search::ToggleFilters",
       "alt-cmd-x": "search::ToggleRegex",
+      "alt-cmd-q": "search::ToggleSearchOnInput",
       "cmd-k shift-enter": "pane::TogglePinTab",
     },
   },

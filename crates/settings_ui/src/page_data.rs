@@ -2591,6 +2591,29 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search on input",
+                    description: "Show search results on input by default.",
+                    field: Box::new(SettingField {
+                        json_path: Some("editor.search.search_on_input"),
+                        pick: |settings_content| {
+                            settings_content
+                                .editor
+                                .search
+                                .as_ref()
+                                .and_then(|search| search.search_on_input.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .search_on_input = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Seed Search Query From Cursor",
                     description: "When to populate a new search's query based on the text under the cursor.",
                     field: Box::new(SettingField {

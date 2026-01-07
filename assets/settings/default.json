@@ -655,6 +655,8 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Show search results on input by default.
+    "search_on_input": false,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
