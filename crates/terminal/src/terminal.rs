@@ -2491,48 +2491,7 @@ mod tests {
         Point, TestAppContext, bounds, point, size, smol_timeout,
     };
     use rand::{Rng, distr, rngs::ThreadRng};
-    use smol::channel::Receiver;
-    use task::{Shell, ShellBuilder};
-
-    /// Helper to build a test terminal running a shell command.
-    /// Returns the terminal entity and a receiver for the completion signal.
-    async fn build_test_terminal(
-        cx: &mut TestAppContext,
-        command: &str,
-        args: &[&str],
-    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let (program, args) =
-            ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
-        let builder = cx
-            .update(|cx| {
-                TerminalBuilder::new(
-                    None,
-                    None,
-                    task::Shell::WithArguments {
-                        program,
-                        args,
-                        title_override: None,
-                    },
-                    HashMap::default(),
-                    CursorShape::default(),
-                    AlternateScroll::On,
-                    None,
-                    vec![],
-                    0,
-                    false,
-                    0,
-                    Some(completion_tx),
-                    cx,
-                    vec![],
-                )
-            })
-            .await
-            .unwrap();
-        let terminal = cx.new(|cx| builder.subscribe(cx));
-        (terminal, completion_rx)
-    }
+    use task::ShellBuilder;
 
     fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
         cx.update(|cx| {
@@ -2616,7 +2575,35 @@ mod tests {
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["hello"]).await;
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .build(Some("echo".to_owned()), &["hello".to_owned()]);
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
         assert_eq!(
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
@@ -2751,17 +2738,24 @@ mod tests {
         })
         .detach();
         cx.background_spawn(async move {
-            // The channel may be closed if the terminal is dropped before sending
-            // the completion signal, which can happen with certain task scheduling orders.
-            let exit_status = completion_rx.recv().await.ok().flatten();
-            if let Some(exit_status) = exit_status {
+            #[cfg(target_os = "windows")]
+            {
+                let exit_status = completion_rx.recv().await.ok().flatten();
+                if let Some(exit_status) = exit_status {
+                    assert!(
+                        !exit_status.success(),
+                        "Wrong shell command should result in a failure"
+                    );
+                    assert_eq!(exit_status.code(), Some(1));
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let exit_status = completion_rx.recv().await.unwrap().unwrap();
                 assert!(
                     !exit_status.success(),
                     "Wrong shell command should result in a failure"
                 );
-                #[cfg(target_os = "windows")]
-                assert_eq!(exit_status.code(), Some(1));
-                #[cfg(not(target_os = "windows"))]
                 assert_eq!(exit_status.code(), None);
             }
         })
@@ -3100,10 +3094,39 @@ mod tests {
     async fn test_kill_active_task_completes_and_captures_output(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
         // Run a command that prints output then sleeps for a long time
         // The echo ensures we have output to capture before killing
-        let (terminal, completion_rx) =
-            build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+            Some("echo".to_owned()),
+            &["test_output_before_kill; sleep 60".to_owned()],
+        );
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
 
         // Wait a bit for the echo to execute and produce output
         smol::Timer::after(Duration::from_millis(200)).await;
@@ -3140,8 +3163,36 @@ mod tests {
     async fn test_kill_active_task_on_completed_task_is_noop(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
         // Run a command that exits immediately
-        let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .build(Some("echo".to_owned()), &["done".to_owned()]);
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
 
         // Wait for the command to complete naturally
         let exit_status = smol_timeout(Duration::from_secs(5), completion_rx.recv())
