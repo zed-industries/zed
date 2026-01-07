@@ -5584,6 +5584,7 @@ dependencies = [
  "editor",
  "encoding_rs",
  "gpui",
+ "settings",
  "ui",
  "workspace",
 ]
