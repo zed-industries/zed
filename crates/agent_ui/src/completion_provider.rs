@@ -218,24 +218,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     fn completion_for_entry(
         entry: PromptContextEntry,
         source_range: Range<Anchor>,
-        source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<Completion> {
         match entry {
-            PromptContextEntry::Mode(PromptContextType::Diagnostics) => {
-                Self::completion_for_diagnostics(
-                    source_range,
-                    source,
-                    editor,
-                    mention_set,
-                    workspace.clone(),
-                    cx,
-                )
-            }
-
             PromptContextEntry::Mode(mode) => vec![Completion {
                 replace_range: source_range,
                 new_text: format!("@{} ", mode.keyword()),
@@ -603,6 +591,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             .project()
             .read(cx)
             .diagnostic_summary(false, cx);
+        if summary.error_count == 0 && summary.warning_count == 0 {
+            return Vec::new();
+        }
         let icon_path = MentionUri::Diagnostics {
             include_errors: true,
             include_warnings: false,
@@ -612,7 +603,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let mut completions = Vec::new();
         if summary.error_count > 0 {
             completions.push(Self::build_diagnostics_completion(
-                diagnostics_label(summary, true, false),
+                diagnostics_submenu_label(summary, true, false),
                 source_range.clone(),
                 source.clone(),
                 editor.clone(),
@@ -627,7 +618,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if summary.warning_count > 0 {
             completions.push(Self::build_diagnostics_completion(
-                diagnostics_label(summary, false, true),
+                diagnostics_submenu_label(summary, false, true),
                 source_range.clone(),
                 source.clone(),
                 editor.clone(),
@@ -640,9 +631,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             ));
         }
 
-        if (summary.error_count > 0 && summary.warning_count > 0) || completions.is_empty() {
+        if summary.error_count > 0 && summary.warning_count > 0 {
             completions.push(Self::build_diagnostics_completion(
-                diagnostics_label(summary, true, true),
+                diagnostics_submenu_label(summary, true, true),
                 source_range,
                 source,
                 editor,
@@ -988,7 +979,14 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             .source
             .supports_context(PromptContextType::Diagnostics, cx)
         {
-            entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            let summary = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .diagnostic_summary(false, cx);
+            if summary.error_count > 0 || summary.warning_count > 0 {
+                entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            }
         }
 
         entries
@@ -1251,7 +1249,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Self::completion_for_entry(
                                         entry,
                                         source_range.clone(),
-                                        source.clone(),
                                         editor.clone(),
                                         mention_set.clone(),
                                         &workspace,
@@ -1557,6 +1554,33 @@ fn diagnostics_label(
     };
 
     format!("Diagnostics: {body}")
+}
+
+fn diagnostics_submenu_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    match (include_errors, include_warnings) {
+        (true, false) => format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ),
+        (false, true) => format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        (true, true) => format!(
+            "{} {} & {} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count),
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        (false, false) => "Diagnostics".into(),
+    }
 }
 
 fn diagnostics_crease_label(

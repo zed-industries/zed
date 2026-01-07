@@ -1681,8 +1681,7 @@ mod tests {
                     "Files & Directories".into(),
                     "Symbols".into(),
                     "Threads".into(),
-                    "Fetch".into(),
-                    "Diagnostics".into()
+                    "Fetch".into()
                 ]
             );
         });
