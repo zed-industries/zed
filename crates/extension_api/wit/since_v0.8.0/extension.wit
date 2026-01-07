@@ -2,6 +2,7 @@ package zed:extension;
 
 world extension {
     import context-server;
+    import task;
     import dap;
     import github;
     import http-client;
@@ -11,6 +12,7 @@ world extension {
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
+    use task.{task-context-location, task-variable, task-context-file, task-definition};
     use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
     use lsp.{completion, symbol};
     use process.{command};
@@ -133,6 +135,12 @@ world extension {
 
     export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
     export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
+
+    /// Returns the task variables for the given location.
+    export build-context: func(language-name: string, location: task-context-location, worktree: borrow<worktree>) -> result<list<task-variable>, string>;
+
+    /// Returns the tasks associated with the given file.
+    export associated-tasks: func(language-name: string, file: option<task-context-file>, worktree: borrow<worktree>) -> result<list<task-definition>, string>;
 
 
     /// Returns the completions that should be shown when completing the provided slash command with the given query.

@@ -3973,6 +3973,33 @@ impl LspStore {
         }
     }
 
+    pub fn lsp_adapter_delegate(
+        &self,
+        worktree: Entity<Worktree>,
+        cx: &mut App,
+    ) -> Option<Arc<dyn LspAdapterDelegate>> {
+        let (languages, environment, weak, http_client, fs) = match &self.mode {
+            LspStoreMode::Local(local) => (
+                local.languages.clone(),
+                local.environment.clone(),
+                local.weak.clone(),
+                local.http_client.clone(),
+                local.fs.clone(),
+            ),
+            LspStoreMode::Remote(_) => return None,
+        };
+
+        Some(LocalLspAdapterDelegate::new(
+            languages,
+            &environment,
+            weak,
+            &worktree,
+            http_client,
+            fs,
+            cx,
+        ))
+    }
+
     pub fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         match &self.mode {
             LspStoreMode::Remote(RemoteLspStore {
