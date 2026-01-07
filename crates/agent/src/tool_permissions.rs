@@ -652,4 +652,107 @@ mod tests {
         let decision = decide_permission("mcp:my-server:terminal", "", &permissions, false);
         assert_eq!(decision, ToolPermissionDecision::Allow);
     }
+
+    #[test]
+    fn test_mcp_tool_with_default_mode_allow() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("mcp:filesystem:read_file"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        let decision = decide_permission("mcp:filesystem:read_file", "", &permissions, false);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+    }
+
+    #[test]
+    fn test_mcp_tool_with_default_mode_deny() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("mcp:dangerous-server:delete_everything"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Deny,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        let decision = decide_permission(
+            "mcp:dangerous-server:delete_everything",
+            "",
+            &permissions,
+            true,
+        );
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn test_mcp_tool_with_default_mode_confirm() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("mcp:github:create_issue"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Confirm,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        let decision = decide_permission("mcp:github:create_issue", "", &permissions, false);
+        assert_eq!(decision, ToolPermissionDecision::Confirm);
+
+        let decision = decide_permission("mcp:github:create_issue", "", &permissions, true);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+    }
+
+    #[test]
+    fn test_mcp_tool_not_configured_uses_fallback() {
+        let permissions = empty_permissions();
+
+        let decision = decide_permission("mcp:some-server:some_tool", "", &permissions, false);
+        assert_eq!(decision, ToolPermissionDecision::Confirm);
+
+        let decision = decide_permission("mcp:some-server:some_tool", "", &permissions, true);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+    }
+
+    #[test]
+    fn test_mcp_tool_id_format_does_not_collide_with_builtin() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Deny,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+            },
+        );
+        tools.insert(
+            Arc::from("mcp:my-server:terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        let decision = decide_permission("terminal", "ls", &permissions, false);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+
+        let decision = decide_permission("mcp:my-server:terminal", "", &permissions, false);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+    }
 }
