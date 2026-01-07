@@ -1562,6 +1562,8 @@ impl Pane {
             None => self.active_item_id(),
         };
 
+        self.unpreview_item_if_preview(active_item_id);
+
         let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(
