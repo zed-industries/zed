@@ -766,21 +766,93 @@ fn get_settings_for_worktree(
 
 **Goal**: MCP tools and custom tools get per-tool default_mode support (no regex)
 
-- [ ] Extend `ToolRulesContent` to support any tool ID (not just the 8 built-in tools)
-- [ ] Update `authorize_with_context` to handle third-party tools:
-  - Show "Always allow <tool_name>" button
-  - Do NOT show pattern-based button (no regex for third-party tools)
-  - Do NOT show global "Always Allow" button
-- [ ] Update settings helpers to write tool permissions for arbitrary tool IDs
-- [ ] Write tests for third-party tool permission flow
+**Background**: Currently, MCP tools (from context servers) call `event_stream.authorize()` which shows the old global "Always Allow" button. We need to:
+1. Make them use the new tool-specific authorization flow
+2. Support arbitrary tool IDs in settings (not just the 8 built-in tools)
+3. Show only "Always allow <tool_name>" (no pattern button, since third-party tools don't have predictable input formats)
+
+**Tool ID Format**: MCP tools use their tool name directly (e.g., `read_file`, `create_issue`). To avoid collisions with built-in tools, we prefix MCP tool IDs in settings with the server ID: `mcp__<server_id>__<tool_name>` (e.g., `mcp__filesystem__read_file`, `mcp__github__create_issue`).
+
+#### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `crates/agent/src/tools/context_server_registry.rs` | Update `ContextServerTool::run()` to use `authorize_with_context` with tool-specific options |
+| `crates/agent/src/thread.rs` | Add `authorize_third_party_tool()` method that generates options without pattern button |
+| `crates/settings/src/settings_content/agent.rs` | Ensure `ToolRulesContent` accepts any string key (already does via `HashMap<Arc<str>, ...>`) |
+| `crates/agent_settings/src/agent_settings.rs` | Add helper to get/set permissions for arbitrary tool IDs |
+
+#### Implementation Details
+
+**1. Add `authorize_third_party_tool` to `ToolCallEventStream`**:
+```rust
+pub fn authorize_third_party_tool(
+    &self,
+    title: impl Into<String>,
+    tool_id: String,      // e.g., "mcp__filesystem__read_file"
+    display_name: String, // e.g., "read_file" (shown in button)
+    cx: &mut App,
+) -> Task<Result<()>>
+```
+
+This method generates only 3 options:
+- "Always allow <display_name>" → sets `tools.<tool_id>.default_mode = "allow"`
+- "Allow" → approve once
+- "Deny" → reject once
+
+**2. Update `ContextServerTool::run()`**:
+```rust
+fn run(...) -> Task<Result<AgentToolOutput>> {
+    // Build tool_id with server prefix to avoid collisions
+    let tool_id = format!("mcp__{}_{}", self.server_id, self.tool.name);
+    let display_name = self.tool.name.clone();
+    
+    let authorize = event_stream.authorize_third_party_tool(
+        self.initial_title(input.clone(), cx),
+        tool_id,
+        display_name,
+        cx,
+    );
+    // ... rest of implementation
+}
+```
+
+**3. Check permissions before showing dialog**:
+```rust
+// In authorize_third_party_tool, check if already allowed
+let settings = AgentSettings::get_global(cx);
+if let Some(rules) = settings.tool_permissions.tools.get(&tool_id) {
+    match rules.default_mode {
+        ToolPermissionMode::Allow => return Task::ready(Ok(())),
+        ToolPermissionMode::Deny => return Task::ready(Err(anyhow!("Tool {} is disabled", display_name))),
+        ToolPermissionMode::Confirm => { /* show dialog */ }
+    }
+}
+```
+
+#### Tasks
+
+- [ ] Add `authorize_third_party_tool()` method to `ToolCallEventStream` in `thread.rs`
+- [ ] Add helper method `tool_id_for_mcp()` to generate prefixed tool IDs
+- [ ] Update `ContextServerTool::run()` to use new authorization method
+- [ ] Add `set_third_party_tool_default_mode()` helper in settings
+- [ ] Write unit tests:
+  - `test_mcp_tool_shows_tool_specific_button`
+  - `test_mcp_tool_respects_default_mode_allow`
+  - `test_mcp_tool_respects_default_mode_deny`
+  - `test_mcp_tool_id_includes_server_prefix`
+- [ ] Write visual test for MCP tool permission dialog
 - [ ] Commit with `Co-Authored-By: Claude Opus 4.5`
 
 **Verification**:
 
-- MCP tools show "Always allow <tool_name>" button
-- Custom tools from Settings show "Always allow <tool_name>" button
-- Clicking the button updates settings with tool-specific default_mode
-- No global "Always Allow" button appears for any tool
+- MCP tools show "Always allow <tool_name>" button (3 buttons total)
+- No pattern-based button appears for MCP tools
+- No global "Always Allow" button appears
+- Clicking "Always allow" updates settings with `tools.mcp__<server>__<tool>.default_mode = "allow"`
+- MCP tools with `default_mode = "allow"` auto-approve without dialog
+- MCP tools with `default_mode = "deny"` fail with clear error message
+- Tool IDs are properly namespaced to avoid collisions with built-in tools
 
 ### PR 4: UI Updates (Behind Feature Flag)
 
