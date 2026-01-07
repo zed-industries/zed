@@ -70,6 +70,13 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch(&self, runnable: GpuiRunnable, _: Option<TaskLabel>) {
+        let queue_priority = match runnable.priority() {
+            Priority::Realtime(_) => unreachable!(),
+            Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH as isize,
+            Priority::Medium => DISPATCH_QUEUE_PRIORITY_DEFAULT as isize,
+            Priority::Low => DISPATCH_QUEUE_PRIORITY_LOW as isize,
+        };
+
         let (context, trampoline) = match runnable {
             GpuiRunnable::GpuiSpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
@@ -79,13 +86,6 @@ impl PlatformDispatcher for MacDispatcher {
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
             ),
-        };
-
-        let queue_priority = match runnable.priority() {
-            Priority::Realtime(_) => unreachable!(),
-            Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH as isize,
-            Priority::Medium => DISPATCH_QUEUE_PRIORITY_DEFAULT as isize,
-            Priority::Low => DISPATCH_QUEUE_PRIORITY_LOW as isize,
         };
 
         unsafe {
