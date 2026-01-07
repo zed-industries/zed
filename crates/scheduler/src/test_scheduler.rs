@@ -95,6 +95,7 @@ impl TestScheduler {
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
                 is_main_thread: true,
+                closed: false,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
@@ -306,6 +307,10 @@ impl TestScheduler {
         };
 
         if let Some(runnable) = runnable {
+            // Check if scheduler was closed - if so, drop the task without running
+            if self.state.lock().closed {
+                return true;
+            }
             let is_foreground = runnable.session_id.is_some();
             let was_main_thread = self.state.lock().is_main_thread;
             self.state.lock().is_main_thread = is_foreground;
@@ -465,6 +470,9 @@ impl Scheduler for TestScheduler {
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
         let mut state = self.state.lock();
+        if state.closed {
+            return; // Task will be dropped, which cancels it
+        }
         let ix = if state.randomize_order {
             let start_ix = state
                 .runnables
@@ -495,6 +503,9 @@ impl Scheduler for TestScheduler {
         priority: Priority,
     ) {
         let mut state = self.state.lock();
+        if state.closed {
+            return; // Task will be dropped, which cancels it
+        }
         let ix = if state.randomize_order {
             self.rng.lock().random_range(0..=state.runnables.len())
         } else {
@@ -525,6 +536,19 @@ impl Scheduler for TestScheduler {
 
     fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    fn close(&self) {
+        // Take runnables out while holding the lock, then drop them after releasing
+        // This avoids deadlock: dropping a runnable can wake awaitors, whose wakers
+        // call schedule_foreground, which tries to acquire the same lock.
+        let runnables = {
+            let mut state = self.state.lock();
+            state.closed = true;
+            std::mem::take(&mut state.runnables)
+        };
+        // Now drop runnables outside the lock
+        drop(runnables);
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {
@@ -592,6 +616,7 @@ struct SchedulerState {
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
     is_main_thread: bool,
+    closed: bool,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(

@@ -174,8 +174,8 @@ pub(crate) struct MacPlatformState {
 }
 
 impl MacPlatform {
-    pub(crate) fn new(headless: bool, liveness: std::sync::Weak<()>) -> Self {
-        let dispatcher = Arc::new(MacDispatcher);
+    pub(crate) fn new(headless: bool) -> Self {
+        let dispatcher = Arc::new(MacDispatcher::new());
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::MacTextSystem::new());
@@ -190,7 +190,7 @@ impl MacPlatform {
             headless,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher, liveness),
+            foreground_executor: ForegroundExecutor::new(dispatcher),
             renderer_context: renderer::Context::default(),
             general_pasteboard: Pasteboard::general(),
             find_pasteboard: Pasteboard::find(),

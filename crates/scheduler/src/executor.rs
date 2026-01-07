@@ -205,6 +205,63 @@ impl<T> Task<T> {
             Task(TaskState::Spawned(task)) => task.detach(),
         }
     }
+
+    /// Converts this task into a fallible task that returns `Option<T>`.
+    pub fn fallible(self) -> FallibleTask<T> {
+        FallibleTask(match self.0 {
+            TaskState::Ready(val) => FallibleTaskState::Ready(val),
+            TaskState::Spawned(task) => FallibleTaskState::Spawned(task.fallible()),
+        })
+    }
+}
+
+/// A task that returns `Option<T>` instead of panicking when cancelled.
+#[must_use]
+pub struct FallibleTask<T>(FallibleTaskState<T>);
+
+enum FallibleTaskState<T> {
+    /// A task that is ready to return a value
+    Ready(Option<T>),
+
+    /// A task that is currently running (wraps async_task::FallibleTask).
+    Spawned(async_task::FallibleTask<T, RunnableMeta>),
+}
+
+impl<T> FallibleTask<T> {
+    /// Creates a new fallible task that will resolve with the value.
+    pub fn ready(val: T) -> Self {
+        FallibleTask(FallibleTaskState::Ready(Some(val)))
+    }
+
+    /// Detaching a task runs it to completion in the background.
+    pub fn detach(self) {
+        match self.0 {
+            FallibleTaskState::Ready(_) => {}
+            FallibleTaskState::Spawned(task) => task.detach(),
+        }
+    }
+}
+
+impl<T> Future for FallibleTask<T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            FallibleTask(FallibleTaskState::Ready(val)) => Poll::Ready(val.take()),
+            FallibleTask(FallibleTaskState::Spawned(task)) => Pin::new(task).poll(cx),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for FallibleTask<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            FallibleTaskState::Ready(_) => f.debug_tuple("FallibleTask::Ready").finish(),
+            FallibleTaskState::Spawned(task) => {
+                f.debug_tuple("FallibleTask::Spawned").field(task).finish()
+            }
+        }
+    }
 }
 
 impl<T> Future for Task<T> {

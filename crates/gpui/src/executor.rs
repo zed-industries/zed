@@ -14,7 +14,7 @@ use std::{
 };
 use util::TryFutureExt;
 
-pub use scheduler::Priority;
+pub use scheduler::{FallibleTask, Priority};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -67,25 +67,22 @@ impl<T> Task<T> {
     /// Converts this task into a fallible task that returns `Option<T>`.
     ///
     /// Unlike the standard `Task<T>`, a [`FallibleTask`] will return `None`
-    /// if the app was dropped while the task is executing.
+    /// if the task was cancelled.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// // Background task that gracefully handles app shutdown:
+    /// // Background task that gracefully handles cancellation:
     /// cx.background_spawn(async move {
     ///     let result = foreground_task.fallible().await;
     ///     if let Some(value) = result {
     ///         // Process the value
     ///     }
-    ///     // If None, app was shut down - just exit gracefully
+    ///     // If None, task was cancelled - just exit gracefully
     /// }).detach();
     /// ```
     pub fn fallible(self) -> FallibleTask<T> {
-        FallibleTask(match self.0 {
-            TaskState::Ready(val) => FallibleTaskState::Ready(val),
-            TaskState::Spawned(task) => FallibleTaskState::Spawned(task.fallible()),
-        })
+        self.0.fallible()
     }
 }
 
@@ -207,10 +204,7 @@ impl BackgroundExecutor {
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta {
-                    location,
-                    app: None,
-                })
+                .metadata(RunnableMeta { location })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -637,25 +631,21 @@ impl Drop for Scope<'_> {
 mod test {
     use super::*;
     use crate::{App, TestDispatcher, TestPlatform};
-    use rand::SeedableRng;
     use std::cell::RefCell;
 
     /// Helper to create test infrastructure.
-    /// Returns (dispatcher, background_executor, app) where app's foreground_executor has liveness.
+    /// Returns (dispatcher, background_executor, app).
     fn create_test_app() -> (TestDispatcher, BackgroundExecutor, Rc<crate::AppCell>) {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let dispatcher = TestDispatcher::new(0);
         let arc_dispatcher = Arc::new(dispatcher.clone());
-        // Create liveness for task cancellation
-        let liveness = std::sync::Arc::new(());
-        let liveness_weak = std::sync::Arc::downgrade(&liveness);
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher, liveness_weak);
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
 
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor);
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let app = App::new_app(platform, liveness, asset_source, http_client);
+        let app = App::new_app(platform, asset_source, http_client);
         (dispatcher, background_executor, app)
     }
 

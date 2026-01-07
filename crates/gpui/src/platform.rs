@@ -92,45 +92,43 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
-    // For standalone background executor, use a dead liveness since there's no App.
-    // Weak::new() creates a weak reference that always returns None on upgrade.
-    current_platform(true, std::sync::Weak::new()).background_executor()
+    current_platform(true).background_executor()
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new(headless, liveness))
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless))
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     #[cfg(feature = "x11")]
     use anyhow::Context as _;
 
     if headless {
-        return Rc::new(HeadlessClient::new(liveness));
+        return Rc::new(HeadlessClient::new());
     }
 
     match guess_compositor() {
         #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new(liveness)),
+        "Wayland" => Rc::new(WaylandClient::new()),
 
         #[cfg(feature = "x11")]
         "X11" => Rc::new(
-            X11Client::new(liveness)
+            X11Client::new()
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
         ),
 
-        "Headless" => Rc::new(HeadlessClient::new(liveness)),
+        "Headless" => Rc::new(HeadlessClient::new()),
         _ => unreachable!(),
     }
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(
-        WindowsPlatform::new(liveness)
+        WindowsPlatform::new()
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
@@ -601,6 +599,9 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
+    /// Close the dispatcher. Tasks will not be executed after this is called.
+    fn close(&self);
 
     fn now(&self) -> Instant {
         Instant::now()

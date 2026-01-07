@@ -40,8 +40,8 @@ use crate::{
     Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
     DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
     KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    Platform, PlatformDispatcher, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    Point, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
     WindowHandle, WindowId, WindowInvalidator,
@@ -138,10 +138,8 @@ impl Application {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
-        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(false, Arc::downgrade(&liveness)),
-            liveness,
+            current_platform(false),
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -151,10 +149,8 @@ impl Application {
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
     pub fn headless() -> Self {
-        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(true, Arc::downgrade(&liveness)),
-            liveness,
+            current_platform(true),
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -588,7 +584,6 @@ impl GpuiMode {
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
-    pub(crate) _liveness: Arc<()>,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
@@ -596,6 +591,7 @@ pub struct App {
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
+    pub(crate) dispatcher: Arc<dyn PlatformDispatcher>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
@@ -653,12 +649,12 @@ impl App {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
-        liveness: Arc<()>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
+        let dispatcher = background_executor.dispatcher().clone();
         assert!(
             background_executor.is_main_thread(),
             "must construct App on main thread"
@@ -672,7 +668,6 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
-                _liveness: liveness,
                 platform: platform.clone(),
                 text_system,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
@@ -681,6 +676,7 @@ impl App {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
+                dispatcher,
                 background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -2549,6 +2545,12 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.dispatcher.close();
     }
 }
 

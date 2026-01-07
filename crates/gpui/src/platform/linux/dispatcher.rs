@@ -7,6 +7,10 @@ use util::ResultExt;
 
 use std::{
     mem::MaybeUninit,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -23,6 +27,7 @@ struct TimerAfter {
 }
 
 pub(crate) struct LinuxDispatcher {
+    closed: Arc<AtomicBool>,
     main_sender: PriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
     background_sender: PriorityQueueSender<RunnableVariant>,
@@ -34,6 +39,7 @@ const MIN_THREADS: usize = 2;
 
 impl LinuxDispatcher {
     pub fn new(main_sender: PriorityQueueCalloopSender<RunnableVariant>) -> Self {
+        let closed = Arc::new(AtomicBool::new(false));
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         let thread_count =
             std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
@@ -42,12 +48,17 @@ impl LinuxDispatcher {
         // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
+                let closed = closed.clone();
                 let mut receiver: PriorityQueueReceiver<RunnableVariant> =
                     background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
+                            if closed.load(Ordering::SeqCst) {
+                                continue;
+                            }
+
                             let start = Instant::now();
 
                             let location = runnable.metadata().location;
@@ -76,9 +87,10 @@ impl LinuxDispatcher {
             .collect::<Vec<_>>();
 
         let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
+        let timer_closed = closed.clone();
         let timer_thread = std::thread::Builder::new()
             .name("Timer".to_owned())
-            .spawn(|| {
+            .spawn(move || {
                 let mut event_loop: EventLoop<()> =
                     EventLoop::try_new().expect("Failed to initialize timer loop!");
 
@@ -87,12 +99,17 @@ impl LinuxDispatcher {
                 handle
                     .insert_source(timer_channel, move |e, _, _| {
                         if let channel::Event::Msg(timer) = e {
+                            let closed = timer_closed.clone();
                             // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
                             let mut runnable = Some(timer.runnable);
                             timer_handle
                                 .insert_source(
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
+                                        if closed.load(Ordering::SeqCst) {
+                                            return TimeoutAction::Drop;
+                                        }
+
                                         if let Some(runnable) = runnable.take() {
                                             let start = Instant::now();
                                             let location = runnable.metadata().location;
@@ -124,6 +141,7 @@ impl LinuxDispatcher {
         background_threads.push(timer_thread);
 
         Self {
+            closed,
             main_sender,
             timer_sender,
             background_sender,
@@ -158,12 +176,20 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
         self.main_sender
             .send(priority, runnable)
             .unwrap_or_else(|runnable| {
@@ -180,6 +206,10 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
         self.timer_sender
             .send(TimerAfter { duration, runnable })
             .ok();
@@ -211,6 +241,10 @@ impl PlatformDispatcher for LinuxDispatcher {
 
             f();
         });
+    }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
     }
 }
 

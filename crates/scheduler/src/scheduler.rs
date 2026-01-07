@@ -85,6 +85,10 @@ pub trait Scheduler: Send + Sync {
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;
 
+    /// Close the scheduler. All pending tasks will be dropped without running.
+    /// New tasks scheduled after close will not be queued.
+    fn close(&self);
+
     fn as_test(&self) -> Option<&TestScheduler> {
         None
     }

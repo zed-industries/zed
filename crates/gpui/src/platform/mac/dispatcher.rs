@@ -3,11 +3,10 @@
 #![allow(non_snake_case)]
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant,
-    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableVariant, THREAD_TIMINGS,
+    TaskTiming, ThreadTaskTimings,
 };
 
-use async_task::Runnable;
 use objc::{
     class, msg_send,
     runtime::{BOOL, YES},
@@ -15,7 +14,11 @@ use objc::{
 };
 use std::{
     ffi::c_void,
-    ptr::{NonNull, addr_of},
+    ptr::addr_of,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -30,7 +33,22 @@ pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
     addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t
 }
 
-pub(crate) struct MacDispatcher;
+pub(crate) struct MacDispatcher {
+    closed: Arc<AtomicBool>,
+}
+
+impl MacDispatcher {
+    pub fn new() -> Self {
+        Self {
+            closed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+struct DispatchedRunnable {
+    runnable: RunnableVariant,
+    closed: Arc<AtomicBool>,
+}
 
 impl PlatformDispatcher for MacDispatcher {
     fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
@@ -57,7 +75,15 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
-        let context = runnable.into_raw().as_ptr() as *mut c_void;
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let dispatched = Box::new(DispatchedRunnable {
+            runnable,
+            closed: self.closed.clone(),
+        });
+        let context = Box::into_raw(dispatched) as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
 
         let queue_priority = match priority {
@@ -76,7 +102,15 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        let context = runnable.into_raw().as_ptr() as *mut c_void;
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let dispatched = Box::new(DispatchedRunnable {
+            runnable,
+            closed: self.closed.clone(),
+        });
+        let context = Box::into_raw(dispatched) as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
         unsafe {
             dispatch_async_f(dispatch_get_main_queue(), context, trampoline);
@@ -84,7 +118,15 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        let context = runnable.into_raw().as_ptr() as *mut c_void;
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let dispatched = Box::new(DispatchedRunnable {
+            runnable,
+            closed: self.closed.clone(),
+        });
+        let context = Box::into_raw(dispatched) as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
         unsafe {
             let queue =
@@ -93,19 +135,23 @@ impl PlatformDispatcher for MacDispatcher {
             dispatch_after_f(when, queue, context, trampoline);
         }
     }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
 }
 
-extern "C" fn trampoline(runnable: *mut c_void) {
-    let task =
-        unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
+extern "C" fn trampoline(context: *mut c_void) {
+    let dispatched = unsafe { Box::from_raw(context as *mut DispatchedRunnable) };
 
-    let metadata = task.metadata();
-    let location = metadata.location;
-
-    if !metadata.is_app_alive() {
-        drop(task);
+    // Check if dispatcher was closed - if so, drop the task without running
+    if dispatched.closed.load(Ordering::SeqCst) {
         return;
     }
+
+    let runnable = dispatched.runnable;
+    let metadata = runnable.metadata();
+    let location = metadata.location;
 
     let start = Instant::now();
     let timing = TaskTiming {
@@ -126,7 +172,7 @@ extern "C" fn trampoline(runnable: *mut c_void) {
         timings.push_back(timing);
     });
 
-    task.run();
+    runnable.run();
     let end = Instant::now();
 
     THREAD_TIMINGS.with(|timings| {
