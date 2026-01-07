@@ -507,15 +507,13 @@ impl WorktreeStore {
                             .ok()
                             .flatten()
                         {
-                            trusted_worktrees
-                                .update(cx, |trusted_worktrees, cx| {
-                                    trusted_worktrees.can_trust(
-                                        &worktree_store,
-                                        worktree.read(cx).id(),
-                                        cx,
-                                    );
-                                })
-                                .ok();
+                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                trusted_worktrees.can_trust(
+                                    &worktree_store,
+                                    worktree.read(cx).id(),
+                                    cx,
+                                );
+                            });
                         }
                     }
                     Ok(worktree)

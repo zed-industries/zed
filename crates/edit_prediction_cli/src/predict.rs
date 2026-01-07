@@ -93,7 +93,7 @@ pub async fn run_prediction(
             }
         };
         store.set_edit_prediction_model(model);
-    })?;
+    });
     step_progress.set_substatus("configuring model");
     let state = example.state.as_ref().context("state must be set")?;
     let run_dir = RUN_DIR.join(&example.spec.name);

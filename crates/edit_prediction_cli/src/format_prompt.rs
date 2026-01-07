@@ -11,7 +11,7 @@ use edit_prediction::{
     EditPredictionStore,
     zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
 };
-use gpui::AsyncApp;
+use gpui::{AsyncApp, Entity};
 use std::sync::Arc;
 use zeta_prompt::format_zeta_prompt;
 
@@ -46,14 +46,16 @@ pub async fn run_format_prompt(
 
             step_progress.set_substatus("formatting zeta2 prompt");
 
-            let ep_store = cx.update(|cx| {
-                EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-            })??;
+            let ep_store: Entity<EditPredictionStore> = cx
+                .update(|cx| {
+                    EditPredictionStore::try_global(cx)
+                        .context("EditPredictionStore not initialized")
+                })?;
 
             let state = example.state.as_ref().context("state must be set")?;
             let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot());
             let project = state.project.clone();
-            let (_, input) = ep_store.update(&mut cx, |ep_store, cx| {
+            let (_, input) = ep_store.update(&mut cx, |ep_store: &mut EditPredictionStore, cx| {
                 let events = ep_store
                     .edit_history_for_project(&project, cx)
                     .into_iter()

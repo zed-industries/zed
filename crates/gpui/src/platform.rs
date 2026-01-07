@@ -590,25 +590,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 /// be considered part of our public API.
 #[doc(hidden)]
 pub struct RunnableMeta {
-    /// Location of the runnable
-    pub location: &'static core::panic::Location<'static>,
-    /// Weak reference to check if the app is still alive before running this task
-    pub app: Option<std::sync::Weak<()>>,
-}
-
-impl std::fmt::Debug for RunnableMeta {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RunnableMeta")
-            .field("location", &self.location)
-            .field("app_alive", &self.is_app_alive())
-            .finish()
-    }
-}
-
-/// This type is public so that our test macro can generate and use it, but it should not
-/// be considered part of our public API.
-#[doc(hidden)]
-pub struct RunnableMeta {
     pub priority: Priority,
     /// Location of the runnable, only set for futures we spawn
     pub location: &'static core::panic::Location<'static>,

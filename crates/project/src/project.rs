@@ -4876,7 +4876,7 @@ impl Project {
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+        if this.read_with(&cx, |project, _| project.is_via_collab()) {
             return Ok(proto::Ack {});
         }
 
@@ -4903,7 +4903,7 @@ impl Project {
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+        if this.read_with(&cx, |project, _| project.is_via_collab()) {
             return Ok(proto::Ack {});
         }
 

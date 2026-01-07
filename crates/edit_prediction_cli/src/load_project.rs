@@ -36,7 +36,7 @@ pub async fn run_load_project(
     let (buffer, cursor_position) =
         cursor_position(example, &project, &open_buffers, &mut cx).await?;
     buffer
-        .read_with(&cx, |buffer, _| buffer.parsing_idle())?
+        .read_with(&cx, |buffer, _| buffer.parsing_idle())
         .await;
     let (example_buffer, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let cursor_point = cursor_position.to_point(&buffer);
@@ -101,14 +101,14 @@ async fn cursor_position(
         buffer.clone()
     } else {
         // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
-        if let Some(worktree) = project.read_with(cx, |project, cx| project.worktrees(cx).next())? {
+        if let Some(worktree) = project.read_with(cx, |project, cx| project.worktrees(cx).next()) {
             refresh_worktree_entries(&worktree, [&*example.spec.cursor_path], cx).await?;
         }
 
         let cursor_path = project
             .read_with(cx, |project, cx| {
                 project.find_project_path(&example.spec.cursor_path, cx)
-            })?
+            })
             .with_context(|| {
                 format!(
                     "failed to find cursor path {}",
@@ -117,7 +117,7 @@ async fn cursor_position(
             })?;
 
         project
-            .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
+            .update(cx, |project, cx| project.open_buffer(cursor_path, cx))
             .await?
     };
 

@@ -640,8 +640,9 @@ impl agent::TerminalHandle for EvalTerminalHandle {
     }
 
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool> {
-        self.terminal
-            .read_with(cx, |term, _cx| term.was_stopped_by_user())
+        Ok(self
+            .terminal
+            .read_with(cx, |term, _cx| term.was_stopped_by_user()))
     }
 }
 

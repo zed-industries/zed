@@ -65,7 +65,7 @@ pub async fn apply_diff(
                         } else {
                             None
                         }
-                    })?;
+                    });
 
                     if let Some(delete_task) = delete_task {
                         delete_task.await?;
@@ -79,20 +79,20 @@ pub async fn apply_diff(
                         let buffer = match included_files.entry(path.to_string()) {
                             Entry::Occupied(entry) => entry.get().clone(),
                             Entry::Vacant(entry) => {
-                                let buffer = if status == FileStatus::Created {
+                                let buffer: Entity<Buffer> = if status == FileStatus::Created {
                                     project
-                                        .update(cx, |project, cx| project.create_buffer(true, cx))?
+                                        .update(cx, |project, cx| project.create_buffer(true, cx))
                                         .await?
                                 } else {
                                     let project_path = project
                                         .update(cx, |project, cx| {
                                             project.find_project_path(path.as_ref(), cx)
-                                        })?
+                                        })
                                         .with_context(|| format!("no such path: {}", path))?;
                                     project
                                         .update(cx, |project, cx| {
                                             project.open_buffer(project_path, cx)
-                                        })?
+                                        })
                                         .await?
                                 };
                                 entry.insert(buffer.clone());
