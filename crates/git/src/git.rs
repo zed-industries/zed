@@ -85,6 +85,8 @@ actions!(
         Commit,
         /// Amends the last commit with staged changes.
         Amend,
+        /// Stash push with a custom message
+        StashPush,
         /// Enable the --signoff option.
         Signoff,
         /// Cancels the current git operation.
@@ -101,6 +103,8 @@ actions!(
         Clone,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Switch commit editor to stash
+        ToggleCommitMode
     ]
 );
 
