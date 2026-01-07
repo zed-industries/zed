@@ -16,8 +16,7 @@ actions!(counter, [Increment, Decrement]);
 struct Counter {
     count: i32,
     focus_handle: FocusHandle,
-    #[allow(dead_code)]
-    subscription: Option<gpui::Subscription>,
+    _subscription: gpui::Subscription,
 }
 
 /// Event emitted by Counter
@@ -27,17 +26,6 @@ impl gpui::EventEmitter<CounterEvent> for Counter {}
 
 impl Counter {
     fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            count: 0,
-            focus_handle: cx.focus_handle(),
-            subscription: None,
-        }
-    }
-
-    /// Creates a counter that subscribes to its own events.
-    /// When CounterEvent is emitted, the subscriber sets count to 999.
-    #[cfg(test)]
-    fn new_with_subscriber(cx: &mut Context<Self>) -> Self {
         let subscription = cx.subscribe_self(|this: &mut Self, _event: &CounterEvent, _cx| {
             this.count = 999;
         });
@@ -45,7 +33,7 @@ impl Counter {
         Self {
             count: 0,
             focus_handle: cx.focus_handle(),
-            subscription: Some(subscription),
+            _subscription: subscription,
         }
     }
 
@@ -216,14 +204,12 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use rand::prelude::*;
 
-    /// Here's a basic GPUI test. Just add the macro and take the context as an argument!
+    /// Here's a basic GPUI test. Just add the macro and take a TestAppContext as an argument!
     ///
-    /// Note that synchronous side effects run immediately after your "update*" calls complete
-    /// so make sure to remember that when testing state updates.
+    /// Note that synchronous side effects run immediately after your "update*" calls complete.
     #[gpui::test]
-    fn test_counter_entity(cx: &mut TestAppContext) {
-        // Create a counter with a self-subscription (sets count to 999 on event)
-        let counter = cx.new(|cx| Counter::new_with_subscriber(cx));
+    fn basic_testing(cx: &mut TestAppContext) {
+        let counter = cx.new(|cx| Counter::new(cx));
 
         counter.update(cx, |counter, _| {
             counter.count = 42;
@@ -241,7 +227,7 @@ mod tests {
         let count_after_update = counter.read_with(cx, |counter, _| counter.count);
         assert_eq!(
             count_after_update, 999,
-            "Side effects run after update completes"
+            "Side effects should run after update completes"
         );
     }
 
