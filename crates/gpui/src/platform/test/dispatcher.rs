@@ -180,12 +180,13 @@ impl TestDispatcher {
             RunnableVariant::Meta(runnable) => {
                 if !runnable.metadata().is_app_alive() {
                     drop(runnable);
-                    self.state.lock().is_main_thread = was_main_thread;
-                    return true;
+                } else {
+                    runnable.run();
                 }
-                runnable.run()
             }
-            RunnableVariant::Compat(runnable) => runnable.run(),
+            RunnableVariant::Compat(runnable) => {
+                runnable.run();
+            }
         };
 
         self.state.lock().is_main_thread = was_main_thread;
