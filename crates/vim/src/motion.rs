@@ -3086,6 +3086,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Inlay;
+    use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
@@ -4528,5 +4529,105 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
         the quick brown foˇd over the lazy dog"});
         assert!(!cx.cx.forced_motion());
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::NextSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo.ˇbar", Mode::Normal);
+
+        cx.set_state("ˇfoo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo(ˇbar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo(barˇ)", Mode::Normal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo_bar_ˇbaz", Mode::Normal);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooBarˇBaz", Mode::Normal);
+
+        cx.set_state("ˇfoo;bar", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo;ˇbar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                super::PreviousSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.barˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo.ˇbar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo.bar", Mode::Normal);
+
+        cx.set_state("foo(barˇ)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo(ˇbar)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo(bar)", Mode::Normal);
+
+        cx.set_state("foo_bar_bazˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo_bar_ˇbaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo_bar_baz", Mode::Normal);
+
+        cx.set_state("fooBarBazˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooBarˇBaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfooBarBaz", Mode::Normal);
+
+        cx.set_state("foo;barˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo;ˇbar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo;bar", Mode::Normal);
     }
 }
