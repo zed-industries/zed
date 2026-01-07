@@ -204,12 +204,16 @@ fn process_content(
                     )
                 }
             } else {
-                // User manually stopped the command - just show the output
+                // User manually stopped the command - make it very clear this was intentional
                 if is_empty {
-                    "Command was stopped. No output was captured.".to_string()
+                    "The user stopped this command. No output was captured before stopping.\n\n\
+                    Since the user intentionally interrupted this command, ask them what they would like to do next \
+                    rather than automatically retrying or assuming something went wrong.".to_string()
                 } else {
                     format!(
-                        "Command was stopped. Output captured before stopping:\n\n{}",
+                        "The user stopped this command. Output captured before stopping:\n\n{}\n\n\
+                        Since the user intentionally interrupted this command, ask them what they would like to do next \
+                        rather than automatically retrying or assuming something went wrong.",
                         content
                     )
                 }
@@ -273,8 +277,8 @@ mod tests {
         let result = process_content(output, "cargo build", exit_status, false);
 
         assert!(
-            result.contains("Command was stopped"),
-            "Expected 'Command was stopped' message when user stops, got: {}",
+            result.contains("user stopped"),
+            "Expected 'user stopped' message when user stops, got: {}",
             result
         );
         assert!(
@@ -285,6 +289,11 @@ mod tests {
         assert!(
             !result.contains("timed out"),
             "User stop should not mention timeout, got: {}",
+            result
+        );
+        assert!(
+            result.contains("ask them what they would like to do"),
+            "Should instruct agent to ask user what to do, got: {}",
             result
         );
     }
@@ -352,6 +361,11 @@ mod tests {
         assert!(
             result.contains("No output was captured"),
             "Expected 'No output was captured' for empty output, got: {}",
+            result
+        );
+        assert!(
+            result.contains("user stopped"),
+            "Should mention user stopped, got: {}",
             result
         );
     }
