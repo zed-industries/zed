@@ -6,7 +6,8 @@ use crate::{
     KeyContext, Keymap, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, WindowAppearance,
-    WindowParams, platform::mac::pasteboard::Pasteboard,
+    WindowParams,
+    platform::mac::{pasteboard::Pasteboard, permissions::MacPermissionsHandler},
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -1134,6 +1135,12 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
+    }
+
+    fn permissions_handler(
+        &self,
+    ) -> Rc<dyn crate::platform::permissions::PlatformPermissionsHandler> {
+        Rc::new(MacPermissionsHandler {})
     }
 }
 

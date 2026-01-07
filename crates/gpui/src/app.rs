@@ -39,12 +39,13 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, PermissionKind,
+    PermissionStatus, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformPermissionsHandler, Point, Priority, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextRenderingMode, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -608,6 +609,7 @@ pub struct App {
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
+    pub(crate) permissions_handler: Rc<dyn PlatformPermissionsHandler>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -660,6 +662,7 @@ impl App {
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
+        let permissions_handler = platform.permissions_handler();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -689,6 +692,7 @@ impl App {
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
                 keyboard_mapper,
+                permissions_handler,
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: FxHashSet::default(),
@@ -2227,6 +2231,18 @@ impl App {
     /// These colors can be accessed through `cx.default_colors()`.
     pub fn init_colors(&mut self) {
         self.set_global(GlobalColors(Arc::new(Colors::default())));
+    }
+
+    /// Returns the current status of the specified system permission.
+    /// This check does not prompt the user.
+    pub fn permission_status(&self, kind: PermissionKind) -> PermissionStatus {
+        self.permissions_handler.status(kind)
+    }
+
+    /// Requests the specified permission from the user.
+    /// This may show a system dialog prompting the user to grant access.
+    pub fn request_permission(&self, kind: PermissionKind) {
+        self.permissions_handler.request(kind);
     }
 }
 

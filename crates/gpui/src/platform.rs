@@ -1,6 +1,7 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod permissions;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
@@ -74,6 +75,7 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
+pub use permissions::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) use linux::*;
@@ -284,6 +286,8 @@ pub(crate) trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+
+    fn permissions_handler(&self) -> Rc<dyn PlatformPermissionsHandler>;
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.

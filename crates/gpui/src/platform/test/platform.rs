@@ -3,7 +3,8 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
     ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    TestDisplay, TestWindow, WindowAppearance, WindowParams,
+    platform::permissions::DummyPermissionsHandler, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -448,6 +449,12 @@ impl Platform for TestPlatform {
 
     fn open_with_system(&self, _path: &Path) {
         unimplemented!()
+    }
+
+    fn permissions_handler(
+        &self,
+    ) -> Rc<dyn crate::platform::permissions::PlatformPermissionsHandler> {
+        Rc::new(DummyPermissionsHandler)
     }
 }
 
