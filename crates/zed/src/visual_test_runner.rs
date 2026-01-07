@@ -301,9 +301,12 @@ fn main() {
 
                     // Close the project panel for the second test
                     cx.update(|cx| {
-                        workspace.window.update(cx, |ws, window, cx| {
-                            ws.close_panel::<ProjectPanel>(window, cx);
-                        })?;
+                        workspace
+                            .window
+                            .update(cx, |ws, window, cx| {
+                                ws.close_panel::<ProjectPanel>(window, cx);
+                            })
+                            .ok();
                     });
 
                     // Refresh and wait for panel to close
