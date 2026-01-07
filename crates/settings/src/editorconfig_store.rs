@@ -93,10 +93,7 @@ impl EditorconfigStore {
         directory_path: Arc<RelPath>,
         editorconfig_contents: Option<&str>,
     ) -> std::result::Result<(), InvalidSettingsError> {
-        match editorconfig_contents
-            .map(|content| content.trim())
-            .filter(|content| !content.is_empty())
-        {
+        match editorconfig_contents {
             None => {
                 if let Some(worktree_configs) = self.worktree_configs.get_mut(&root_id) {
                     worktree_configs.internal_configs.remove(&directory_path);
