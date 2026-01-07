@@ -1,5 +1,6 @@
 use gpui::{
-    App, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, Window, canvas, point, px,
+    App, Bounds, Hsla, IntoElement, PathBuilder, PathStyle, Pixels, Point, StrokeOptions, Styled,
+    Window, canvas, point, px,
 };
 use theme::AccentColors;
 use ui::ActiveTheme as _;
@@ -131,8 +132,9 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                 );
 
                                 // This means that this branch was a checkout
+                                let going_right = to_column > current_column;
                                 if segment_idx == 0 {
-                                    let column_shift = if to_column > current_column {
+                                    let column_shift = if going_right {
                                         COMMIT_CIRCLE_RADIUS + COMMIT_CIRCLE_STROKE_WIDTH
                                     } else {
                                         -COMMIT_CIRCLE_RADIUS - COMMIT_CIRCLE_STROKE_WIDTH
@@ -148,6 +150,19 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                     to_row -= COMMIT_CIRCLE_RADIUS;
                                 }
 
+                                if (to_column - current_column).abs() > LANE_WIDTH {
+                                    let column_shift =
+                                        if going_right { LANE_WIDTH } else { -LANE_WIDTH };
+
+                                    // todo! we should only subtract the commit circle radius if this is the first segment
+                                    let start_curve = point(
+                                        current_column + column_shift,
+                                        current_row - COMMIT_CIRCLE_RADIUS,
+                                    );
+                                    builder.line_to(start_curve);
+                                    builder.move_to(start_curve);
+                                }
+
                                 // Draw a sharp right-angle corner:
                                 // 1. Horizontal line to just before the corner
                                 // 2. Small quadratic curve around the corner
@@ -158,23 +173,23 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                 let corner_y = current_row;
 
                                 // Determine direction of horizontal movement
-                                let going_right = to_column > current_column;
                                 let horizontal_end_x = if going_right {
                                     corner_x - corner_radius
                                 } else {
                                     corner_x + corner_radius
                                 };
 
-                                // 1. Horizontal line to just before the corner
-                                builder.line_to(point(horizontal_end_x, corner_y));
-
-                                // 2. Small curve around the corner
-                                let curve_end = point(corner_x, corner_y + corner_radius);
-                                let control = point(corner_x, corner_y);
-                                builder.curve_to(curve_end, control);
+                                // // 2. Small curve around the corner
+                                // let curve_end = point(to_row, to_column);
+                                // let control = point(corner_x, corner_y);
+                                // builder.curve_to(curve_end, control);
+                                //
 
                                 // 3. Vertical line down to destination
-                                builder.line_to(point(to_column, to_row));
+                                builder.curve_to(
+                                    point(to_column, to_row),
+                                    point(to_column, current_row),
+                                );
                                 current_row = to_row;
                                 current_column = to_column;
                                 builder.move_to(point(current_column, current_row));
