@@ -1283,32 +1283,11 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
-                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(
-                                &this.project().read(cx).worktree_store(),
-                                *worktree_id,
-                                cx,
-                            );
-                        });
-                    }
-                }
-
                 project::Event::WorktreeRemoved(_) => {
                     this.update_worktree_data(window, cx);
                 }
 
-                project::Event::WorktreeAdded(worktree_id) => {
-                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(
-                                &this.project().read(cx).worktree_store(),
-                                *worktree_id,
-                                cx,
-                            );
-                        });
-                    }
+                project::Event::WorktreeUpdatedEntries(..) | project::Event::WorktreeAdded(..) => {
                     this.update_worktree_data(window, cx);
                 }
 
@@ -1321,7 +1300,7 @@ impl Workspace {
                     }
                 }
 
-                project::Event::DisconnectedFromSshRemote => {
+                project::Event::DisconnectedFromRemote => {
                     this.update_window_edited(window, cx);
                 }
 

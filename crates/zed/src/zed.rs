@@ -4,7 +4,10 @@ pub mod edit_prediction_registry;
 pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
+mod open_url_modal;
 mod quick_action_bar;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
@@ -143,6 +146,8 @@ actions!(
         /// Tracy will connect to this Zed instance and begin capturing performance data.
         /// Requires Zed to be built with tracy support (`--features tracy`).
         StartTracing,
+        /// Opens a prompt to enter a URL to open.
+        OpenUrlPrompt,
     ]
 );
 
@@ -432,6 +437,8 @@ pub fn initialize_workspace(
             window,
             cx,
         );
+        let active_buffer_encoding =
+            cx.new(|_| encoding_selector::ActiveBufferEncoding::new(workspace));
         let active_buffer_language =
             cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
@@ -458,6 +465,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
+            status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(line_ending_indicator, window, cx);
@@ -824,6 +832,11 @@ fn register_actions(
                 urls: vec![action.url.clone()],
                 ..Default::default()
             })
+        })
+        .register_action(|workspace, _: &OpenUrlPrompt, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                open_url_modal::OpenUrlModal::new(window, cx)
+            });
         })
         .register_action(|workspace, action: &OpenBrowser, _window, cx| {
             // Parse and validate the URL to ensure it's properly formatted

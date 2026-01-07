@@ -1124,7 +1124,11 @@ impl Buffer {
             syntax_map,
             reparse: None,
             non_text_state_update_count: 0,
-            sync_parse_timeout: Some(Duration::from_millis(1)),
+            sync_parse_timeout: if cfg!(any(test, feature = "test-support")) {
+                Some(Duration::from_millis(10))
+            } else {
+                Some(Duration::from_millis(1))
+            },
             parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             wait_for_autoindent_txs: Default::default(),

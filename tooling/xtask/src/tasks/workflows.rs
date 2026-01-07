@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 mod after_release;
 mod autofix_pr;
+mod bump_patch_version;
 mod cherry_pick;
 mod compare_perf;
 mod danger;
@@ -126,22 +127,23 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
     }
 
     let workflows = [
-        WorkflowFile::zed(danger::danger),
-        WorkflowFile::zed(run_bundling::run_bundling),
-        WorkflowFile::zed(release_nightly::release_nightly),
-        WorkflowFile::zed(run_tests::run_tests),
-        WorkflowFile::zed(release::release),
-        WorkflowFile::zed(cherry_pick::cherry_pick),
-        WorkflowFile::zed(autofix_pr::autofix_pr),
-        WorkflowFile::zed(compare_perf::compare_perf),
-        WorkflowFile::zed(run_agent_evals::run_unit_evals),
-        WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
-        WorkflowFile::zed(run_agent_evals::run_agent_evals),
         WorkflowFile::zed(after_release::after_release),
-        WorkflowFile::zed(extension_tests::extension_tests),
+        WorkflowFile::zed(autofix_pr::autofix_pr),
+        WorkflowFile::zed(bump_patch_version::bump_patch_version),
+        WorkflowFile::zed(cherry_pick::cherry_pick),
+        WorkflowFile::zed(compare_perf::compare_perf),
+        WorkflowFile::zed(danger::danger),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_release::extension_release),
+        WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
+        WorkflowFile::zed(release::release),
+        WorkflowFile::zed(release_nightly::release_nightly),
+        WorkflowFile::zed(run_agent_evals::run_agent_evals),
+        WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
+        WorkflowFile::zed(run_agent_evals::run_unit_evals),
+        WorkflowFile::zed(run_bundling::run_bundling),
+        WorkflowFile::zed(run_tests::run_tests),
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension_shared(extensions::bump_version::bump_version),

@@ -67,6 +67,25 @@ jobs:
   publish_winget:
     runs-on: self-32vcpu-windows-2022
     steps:
+    - name: after_release::publish_winget::sync_winget_pkgs_fork
+      run: |
+        $headers = @{
+            "Authorization" = "Bearer $env:WINGET_TOKEN"
+            "Accept" = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+        }
+        $body = @{ branch = "master" } | ConvertTo-Json
+        $uri = "https://api.github.com/repos/${{ github.repository_owner }}/winget-pkgs/merge-upstream"
+        try {
+            Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
+            Write-Host "Successfully synced winget-pkgs fork"
+        } catch {
+            Write-Host "Fork sync response: $_"
+            Write-Host "Continuing anyway - fork may already be up to date"
+        }
+      shell: pwsh
+      env:
+        WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
     - id: set-package-name
       name: after_release::publish_winget::set_package_name
       run: |

@@ -20,6 +20,8 @@ use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 /// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
 ///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
+/// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
+///   Image files are returned as visual content that you can analyze directly.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -175,6 +177,12 @@ impl AgentTool for ReadFileTool {
                     .update(|cx| LanguageModelImage::from_image(image, cx))?
                     .await
                     .context("processing image")?;
+
+                event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                        acp::ImageContent::new(language_model_image.source.clone(), "image/png"),
+                    ))),
+                ]));
 
                 Ok(language_model_image.into())
             });

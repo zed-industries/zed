@@ -12,7 +12,7 @@ mod session;
 use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
-use gpui::{App, PlatformDispatcher, Priority, RunnableVariant};
+use gpui::{App, GpuiRunnable, PlatformDispatcher};
 use project::Fs;
 pub use runtimelib::ExecutionState;
 
@@ -46,12 +46,12 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     impl Dispatcher for ZedDispatcher {
         fn dispatch(&self, runnable: Runnable) {
             self.dispatcher
-                .dispatch(RunnableVariant::Compat(runnable), None, Priority::default());
+                .dispatch(GpuiRunnable::DependencySpawned(runnable), None);
         }
 
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
             self.dispatcher
-                .dispatch_after(duration, RunnableVariant::Compat(runnable));
+                .dispatch_after(duration, GpuiRunnable::DependencySpawned(runnable));
         }
     }
 

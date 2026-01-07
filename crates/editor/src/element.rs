@@ -41,14 +41,14 @@ use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatu
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, TextStyleRefinement,
-    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -94,8 +94,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
-    CollaboratorId, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel, Workspace,
-    item::{Item, ItemBufferKind},
+    CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
+    Workspace,
+    item::{BreadcrumbText, Item, ItemBufferKind},
     notifications::NotifyTaskExt,
 };
 
@@ -1021,6 +1022,10 @@ impl EditorElement {
             && hovered_link_modifier
             && mouse_down_hovered_link_modifier
             && text_hitbox.is_hovered(window)
+            && !matches!(
+                editor.selection_drag_state,
+                SelectionDragState::Dragging { .. }
+            )
         {
             let point = position_map.point_for_position(mouse_position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
@@ -3878,6 +3883,13 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let multi_buffer = editor.buffer.read(cx);
         let is_read_only = self.editor.read(cx).read_only(cx);
+        let editor_handle: &dyn ItemHandle = &self.editor;
+
+        let breadcrumbs = if is_selected {
+            editor.breadcrumbs_inner(cx.theme(), cx)
+        } else {
+            None
+        };
 
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
@@ -4035,57 +4047,103 @@ impl EditorElement {
                             .id("path_header_block")
                             .min_w_0()
                             .size_full()
+                            .gap_1()
                             .justify_between()
                             .overflow_hidden()
-                            .child(h_flex().min_w_0().flex_1().gap_0p5().map(|path_header| {
-                                let filename = filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                            .child(h_flex().min_w_0().flex_1().gap_0p5().overflow_hidden().map(
+                                |path_header| {
+                                    let filename = filename
+                                        .map(SharedString::from)
+                                        .unwrap_or_else(|| "untitled".into());
 
-                                path_header
-                                    .when(ItemSettings::get_global(cx).file_icons, |el| {
-                                        let path = path::Path::new(filename.as_str());
-                                        let icon =
-                                            FileIcons::get_icon(path, cx).unwrap_or_default();
+                                    let full_path = match parent_path.as_deref() {
+                                        Some(parent) if !parent.is_empty() => {
+                                            format!("{}{}", parent, filename.as_str())
+                                        }
+                                        _ => filename.as_str().to_string(),
+                                    };
 
-                                        el.child(Icon::from_path(icon).color(Color::Muted))
-                                    })
-                                    .child(
-                                        ButtonLike::new("filename-button")
-                                            .child(
-                                                Label::new(filename)
-                                                    .single_line()
-                                                    .color(file_status_label_color(file_status))
-                                                    .when(
-                                                        file_status.is_some_and(|s| s.is_deleted()),
-                                                        |label| label.strikethrough(),
+                                    path_header
+                                        .child(
+                                            ButtonLike::new("filename-button")
+                                                .when(
+                                                    ItemSettings::get_global(cx).file_icons,
+                                                    |this| {
+                                                        let path =
+                                                            path::Path::new(filename.as_str());
+                                                        let icon = FileIcons::get_icon(path, cx)
+                                                            .unwrap_or_default();
+
+                                                        this.child(
+                                                            Icon::from_path(icon)
+                                                                .color(Color::Muted),
+                                                        )
+                                                    },
+                                                )
+                                                .child(
+                                                    Label::new(filename)
+                                                        .single_line()
+                                                        .color(file_status_label_color(file_status))
+                                                        .buffer_font(cx)
+                                                        .when(
+                                                            file_status
+                                                                .is_some_and(|s| s.is_deleted()),
+                                                            |label| label.strikethrough(),
+                                                        ),
+                                                )
+                                                .tooltip(move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Open File",
+                                                        None,
+                                                        full_path.clone(),
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(window.listener_for(&self.editor, {
+                                                    let jump_data = jump_data.clone();
+                                                    move |editor, e: &ClickEvent, window, cx| {
+                                                        editor.open_excerpts_common(
+                                                            Some(jump_data.clone()),
+                                                            e.modifiers().secondary(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                })),
+                                        )
+                                        .when_some(parent_path, |then, path| {
+                                            then.child(
+                                                Label::new(path)
+                                                    .buffer_font(cx)
+                                                    .truncate_start()
+                                                    .color(
+                                                        if file_status
+                                                            .is_some_and(FileStatus::is_deleted)
+                                                        {
+                                                            Color::Custom(colors.text_disabled)
+                                                        } else {
+                                                            Color::Custom(colors.text_muted)
+                                                        },
                                                     ),
                                             )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    )
-                                    .when(!for_excerpt.buffer.capability.editable(), |el| {
-                                        el.child(Icon::new(IconName::FileLock).color(Color::Muted))
-                                    })
-                                    .when_some(parent_path, |then, path| {
-                                        then.child(Label::new(path).truncate().color(
-                                            if file_status.is_some_and(FileStatus::is_deleted) {
-                                                Color::Custom(colors.text_disabled)
-                                            } else {
-                                                Color::Custom(colors.text_muted)
-                                            },
-                                        ))
-                                    })
-                            }))
+                                        })
+                                        .when(!for_excerpt.buffer.capability.editable(), |el| {
+                                            el.child(
+                                                Icon::new(IconName::FileLock).color(Color::Muted),
+                                            )
+                                        })
+                                        .when_some(breadcrumbs, |then, breadcrumbs| {
+                                            then.child(render_breadcrumb_text(
+                                                breadcrumbs,
+                                                None,
+                                                editor_handle,
+                                                true,
+                                                window,
+                                                cx,
+                                            ))
+                                        })
+                                },
+                            ))
                             .when(
                                 can_open_excerpts && is_selected && relative_path.is_some(),
                                 |el| {
@@ -7873,6 +7931,168 @@ impl EditorElement {
             }
         });
     }
+}
+
+pub fn render_breadcrumb_text(
+    mut segments: Vec<BreadcrumbText>,
+    prefix: Option<gpui::AnyElement>,
+    active_item: &dyn ItemHandle,
+    multibuffer_header: bool,
+    window: &mut Window,
+    cx: &App,
+) -> impl IntoElement {
+    const MAX_SEGMENTS: usize = 12;
+
+    let element = h_flex().flex_grow().text_ui(cx);
+
+    let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
+    let suffix_start_ix = cmp::max(
+        prefix_end_ix,
+        segments.len().saturating_sub(MAX_SEGMENTS / 2),
+    );
+
+    if suffix_start_ix > prefix_end_ix {
+        segments.splice(
+            prefix_end_ix..suffix_start_ix,
+            Some(BreadcrumbText {
+                text: "⋯".into(),
+                highlights: None,
+                font: None,
+            }),
+        );
+    }
+
+    let highlighted_segments = segments.into_iter().enumerate().map(|(index, segment)| {
+        let mut text_style = window.text_style();
+        if let Some(ref font) = segment.font {
+            text_style.font_family = font.family.clone();
+            text_style.font_features = font.features.clone();
+            text_style.font_style = font.style;
+            text_style.font_weight = font.weight;
+        }
+        text_style.color = Color::Muted.color(cx);
+
+        if index == 0
+            && !workspace::TabBarSettings::get_global(cx).show
+            && active_item.is_dirty(cx)
+            && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+        {
+            return styled_element;
+        }
+
+        StyledText::new(segment.text.replace('\n', "⏎"))
+            .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
+            .into_any()
+    });
+
+    let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
+        Label::new("›").color(Color::Placeholder).into_any_element()
+    });
+
+    let breadcrumbs_stack = h_flex()
+        .gap_1()
+        .when(multibuffer_header, |this| {
+            this.pl_2()
+                .border_l_1()
+                .border_color(cx.theme().colors().border.opacity(0.6))
+        })
+        .children(breadcrumbs);
+
+    let breadcrumbs = if let Some(prefix) = prefix {
+        h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+    } else {
+        breadcrumbs_stack
+    };
+
+    let editor = active_item
+        .downcast::<Editor>()
+        .map(|editor| editor.downgrade());
+
+    match editor {
+        Some(editor) => element
+            .id("breadcrumb_container")
+            .when(!multibuffer_header, |this| this.overflow_x_scroll())
+            .child(
+                ButtonLike::new("toggle outline view")
+                    .child(breadcrumbs)
+                    .when(multibuffer_header, |this| {
+                        this.style(ButtonStyle::Transparent)
+                    })
+                    .when(!multibuffer_header, |this| {
+                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+
+                        this.tooltip(move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_, window, cx| {
+                                if let Some((editor, callback)) = editor
+                                    .upgrade()
+                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                                {
+                                    callback(editor.to_any_view(), window, cx);
+                                }
+                            }
+                        })
+                    }),
+            )
+            .into_any_element(),
+        None => element
+            // Match the height and padding of the `ButtonLike` in the other arm.
+            .h(rems_from_px(22.))
+            .pl_1()
+            .child(breadcrumbs)
+            .into_any_element(),
+    }
+}
+
+fn apply_dirty_filename_style(
+    segment: &BreadcrumbText,
+    text_style: &gpui::TextStyle,
+    cx: &App,
+) -> Option<gpui::AnyElement> {
+    let text = segment.text.replace('\n', "⏎");
+
+    let filename_position = std::path::Path::new(&segment.text)
+        .file_name()
+        .and_then(|f| {
+            let filename_str = f.to_string_lossy();
+            segment.text.rfind(filename_str.as_ref())
+        })?;
+
+    let bold_weight = FontWeight::BOLD;
+    let default_color = Color::Default.color(cx);
+
+    if filename_position == 0 {
+        let mut filename_style = text_style.clone();
+        filename_style.font_weight = bold_weight;
+        filename_style.color = default_color;
+
+        return Some(
+            StyledText::new(text)
+                .with_default_highlights(&filename_style, [])
+                .into_any(),
+        );
+    }
+
+    let highlight_style = gpui::HighlightStyle {
+        font_weight: Some(bold_weight),
+        color: Some(default_color),
+        ..Default::default()
+    };
+
+    let highlight = vec![(filename_position..text.len(), highlight_style)];
+    Some(
+        StyledText::new(text)
+            .with_default_highlights(text_style, highlight)
+            .into_any(),
+    )
 }
 
 fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
