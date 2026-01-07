@@ -32,8 +32,8 @@ use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, CopyButton, Facepile,
-    HighlightedLabel, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
-    Tab, Tooltip, prelude::*, tooltip_container,
+    HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Indicator, Label,
+    ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -2422,6 +2422,9 @@ impl CollabPanel {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
+
+        let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+
         v_flex()
             .size_full()
             .gap_1()
@@ -2437,7 +2440,18 @@ impl CollabPanel {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_filter_input(&self.filter_editor, cx)),
+                    .child(self.render_filter_input(&self.filter_editor, cx))
+                    .when(has_query, |this| {
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Filter"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(
                 list(
