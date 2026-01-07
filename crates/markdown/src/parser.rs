@@ -149,6 +149,8 @@ pub fn parse_markdown(
                     pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
                     pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
                     pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
+                    pulldown_cmark::Tag::Superscript => MarkdownTag::Superscript,
+                    pulldown_cmark::Tag::Subscript => MarkdownTag::Subscript,
                     pulldown_cmark::Tag::Image {
                         link_type,
                         dest_url,
@@ -454,6 +456,8 @@ pub enum MarkdownTag {
     Emphasis,
     Strong,
     Strikethrough,
+    Superscript,
+    Subscript,
 
     /// A link.
     Link {
