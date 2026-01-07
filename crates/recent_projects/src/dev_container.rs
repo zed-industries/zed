@@ -1,17 +1,22 @@
+use editor::actions::Tab;
+use regex::Regex;
 use std::fmt::Debug;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use ::dev_container::{DevContainerTemplate, get_template_text, get_templates};
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset};
 use gpui::{
-    Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
-    WeakEntity,
+    Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, FocusOutEvent, Focusable,
+    RenderOnce, WeakEntity,
 };
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
+use smallvec::{SmallVec, smallvec_inline};
 use smol::fs;
+use snippet::{Snippet, TabStop};
 use ui::{
     AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
     InteractiveElement, IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable,
@@ -418,7 +423,6 @@ impl DevContainerModal {
                             .on_action({
                                 let template = template_entry.template.clone();
                                 cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                    // let entry = template_entry.clone();
                                     this.accept_message(
                                         DevContainerMessage::TemplateSelected(template.clone()),
                                         window,
@@ -614,6 +618,31 @@ impl StatefulModal for DevContainerModal {
                                 return;
                             };
 
+                            // let our_important_data = (template.options, template_text); // How are we going to use this?
+
+                            // let mut small_vec = SmallVec::<[Range<isize>; 2]>::new();
+                            // small_vec.push(54_isize..82_isize);
+
+                            // let mut other_small_vec = SmallVec::<[Range<isize>; 2]>::new();
+                            // other_small_vec.push(83_isize..83_isize);
+
+                            // let snippet = Snippet {
+                            //     text: "\"image\": \"mcr.microsoft.com/devcontainers/base:alpine-${templateOption:imageVariant}\"".to_string(),
+                            //     tabstops: vec![
+                            //         TabStop {
+                            //             ranges: small_vec,
+                            //             choices: None,
+                            //         },
+                            //         TabStop {
+                            //             ranges: other_small_vec,
+                            //             choices: None,
+                            //         },
+                            //     ]
+                            // };
+
+                            // TODO implement
+                            let snippet = build_snippet_from_template(template, template_text);
+
                             if let Ok(item) = open_task.await {
                                 if let Some(editor) = item.downcast::<Editor>() {
                                     editor
@@ -624,7 +653,13 @@ impl StatefulModal for DevContainerModal {
                                             // - If time:
                                             //   - Dive deeper into the actual call to get the content
                                             editor.clear(window, cx);
-                                            editor.insert(&template_text, window, cx);
+                                            editor.insert_snippet(
+                                                &vec![MultiBufferOffset(0)..MultiBufferOffset(0)],
+                                                snippet,
+                                                window,
+                                                cx,
+                                            )
+                                            //editor.insert_snippet(Range<MultiBufferOffset>(0..0), snippet, window, cx)
                                         })
                                         .log_err();
                                 };
@@ -693,6 +728,35 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
             .key_context("ContainerModal")
             .on_action(cx.listener(Self::dismiss))
             .child(element)
+    }
+}
+
+fn build_snippet_from_template(template: DevContainerTemplate, template_text: String) -> Snippet {
+    static TEMPLATE_OPTION_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\$\{templateOption:[^}]\}").expect("Failed to create REGEX"));
+
+    let mut tabstops = TEMPLATE_OPTION_REGEX
+        .find_iter(&template_text)
+        .map(|m| {
+            let mut vec: SmallVec<[Range<isize>; 2]> = SmallVec::new();
+            vec.push(m.start() as isize..m.end() as isize);
+            TabStop {
+                ranges: vec,
+                choices: None,
+            }
+        })
+        .collect::<Vec<TabStop>>();
+
+    let mut final_range: SmallVec<[Range<isize>; 2]> = SmallVec::new();
+    final_range.push(template_text.len() as isize - 1..template_text.len() as isize - 1);
+    tabstops.push(TabStop {
+        ranges: final_range,
+        choices: None,
+    });
+
+    Snippet {
+        text: template_text,
+        tabstops: tabstops,
     }
 }
 
