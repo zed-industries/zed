@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, hash_map::Entry};
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_diff};
 use postage::stream::Stream as _;
@@ -17,7 +17,13 @@ use util::{paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
 #[derive(Clone, Debug)]
-pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
+pub struct OpenedBuffers(HashMap<String, Entity<Buffer>>);
+
+impl OpenedBuffers {
+    pub fn get(&self, path: &str) -> Option<&Entity<Buffer>> {
+        self.0.get(path)
+    }
+}
 
 #[must_use]
 pub async fn apply_diff(
@@ -42,12 +48,12 @@ pub async fn apply_diff(
         .collect();
     refresh_worktree_entries(&worktree, paths.iter().map(|p| p.as_path()), cx).await?;
 
-    let mut included_files = HashMap::default();
+    let mut included_files: HashMap<String, Entity<Buffer>> = HashMap::default();
 
     let ranges = [Anchor::MIN..Anchor::MAX];
     let mut diff = DiffParser::new(diff_str);
     let mut current_file = None;
-    let mut edits = vec![];
+    let mut edits: Vec<(std::ops::Range<Anchor>, Arc<str>)> = vec![];
 
     while let Some(event) = diff.next()? {
         match event {
@@ -58,21 +64,29 @@ pub async fn apply_diff(
             } => {
                 let buffer = match current_file {
                     None => {
-                        let buffer = if is_new_file {
-                            project
-                                .update(cx, |project, cx| project.create_buffer(true, cx))?
-                                .await?
-                        } else {
-                            let project_path = project
-                                .update(cx, |project, cx| {
-                                    project.find_project_path(path.as_ref(), cx)
-                                })?
-                                .with_context(|| format!("no such path: {}", path))?;
-                            project
-                                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                                .await?
+                        let buffer = match included_files.entry(path.to_string()) {
+                            Entry::Occupied(entry) => entry.get().clone(),
+                            Entry::Vacant(entry) => {
+                                let buffer = if is_new_file {
+                                    project
+                                        .update(cx, |project, cx| project.create_buffer(true, cx))?
+                                        .await?
+                                } else {
+                                    let project_path = project
+                                        .update(cx, |project, cx| {
+                                            project.find_project_path(path.as_ref(), cx)
+                                        })?
+                                        .with_context(|| format!("no such path: {}", path))?;
+                                    project
+                                        .update(cx, |project, cx| {
+                                            project.open_buffer(project_path, cx)
+                                        })?
+                                        .await?
+                                };
+                                entry.insert(buffer.clone());
+                                buffer
+                            }
                         };
-                        included_files.insert(path.to_string(), buffer.clone());
                         current_file = Some(buffer);
                         current_file.as_ref().unwrap()
                     }
