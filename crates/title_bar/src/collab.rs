@@ -35,13 +35,13 @@ pub fn toggle_screen_sharing(
     let permission_status = cx.permission_status(PermissionKind::ScreenCapture);
     let toggle_screen_sharing = match permission_status {
         PermissionStatus::Denied => Task::ready(Err(anyhow::anyhow!(
-            "Please grant Zed permissions to screen record. You will need to restart zed app."
+            "Screen recording permission was denied. Please enable it in your system settings and restart Zed."
         ))),
         PermissionStatus::NotDetermined => {
             cx.request_permission(PermissionKind::ScreenCapture);
 
             Task::ready(Err(anyhow::anyhow!(
-                "Please grant Zed permissions to screen record. You will need to restart zed app."
+                "Screen recording permission is required. Please grant access and restart Zed."
             )))
         }
         PermissionStatus::Granted

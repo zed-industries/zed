@@ -18,8 +18,6 @@ impl PlatformPermissionsHandler for MacPermissionsHandler {
             PermissionKind::Microphone => Self::request_microphone(),
         }
     }
-
-    fn open_settings(&self, _kind: PermissionKind) {}
 }
 
 impl MacPermissionsHandler {
