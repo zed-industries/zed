@@ -18,7 +18,9 @@ const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_HEADING_ATTRIBUTES)
     .union(Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS)
     .union(Options::ENABLE_OLD_FOOTNOTES)
-    .union(Options::ENABLE_GFM);
+    .union(Options::ENABLE_GFM)
+    .union(Options::ENABLE_SUPERSCRIPT)
+    .union(Options::ENABLE_SUBSCRIPT);
 
 pub fn parse_markdown(
     text: &str,
@@ -552,7 +554,8 @@ mod tests {
 
     const UNWANTED_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
         .union(Options::ENABLE_MATH)
-        .union(Options::ENABLE_DEFINITION_LIST);
+        .union(Options::ENABLE_DEFINITION_LIST)
+        .union(Options::ENABLE_WIKILINKS);
 
     #[test]
     fn all_options_considered() {
