@@ -5,7 +5,7 @@ use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
     #[serde(default)]
     pub name: String,
