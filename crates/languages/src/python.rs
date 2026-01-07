@@ -2061,6 +2061,12 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     }
                     Some(())
                 });
+                // Disable basedpyright's organizeImports so ruff handles it instead
+                if let serde_json::map::Entry::Vacant(v) =
+                    object.entry("basedpyright.disableOrganizeImports")
+                {
+                    v.insert(Value::Bool(true));
+                }
             }
 
             user_settings
