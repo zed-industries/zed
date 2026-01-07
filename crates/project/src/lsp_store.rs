@@ -12201,25 +12201,21 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) {
-        let associated_buffers: Vec<_> = {
-            let Some(local) = self.as_local() else {
-                return;
-            };
-            let buffers: Vec<_> = self.buffer_store().read(cx).buffers().collect();
-            buffers
-                .into_iter()
-                .filter(|buffer| {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.file().is_some()
-                            && local
-                                .language_server_ids_for_buffer(buffer, cx)
-                                .contains(&server_id)
-                    })
+        let buffers_to_pull: Vec<_> = self
+            .as_local()
+            .into_iter()
+            .flat_map(|local| {
+                self.buffer_store.read(cx).buffers().filter(|buffer| {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    local
+                        .buffers_opened_in_servers
+                        .get(&buffer_id)
+                        .is_some_and(|servers| servers.contains(&server_id))
                 })
-                .collect()
-        };
+            })
+            .collect();
 
-        for buffer in associated_buffers {
+        for buffer in buffers_to_pull {
             self.pull_diagnostics_for_buffer(buffer, cx)
                 .detach_and_log_err(cx);
         }
@@ -12665,22 +12661,7 @@ impl LspStore {
 
                         notify_server_capabilities_updated(&server, cx);
 
-                        let buffers_to_pull: Vec<_> = self
-                            .as_local()
-                            .into_iter()
-                            .flat_map(|local| {
-                                self.buffer_store.read(cx).buffers().filter(|buffer| {
-                                    let buffer_id = buffer.read(cx).remote_id();
-                                    local
-                                        .buffers_opened_in_servers
-                                        .get(&buffer_id)
-                                        .is_some_and(|servers| servers.contains(&server_id))
-                                })
-                            })
-                            .collect();
-                        for buffer in buffers_to_pull {
-                            self.pull_diagnostics_for_buffer(buffer, cx).detach();
-                        }
+                        self.pull_document_diagnostics_for_server(server_id, cx);
                     }
                 }
                 "textDocument/documentColor" => {
