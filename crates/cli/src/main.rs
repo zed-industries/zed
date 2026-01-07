@@ -9,7 +9,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{CliRequest, CliResponse, DiffPaths, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     env,
@@ -477,10 +477,15 @@ fn main() -> Result<()> {
     let mut anonymous_fd_tmp_files = vec![];
 
     for path in args.diff.chunks(2) {
-        diff_paths.push([
-            parse_path_with_position(&path[0])?,
-            parse_path_with_position(&path[1])?,
-        ]);
+        let old_path = parse_path_with_position(&path[0])?;
+        let new_path_with_pos = PathWithPosition::parse_str(&path[1]);
+        let new_path = parse_path_with_position(&path[1])?;
+        diff_paths.push(DiffPaths {
+            old_path,
+            new_path,
+            new_row: new_path_with_pos.row,
+            new_column: new_path_with_pos.column,
+        });
     }
 
     #[cfg(target_os = "windows")]

@@ -1,7 +1,7 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
-use cli::{CliRequest, CliResponse, ipc::IpcSender};
+use cli::{CliRequest, CliResponse, DiffPaths, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use collections::HashMap;
@@ -36,7 +36,7 @@ use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
-    pub diff_paths: Vec<[String; 2]>,
+    pub diff_paths: Vec<DiffPaths>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
@@ -239,7 +239,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 #[derive(Default)]
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
-    pub diff_paths: Vec<[String; 2]>,
+    pub diff_paths: Vec<DiffPaths>,
     pub wsl: Option<String>,
 }
 
@@ -315,7 +315,7 @@ fn connect_to_cli(
 
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
-    diff_paths: &[[String; 2]],
+    diff_paths: &[DiffPaths],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
@@ -345,10 +345,12 @@ pub async fn open_paths_with_positions(
         .await?;
 
     for diff_pair in diff_paths {
-        let old_path = Path::new(&diff_pair[0]).canonicalize()?;
-        let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+        let old_path = Path::new(&diff_pair.old_path).canonicalize()?;
+        let new_path = Path::new(&diff_pair.new_path).canonicalize()?;
+        let row = diff_pair.new_row;
+        let column = diff_pair.new_column;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            FileDiffView::open(old_path, new_path, workspace, window, cx)
+            FileDiffView::open(old_path, new_path, row, column, workspace, window, cx)
         }) && let Some(diff_view) = diff_view.await.log_err()
         {
             items.push(Some(Ok(Box::new(diff_view))))

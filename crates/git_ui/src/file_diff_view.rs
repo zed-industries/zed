@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use language::Point;
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
@@ -39,6 +40,8 @@ impl FileDiffView {
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
+        row: Option<u32>,
+        column: Option<u32>,
         workspace: &Workspace,
         window: &mut Window,
         cx: &mut App,
@@ -72,6 +75,16 @@ impl FileDiffView {
                 pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
                 });
+
+                if let Some(row) = row {
+                    let row = row.saturating_sub(1);
+                    let col = column.unwrap_or(0).saturating_sub(1);
+                    diff_view.update(cx, |diff_view, cx| {
+                        diff_view.editor.update(cx, |editor, cx| {
+                            editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                        });
+                    });
+                }
 
                 diff_view
             })
@@ -406,6 +419,8 @@ mod tests {
                 FileDiffView::open(
                     path!("/test/old_file.txt").into(),
                     path!("/test/new_file.txt").into(),
+                    None,
+                    None,
                     workspace,
                     window,
                     cx,
@@ -540,6 +555,8 @@ mod tests {
                 FileDiffView::open(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
+                    None,
+                    None,
                     workspace,
                     window,
                     cx,
