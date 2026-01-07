@@ -309,6 +309,10 @@ impl RemoteConnectionModal {
                 (options.distro_name.clone(), None, true, false)
             }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => {
+                (format!("mock-{}", options.id), None, false, false)
+            }
         };
         Self {
             prompt: cx.new(|cx| {
@@ -720,6 +724,10 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Docker(_) => {
                                         "Failed to connect to Dev Container"
                                     }
+                                    #[cfg(any(test, feature = "test-support"))]
+                                    RemoteConnectionOptions::Mock(_) => {
+                                        "Failed to connect to mock server"
+                                    }
                                 },
                                 Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
@@ -778,6 +786,10 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
+                                }
+                                #[cfg(any(test, feature = "test-support"))]
+                                RemoteConnectionOptions::Mock(_) => {
+                                    "Failed to connect to mock server"
                                 }
                             },
                             Some(&format!("{e:#}")),

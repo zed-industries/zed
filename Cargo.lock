@@ -3372,6 +3372,7 @@ dependencies = [
  "text",
  "theme",
  "time",
+ "title_bar",
  "tokio",
  "toml 0.8.23",
  "tower 0.4.13",
