@@ -9,6 +9,7 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use std::sync::Arc;
 use std::{
     borrow::Cow,
@@ -69,6 +70,8 @@ pub struct ExampleBuffer {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    pub context_range: Range<usize>,
+    pub editable_range: Range<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

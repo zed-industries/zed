@@ -18,8 +18,8 @@ use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
 
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
+pub const MAX_CONTEXT_TOKENS: usize = 150;
+pub const MAX_REWRITE_TOKENS: usize = 350;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
