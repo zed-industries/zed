@@ -3032,7 +3032,7 @@ fn test_delete_to_previous_subword_start_or_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("one\n2\nthree\n4", cx);
+        let buffer = MultiBuffer::build_simple("fooBar\n\nbazQux", cx);
         build_editor(buffer, window, cx)
     });
     let del_to_prev_sub_word_start = DeleteToPreviousSubwordStart {
@@ -3047,23 +3047,19 @@ fn test_delete_to_previous_subword_start_or_newline(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1)
+                DisplayPoint::new(DisplayRow(2), 6)..DisplayPoint::new(DisplayRow(2), 6)
             ])
         });
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\nthree\n");
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n\nbaz");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\nthree");
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n\n");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\n");
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2");
-        editor.delete_to_previous_subword_start(
-            &del_to_prev_sub_word_start_ignore_newlines,
-            window,
-            cx,
-        );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n");
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "foo");
         editor.delete_to_previous_subword_start(
             &del_to_prev_sub_word_start_ignore_newlines,
             window,
@@ -3127,7 +3123,7 @@ fn test_delete_to_next_subword_end_or_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("\none\n   two\nthree\n   four", cx);
+        let buffer = MultiBuffer::build_simple("\nfooBar\n   bazQux", cx);
         build_editor(buffer, window, cx)
     });
     let del_to_next_subword_end = DeleteToNextSubwordEnd {
@@ -3145,27 +3141,22 @@ fn test_delete_to_next_subword_end_or_newline(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
             ])
         });
+        // Delete "\n" (empty line)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(
-            editor.buffer.read(cx).read(cx).text(),
-            "one\n   two\nthree\n   four"
-        );
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n   bazQux");
+        // Delete "foo" (subword boundary)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(
-            editor.buffer.read(cx).read(cx).text(),
-            "\n   two\nthree\n   four"
-        );
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "Bar\n   bazQux");
+        // Delete "Bar"
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(
-            editor.buffer.read(cx).read(cx).text(),
-            "two\nthree\n   four"
-        );
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   bazQux");
+        // Delete "\n   " (newline + leading whitespace)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\nthree\n   four");
-        editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   four");
-        editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "bazQux");
+        // Delete "baz" (subword boundary)
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "Qux");
+        // With ignore_newlines, delete "Qux"
         editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
     });
