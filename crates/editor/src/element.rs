@@ -3056,8 +3056,8 @@ impl EditorElement {
 
         let button = IconButton::new("diff_review_button", IconName::Plus)
             .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::None)
-            .style(ButtonStyle::Transparent)
+            .size(ui::ButtonSize::Compact)
+            .style(ButtonStyle::Filled)
             .tooltip(Tooltip::text("Add Review"));
 
         let button = prepaint_gutter_button(
