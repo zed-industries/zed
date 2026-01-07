@@ -165,21 +165,37 @@ impl LaneState {
                         Some(CommitLineSegment::Straight { to_row }) if *to_row == usize::MAX => {
                             if destination_column.is_some_and(|dest| dest != current_column) {
                                 *to_row = ending_row - 1;
-                                segments.push(CommitLineSegment::Curve {
+
+                                let curved_line = CommitLineSegment::Curve {
                                     to_column: destination_column.unwrap(),
                                     on_row: ending_row,
                                     curve_kind: CurveKind::Checkout,
-                                });
+                                };
+
+                                if *to_row == starting_row {
+                                    let last_index = segments.len() - 1;
+                                    segments[last_index] = curved_line;
+                                } else {
+                                    segments.push(curved_line);
+                                }
                             } else {
                                 *to_row = ending_row;
                             }
                         }
                         Some(CommitLineSegment::Curve {
-                            on_row,
-                            to_column,
-                            curve_kind,
+                            on_row, to_column, ..
                         }) if *on_row == usize::MAX => {
+                            // todo! remove this in the future
+                            assert!(destination_column.is_none_or(|column| column == *to_column));
                             *on_row = ending_row;
+                        }
+                        Some(CommitLineSegment::Curve {
+                            on_row, to_column, ..
+                        }) => {
+                            assert_eq!(*to_column, current_column);
+                            if *on_row < ending_row {
+                                segments.push(CommitLineSegment::Straight { to_row: ending_row });
+                            }
                         }
                         _ => {}
                     }
@@ -441,14 +457,11 @@ impl GitGraph {
                             starting_col: commit_lane,
                             starting_row: commit_row,
                             destination_column: None,
-                            segments: smallvec![
-                                CommitLineSegment::Curve {
-                                    to_column: parent_lane,
-                                    on_row: commit_row + 1,
-                                    curve_kind: CurveKind::Merge,
-                                },
-                                CommitLineSegment::Straight { to_row: usize::MAX }
-                            ],
+                            segments: smallvec![CommitLineSegment::Curve {
+                                to_column: parent_lane,
+                                on_row: commit_row + 1,
+                                curve_kind: CurveKind::Merge,
+                            },],
                         };
                     }
                 });

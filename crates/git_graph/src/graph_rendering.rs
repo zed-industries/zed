@@ -87,7 +87,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                     };
 
                     let line_color = accent_colors.color_for_index(line.color_idx as u32);
-                    // dbg!(&line);
+                    dbg!(&line);
                     let line_x = lane_center_x(bounds, left_padding, start_column as f32);
 
                     let start_row = line.full_interval.start as i32 - first_visible_row as i32;
@@ -156,9 +156,9 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                         }
                                         builder.move_to(point(
                                             current_column,
-                                            current_row - COMMIT_CIRCLE_RADIUS, // - COMMIT_CIRCLE_STROKE_WIDTH,
+                                            current_row, // - COMMIT_CIRCLE_STROKE_WIDTH,
                                         ));
-                                        point(to_column, to_row)
+                                        point(current_column, to_row)
                                     }
                                     CurveKind::Merge => {
                                         if is_last {
@@ -172,26 +172,31 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                     }
                                 };
 
-                                if (to_column - current_column).abs() > LANE_WIDTH {
-                                    let column_shift =
-                                        if going_right { LANE_WIDTH } else { -LANE_WIDTH };
+                                match curve_kind {
+                                    CurveKind::Checkout
+                                        if (to_row - current_row).abs() > row_height =>
+                                    {
+                                        let start_curve =
+                                            point(current_column, current_row + row_height);
+                                        builder.line_to(start_curve);
+                                        builder.move_to(start_curve);
+                                    }
+                                    CurveKind::Merge
+                                        if (to_column - current_column).abs() > LANE_WIDTH =>
+                                    {
+                                        let column_shift =
+                                            if going_right { LANE_WIDTH } else { -LANE_WIDTH };
 
-                                    // todo! we should only subtract the commit circle radius if this is the first segment
-
-                                    let start_curve = match curve_kind {
-                                        CurveKind::Checkout => point(
-                                            current_column,
-                                            to_row - (row_height / 2.0).into(),
-                                        ),
-                                        CurveKind::Merge => point(
+                                        let start_curve = point(
                                             current_column + column_shift,
                                             current_row - COMMIT_CIRCLE_RADIUS,
-                                        ),
-                                    };
+                                        );
 
-                                    builder.line_to(start_curve);
-                                    builder.move_to(start_curve);
-                                }
+                                        builder.line_to(start_curve);
+                                        builder.move_to(start_curve);
+                                    }
+                                    _ => {}
+                                };
 
                                 builder.curve_to(point(to_column, to_row), control);
                                 current_row = to_row;
