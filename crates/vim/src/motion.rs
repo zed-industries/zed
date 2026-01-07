@@ -2371,23 +2371,16 @@ fn find_matching_bracket_text_based(
     offset: MultiBufferOffset,
     line_range: Range<MultiBufferOffset>,
 ) -> Option<MultiBufferOffset> {
-    let mut bracket_info = None;
-
-    for (ch, char_offset) in map.buffer_chars_at(offset) {
-        if char_offset >= line_range.end {
-            break;
-        }
-        if let Some(info) = get_bracket_pair(ch) {
-            bracket_info = Some((info, char_offset));
-            break;
-        }
-    }
+    let bracket_info = map
+        .buffer_chars_at(offset)
+        .take_while(|(_, char_offset)| *char_offset < line_range.end)
+        .find_map(|(ch, char_offset)| get_bracket_pair(ch).map(|info| (info, char_offset)));
 
     let (open, close, is_opening) = bracket_info?.0;
     let bracket_offset = bracket_info?.1;
 
+    let mut depth = 0i32;
     if is_opening {
-        let mut depth = 0i32;
         for (ch, char_offset) in map.buffer_chars_at(bracket_offset) {
             if ch == open {
                 depth += 1;
@@ -2399,7 +2392,6 @@ fn find_matching_bracket_text_based(
             }
         }
     } else {
-        let mut depth = 0i32;
         for (ch, char_offset) in map.reverse_buffer_chars_at(bracket_offset + close.len_utf8()) {
             if ch == close {
                 depth += 1;
@@ -2461,10 +2453,10 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
+    let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+        ..line_range.end.to_offset(&map.buffer_snapshot());
     let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
-        let line_range = line_range.start.to_offset(&map.buffer_snapshot())
-            ..line_range.end.to_offset(&map.buffer_snapshot());
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
 
@@ -2511,13 +2503,11 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
             .unwrap_or_else(|| {
-                find_matching_bracket_text_based(map, offset, line_range)
+                find_matching_bracket_text_based(map, offset, line_range.clone())
                     .map(|o| o.to_display_point(map))
                     .unwrap_or(display_point)
             })
     } else {
-        let line_range = line_range.start.to_offset(&map.buffer_snapshot())
-            ..line_range.end.to_offset(&map.buffer_snapshot());
         find_matching_bracket_text_based(map, offset, line_range)
             .map(|o| o.to_display_point(map))
             .unwrap_or(display_point)
