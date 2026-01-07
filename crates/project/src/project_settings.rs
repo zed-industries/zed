@@ -131,11 +131,11 @@ impl Default for GlobalLspSettings {
 }
 
 impl GlobalLspSettings {
-    /// Returns the timeout duration for the LSP settings, or None if no timeout should be used.
-    pub fn request_timeout(&self) -> Option<Duration> {
+    /// Returns the timeout duration for the LSP settings, or Duration::MAX if no timeout should be used.
+    pub fn get_request_timeout(&self) -> Duration {
         match self.request_timeout {
-            0 => None,
-            secs => Some(Duration::from_secs(secs)),
+            0 => Duration::MAX,
+            secs => Duration::from_secs(secs),
         }
     }
 }

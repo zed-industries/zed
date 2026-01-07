@@ -22,7 +22,7 @@ use language::{
     point_from_lsp, point_to_lsp,
 };
 use lsp::{
-    DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerId,
+    LanguageServer, LanguageServerBinary, LanguageServerId,
     LanguageServerName,
 };
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -513,9 +513,8 @@ impl Copilot {
                 .update(|app| {
                     ProjectSettings::get_global(app)
                         .global_lsp_settings
-                        .request_timeout()
-                })
-                .unwrap_or_else(|_| Some(DEFAULT_LSP_REQUEST_TIMEOUT));
+                        .get_request_timeout()
+                }).ok();
 
             let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(

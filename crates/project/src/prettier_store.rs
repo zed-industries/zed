@@ -281,7 +281,7 @@ impl PrettierStore {
     ) -> PrettierTask {
         let request_timeout = ProjectSettings::get_global(cx)
             .global_lsp_settings
-            .request_timeout();
+            .get_request_timeout();
 
         cx.spawn(async move |prettier_store, cx| {
             log::info!("Starting prettier at path {prettier_dir:?}");
@@ -293,7 +293,7 @@ impl PrettierStore {
                 new_server_id,
                 prettier_dir,
                 node,
-                request_timeout,
+                Some(request_timeout),
                 cx.clone(),
             )
             .await
