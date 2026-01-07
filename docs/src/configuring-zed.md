@@ -246,13 +246,13 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 ## Auto Update extensions
 
-- Description: Define extensions to be auto-updated or not auto-updated.
+- Description: Define extensions to be autoupdated or manually updated.
 - Setting: `auto_update_extensions`
 - Default: `null`
 
 **Options**
 
-Define extensions which should be auto-updated (`true`) vs. manually updated (`false`).
+Define extensions which will be autoupdated (`true`) vs. those that will be manually updated (`false`).
 
 ```json [settings]
 {
@@ -2929,7 +2929,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
