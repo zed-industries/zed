@@ -4,7 +4,7 @@
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RealtimePriority, RunnableMeta,
-    RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
+    GpuiRunnable, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
 };
 
 use anyhow::Context;
@@ -69,13 +69,13 @@ impl PlatformDispatcher for MacDispatcher {
         is_main_thread == YES
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: GpuiRunnable, _: Option<TaskLabel>) {
         let (context, trampoline) = match runnable {
-            RunnableVariant::Meta(runnable) => (
+            GpuiRunnable::GpuiSpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline as unsafe extern "C" fn(*mut c_void)),
             ),
-            RunnableVariant::Compat(runnable) => (
+            GpuiRunnable::DependencySpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
             ),
@@ -97,13 +97,13 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
+    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable, _priority: Priority) {
         let (context, trampoline) = match runnable {
-            RunnableVariant::Meta(runnable) => (
+            GpuiRunnable::GpuiSpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline as unsafe extern "C" fn(*mut c_void)),
             ),
-            RunnableVariant::Compat(runnable) => (
+            GpuiRunnable::DependencySpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
             ),
@@ -113,13 +113,13 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
+    fn dispatch_after(&self, duration: Duration, runnable: GpuiRunnable) {
         let (context, trampoline) = match runnable {
-            RunnableVariant::Meta(runnable) => (
+            GpuiRunnable::GpuiSpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline as unsafe extern "C" fn(*mut c_void)),
             ),
-            RunnableVariant::Compat(runnable) => (
+            GpuiRunnable::DependencySpawned(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
             ),
@@ -250,79 +250,12 @@ fn set_audio_thread_priority() -> anyhow::Result<()> {
 extern "C" fn trampoline(runnable: *mut c_void) {
     let task =
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
-
-    let metadata = task.metadata();
-    let location = metadata.location;
-
-    if !metadata.is_app_alive() {
-        drop(task);
-        return;
-    }
-
-    let start = Instant::now();
-    let timing = TaskTiming {
-        location,
-        start,
-        end: None,
-    };
-
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                return;
-            }
-        }
-
-        timings.push_back(timing);
-    });
-
-    task.run();
-    let end = Instant::now();
-
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        let Some(last_timing) = timings.iter_mut().rev().next() else {
-            return;
-        };
-        last_timing.end = Some(end);
-    });
+    let task = GpuiRunnable::GpuiSpawned(task);
+    task.run_and_time();
 }
 
 extern "C" fn trampoline_compat(runnable: *mut c_void) {
     let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
-
-    let location = core::panic::Location::caller();
-
-    let start = Instant::now();
-    let timing = TaskTiming {
-        location,
-        start,
-        end: None,
-    };
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                return;
-            }
-        }
-
-        timings.push_back(timing);
-    });
-
-    task.run();
-    let end = Instant::now();
-
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        let Some(last_timing) = timings.iter_mut().rev().next() else {
-            return;
-        };
-        last_timing.end = Some(end);
-    });
+    let task = GpuiRunnable::DependencySpawned(task);
+    task.run_and_time();
 }

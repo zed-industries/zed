@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, Priority, RunnableVariant, TaskLabel};
+use crate::{GpuiRunnable, PlatformDispatcher, TaskLabel};
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
 use parking::Unparker;
@@ -25,10 +25,10 @@ pub struct TestDispatcher {
 
 struct TestDispatcherState {
     random: StdRng,
-    foreground: HashMap<TestDispatcherId, VecDeque<RunnableVariant>>,
-    background: Vec<RunnableVariant>,
-    deprioritized_background: Vec<RunnableVariant>,
-    delayed: Vec<(Duration, RunnableVariant)>,
+    foreground: HashMap<TestDispatcherId, VecDeque<GpuiRunnable>>,
+    background: Vec<GpuiRunnable>,
+    deprioritized_background: Vec<GpuiRunnable>,
+    delayed: Vec<(Duration, GpuiRunnable)>,
     start_time: Instant,
     time: Duration,
     is_main_thread: bool,
@@ -176,21 +176,10 @@ impl TestDispatcher {
         drop(state);
 
         // todo(localcc): add timings to tests
-        match runnable {
-            RunnableVariant::Meta(runnable) => {
-                if !runnable.metadata().is_app_alive() {
-                    drop(runnable);
-                } else {
-                    runnable.run();
-                }
-            }
-            RunnableVariant::Compat(runnable) => {
-                runnable.run();
-            }
-        };
-
+        if !runnable.app_dropped() {
+            runnable.run_unprofiled()
+        }
         self.state.lock().is_main_thread = was_main_thread;
-
         true
     }
 
@@ -292,7 +281,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.start_time + state.time
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, _priority: Priority) {
+    fn dispatch(&self, runnable: GpuiRunnable, label: Option<TaskLabel>) {
         {
             let mut state = self.state.lock();
             if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
@@ -304,7 +293,7 @@ impl PlatformDispatcher for TestDispatcher {
         self.unpark_all();
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
+    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable) {
         self.state
             .lock()
             .foreground
@@ -314,7 +303,7 @@ impl PlatformDispatcher for TestDispatcher {
         self.unpark_all();
     }
 
-    fn dispatch_after(&self, duration: std::time::Duration, runnable: RunnableVariant) {
+    fn dispatch_after(&self, duration: std::time::Duration, runnable: GpuiRunnable) {
         let mut state = self.state.lock();
         let next_time = state.time + duration;
         let ix = match state.delayed.binary_search_by_key(&next_time, |e| e.0) {
