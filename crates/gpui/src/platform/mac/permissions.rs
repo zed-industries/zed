@@ -23,6 +23,8 @@ impl MacPermissionsHandler {
         if unsafe { CGPreflightScreenCaptureAccess() } {
             PermissionStatus::Granted
         } else {
+            // Returns false even if the user has never been asked
+            // so we cannot distinguish between denied and not determined
             PermissionStatus::NotDetermined
         }
     }

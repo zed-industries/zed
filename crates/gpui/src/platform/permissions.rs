@@ -1,4 +1,5 @@
 /// The current status of a system permission.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Hash)]
 pub enum PermissionStatus {
     /// The user has granted permission.
     Granted,
@@ -9,10 +10,12 @@ pub enum PermissionStatus {
     /// Permission is restricted by system policy (e.g., parental controls, MDM).
     Restricted,
     /// This permission type is not supported on the current platform.
+    #[default]
     Unsupported,
 }
 
 /// Types of system permissions the application may request.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum PermissionKind {
     /// Permission to capture the screen content.
     ScreenCapture,

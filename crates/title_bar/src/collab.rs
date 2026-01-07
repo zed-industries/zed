@@ -5,8 +5,8 @@ use call::{ActiveCall, ParticipantLocation, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
-    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
-    canvas, point,
+    AnyElement, Hsla, IntoElement, MouseButton, Path, PermissionKind, PermissionStatus,
+    ScreenCaptureSource, Styled, WeakEntity, canvas, point,
 };
 use gpui::{App, Task, Window};
 use project::WorktreeSettings;
@@ -28,13 +28,26 @@ pub fn toggle_screen_sharing(
     cx: &mut App,
 ) {
     let call = ActiveCall::global(cx).read(cx);
-    let toggle_screen_sharing = match screen {
-        Ok(screen) => {
-            let Some(room) = call.room().cloned() else {
-                return;
-            };
+    let Some(room) = call.room().cloned() else {
+        return;
+    };
 
-            room.update(cx, |room, cx| {
+    let permission_status = cx.permission_status(PermissionKind::ScreenCapture);
+    let toggle_screen_sharing = match permission_status {
+        PermissionStatus::Denied => Task::ready(Err(anyhow::anyhow!(
+            "Please grant Zed permissions to screen record. You will need to restart zed app."
+        ))),
+        PermissionStatus::NotDetermined => {
+            cx.request_permission(PermissionKind::ScreenCapture);
+
+            Task::ready(Err(anyhow::anyhow!(
+                "Please grant Zed permissions to screen record. You will need to restart zed app."
+            )))
+        }
+        PermissionStatus::Granted
+        | PermissionStatus::Restricted
+        | PermissionStatus::Unsupported => match screen {
+            Ok(screen) => room.update(cx, |room, cx| {
                 let clicked_on_currently_shared_screen =
                     room.shared_screen_id().is_some_and(|screen_id| {
                         Some(screen_id)
@@ -61,6 +74,7 @@ pub fn toggle_screen_sharing(
                     }
                     cx.spawn(async move |room, cx| {
                         unshared_current_screen.transpose()?;
+
                         if !clicked_on_currently_shared_screen {
                             room.update(cx, |room, cx| room.share_screen(screen, cx))?
                                 .await
@@ -71,11 +85,17 @@ pub fn toggle_screen_sharing(
                 } else {
                     Task::ready(Ok(()))
                 }
-            })
-        }
-        Err(e) => Task::ready(Err(e)),
+            }),
+            Err(e) => Task::ready(Err(anyhow::format_err!(
+                "{:?} \n\nPlease check that you have given Zed permissions to record your screen in Settings.",
+                e
+            ))),
+        },
     };
-    toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
+
+    toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| {
+        Some(e.to_string())
+    });
 }
 
 pub fn toggle_mute(cx: &mut App) {
