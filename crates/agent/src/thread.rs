@@ -2701,7 +2701,7 @@ impl ToolCallEventStream {
                         ),
                         acp::PermissionOption::new(
                             acp::PermissionOptionId::new("allow"),
-                            "Allow",
+                            "Allow Once",
                             acp::PermissionOptionKind::AllowOnce,
                         ),
                         acp::PermissionOption::new(
@@ -2779,7 +2779,7 @@ impl ToolCallEventStream {
                         ),
                         acp::PermissionOption::new(
                             acp::PermissionOptionId::new("allow"),
-                            "Allow",
+                            "Allow Once",
                             acp::PermissionOptionKind::AllowOnce,
                         ),
                         acp::PermissionOption::new(
@@ -2878,7 +2878,7 @@ impl ToolCallEventStream {
 
         options.push(acp::PermissionOption::new(
             acp::PermissionOptionId::new("allow"),
-            "Allow",
+            "Allow Once",
             acp::PermissionOptionKind::AllowOnce,
         ));
         options.push(acp::PermissionOption::new(
