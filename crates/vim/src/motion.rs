@@ -1283,10 +1283,10 @@ impl Motion {
                 char,
                 mode,
                 smartcase,
-            } => (
-                find_backward(map, point, *after, *char, times, *mode, *smartcase),
-                SelectionGoal::None,
-            ),
+            } => {
+                return find_backward(map, point, *after, *char, times, *mode, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
             Sneak {
                 first_char,
                 second_char,
@@ -2709,7 +2709,7 @@ fn find_backward(
     times: usize,
     mode: FindRange,
     smartcase: bool,
-) -> DisplayPoint {
+) -> Option<DisplayPoint> {
     let mut to = from;
 
     for _ in 0..times {
@@ -2723,7 +2723,7 @@ fn find_backward(
     }
 
     let next = map.buffer_snapshot().chars_at(to.to_point(map)).next();
-    if next.is_some() && is_character_match(target, next.unwrap(), smartcase) {
+    let ret = if next.is_some() && is_character_match(target, next.unwrap(), smartcase) {
         if after {
             *to.column_mut() += 1;
             map.clip_point(to, Bias::Right)
@@ -2731,8 +2731,10 @@ fn find_backward(
             to
         }
     } else {
-        from
-    }
+        return None;
+    };
+
+    Some(ret)
 }
 
 /// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
