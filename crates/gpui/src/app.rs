@@ -40,7 +40,7 @@ use crate::{
     Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
     DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
     KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDispatcher, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     Point, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
@@ -591,7 +591,6 @@ pub struct App {
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
-    pub(crate) dispatcher: Arc<dyn PlatformDispatcher>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
@@ -654,7 +653,6 @@ impl App {
     ) -> Rc<AppCell> {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
-        let dispatcher = background_executor.dispatcher().clone();
         assert!(
             background_executor.is_main_thread(),
             "must construct App on main thread"
@@ -676,7 +674,6 @@ impl App {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                dispatcher,
                 background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -2550,7 +2547,8 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 impl Drop for App {
     fn drop(&mut self) {
-        self.dispatcher.close();
+        self.foreground_executor.close();
+        self.background_executor.close();
     }
 }
 

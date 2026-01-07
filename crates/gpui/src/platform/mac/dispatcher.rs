@@ -3,10 +3,11 @@
 #![allow(non_snake_case)]
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableVariant, THREAD_TIMINGS,
-    TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant,
+    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
 };
 
+use async_task::Runnable;
 use objc::{
     class, msg_send,
     runtime::{BOOL, YES},
@@ -14,11 +15,7 @@ use objc::{
 };
 use std::{
     ffi::c_void,
-    ptr::addr_of,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    ptr::{NonNull, addr_of},
     time::{Duration, Instant},
 };
 
@@ -33,21 +30,12 @@ pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
     addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t
 }
 
-pub(crate) struct MacDispatcher {
-    closed: Arc<AtomicBool>,
-}
+pub(crate) struct MacDispatcher;
 
 impl MacDispatcher {
     pub fn new() -> Self {
-        Self {
-            closed: Arc::new(AtomicBool::new(false)),
-        }
+        Self
     }
-}
-
-struct DispatchedRunnable {
-    runnable: RunnableVariant,
-    closed: Arc<AtomicBool>,
 }
 
 impl PlatformDispatcher for MacDispatcher {
@@ -75,16 +63,7 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-
-        let dispatched = Box::new(DispatchedRunnable {
-            runnable,
-            closed: self.closed.clone(),
-        });
-        let context = Box::into_raw(dispatched) as *mut c_void;
-        let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
 
         let queue_priority = match priority {
             Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH as isize,
@@ -96,61 +75,52 @@ impl PlatformDispatcher for MacDispatcher {
             dispatch_async_f(
                 dispatch_get_global_queue(queue_priority, 0),
                 context,
-                trampoline,
+                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
             );
         }
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-
-        let dispatched = Box::new(DispatchedRunnable {
-            runnable,
-            closed: self.closed.clone(),
-        });
-        let context = Box::into_raw(dispatched) as *mut c_void;
-        let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
-            dispatch_async_f(dispatch_get_main_queue(), context, trampoline);
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                context,
+                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
+            );
         }
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-
-        let dispatched = Box::new(DispatchedRunnable {
-            runnable,
-            closed: self.closed.clone(),
-        });
-        let context = Box::into_raw(dispatched) as *mut c_void;
-        let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
             let queue =
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
             let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
-            dispatch_after_f(when, queue, context, trampoline);
+            dispatch_after_f(
+                when,
+                queue,
+                context,
+                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
+            );
         }
     }
 
-    fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-    }
+    fn close(&self) {}
 }
 
 extern "C" fn trampoline(context: *mut c_void) {
-    let dispatched = unsafe { Box::from_raw(context as *mut DispatchedRunnable) };
+    let runnable = unsafe {
+        Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ()))
+    };
 
-    // Check if dispatcher was closed - if so, drop the task without running
-    if dispatched.closed.load(Ordering::SeqCst) {
+    let metadata = runnable.metadata();
+
+    // Check if the executor that spawned this task was closed
+    if metadata.is_closed() {
         return;
     }
 
-    let runnable = dispatched.runnable;
-    let metadata = runnable.metadata();
     let location = metadata.location;
 
     let start = Instant::now();

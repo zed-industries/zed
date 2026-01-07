@@ -20,7 +20,7 @@ pub use scheduler::{FallibleTask, Priority};
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    scheduler: Arc<dyn Scheduler>,
+    inner: scheduler::BackgroundExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
@@ -129,9 +129,14 @@ impl BackgroundExecutor {
         let scheduler: Arc<dyn Scheduler> = Arc::new(PlatformScheduler::new(dispatcher.clone()));
 
         Self {
-            scheduler,
+            inner: scheduler::BackgroundExecutor::new(scheduler),
             dispatcher,
         }
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.inner.close();
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
@@ -161,8 +166,7 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        let inner = scheduler::BackgroundExecutor::new(self.scheduler.clone());
-        Task::from_scheduler(inner.spawn_with_priority(priority, future))
+        Task::from_scheduler(self.inner.spawn_with_priority(priority, future))
     }
 
     /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
@@ -175,6 +179,7 @@ impl BackgroundExecutor {
     {
         use crate::RunnableMeta;
         use parking_lot::{Condvar, Mutex};
+        use std::sync::{Arc, atomic::AtomicBool};
 
         struct NotifyOnDrop<'a>(&'a (Condvar, Mutex<bool>));
 
@@ -198,13 +203,14 @@ impl BackgroundExecutor {
 
         let dispatcher = self.dispatcher.clone();
         let location = core::panic::Location::caller();
+        let closed = Arc::new(AtomicBool::new(false));
 
         let pair = &(Condvar::new(), Mutex::new(false));
         let _wait_guard = WaitOnDrop(pair);
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta { location, closed })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -261,7 +267,7 @@ impl BackgroundExecutor {
         #[cfg(not(any(test, feature = "test-support")))]
         let session_id = None;
 
-        self.scheduler.block(session_id, future.as_mut(), None);
+        self.inner.scheduler().block(session_id, future.as_mut(), None);
 
         output.take().expect("block future did not complete")
     }
@@ -289,7 +295,8 @@ impl BackgroundExecutor {
             #[cfg(not(any(test, feature = "test-support")))]
             let session_id = None;
 
-            self.scheduler
+            self.inner
+                .scheduler()
                 .block(session_id, wrapper.as_mut(), Some(duration));
         }
 
@@ -338,7 +345,7 @@ impl BackgroundExecutor {
     /// Calling this instead of `std::time::Instant::now` allows the use
     /// of fake timers in tests.
     pub fn now(&self) -> Instant {
-        self.scheduler.clock().now()
+        self.inner.scheduler().clock().now()
     }
 
     /// Returns a task that will complete after the given duration.
@@ -348,7 +355,7 @@ impl BackgroundExecutor {
         if duration.is_zero() {
             return Task::ready(());
         }
-        self.spawn(self.scheduler.timer(duration))
+        self.spawn(self.inner.scheduler().timer(duration))
     }
 
     /// In tests, run an arbitrary number of tasks (determined by the SEED environment variable)
@@ -535,6 +542,11 @@ impl ForegroundExecutor {
             dispatcher,
             not_send: PhantomData,
         }
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.inner.close();
     }
 
     /// Enqueues the given Task to run on the main thread.

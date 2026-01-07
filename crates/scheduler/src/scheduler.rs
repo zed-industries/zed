@@ -14,7 +14,10 @@ use std::{
     future::Future,
     panic::Location,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -49,10 +52,29 @@ impl Priority {
 }
 
 /// Metadata attached to runnables for debugging and profiling.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RunnableMeta {
     /// The source location where the task was spawned.
     pub location: &'static Location<'static>,
+    /// Shared flag indicating whether the scheduler has been closed.
+    /// When true, tasks should be dropped without running.
+    pub closed: Arc<AtomicBool>,
+}
+
+impl RunnableMeta {
+    /// Returns true if the scheduler has been closed and this task should not run.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+}
+
+impl std::fmt::Debug for RunnableMeta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunnableMeta")
+            .field("location", &self.location)
+            .field("closed", &self.is_closed())
+            .finish()
+    }
 }
 
 pub trait Scheduler: Send + Sync {

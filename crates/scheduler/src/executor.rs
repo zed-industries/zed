@@ -6,7 +6,10 @@ use std::{
     panic::Location,
     pin::Pin,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     thread::{self, ThreadId},
     time::{Duration, Instant},
@@ -16,6 +19,7 @@ use std::{
 pub struct ForegroundExecutor {
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,
+    closed: Arc<AtomicBool>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -24,6 +28,7 @@ impl ForegroundExecutor {
         Self {
             session_id,
             scheduler,
+            closed: Arc::new(AtomicBool::new(false)),
             not_send: PhantomData,
         }
     }
@@ -36,6 +41,16 @@ impl ForegroundExecutor {
         &self.scheduler
     }
 
+    /// Returns the closed flag for this executor.
+    pub fn closed(&self) -> &Arc<AtomicBool> {
+        &self.closed
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
+
     #[track_caller]
     pub fn spawn<F>(&self, future: F) -> Task<F::Output>
     where
@@ -45,12 +60,13 @@ impl ForegroundExecutor {
         let session_id = self.session_id;
         let scheduler = Arc::clone(&self.scheduler);
         let location = Location::caller();
+        let closed = self.closed.clone();
         let (runnable, task) = spawn_local_with_source_location(
             future,
             move |runnable| {
                 scheduler.schedule_foreground(session_id, runnable);
             },
-            RunnableMeta { location },
+            RunnableMeta { location, closed },
         );
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -112,11 +128,25 @@ impl ForegroundExecutor {
 #[derive(Clone)]
 pub struct BackgroundExecutor {
     scheduler: Arc<dyn Scheduler>,
+    closed: Arc<AtomicBool>,
 }
 
 impl BackgroundExecutor {
     pub fn new(scheduler: Arc<dyn Scheduler>) -> Self {
-        Self { scheduler }
+        Self {
+            scheduler,
+            closed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Returns the closed flag for this executor.
+    pub fn closed(&self) -> &Arc<AtomicBool> {
+        &self.closed
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
     }
 
     #[track_caller]
@@ -136,8 +166,9 @@ impl BackgroundExecutor {
     {
         let scheduler = Arc::clone(&self.scheduler);
         let location = Location::caller();
+        let closed = self.closed.clone();
         let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta { location, closed })
             .spawn(
                 move |_| future,
                 move |runnable| {

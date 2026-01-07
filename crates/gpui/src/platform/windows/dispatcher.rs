@@ -1,8 +1,5 @@
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
     time::{Duration, Instant},
 };
@@ -25,7 +22,6 @@ use crate::{
 };
 
 pub(crate) struct WindowsDispatcher {
-    closed: Arc<AtomicBool>,
     pub(crate) wake_posted: AtomicBool,
     main_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_id: ThreadId,
@@ -43,7 +39,6 @@ impl WindowsDispatcher {
         let platform_window_handle = platform_window_handle.into();
 
         WindowsDispatcher {
-            closed: Arc::new(AtomicBool::new(false)),
             main_sender,
             main_thread_id,
             platform_window_handle,
@@ -53,14 +48,15 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool(&self, priority: WorkItemPriority, runnable: RunnableVariant) {
-        let closed = self.closed.clone();
         let handler = {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
-                if closed.load(Ordering::SeqCst) {
+                let runnable = task_wrapper.take().unwrap();
+                // Check if the executor that spawned this task was closed
+                if runnable.metadata().is_closed() {
                     return Ok(());
                 }
-                Self::execute_runnable(task_wrapper.take().unwrap());
+                Self::execute_runnable(runnable);
                 Ok(())
             })
         };
@@ -69,14 +65,15 @@ impl WindowsDispatcher {
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
-        let closed = self.closed.clone();
         let handler = {
             let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
-                if closed.load(Ordering::SeqCst) {
+                let runnable = task_wrapper.take().unwrap();
+                // Check if the executor that spawned this task was closed
+                if runnable.metadata().is_closed() {
                     return Ok(());
                 }
-                Self::execute_runnable(task_wrapper.take().unwrap());
+                Self::execute_runnable(runnable);
                 Ok(())
             })
         };
@@ -129,10 +126,6 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-
         let priority = match priority {
             Priority::High => WorkItemPriority::High,
             Priority::Medium => WorkItemPriority::Normal,
@@ -142,10 +135,6 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-
         match self.main_sender.send(priority, runnable) {
             Ok(_) => {
                 if !self.wake_posted.swap(true, Ordering::AcqRel) {
@@ -175,14 +164,8 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-
         self.dispatch_on_threadpool_after(runnable, duration);
     }
 
-    fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-    }
+    fn close(&self) {}
 }
