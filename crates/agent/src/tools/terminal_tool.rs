@@ -148,10 +148,9 @@ impl AgentTool for TerminalTool {
             };
 
             // Check if user stopped - we check both:
-            // 1. The cancellation signal from RunningTurn::cancel (main Stop button)
-            // 2. The terminal's user_stopped flag (Stop button on the terminal card)
-            // Either one indicates the user explicitly stopped this command.
-            let user_stopped_via_signal = event_stream.is_cancelled();
+            // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
+            // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
+            let user_stopped_via_signal = event_stream.was_cancelled_by_user();
             let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
             let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
 

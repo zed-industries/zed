@@ -2564,7 +2564,7 @@ impl ToolCallEventStream {
 
     /// Returns a future that resolves when the user cancels the tool call.
     /// Tools should select on this alongside their main work to detect user cancellation.
-    pub fn cancelled(&self) -> impl std::future::Future<Output = ()> + '_ {
+    pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + '_ {
         let mut rx = self.cancellation_rx.clone();
         async move {
             loop {
@@ -2582,7 +2582,7 @@ impl ToolCallEventStream {
     /// Returns true if the user has cancelled this tool call.
     /// This is useful for checking cancellation state after an operation completes,
     /// to determine if the completion was due to user cancellation.
-    pub fn is_cancelled(&self) -> bool {
+    pub fn was_cancelled_by_user(&self) -> bool {
         *self.cancellation_rx.clone().borrow()
     }
 
