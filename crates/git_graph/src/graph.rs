@@ -386,9 +386,6 @@ impl GitGraph {
                 .lane_states
                 .iter()
                 .position(|lane: &LaneState| lane.is_parent_commit(&commit.sha, true));
-            if commit.sha.display_short().starts_with("741099d") {
-                dbg!(commit_lane, &self.lane_states);
-            }
 
             if commit_lane.is_some() {
                 self.lane_states
@@ -419,8 +416,13 @@ impl GitGraph {
                             .enumerate()
                             .find_map(|(lane_idx, lane_state)| match lane_state {
                                 LaneState::Active {
-                                    parent: parent_sha, ..
-                                } if parent_sha == parent => Some((lane_idx, parent_sha)),
+                                    parent: parent_sha,
+                                    destination_column,
+                                    ..
+                                } if parent_sha == parent => {
+                                    let final_destination = destination_column.unwrap_or(lane_idx);
+                                    Some((final_destination, parent_sha))
+                                }
                                 _ => None,
                             });
 
