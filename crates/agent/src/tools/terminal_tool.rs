@@ -187,12 +187,12 @@ fn process_content(
         }
         None => {
             // When exit_code is None, check if there's a signal indicating how the process ended.
-            // SIGKILL (signal 9) or SIGTERM (signal 15) typically means the user stopped the command.
-            let was_stopped_by_user = exit_status
-                .signal
-                .as_ref()
-                .map(|s| s == "SIGKILL" || s == "SIGTERM" || s == "9" || s == "15")
-                .unwrap_or(false);
+            // strsignal() returns names like "Killed: 9" for SIGKILL, "Terminated: 15" for SIGTERM.
+            // The user stopping a command typically results in SIGKILL or SIGTERM.
+            let was_stopped_by_user = exit_status.signal.as_ref().map_or(false, |s| {
+                let s_lower = s.to_lowercase();
+                s_lower.contains("kill") || s_lower.contains("term")
+            });
 
             if was_stopped_by_user {
                 // User manually stopped the command - just show the output without error framing
@@ -258,5 +258,107 @@ fn working_dir(
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_content_with_sigkill() {
+        // When a process is killed with SIGKILL, strsignal returns "Killed: 9"
+        let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
+
+        let result = process_content(output, "cargo build", exit_status);
+
+        assert!(
+            result.contains("Command was stopped"),
+            "Expected 'Command was stopped' message for SIGKILL, got: {}",
+            result
+        );
+        assert!(
+            result.contains("some output"),
+            "Expected output to be included, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_sigterm() {
+        // When a process is killed with SIGTERM, strsignal returns "Terminated: 15"
+        let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new().signal("Terminated: 15".to_string());
+
+        let result = process_content(output, "cargo build", exit_status);
+
+        assert!(
+            result.contains("Command was stopped"),
+            "Expected 'Command was stopped' message for SIGTERM, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_normal_exit() {
+        let output = acp::TerminalOutputResponse::new("success output".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new().exit_code(0);
+
+        let result = process_content(output, "echo hello", exit_status);
+
+        assert!(
+            !result.contains("Command was stopped"),
+            "Normal exit should not say 'stopped', got: {}",
+            result
+        );
+        assert!(
+            result.contains("success output"),
+            "Expected output to be included, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_error_exit() {
+        let output = acp::TerminalOutputResponse::new("error output".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new().exit_code(1);
+
+        let result = process_content(output, "false", exit_status);
+
+        assert!(
+            result.contains("failed with exit code 1"),
+            "Expected failure message, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_unknown_signal() {
+        // Some other signal that's not SIGKILL or SIGTERM
+        let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new().signal("Hangup: 1".to_string());
+
+        let result = process_content(output, "some command", exit_status);
+
+        assert!(
+            result.contains("terminated unexpectedly"),
+            "Unknown signal should say 'terminated unexpectedly', got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_stopped_with_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let exit_status = acp::TerminalExitStatus::new().signal("Killed: 9".to_string());
+
+        let result = process_content(output, "cargo build", exit_status);
+
+        assert!(
+            result.contains("No output was captured"),
+            "Expected 'No output was captured' for empty output, got: {}",
+            result
+        );
     }
 }
