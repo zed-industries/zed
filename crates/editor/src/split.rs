@@ -2470,4 +2470,170 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_split_editor_newline_insertion_at_line_boundary(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let base_text = "
+            aaa
+            bbb
+
+            ccc
+            ddd
+        "
+        .unindent();
+        let current_text = base_text.clone();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        // Insert a newline at the start of the existing blank line (row 2)
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "\n")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        eprintln!("=== State after inserting newline (before diff recalculation) ===");
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.debug_print(cx);
+            });
+        });
+
+        // Before diff recalculation: the primary has an extra blank line,
+        // and the secondary should have one spacer to compensate
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+
+
+            ccc
+            ddd"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+
+            ccc
+            ddd"
+            .unindent()
+        );
+
+        // Recalculate diff
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        eprintln!("=== State after diff recalculation ===");
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.debug_print(cx);
+            });
+        });
+
+        // After diff recalculation: the state should remain aligned.
+        // The new blank line is now recognized as an addition by the diff,
+        // but the spacer arrangement should stay the same.
+        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
+        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+
+
+            ccc
+            ddd"
+            .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+
+            ccc
+            ddd"
+            .unindent()
+        );
+    }
 }
