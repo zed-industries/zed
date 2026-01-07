@@ -434,7 +434,7 @@ pub enum SelectPhase {
         position: DisplayPoint,
         reset: bool,
         mode: ColumnarMode,
-        goal_column: u32,
+        column_overshoot: u32,
     },
     Extend {
         position: DisplayPoint,
@@ -442,7 +442,7 @@ pub enum SelectPhase {
     },
     Update {
         position: DisplayPoint,
-        goal_column: u32,
+        column_overshoot: u32,
         scroll_delta: gpui::Point<f32>,
     },
     End,
@@ -999,14 +999,37 @@ enum SelectionDragState {
     },
 }
 
+#[derive(Clone, Copy)]
 enum ColumnarSelectionState {
     FromMouse {
         selection_tail: Anchor,
-        display_point: Option<DisplayPoint>,
+        column_overshoot: Option<u32>,
     },
     FromSelection {
         selection_tail: Anchor,
     },
+}
+
+impl ColumnarSelectionState {
+    fn column_overshoot(self) -> u32 {
+        match self {
+            Self::FromMouse {
+                selection_tail: _,
+                column_overshoot,
+            } => column_overshoot.unwrap_or(0),
+            Self::FromSelection { selection_tail: _ } => 0,
+        }
+    }
+
+    fn selection_tail(self) -> Anchor {
+        match self {
+            Self::FromMouse {
+                selection_tail,
+                column_overshoot: _,
+            } => selection_tail,
+            Self::FromSelection { selection_tail } => selection_tail,
+        }
+    }
 }
 
 /// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
@@ -3737,19 +3760,19 @@ impl Editor {
             } => self.begin_selection(position, add, click_count, window, cx),
             SelectPhase::BeginColumnar {
                 position,
-                goal_column,
+                column_overshoot,
                 reset,
                 mode,
-            } => self.begin_columnar_selection(position, goal_column, reset, mode, window, cx),
+            } => self.begin_columnar_selection(position, column_overshoot, reset, mode, window, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
             } => self.extend_selection(position, click_count, window, cx),
             SelectPhase::Update {
                 position,
-                goal_column,
+                column_overshoot,
                 scroll_delta,
-            } => self.update_selection(position, goal_column, scroll_delta, window, cx),
+            } => self.update_selection(position, column_overshoot, scroll_delta, window, cx),
             SelectPhase::End => self.end_selection(window, cx),
         }
     }
@@ -3928,7 +3951,7 @@ impl Editor {
     fn begin_columnar_selection(
         &mut self,
         position: DisplayPoint,
-        goal_column: u32,
+        column_overshoot: u32,
         reset: bool,
         mode: ColumnarMode,
         window: &mut Window,
@@ -3965,9 +3988,9 @@ impl Editor {
         self.columnar_selection_state = match mode {
             ColumnarMode::FromMouse => Some(ColumnarSelectionState::FromMouse {
                 selection_tail: selection_anchor,
-                display_point: if reset {
-                    if position.column() != goal_column {
-                        Some(DisplayPoint::new(position.row(), goal_column))
+                column_overshoot: if reset {
+                    if column_overshoot > 0 {
+                        Some(column_overshoot)
                     } else {
                         None
                     }
@@ -3981,14 +4004,14 @@ impl Editor {
         };
 
         if !reset {
-            self.select_columns(position, goal_column, &display_map, window, cx);
+            self.select_columns(position, column_overshoot, &display_map, window, cx);
         }
     }
 
     fn update_selection(
         &mut self,
         position: DisplayPoint,
-        goal_column: u32,
+        column_overshoot: u32,
         scroll_delta: gpui::Point<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3996,7 +4019,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if self.columnar_selection_state.is_some() {
-            self.select_columns(position, goal_column, &display_map, window, cx);
+            self.select_columns(position, column_overshoot, &display_map, window, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor().cloned() {
             let buffer = display_map.buffer_snapshot();
             let head;
@@ -4105,44 +4128,62 @@ impl Editor {
     fn select_columns(
         &mut self,
         head: DisplayPoint,
-        goal_column: u32,
+        head_column_overshoot: u32,
         display_map: &DisplaySnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let em_advance = {
+            let font_id = window
+                .text_system()
+                .resolve_font(&self.style(cx).text.font());
+            let font_size = self.style(cx).text.font_size.to_pixels(window.rem_size());
+            window.text_system().em_advance(font_id, font_size).unwrap()
+        };
+
         let Some(columnar_state) = self.columnar_selection_state.as_ref() else {
             return;
         };
 
-        let tail = match columnar_state {
-            ColumnarSelectionState::FromMouse {
-                selection_tail,
-                display_point,
-            } => display_point.unwrap_or_else(|| selection_tail.to_display_point(display_map)),
-            ColumnarSelectionState::FromSelection { selection_tail } => {
-                selection_tail.to_display_point(display_map)
-            }
-        };
+        let tail = columnar_state
+            .selection_tail()
+            .to_display_point(display_map);
+        let tail_column_overshoot = columnar_state.column_overshoot();
 
         let start_row = cmp::min(tail.row(), head.row());
         let end_row = cmp::max(tail.row(), head.row());
-        let start_column = cmp::min(tail.column(), goal_column);
-        let end_column = cmp::max(tail.column(), goal_column);
-        let reversed = start_column < tail.column();
+
+        let text_layout_details = self.text_layout_details(window);
+        let head_goal_x = display_map.x_for_display_point(head, &text_layout_details)
+            + em_advance * head_column_overshoot as f32;
+        let tail_goal_x = display_map.x_for_display_point(tail, &text_layout_details)
+            + em_advance * tail_column_overshoot as f32;
+
+        let start_goal_x = cmp::min(head_goal_x, tail_goal_x);
+        let end_goal_x = cmp::max(head_goal_x, tail_goal_x);
+
+        let reversed = head_goal_x < tail_goal_x;
 
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
+                let row_start_column =
+                    display_map.display_column_for_x(row, start_goal_x, &text_layout_details);
+
                 if (matches!(columnar_state, ColumnarSelectionState::FromMouse { .. })
-                    || start_column <= display_map.line_len(row))
+                    || row_start_column <= display_map.line_len(row))
                     && !display_map.is_block_line(row)
                 {
                     let start = display_map
-                        .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
+                        .clip_point(DisplayPoint::new(row, row_start_column), Bias::Left)
                         .to_point(display_map);
+
+                    let row_end_column =
+                        display_map.display_column_for_x(row, end_goal_x, &text_layout_details);
                     let end = display_map
-                        .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
+                        .clip_point(DisplayPoint::new(row, row_end_column), Bias::Right)
                         .to_point(display_map);
+
                     if reversed {
                         Some(end..start)
                     } else {
@@ -8039,7 +8080,7 @@ impl Editor {
                 position,
                 reset: false,
                 mode,
-                goal_column: point_for_position.exact_unclipped.column(),
+                column_overshoot: point_for_position.column_overshoot_after_line_end,
             },
             window,
             cx,
