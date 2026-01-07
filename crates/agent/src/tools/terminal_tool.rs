@@ -124,27 +124,44 @@ impl AgentTool for TerminalTool {
 
             let timeout = input.timeout_ms.map(Duration::from_millis);
 
-            let exit_status = match timeout {
+            let mut timed_out = false;
+            let wait_for_exit = terminal.wait_for_exit(cx)?;
+
+            match timeout {
                 Some(timeout) => {
-                    let wait_for_exit = terminal.wait_for_exit(cx)?;
                     let timeout_task = cx.background_spawn(async move {
                         smol::Timer::after(timeout).await;
                     });
 
                     futures::select! {
-                        status = wait_for_exit.clone().fuse() => status,
+                        _ = wait_for_exit.clone().fuse() => {},
                         _ = timeout_task.fuse() => {
+                            timed_out = true;
                             terminal.kill(cx)?;
-                            wait_for_exit.await
+                            wait_for_exit.await;
                         }
                     }
                 }
-                None => terminal.wait_for_exit(cx)?.await,
+                None => {
+                    wait_for_exit.await;
+                }
             };
+
+            // Check if user stopped - we check both:
+            // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
+            // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
+            let user_stopped_via_signal = event_stream.was_cancelled_by_user();
+            let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
+            let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
 
             let output = terminal.current_output(cx)?;
 
-            Ok(process_content(output, &input.command, exit_status))
+            Ok(process_content(
+                output,
+                &input.command,
+                timed_out,
+                user_stopped,
+            ))
         })
     }
 }
@@ -152,7 +169,8 @@ impl AgentTool for TerminalTool {
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
-    exit_status: acp::TerminalExitStatus,
+    timed_out: bool,
+    user_stopped: bool,
 ) -> String {
     let content = output.output.trim();
     let is_empty = content.is_empty();
@@ -167,29 +185,58 @@ fn process_content(
         content
     };
 
-    let content = match exit_status.exit_code {
-        Some(0) => {
-            if is_empty {
-                "Command executed successfully.".to_string()
-            } else {
-                content
-            }
-        }
-        Some(exit_code) => {
-            if is_empty {
-                format!("Command \"{command}\" failed with exit code {}.", exit_code)
-            } else {
-                format!(
-                    "Command \"{command}\" failed with exit code {}.\n\n{content}",
-                    exit_code
-                )
-            }
-        }
-        None => {
+    let content = if user_stopped {
+        if is_empty {
+            "The user stopped this command. No output was captured before stopping.\n\n\
+            Since the user intentionally interrupted this command, ask them what they would like to do next \
+            rather than automatically retrying or assuming something went wrong.".to_string()
+        } else {
             format!(
-                "Command failed or was interrupted.\nPartial output captured:\n\n{}",
-                content,
+                "The user stopped this command. Output captured before stopping:\n\n{}\n\n\
+                Since the user intentionally interrupted this command, ask them what they would like to do next \
+                rather than automatically retrying or assuming something went wrong.",
+                content
             )
+        }
+    } else if timed_out {
+        if is_empty {
+            format!("Command \"{command}\" timed out. No output was captured.")
+        } else {
+            format!(
+                "Command \"{command}\" timed out. Output captured before timeout:\n\n{}",
+                content
+            )
+        }
+    } else {
+        let exit_code = output.exit_status.as_ref().and_then(|s| s.exit_code);
+        match exit_code {
+            Some(0) => {
+                if is_empty {
+                    "Command executed successfully.".to_string()
+                } else {
+                    content
+                }
+            }
+            Some(exit_code) => {
+                if is_empty {
+                    format!("Command \"{command}\" failed with exit code {}.", exit_code)
+                } else {
+                    format!(
+                        "Command \"{command}\" failed with exit code {}.\n\n{content}",
+                        exit_code
+                    )
+                }
+            }
+            None => {
+                if is_empty {
+                    "Command terminated unexpectedly. No output was captured.".to_string()
+                } else {
+                    format!(
+                        "Command terminated unexpectedly. Output captured:\n\n{}",
+                        content
+                    )
+                }
+            }
         }
     };
     content
@@ -233,5 +280,189 @@ fn working_dir(
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_content_user_stopped() {
+        let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
+
+        let result = process_content(output, "cargo build", false, true);
+
+        assert!(
+            result.contains("user stopped"),
+            "Expected 'user stopped' message, got: {}",
+            result
+        );
+        assert!(
+            result.contains("partial output"),
+            "Expected output to be included, got: {}",
+            result
+        );
+        assert!(
+            result.contains("ask them what they would like to do"),
+            "Should instruct agent to ask user, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_user_stopped_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+
+        let result = process_content(output, "cargo build", false, true);
+
+        assert!(
+            result.contains("user stopped"),
+            "Expected 'user stopped' message, got: {}",
+            result
+        );
+        assert!(
+            result.contains("No output was captured"),
+            "Expected 'No output was captured', got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_timed_out() {
+        let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
+
+        let result = process_content(output, "cargo build", true, false);
+
+        assert!(
+            result.contains("timed out"),
+            "Expected 'timed out' message for timeout, got: {}",
+            result
+        );
+        assert!(
+            result.contains("build output here"),
+            "Expected output to be included, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_timed_out_with_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+
+        let result = process_content(output, "sleep 1000", true, false);
+
+        assert!(
+            result.contains("timed out"),
+            "Expected 'timed out' for timeout, got: {}",
+            result
+        );
+        assert!(
+            result.contains("No output was captured"),
+            "Expected 'No output was captured' for empty output, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_success() {
+        let output = acp::TerminalOutputResponse::new("success output".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(output, "echo hello", false, false);
+
+        assert!(
+            result.contains("success output"),
+            "Expected output to be included, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("failed"),
+            "Success should not say 'failed', got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_success_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(output, "true", false, false);
+
+        assert!(
+            result.contains("executed successfully"),
+            "Expected success message for empty output, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_error_exit() {
+        let output = acp::TerminalOutputResponse::new("error output".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+
+        let result = process_content(output, "false", false, false);
+
+        assert!(
+            result.contains("failed with exit code 1"),
+            "Expected failure message, got: {}",
+            result
+        );
+        assert!(
+            result.contains("error output"),
+            "Expected output to be included, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_with_error_exit_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+
+        let result = process_content(output, "false", false, false);
+
+        assert!(
+            result.contains("failed with exit code 1"),
+            "Expected failure message, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_unexpected_termination() {
+        let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
+
+        let result = process_content(output, "some_command", false, false);
+
+        assert!(
+            result.contains("terminated unexpectedly"),
+            "Expected 'terminated unexpectedly' message, got: {}",
+            result
+        );
+        assert!(
+            result.contains("some output"),
+            "Expected output to be included, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_unexpected_termination_empty_output() {
+        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+
+        let result = process_content(output, "some_command", false, false);
+
+        assert!(
+            result.contains("terminated unexpectedly"),
+            "Expected 'terminated unexpectedly' message, got: {}",
+            result
+        );
+        assert!(
+            result.contains("No output was captured"),
+            "Expected 'No output was captured' for empty output, got: {}",
+            result
+        );
     }
 }

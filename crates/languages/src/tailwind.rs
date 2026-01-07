@@ -156,7 +156,7 @@ impl LspAdapter for TailwindLspAdapter {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
-        })?;
+        });
 
         if tailwind_user_settings.get("emmetCompletions").is_none() {
             tailwind_user_settings["emmetCompletions"] = Value::Bool(true);

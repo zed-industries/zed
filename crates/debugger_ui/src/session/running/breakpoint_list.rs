@@ -151,7 +151,7 @@ impl BreakpointList {
             .update(cx, |this, cx| this.find_or_create_worktree(path, false, cx));
         cx.spawn_in(window, async move |this, cx| {
             let (worktree, relative_path) = task.await?;
-            let worktree_id = worktree.read_with(cx, |this, _| this.id())?;
+            let worktree_id = worktree.read_with(cx, |this, _| this.id());
             let item = this
                 .update_in(cx, |this, window, cx| {
                     this.workspace.update(cx, |this, cx| {

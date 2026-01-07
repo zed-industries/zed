@@ -1022,6 +1022,10 @@ impl EditorElement {
             && hovered_link_modifier
             && mouse_down_hovered_link_modifier
             && text_hitbox.is_hovered(window)
+            && !matches!(
+                editor.selection_drag_state,
+                SelectionDragState::Dragging { .. }
+            )
         {
             let point = position_map.point_for_position(mouse_position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);

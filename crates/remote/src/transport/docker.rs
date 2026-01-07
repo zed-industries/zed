@@ -66,7 +66,7 @@ impl DockerExecConnection {
                 AppVersion::global(cx),
                 AppCommitSha::try_global(cx),
             )
-        })?;
+        });
         let remote_platform = this.check_remote_platform().await?;
 
         this.path_style = match remote_platform.os {
@@ -200,7 +200,7 @@ impl DockerExecConnection {
                 )
             }
             _ => Ok(Some(AppVersion::global(cx))),
-        })??;
+        })?;
 
         let tmp_path_gz = paths::remote_server_dir_relative().join(
             RelPath::unix(&format!(

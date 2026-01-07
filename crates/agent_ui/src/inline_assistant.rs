@@ -300,7 +300,7 @@ impl InlineAssistant {
         if let Some(error) = configuration_error() {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
-                    cx.update(|cx| provider.authenticate(cx))?.await?;
+                    cx.update(|cx| provider.authenticate(cx)).await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -1633,7 +1633,7 @@ impl EditorInlineAssists {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
                             assistant.update_editor_highlights(&editor, cx);
-                        })?;
+                        });
                     }
                     Ok(())
                 }
@@ -1978,7 +1978,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                         let multibuffer_snapshot = multibuffer.read(cx);
                         multibuffer_snapshot.anchor_range_in_excerpt(excerpt_id, action.range)
                     })
-                })?
+                })
                 .context("invalid range")?;
 
             let prompt_store = prompt_store.await.ok();

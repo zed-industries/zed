@@ -597,6 +597,7 @@ impl GitRepository for FakeGitRepository {
     fn push(
         &self,
         _branch: String,
+        _remote_branch: String,
         _remote: String,
         _options: Option<PushOptions>,
         _askpass: AskPassDelegate,

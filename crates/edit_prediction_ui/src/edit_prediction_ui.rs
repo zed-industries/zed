@@ -168,16 +168,19 @@ fn capture_example_as_markdown(
             fs.create_dir(&dir).await.ok();
             let mut path = dir.join(&example_spec.name.replace(' ', "--").replace(':', "-"));
             path.set_extension("md");
-            project.update(cx, |project, cx| project.open_local_buffer(&path, cx))
+            project
+                .update(cx, |project, cx| project.open_local_buffer(&path, cx))
+                .await?
         } else {
-            project.update(cx, |project, cx| project.create_buffer(false, cx))
-        }?
-        .await?;
+            project
+                .update(cx, |project, cx| project.create_buffer(false, cx))
+                .await?
+        };
 
         buffer.update(cx, |buffer, cx| {
             buffer.set_text(example_spec.to_markdown(), cx);
             buffer.set_language(Some(markdown_language), cx);
-        })?;
+        });
         workspace_entity.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(
                 Box::new(

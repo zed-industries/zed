@@ -54,9 +54,19 @@ jobs:
     - name: autofix_pr::run_autofix::run_cargo_fmt
       run: cargo fmt --all
       shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::install_cargo_machete
+      if: ${{ inputs.run_clippy }}
+      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      with:
+        command: install
+        args: cargo-machete@0.7.0
     - name: autofix_pr::run_autofix::run_cargo_fix
       if: ${{ inputs.run_clippy }}
       run: cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged
+      shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::run_cargo_machete_fix
+      if: ${{ inputs.run_clippy }}
+      run: cargo machete --fix
       shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: ${{ inputs.run_clippy }}

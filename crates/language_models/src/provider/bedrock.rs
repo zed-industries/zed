@@ -527,7 +527,7 @@ impl BedrockModel {
                     let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
                     let region = state.get_region();
                     (state.auth.clone(), endpoint, region)
-                })?;
+                });
 
                 let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
                     .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
@@ -597,10 +597,8 @@ impl BedrockModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        match Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request)) {
-            Ok(res) => async { res.await.map_err(|err| anyhow!(err))? }.boxed(),
-            Err(err) => futures::future::ready(Err(anyhow!(err))).boxed(),
-        }
+        let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
+        async move { task.await.map_err(|err| anyhow!(err))? }.boxed()
     }
 }
 
@@ -670,11 +668,9 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let Ok((region, allow_global)) = cx.read_entity(&self.state, |state, _cx| {
+        let (region, allow_global) = cx.read_entity(&self.state, |state, _cx| {
             (state.get_region(), state.get_allow_global())
-        }) else {
-            return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
-        };
+        });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -1194,10 +1190,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -1273,7 +1266,7 @@ impl ConfigurationView {
                     };
 
                     state.set_static_credentials(credentials, cx)
-                })?
+                })
                 .await
         })
         .detach_and_log_err(cx);
@@ -1290,7 +1283,7 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_auth(cx))?.await)
+        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_auth(cx)).await)
             .detach_and_log_err(cx);
     }
 
@@ -1411,7 +1404,7 @@ impl Render for ConfigurationView {
             .child(self.render_static_credentials_ui())
             .child(
                 Label::new(
-                    format!("You can also assign the {}, {} AND {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name),
+                    format!("You can also set the {}, {} AND {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted)

@@ -930,6 +930,9 @@ impl BufferSearchBar {
             self.default_options = configured_options;
         }
 
+        // This isn't a normal setting; it's only applicable to vim search.
+        self.search_options.remove(SearchOptions::BACKWARDS);
+
         self.dismissed = false;
         self.adjust_query_regex_language(cx);
         handle.search_bar_visibility_changed(true, window, cx);

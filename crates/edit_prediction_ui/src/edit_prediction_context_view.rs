@@ -188,7 +188,7 @@ impl EditPredictionContextView {
                 for (path, buffer, ranges) in paths {
                     multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
                 }
-            })?;
+            });
 
             editor.update_in(cx, |editor, window, cx| {
                 editor.move_to_beginning(&Default::default(), window, cx);

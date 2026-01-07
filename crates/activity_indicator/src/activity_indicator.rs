@@ -246,7 +246,7 @@ impl ActivityIndicator {
                             cx,
                         );
                         buffer.set_capability(language::Capability::ReadOnly, cx);
-                    })?;
+                    });
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {

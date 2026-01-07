@@ -1,0 +1,6 @@
+collab: RUST_LOG=${RUST_LOG:-info} cargo run --package=collab serve all
+cloud: cd ../cloud; cargo make dev
+dashboard: cd ../cloud/packages/dashboard; pnpm dev
+website: cd ../zed.dev; pnpm dev --port=3000
+livekit: livekit-server --dev
+blob_store: ./script/run-local-minio

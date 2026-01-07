@@ -105,7 +105,7 @@ impl AgentTool for DiagnosticsTool {
                 cx.spawn(async move |cx| {
                     let mut output = String::new();
                     let buffer = buffer.await?;
-                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                     for (_, group) in snapshot.diagnostic_groups(None) {
                         let entry = &group.entries[group.primary_ix];

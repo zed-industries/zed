@@ -447,7 +447,11 @@ message Envelope {
         GitRemoveRemote git_remove_remote = 403;
 
         TrustWorktrees trust_worktrees = 404;
-        RestrictWorktrees restrict_worktrees = 405; // current max
+        RestrictWorktrees restrict_worktrees = 405;
+        
+        ShareAgentThread share_agent_thread = 406;
+        GetSharedAgentThread get_shared_agent_thread = 407;
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; // current max
     }
 
     reserved 87 to 88;

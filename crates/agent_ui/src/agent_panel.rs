@@ -720,8 +720,23 @@ impl AgentPanel {
         &self.prompt_store
     }
 
-    pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
+    pub fn thread_store(&self) -> &Entity<HistoryStore> {
         &self.history_store
+    }
+
+    pub fn open_thread(
+        &mut self,
+        thread: DbThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_thread(
+            Some(crate::ExternalAgent::NativeAgent),
+            Some(thread),
+            None,
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
@@ -2968,4 +2983,38 @@ struct TrialEndUpsell;
 
 impl Dismissable for TrialEndUpsell {
     const KEY: &'static str = "dismissed-trial-end-upsell";
+}
+
+#[cfg(feature = "test-support")]
+impl AgentPanel {
+    /// Opens an external thread using an arbitrary AgentServer.
+    ///
+    /// This is a test-only helper that allows visual tests and integration tests
+    /// to inject a stub server without modifying production code paths.
+    /// Not compiled into production builds.
+    pub fn open_external_thread_with_server(
+        &mut self,
+        server: Rc<dyn AgentServer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+
+        let ext_agent = ExternalAgent::Custom {
+            name: server.name(),
+        };
+
+        self._external_thread(
+            server, None, None, workspace, project, false, ext_agent, window, cx,
+        );
+    }
+
+    /// Returns the currently active thread view, if any.
+    ///
+    /// This is a test-only accessor that exposes the private `active_thread_view()`
+    /// method for test assertions. Not compiled into production builds.
+    pub fn active_thread_view_for_tests(&self) -> Option<&Entity<AcpThreadView>> {
+        self.active_thread_view()
+    }
 }

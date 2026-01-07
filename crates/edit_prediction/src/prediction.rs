@@ -49,16 +49,14 @@ impl EditPredictionResult {
             };
         }
 
-        let Some((edits, snapshot, edit_preview_task)) = edited_buffer
-            .read_with(cx, |buffer, cx| {
+        let Some((edits, snapshot, edit_preview_task)) =
+            edited_buffer.read_with(cx, |buffer, cx| {
                 let new_snapshot = buffer.snapshot();
                 let edits: Arc<[_]> =
                     interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits)?.into();
 
                 Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
             })
-            .ok()
-            .flatten()
         else {
             return Self {
                 id,

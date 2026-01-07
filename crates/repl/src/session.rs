@@ -4,19 +4,26 @@ use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
-    outputs::{ExecutionStatus, ExecutionView},
+    outputs::{
+        ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
+    },
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::SelectionEffects;
 use editor::{
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
+    Anchor, AnchorRangeExt as _, Editor, Inlay, MultiBuffer, ToOffset, ToPoint,
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
 };
+use project::InlayId;
+
+/// Marker types
+enum ReplExecutedRange {}
+
 use futures::FutureExt as _;
 use gpui::{
     Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window, div, prelude::*,
@@ -36,9 +43,13 @@ pub struct Session {
     fs: Arc<dyn Fs>,
     editor: WeakEntity<Editor>,
     pub kernel: Kernel,
-    blocks: HashMap<String, EditorBlock>,
     pub kernel_specification: KernelSpecification,
-    _buffer_subscription: Subscription,
+
+    blocks: HashMap<String, EditorBlock>,
+    result_inlays: HashMap<String, (InlayId, Range<Anchor>, usize)>,
+    next_inlay_id: usize,
+
+    _subscriptions: Vec<Subscription>,
 }
 
 struct EditorBlock {
@@ -220,8 +231,10 @@ impl Session {
             editor,
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
             blocks: HashMap::default(),
+            result_inlays: HashMap::default(),
+            next_inlay_id: 0,
             kernel_specification,
-            _buffer_subscription: subscription,
+            _subscriptions: vec![subscription],
         };
 
         session.start_kernel(window, cx);
@@ -321,20 +334,56 @@ impl Session {
             let snapshot = buffer.read(cx).snapshot(cx);
 
             let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
+            let mut gutter_ranges_to_remove: Vec<Range<Anchor>> = Vec::new();
+            let mut keys_to_remove: Vec<String> = Vec::new();
 
-            self.blocks.retain(|_id, block| {
+            self.blocks.retain(|id, block| {
                 if block.invalidation_anchor.is_valid(&snapshot) {
                     true
                 } else {
                     blocks_to_remove.insert(block.block_id);
+                    gutter_ranges_to_remove.push(block.code_range.clone());
+                    keys_to_remove.push(id.clone());
                     false
                 }
             });
 
-            if !blocks_to_remove.is_empty() {
+            let mut inlays_to_remove: Vec<InlayId> = Vec::new();
+
+            self.result_inlays
+                .retain(|id, (inlay_id, code_range, original_len)| {
+                    let start_offset = code_range.start.to_offset(&snapshot);
+                    let end_offset = code_range.end.to_offset(&snapshot);
+                    let current_len = end_offset.saturating_sub(start_offset);
+
+                    if current_len != *original_len {
+                        inlays_to_remove.push(*inlay_id);
+                        gutter_ranges_to_remove.push(code_range.clone());
+                        keys_to_remove.push(id.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+            if !blocks_to_remove.is_empty()
+                || !inlays_to_remove.is_empty()
+                || !gutter_ranges_to_remove.is_empty()
+            {
                 self.editor
                     .update(cx, |editor, cx| {
-                        editor.remove_blocks(blocks_to_remove, None, cx);
+                        if !blocks_to_remove.is_empty() {
+                            editor.remove_blocks(blocks_to_remove, None, cx);
+                        }
+                        if !inlays_to_remove.is_empty() {
+                            editor.splice_inlays(&inlays_to_remove, vec![], cx);
+                        }
+                        if !gutter_ranges_to_remove.is_empty() {
+                            editor.remove_gutter_highlights::<ReplExecutedRange>(
+                                gutter_ranges_to_remove,
+                                cx,
+                            );
+                        }
                     })
                     .ok();
                 cx.notify();
@@ -350,17 +399,72 @@ impl Session {
         anyhow::Ok(())
     }
 
+    fn replace_block_with_inlay(&mut self, message_id: &str, text: &str, cx: &mut Context<Self>) {
+        let Some(block) = self.blocks.remove(message_id) else {
+            return;
+        };
+
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        let code_range = block.code_range.clone();
+
+        editor.update(cx, |editor, cx| {
+            let mut block_ids = HashSet::default();
+            block_ids.insert(block.block_id);
+            editor.remove_blocks(block_ids, None, cx);
+
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let start_offset = code_range.start.to_offset(&buffer);
+            let end_offset = code_range.end.to_offset(&buffer);
+            let original_len = end_offset.saturating_sub(start_offset);
+
+            let end_point = code_range.end.to_point(&buffer);
+            let inlay_position = buffer.anchor_after(end_point);
+
+            let inlay_id = self.next_inlay_id;
+            self.next_inlay_id += 1;
+
+            let inlay = Inlay::repl_result(inlay_id, inlay_position, format!("    {}", text));
+
+            editor.splice_inlays(&[], vec![inlay], cx);
+            self.result_inlays.insert(
+                message_id.to_string(),
+                (
+                    InlayId::ReplResult(inlay_id),
+                    code_range.clone(),
+                    original_len,
+                ),
+            );
+
+            editor.insert_gutter_highlight::<ReplExecutedRange>(
+                code_range,
+                |cx| cx.theme().status().success,
+                cx,
+            );
+        });
+
+        cx.notify();
+    }
+
     pub fn clear_outputs(&mut self, cx: &mut Context<Self>) {
         let blocks_to_remove: HashSet<CustomBlockId> =
             self.blocks.values().map(|block| block.block_id).collect();
 
+        let inlays_to_remove: Vec<InlayId> =
+            self.result_inlays.values().map(|(id, _, _)| *id).collect();
+
         self.editor
             .update(cx, |editor, cx| {
                 editor.remove_blocks(blocks_to_remove, None, cx);
+                editor.splice_inlays(&inlays_to_remove, vec![], cx);
+                editor.clear_gutter_highlights::<ReplExecutedRange>(cx);
             })
             .ok();
 
         self.blocks.clear();
+        self.result_inlays.clear();
     }
 
     pub fn execute(
@@ -388,6 +492,8 @@ impl Session {
         let message: JupyterMessage = execute_request.into();
 
         let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
+        let mut inlays_to_remove: Vec<InlayId> = Vec::new();
+        let mut gutter_ranges_to_remove: Vec<Range<Anchor>> = Vec::new();
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 
@@ -400,9 +506,27 @@ impl Session {
             }
         });
 
+        self.result_inlays
+            .retain(|_key, (inlay_id, inlay_range, _)| {
+                if anchor_range.overlaps(inlay_range, &buffer) {
+                    inlays_to_remove.push(*inlay_id);
+                    gutter_ranges_to_remove.push(inlay_range.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+
         self.editor
             .update(cx, |editor, cx| {
                 editor.remove_blocks(blocks_to_remove, None, cx);
+                if !inlays_to_remove.is_empty() {
+                    editor.splice_inlays(&inlays_to_remove, vec![], cx);
+                }
+                if !gutter_ranges_to_remove.is_empty() {
+                    editor
+                        .remove_gutter_highlights::<ReplExecutedRange>(gutter_ranges_to_remove, cx);
+                }
             })
             .ok();
 
@@ -418,6 +542,7 @@ impl Session {
         let parent_message_id = message.header.msg_id.clone();
         let session_view = cx.entity().downgrade();
         let weak_editor = self.editor.clone();
+        let code_range_for_close = anchor_range.clone();
 
         let on_close: CloseBlockFn = Arc::new(
             move |block_id: CustomBlockId, _: &mut Window, cx: &mut App| {
@@ -433,22 +558,58 @@ impl Session {
                         let mut block_ids = HashSet::default();
                         block_ids.insert(block_id);
                         editor.remove_blocks(block_ids, None, cx);
+                        editor.remove_gutter_highlights::<ReplExecutedRange>(
+                            vec![code_range_for_close.clone()],
+                            cx,
+                        );
                     });
                 }
             },
         );
 
-        let Ok(editor_block) =
-            EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, cx)
-        else {
+        let Ok(editor_block) = EditorBlock::new(
+            self.editor.clone(),
+            anchor_range.clone(),
+            status,
+            on_close,
+            cx,
+        ) else {
             return;
         };
+
+        self.editor
+            .update(cx, |editor, cx| {
+                editor.insert_gutter_highlight::<ReplExecutedRange>(
+                    anchor_range.clone(),
+                    |cx| cx.theme().status().success,
+                    cx,
+                );
+            })
+            .ok();
 
         let new_cursor_pos = if let Some(next_cursor) = next_cell {
             next_cursor
         } else {
             editor_block.invalidation_anchor
         };
+
+        let msg_id = message.header.msg_id.clone();
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            move |session, _execution_view, _event: &ExecutionViewFinishedEmpty, cx| {
+                session.replace_block_with_inlay(&msg_id, "✓", cx);
+            },
+        );
+        self._subscriptions.push(subscription);
+
+        let msg_id = message.header.msg_id.clone();
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            move |session, _execution_view, event: &ExecutionViewFinishedSmall, cx| {
+                session.replace_block_with_inlay(&msg_id, &event.0, cx);
+            },
+        );
+        self._subscriptions.push(subscription);
 
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);

@@ -221,7 +221,7 @@ impl ExampleContext {
             } else {
                 thread.proceed(cx)
             }
-        })??;
+        })?;
 
         let task = self.app.background_spawn(async move {
             let mut messages = Vec::new();
@@ -357,11 +357,13 @@ impl ExampleContext {
     }
 
     pub fn edits(&self) -> HashMap<Arc<RelPath>, FileEdits> {
-        self.agent_thread
-            .read_with(&self.app, |thread, cx| {
-                let action_log = thread.action_log().read(cx);
-                HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
-                    |(buffer, diff)| {
+        self.agent_thread.read_with(&self.app, |thread, cx| {
+            let action_log = thread.action_log().read(cx);
+            HashMap::from_iter(
+                action_log
+                    .changed_buffers(cx)
+                    .into_iter()
+                    .map(|(buffer, diff)| {
                         let snapshot = buffer.read(cx).snapshot();
 
                         let file = snapshot.file().unwrap();
@@ -381,10 +383,9 @@ impl ExampleContext {
                             .collect();
 
                         (file.path().clone(), FileEdits { hunks })
-                    },
-                ))
-            })
-            .unwrap()
+                    }),
+            )
+        })
     }
 
     pub fn agent_thread(&self) -> Entity<Thread> {
@@ -393,16 +394,14 @@ impl ExampleContext {
 }
 
 impl AppContext for ExampleContext {
-    type Result<T> = anyhow::Result<T>;
-
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.app.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> gpui::Reservation<T> {
         self.app.reserve_entity()
     }
 
@@ -410,7 +409,7 @@ impl AppContext for ExampleContext {
         &mut self,
         reservation: gpui::Reservation<T>,
         build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.app.insert_entity(reservation, build_entity)
     }
 
@@ -418,25 +417,21 @@ impl AppContext for ExampleContext {
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut gpui::Context<T>) -> R,
-    ) -> Self::Result<R>
+    ) -> R
     where
         T: 'static,
     {
         self.app.update_entity(handle, update)
     }
 
-    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<gpui::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> gpui::GpuiBorrow<'a, T>
     where
         T: 'static,
     {
         self.app.as_mut(handle)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -471,7 +466,7 @@ impl AppContext for ExampleContext {
         self.app.background_spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: gpui::Global,
     {

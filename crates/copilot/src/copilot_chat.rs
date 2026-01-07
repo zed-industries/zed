@@ -624,8 +624,6 @@ impl CopilotChat {
     ) -> Result<(Arc<dyn HttpClient>, ApiToken, CopilotChatConfiguration)> {
         let this = cx
             .update(|cx| Self::global(cx))
-            .ok()
-            .flatten()
             .context("Copilot chat is not enabled")?;
 
         let (oauth_token, api_token, client, configuration) = this.read_with(cx, |this, _| {
@@ -635,7 +633,7 @@ impl CopilotChat {
                 this.client.clone(),
                 this.configuration.clone(),
             )
-        })?;
+        });
 
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
@@ -648,7 +646,7 @@ impl CopilotChat {
                 this.update(cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
-                })?;
+                });
                 token
             }
         };

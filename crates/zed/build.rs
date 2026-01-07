@@ -66,7 +66,7 @@ fn main() {
             let open_console_target = target_dir.join("OpenConsole.exe");
 
             let conpty_url = "https://github.com/microsoft/terminal/releases/download/v1.23.13503.0/Microsoft.Windows.Console.ConPTY.1.23.251216003.nupkg";
-            let nupkg_path = out_dir.join("conpty.nupkg");
+            let nupkg_path = out_dir.join("conpty.nupkg.zip");
             let extract_dir = out_dir.join("conpty");
 
             let download_script = format!(

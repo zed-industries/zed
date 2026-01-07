@@ -643,6 +643,9 @@
     "context": "vim_operator == helix_m",
     "bindings": {
       "m": "vim::Matching",
+      "s": "vim::PushHelixSurroundAdd",
+      "r": "vim::PushHelixSurroundReplace",
+      "d": "vim::PushHelixSurroundDelete",
     },
   },
   {

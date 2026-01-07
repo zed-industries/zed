@@ -2146,7 +2146,11 @@ impl Terminal {
             && task.status == TaskStatus::Running
         {
             if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+                // First kill the foreground process group (the command running in the shell)
                 info.kill_current_process();
+                // Then kill the shell itself so that the terminal exits properly
+                // and wait_for_completed_task can complete
+                info.kill_child_process();
             }
         }
     }
@@ -2487,7 +2491,48 @@ mod tests {
         Point, TestAppContext, bounds, point, size, smol_timeout,
     };
     use rand::{Rng, distr, rngs::ThreadRng};
-    use task::ShellBuilder;
+    use smol::channel::Receiver;
+    use task::{Shell, ShellBuilder};
+
+    /// Helper to build a test terminal running a shell command.
+    /// Returns the terminal entity and a receiver for the completion signal.
+    async fn build_test_terminal(
+        cx: &mut TestAppContext,
+        command: &str,
+        args: &[&str],
+    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let (program, args) =
+            ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+        (terminal, completion_rx)
+    }
 
     fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
         cx.update(|cx| {
@@ -2571,35 +2616,7 @@ mod tests {
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System, false)
-            .build(Some("echo".to_owned()), &["hello".to_owned()]);
-        let builder = cx
-            .update(|cx| {
-                TerminalBuilder::new(
-                    None,
-                    None,
-                    task::Shell::WithArguments {
-                        program,
-                        args,
-                        title_override: None,
-                    },
-                    HashMap::default(),
-                    CursorShape::default(),
-                    AlternateScroll::On,
-                    None,
-                    vec![],
-                    0,
-                    false,
-                    0,
-                    Some(completion_tx),
-                    cx,
-                    vec![],
-                )
-            })
-            .await
-            .unwrap();
-        let terminal = cx.new(|cx| builder.subscribe(cx));
+        let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["hello"]).await;
         assert_eq!(
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
@@ -2734,24 +2751,17 @@ mod tests {
         })
         .detach();
         cx.background_spawn(async move {
-            #[cfg(target_os = "windows")]
-            {
-                let exit_status = completion_rx.recv().await.ok().flatten();
-                if let Some(exit_status) = exit_status {
-                    assert!(
-                        !exit_status.success(),
-                        "Wrong shell command should result in a failure"
-                    );
-                    assert_eq!(exit_status.code(), Some(1));
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let exit_status = completion_rx.recv().await.unwrap().unwrap();
+            // The channel may be closed if the terminal is dropped before sending
+            // the completion signal, which can happen with certain task scheduling orders.
+            let exit_status = completion_rx.recv().await.ok().flatten();
+            if let Some(exit_status) = exit_status {
                 assert!(
                     !exit_status.success(),
                     "Wrong shell command should result in a failure"
                 );
+                #[cfg(target_os = "windows")]
+                assert_eq!(exit_status.code(), Some(1));
+                #[cfg(not(target_os = "windows"))]
                 assert_eq!(exit_status.code(), None);
             }
         })
@@ -3081,6 +3091,76 @@ mod tests {
                 "Should have ProcessHyperlink event when dragging within hyperlink bounds"
             );
         });
+    }
+
+    /// Test that kill_active_task properly terminates both the foreground process
+    /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_kill_active_task_completes_and_captures_output(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Run a command that prints output then sleeps for a long time
+        // The echo ensures we have output to capture before killing
+        let (terminal, completion_rx) =
+            build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
+
+        // Wait a bit for the echo to execute and produce output
+        smol::Timer::after(Duration::from_millis(200)).await;
+
+        // Kill the active task
+        terminal.update(cx, |term, _cx| {
+            term.kill_active_task();
+        });
+
+        // wait_for_completed_task should complete within a reasonable time (not hang)
+        let completion_result = smol_timeout(Duration::from_secs(5), completion_rx.recv()).await;
+        assert!(
+            completion_result.is_ok(),
+            "wait_for_completed_task should complete after kill_active_task, but it timed out"
+        );
+
+        // The exit status should indicate the process was killed (not a clean exit)
+        let exit_status = completion_result.unwrap().unwrap();
+        assert!(
+            exit_status.is_some(),
+            "Should have received an exit status after killing"
+        );
+
+        // Verify that output captured before killing is still available
+        let content = terminal.update(cx, |term, _| term.get_content());
+        assert!(
+            content.contains("test_output_before_kill"),
+            "Output from before kill should be captured, got: {content}"
+        );
+    }
+
+    /// Test that kill_active_task on a task that's not running is a no-op
+    #[gpui::test]
+    async fn test_kill_active_task_on_completed_task_is_noop(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Run a command that exits immediately
+        let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
+
+        // Wait for the command to complete naturally
+        let exit_status = smol_timeout(Duration::from_secs(5), completion_rx.recv())
+            .await
+            .expect("Command should complete")
+            .expect("Should receive exit status");
+        assert_eq!(exit_status, Some(ExitStatus::default()));
+
+        // Now try to kill - should be a no-op since task already completed
+        terminal.update(cx, |term, _cx| {
+            term.kill_active_task();
+        });
+
+        // Content should still be there
+        let content = terminal.update(cx, |term, _| term.get_content());
+        assert!(
+            content.contains("done"),
+            "Output should still be present after no-op kill, got: {content}"
+        );
     }
 
     mod perf {

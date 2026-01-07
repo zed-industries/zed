@@ -5,31 +5,37 @@
 //!
 //! TODO: Port Python code to generate chronologically-ordered commits
 use crate::reorder_patch::{Patch, PatchLine, extract_edits, locate_edited_line};
+
+/// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else if s.is_char_boundary(index) {
+        index
+    } else {
+        // Find the nearest valid character boundary at or before index
+        (0..index)
+            .rev()
+            .find(|&i| s.is_char_boundary(i))
+            .unwrap_or(0)
+    }
+}
 use anyhow::{Context as _, Result};
 use clap::Args;
+use edit_prediction::example_spec::ExampleSpec;
 use rand::Rng;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use similar::{DiffTag, TextDiff};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Write};
+use std::path::Path;
+use std::path::PathBuf;
 
 /// `ep split-commit` CLI args.
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub struct SplitCommitArgs {
-    /// Path to the commit file (use "-" for stdin)
-    #[arg(long, short = 'c')]
-    pub commit: String,
-
-    /// Repository URL
-    #[arg(long, short = 'r', default_value_t = String::new())]
-    pub repository_url: String,
-
-    /// Commit hash
-    #[arg(long, default_value_t = String::new())]
-    pub commit_hash: String,
-
     /// Split point (float 0.0-1.0 for fraction, or integer for index)
     #[arg(long, short = 's')]
     pub split_point: Option<String>,
@@ -41,6 +47,28 @@ pub struct SplitCommitArgs {
     /// Pretty-print JSON output
     #[arg(long, short = 'p')]
     pub pretty: bool,
+
+    /// Number of samples to generate per commit (samples random split points)
+    #[arg(long, short = 'n')]
+    pub num_samples: Option<usize>,
+}
+
+/// Input format for annotated commits (JSON Lines).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct AnnotatedCommit {
+    /// Repository path (e.g., "repos/zed")
+    pub repo: String,
+    /// Repository URL (e.g., "https://github.com/zed-industries/zed")
+    pub repo_url: String,
+    /// Commit SHA
+    pub commit_sha: String,
+    /// Chronologically reordered commit diff
+    pub reordered_commit: String,
+    /// Original commit diff
+    pub original_commit: String,
+    /// Whether diff stats match between original and reordered
+    pub diff_stats_match: bool,
 }
 
 /// Cursor position in a file.
@@ -64,21 +92,6 @@ pub struct SplitCommit {
     pub target_patch: String,
 }
 
-/// The evaluation case structure that will be serialized to JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationCase {
-    pub repository_url: String,
-    pub commit: String,
-    pub edit_history: Vec<String>,
-    pub cursor_position: String,
-    pub cursor_excerpt: String,
-    pub expected_hunks: Vec<String>,
-    pub expected_patch: String,
-    pub allowed_patch: String,
-    pub expected_context_excerpts: Vec<String>,
-    pub extra: serde_json::Value,
-}
-
 /// Split point specification for evaluation generation.
 #[derive(Debug, Clone)]
 pub enum SplitPoint {
@@ -98,38 +111,122 @@ fn parse_split_point(value: &str) -> Option<SplitPoint> {
 
 /// Entry point for the `ep split-commit` subcommand.
 ///
-/// This runs synchronously and prints a single JSON object to stdout.
-pub fn run_split_commit(args: &SplitCommitArgs) -> Result<()> {
-    let commit = if args.commit == "-" {
-        let mut content = String::new();
-        io::stdin()
-            .read_to_string(&mut content)
-            .context("failed to read commit diff from stdin")?;
-        content
+/// This runs synchronously and outputs JSON Lines (one output per input line).
+pub fn run_split_commit(
+    args: &SplitCommitArgs,
+    inputs: &[PathBuf],
+    output_path: Option<&PathBuf>,
+) -> Result<()> {
+    use std::collections::HashSet;
+    use std::io::BufRead;
+
+    let stdin_path = PathBuf::from("-");
+    let inputs = if inputs.is_empty() {
+        std::slice::from_ref(&stdin_path)
     } else {
-        fs::read_to_string(&args.commit)
-            .with_context(|| format!("failed to read commit diff from {}", args.commit))?
+        inputs
     };
 
     let split_point = args.split_point.as_deref().and_then(parse_split_point);
+    let mut output_lines = Vec::new();
 
-    let case = generate_evaluation_example_from_ordered_commit(
-        &commit,
-        &args.repository_url,
-        &args.commit_hash,
-        split_point,
-        args.seed,
-    )
-    .context("failed to generate evaluation example")?;
+    for input_path in inputs {
+        let input: Box<dyn BufRead> = if input_path.as_os_str() == "-" {
+            Box::new(io::BufReader::new(io::stdin()))
+        } else {
+            let file = fs::File::open(input_path)
+                .with_context(|| format!("failed to open input file {}", input_path.display()))?;
+            Box::new(io::BufReader::new(file))
+        };
 
-    let json = if args.pretty {
-        serde_json::to_string_pretty(&case)
-    } else {
-        serde_json::to_string(&case)
+        for (line_num, line_result) in input.lines().enumerate() {
+            let line =
+                line_result.with_context(|| format!("failed to read line {}", line_num + 1))?;
+
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let annotated: AnnotatedCommit = serde_json::from_str(&line)
+                .with_context(|| format!("failed to parse JSON at line {}", line_num + 1))?;
+
+            // Generate multiple samples if num_samples is set
+            if let Some(num_samples) = args.num_samples {
+                let mut seen_samples: HashSet<String> = HashSet::new();
+                let base_seed = args.seed.unwrap_or_else(|| rand::random());
+
+                for sample_idx in 0..num_samples {
+                    let sample_seed = base_seed.wrapping_add(sample_idx as u64);
+
+                    let case = generate_evaluation_example_from_ordered_commit(
+                        &annotated.reordered_commit,
+                        &annotated.repo_url,
+                        &annotated.commit_sha,
+                        None, // Use random split point for multi-sample mode
+                        Some(sample_seed),
+                        Some(sample_idx),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "failed to generate evaluation example for commit {} at line {} (sample {})",
+                            annotated.commit_sha,
+                            line_num + 1,
+                            sample_idx
+                        )
+                    })?;
+
+                    let json = if args.pretty {
+                        serde_json::to_string_pretty(&case)
+                    } else {
+                        serde_json::to_string(&case)
+                    }
+                    .context("failed to serialize evaluation case as JSON")?;
+
+                    // Only add unique samples (different split points may produce same result)
+                    if seen_samples.insert(json.clone()) {
+                        output_lines.push(json);
+                    }
+                }
+            } else {
+                let case = generate_evaluation_example_from_ordered_commit(
+                    &annotated.reordered_commit,
+                    &annotated.repo_url,
+                    &annotated.commit_sha,
+                    split_point.clone(),
+                    args.seed,
+                    None,
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to generate evaluation example for commit {} at line {}",
+                        annotated.commit_sha,
+                        line_num + 1
+                    )
+                })?;
+
+                let json = if args.pretty {
+                    serde_json::to_string_pretty(&case)
+                } else {
+                    serde_json::to_string(&case)
+                }
+                .context("failed to serialize evaluation case as JSON")?;
+
+                output_lines.push(json);
+            }
+        }
     }
-    .context("failed to serialize evaluation case as JSON")?;
 
-    println!("{json}");
+    let output_content = output_lines.join("\n") + if output_lines.is_empty() { "" } else { "\n" };
+
+    if let Some(path) = output_path {
+        fs::write(path, &output_content)
+            .with_context(|| format!("failed to write output to {}", path.display()))?;
+    } else {
+        io::stdout()
+            .write_all(output_content.as_bytes())
+            .context("failed to write to stdout")?;
+    }
+
     Ok(())
 }
 
@@ -141,13 +238,15 @@ pub fn run_split_commit(args: &SplitCommitArgs) -> Result<()> {
 /// * `commit_hash` - Hash of the commit
 /// * `split_point` - Point at which the commit will be split (None for random)
 /// * `seed` - Optional seed for randomness
+/// * `sample_num` - Optional sample number for generating unique names
 pub fn generate_evaluation_example_from_ordered_commit(
     commit: &str,
     repository_url: &str,
     commit_hash: &str,
     split_point: Option<SplitPoint>,
     seed: Option<u64>,
-) -> Result<EvaluationCase> {
+    sample_num: Option<usize>,
+) -> Result<ExampleSpec> {
     let mut rng: Box<dyn rand::RngCore> = match seed {
         Some(seed) => Box::new(rand::rngs::StdRng::seed_from_u64(seed)),
         None => Box::new(rand::rngs::ThreadRng::default()),
@@ -222,17 +321,29 @@ pub fn generate_evaluation_example_from_ordered_commit(
         split_commit.target_patch = String::new();
     }
 
-    Ok(EvaluationCase {
+    let repo_name = repository_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("unknown");
+    let short_sha = &commit_hash[..commit_hash.len().min(8)];
+    let name = match sample_num {
+        Some(n) => format!("{}-{}-{}", repo_name, short_sha, n),
+        None => format!("{}-{}", repo_name, short_sha),
+    };
+
+    Ok(ExampleSpec {
+        name,
         repository_url: repository_url.to_string(),
-        commit: format!("{}~1", commit_hash),
-        edit_history: vec![split_commit.source_patch.clone()],
-        cursor_position: cursor.to_string(),
-        cursor_excerpt,
-        expected_hunks: vec![split_commit.target_patch.clone()],
-        expected_patch: split_commit.target_patch.clone(),
-        allowed_patch: split_commit.target_patch,
-        expected_context_excerpts: vec![],
-        extra: serde_json::json!({}),
+        revision: format!("{}~1", commit_hash),
+        edit_history: split_commit.source_patch.clone(),
+        // cursor_position: cursor.to_string(),
+        cursor_path: Path::new(&cursor.file).into(),
+        cursor_position: cursor_excerpt,
+        expected_patches: vec![split_commit.target_patch],
+        tags: vec![],
+        reasoning: None,
+        uncommitted_diff: String::new(),
     })
 }
 
@@ -591,11 +702,13 @@ pub fn imitate_human_edits(
                     // Split within this replace operation
                     let offset = split_index - edit_index;
                     if offset < ins.len() {
-                        new_src.push_str(&ins[..offset]);
+                        let safe_offset = floor_char_boundary(&ins, offset);
+                        new_src.push_str(&ins[..safe_offset]);
                     } else {
                         new_src.push_str(&ins);
                         let del_offset = offset - ins.len();
-                        new_src.push_str(&del[..del_offset.min(del.len())]);
+                        let safe_del_offset = floor_char_boundary(&del, del_offset.min(del.len()));
+                        new_src.push_str(&del[..safe_del_offset]);
                     }
                     split_found = true;
                     last_old_end = op.old_range().end;
@@ -610,7 +723,8 @@ pub fn imitate_human_edits(
                 let repl: String = op.new_range().map(|i| tgt_tokens[i].as_str()).collect();
                 if edit_index + repl.len() >= split_index {
                     let offset = split_index - edit_index;
-                    new_src.push_str(&repl[..offset]);
+                    let safe_offset = floor_char_boundary(&repl, offset);
+                    new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
                     break;
                 } else {
@@ -622,9 +736,10 @@ pub fn imitate_human_edits(
                 let repl: String = op.old_range().map(|i| src_tokens[i].as_str()).collect();
                 if edit_index + repl.len() >= split_index {
                     let offset = split_index - edit_index;
-                    new_src.push_str(&repl[..offset]);
+                    let safe_offset = floor_char_boundary(&repl, offset);
+                    new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
-                    last_old_end = op.old_range().start + offset.min(op.old_range().len());
+                    last_old_end = op.old_range().start + safe_offset.min(op.old_range().len());
                     break;
                 } else {
                     edit_index += repl.len();
@@ -684,16 +799,21 @@ pub fn imitate_human_edits(
             hunk.new_count += 1;
         }
     } else {
-        // For pure insertions, we need to add or modify a hunk
-        if let Some(hunk) = new_src_patch.hunks.get_mut(tgt_edit_loc.hunk_index) {
-            // Insert the partial line at the same position as target
-            hunk.lines.insert(
-                tgt_edit_loc.line_index_within_hunk,
-                PatchLine::Addition(new_src.clone()),
-            );
-            hunk.new_count += 1;
-        } else if new_src_patch.hunks.is_empty() {
-            // Source patch is empty, create a new hunk based on target
+        // For pure insertions, insert after the last edit in source patch
+        // This imitates human typing - the intermediate content is what the user is currently typing
+        let last_src_edit = locate_edited_line(&new_src_patch, -1);
+
+        if let Some(src_loc) = last_src_edit {
+            // Insert after the last edit in source
+            if let Some(hunk) = new_src_patch.hunks.get_mut(src_loc.hunk_index) {
+                hunk.lines.insert(
+                    src_loc.line_index_within_hunk + 1,
+                    PatchLine::Addition(new_src.clone()),
+                );
+                hunk.new_count += 1;
+            }
+        } else {
+            // Source patch is empty or has incompatible hunk structure, create a new hunk based on target
             if let Some(tgt_hunk) = tgt_patch.hunks.get(tgt_edit_loc.hunk_index) {
                 let mut new_hunk = tgt_hunk.clone();
                 // Replace the full addition with the partial one
@@ -827,6 +947,18 @@ pub fn get_cursor_excerpt(
                         _ => {}
                     }
                 }
+                // If hunk only has deletions (file deletion), include deletion lines
+                if excerpt_lines.is_empty() {
+                    excerpt_first_line = hunk.old_start as usize;
+                    for line in &hunk.lines {
+                        match line {
+                            PatchLine::Deletion(s) => {
+                                excerpt_lines.push(s.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
     }
@@ -834,18 +966,67 @@ pub fn get_cursor_excerpt(
     // Search in target patch if not found
     if excerpt_lines.is_empty() {
         let tgt = Patch::parse_unified_diff(target_patch);
-        if let Some(loc) = locate_edited_line(&tgt, 0) {
-            if loc.filename == cursor.file {
-                if let Some(hunk) = tgt.hunks.get(loc.hunk_index) {
-                    excerpt_first_line = hunk.new_start as usize;
+        // Search all hunks for the cursor file, not just the first edit's hunk
+        for hunk in &tgt.hunks {
+            if hunk.filename == cursor.file {
+                excerpt_first_line = hunk.new_start as usize;
+                // First try to collect deletions and context (what exists before edits)
+                for line in &hunk.lines {
+                    match line {
+                        PatchLine::Deletion(s) | PatchLine::Context(s) => {
+                            excerpt_lines.push(s.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                // If hunk only has additions (no deletions/context), include all lines
+                // This handles cases like adding to an empty file or section
+                if excerpt_lines.is_empty() {
                     for line in &hunk.lines {
                         match line {
-                            PatchLine::Deletion(s) | PatchLine::Context(s) => {
+                            PatchLine::Addition(s)
+                            | PatchLine::Deletion(s)
+                            | PatchLine::Context(s) => {
                                 excerpt_lines.push(s.clone());
                             }
                             _ => {}
                         }
                     }
+                }
+                if !excerpt_lines.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Also search source patch hunks if still not found (for fallback cursor case)
+    if excerpt_lines.is_empty() {
+        for hunk in &src.hunks {
+            if hunk.filename == cursor.file {
+                excerpt_first_line = hunk.new_start as usize;
+                for line in &hunk.lines {
+                    match line {
+                        PatchLine::Addition(s) | PatchLine::Context(s) => {
+                            excerpt_lines.push(s.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                // If hunk only has deletions, include deletion lines
+                if excerpt_lines.is_empty() {
+                    excerpt_first_line = hunk.old_start as usize;
+                    for line in &hunk.lines {
+                        match line {
+                            PatchLine::Deletion(s) => {
+                                excerpt_lines.push(s.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if !excerpt_lines.is_empty() {
+                    break;
                 }
             }
         }
@@ -860,6 +1041,16 @@ pub fn get_cursor_excerpt(
         let line_num = excerpt_first_line + i;
         if line_num == cursor.line {
             let col = cursor.column.min(line.len());
+            // Ensure we split at a valid UTF-8 character boundary
+            let col = if line.is_char_boundary(col) {
+                col
+            } else {
+                // Find the nearest valid character boundary
+                (0..=col)
+                    .rev()
+                    .find(|&i| line.is_char_boundary(i))
+                    .unwrap_or(0)
+            };
             let (before, after) = line.split_at(col);
             *line = format!("{}<|user_cursor|>{}", before, after);
             break;
@@ -871,6 +1062,10 @@ pub fn get_cursor_excerpt(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use edit_prediction::example_spec::ExampleSpec;
+
     use super::*;
 
     #[test]
@@ -979,12 +1174,13 @@ Date: Mon Jan 1 00:00:00 2024
             "abc123",
             Some(SplitPoint::Fraction(0.5)),
             Some(42),
+            None,
         );
 
         assert!(result.is_ok());
         let case = result.unwrap();
         assert_eq!(case.repository_url, "https://github.com/test/repo");
-        assert_eq!(case.commit, "abc123~1");
+        assert_eq!(case.revision, "abc123~1");
         assert!(!case.edit_history.is_empty());
     }
 
@@ -1009,6 +1205,7 @@ Date: Mon Jan 1 00:00:00 2024
             "abc123",
             Some(SplitPoint::Fraction(0.5)),
             Some(12345),
+            None,
         )
         .unwrap();
 
@@ -1018,12 +1215,13 @@ Date: Mon Jan 1 00:00:00 2024
             "abc123",
             Some(SplitPoint::Fraction(0.5)),
             Some(12345),
+            None,
         )
         .unwrap();
 
         // Results should be identical
         assert_eq!(result1.edit_history, result2.edit_history);
-        assert_eq!(result1.expected_patch, result2.expected_patch);
+        assert_eq!(result1.expected_patches, result2.expected_patches);
         assert_eq!(result1.cursor_position, result2.cursor_position);
     }
 
@@ -1085,13 +1283,14 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Fraction(0.2)),
             Some(1),
+            None,
         );
 
         assert!(result.is_ok());
         let case = result.unwrap();
 
         // Source should have some edits
-        let src_patch = Patch::parse_unified_diff(&case.edit_history[0]);
+        let src_patch = Patch::parse_unified_diff(&case.edit_history);
         assert!(src_patch.stats().added > 0);
     }
 
@@ -1118,12 +1317,13 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Index(2)),
             Some(1),
+            None,
         );
 
         assert!(result.is_ok());
         let case = result.unwrap();
 
-        let src_patch = Patch::parse_unified_diff(&case.edit_history[0]);
+        let src_patch = Patch::parse_unified_diff(&case.edit_history);
         // Pure insertion adds a partial line, so we expect 3 (2 original + 1 partial)
         assert_eq!(src_patch.stats().added, 3);
     }
@@ -1148,37 +1348,39 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Fraction(0.5)),
             Some(42),
+            None,
         )
         .unwrap();
 
         // Cursor excerpt should contain the cursor marker
         assert!(
-            result.cursor_excerpt.contains("<|user_cursor|>"),
+            result.cursor_position.contains("<|user_cursor|>"),
             "Cursor excerpt should contain marker: {}",
-            result.cursor_excerpt
+            result.cursor_position
         );
     }
 
     #[test]
     fn test_evaluation_case_json_serialization() {
-        let case = EvaluationCase {
+        let case = ExampleSpec {
+            name: "test-abc123".to_string(),
             repository_url: "https://github.com/test/repo".to_string(),
-            commit: "abc123~1".to_string(),
-            edit_history: vec!["patch1".to_string()],
-            cursor_position: "file.rs:10:5".to_string(),
-            cursor_excerpt: "some code<|user_cursor|>".to_string(),
-            expected_hunks: vec!["hunk1".to_string()],
-            expected_patch: "patch".to_string(),
-            allowed_patch: "patch".to_string(),
-            expected_context_excerpts: vec![],
-            extra: serde_json::json!({}),
+            revision: "abc123~1".to_string(),
+            edit_history: "patch1".to_string(),
+            // cursor_position: "file.rs:10:5".to_string(),
+            cursor_path: Path::new("file.rs").into(),
+            cursor_position: "some code<|user_cursor|>".to_string(),
+            expected_patches: vec!["patch".to_string()],
+            tags: vec![],
+            reasoning: None,
+            uncommitted_diff: String::new(),
         };
 
         let json = serde_json::to_string(&case).unwrap();
-        let deserialized: EvaluationCase = serde_json::from_str(&json).unwrap();
+        let deserialized: ExampleSpec = serde_json::from_str(&json).unwrap();
 
         assert_eq!(case.repository_url, deserialized.repository_url);
-        assert_eq!(case.commit, deserialized.commit);
+        assert_eq!(case.revision, deserialized.revision);
         assert_eq!(case.cursor_position, deserialized.cursor_position);
     }
 
@@ -1192,6 +1394,7 @@ Date: Mon Jan 1 00:00:00 2024
             "hash",
             Some(SplitPoint::Fraction(0.5)),
             Some(1),
+            None,
         );
 
         assert!(result.is_err());
@@ -1224,6 +1427,7 @@ index 123..456 789
             "hash",
             Some(SplitPoint::Index(1)),
             Some(1),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1231,8 +1435,8 @@ index 123..456 789
 
         // The edit history should contain the group header (// lines)
         // but not the commit metadata
-        assert!(!case.edit_history[0].contains("Author:"));
-        assert!(!case.edit_history[0].contains("Date:"));
+        assert!(!case.edit_history.contains("Author:"));
+        assert!(!case.edit_history.contains("Date:"));
     }
 
     #[test]
@@ -1461,5 +1665,116 @@ index 123..456 789
             found_partial,
             "At least one seed should produce a partial intermediate state"
         );
+    }
+
+    #[test]
+    fn test_imitate_human_edits_inserts_after_last_source_edit() {
+        // Regression test: intermediate content should appear after the last edit
+        // in the source patch, not at the position of the first target edit.
+        // This ensures the diff output correctly imitates human typing order.
+        //
+        // The bug was: when source has edits and target has a pure insertion,
+        // the intermediate content was inserted at tgt_edit_loc.line_index_within_hunk
+        // (position of first target edit) instead of after the last source edit.
+        //
+        // Source patch has edits at lines 1-4, target has a new edit at line 10
+        // (different location to avoid the "same line" early return)
+        let source = r#"--- a/test.py
++++ b/test.py
+@@ -1,4 +1,5 @@
++import foo
+ import bar
+-import old
+ import baz
++import qux
+"#;
+        // Target has a pure insertion at a different line (line 10, not overlapping with source)
+        let target = r#"--- a/test.py
++++ b/test.py
+@@ -10,3 +10,4 @@
+ def main():
++    print("hello world")
+     pass
+"#;
+
+        // Use a seed that produces a partial result
+        let (new_src, _new_tgt, cursor) = imitate_human_edits(source, target, 42);
+
+        // The function should produce a modified patch
+        assert!(cursor.is_some(), "Should produce intermediate state");
+
+        let src_patch = Patch::parse_unified_diff(&new_src);
+        let all_additions: Vec<_> = src_patch
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter_map(|l| match l {
+                PatchLine::Addition(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        // The intermediate content (partial 'print("hello world")') should be
+        // the LAST addition, appearing after "+import qux" (the last source edit)
+        let last_addition = all_additions.last().expect("Should have additions");
+        assert!(
+            last_addition.trim_start().starts_with("pr"),
+            "Intermediate content should be the last addition (partial 'print'), but last was: {:?}",
+            last_addition
+        );
+
+        // Verify the original source edits are still in order before the intermediate
+        let foo_pos = all_additions.iter().position(|s| *s == "import foo");
+        let qux_pos = all_additions.iter().position(|s| *s == "import qux");
+        let intermediate_pos = all_additions
+            .iter()
+            .position(|s| s.trim_start().starts_with("pr"));
+
+        assert!(foo_pos.is_some(), "Should have 'import foo'");
+        assert!(qux_pos.is_some(), "Should have 'import qux'");
+        assert!(
+            intermediate_pos.is_some(),
+            "Should have intermediate content"
+        );
+
+        assert!(
+            foo_pos < qux_pos && qux_pos < intermediate_pos,
+            "Order should be: foo < qux < intermediate. Got foo={:?}, qux={:?}, intermediate={:?}",
+            foo_pos,
+            qux_pos,
+            intermediate_pos
+        );
+    }
+
+    #[test]
+    fn test_cursor_excerpt_with_multibyte_utf8() {
+        // Test that cursor excerpt handles multi-byte UTF-8 characters correctly
+        // The Chinese character '第' is 3 bytes (0..3)
+        let cursor = CursorPosition {
+            file: "test.md".to_string(),
+            line: 1,
+            column: 1, // Byte index 1 is inside '第' (bytes 0..3)
+        };
+
+        let source_patch = r#"--- a/test.md
++++ b/test.md
+@@ -1,1 +1,1 @@
++第 14 章 Flask 工作原理与机制解析**
+"#;
+
+        let target_patch = "";
+
+        // This should not panic even though column=1 is not a char boundary
+        let result = get_cursor_excerpt(&cursor, source_patch, target_patch);
+
+        // The function should handle the invalid byte index gracefully
+        if let Some(excerpt) = result {
+            assert!(
+                excerpt.contains("<|user_cursor|>"),
+                "Cursor excerpt should contain marker"
+            );
+            // The marker should be placed at a valid character boundary
+            // (either at the start or after '第')
+        }
     }
 }

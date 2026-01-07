@@ -150,8 +150,16 @@ impl ToString for Patch {
         let mut result = self.header.clone();
         for hunk in &self.hunks {
             let current_file = hunk.filename.clone();
-            result.push_str(&format!("--- a/{}\n", current_file));
-            result.push_str(&format!("+++ b/{}\n", current_file));
+            if hunk.is_file_creation() {
+                result.push_str("--- /dev/null\n");
+            } else {
+                result.push_str(&format!("--- a/{}\n", current_file));
+            }
+            if hunk.is_file_deletion() {
+                result.push_str("+++ /dev/null\n");
+            } else {
+                result.push_str(&format!("+++ b/{}\n", current_file));
+            }
             result.push_str(&hunk.to_string());
         }
 
@@ -186,10 +194,16 @@ impl Patch {
                 is_filename_inherited = true;
             } else if let Some(path) = line.strip_prefix("--- ") {
                 is_filename_inherited = false;
-                current_file = path.trim().strip_prefix("a/").unwrap_or(path).into();
+                let path = path.trim().strip_prefix("a/").unwrap_or(path);
+                if path != "/dev/null" {
+                    current_file = path.into();
+                }
             } else if let Some(path) = line.strip_prefix("+++ ") {
                 is_filename_inherited = false;
-                current_file = path.trim().strip_prefix("b/").unwrap_or(path).into();
+                let path = path.trim().strip_prefix("b/").unwrap_or(path);
+                if path != "/dev/null" {
+                    current_file = path.into();
+                }
             } else if let Some(line) = line.strip_prefix("+") {
                 hunk.lines.push(PatchLine::Addition(line.to_string()));
             } else if let Some(line) = line.strip_prefix("-") {
@@ -330,6 +344,16 @@ impl ToString for Hunk {
 }
 
 impl Hunk {
+    /// Returns true if this hunk represents a file creation (old side is empty).
+    pub fn is_file_creation(&self) -> bool {
+        self.old_start == 0 && self.old_count == 0
+    }
+
+    /// Returns true if this hunk represents a file deletion (new side is empty).
+    pub fn is_file_deletion(&self) -> bool {
+        self.new_start == 0 && self.new_count == 0
+    }
+
     /// Render the hunk header
     pub fn header_string(&self) -> String {
         format!(
@@ -1456,6 +1480,60 @@ mod tests {
             -blue
              brown
             // Some garbage
+        "}
+        );
+    }
+
+    #[test]
+    fn test_file_creation_diff_header() {
+        // When old_start and old_count are both 0, the file is being created,
+        // so the --- line should be /dev/null instead of a/filename
+        let patch = Patch::parse_unified_diff(indoc! {"
+            --- a/new_file.rs
+            +++ b/new_file.rs
+            @@ -0,0 +1,3 @@
+            +fn main() {
+            +    println!(\"hello\");
+            +}
+        "});
+
+        let actual = patch.to_string();
+        assert_eq!(
+            actual,
+            indoc! {"
+            --- /dev/null
+            +++ b/new_file.rs
+            @@ -0,0 +1,3 @@
+            +fn main() {
+            +    println!(\"hello\");
+            +}
+        "}
+        );
+    }
+
+    #[test]
+    fn test_file_deletion_diff_header() {
+        // When new_start and new_count are both 0, the file is being deleted,
+        // so the +++ line should be /dev/null instead of b/filename
+        let patch = Patch::parse_unified_diff(indoc! {"
+            --- a/old_file.rs
+            +++ /dev/null
+            @@ -1,3 +0,0 @@
+            -fn main() {
+            -    println!(\"goodbye\");
+            -}
+        "});
+
+        let actual = patch.to_string();
+        assert_eq!(
+            actual,
+            indoc! {"
+            --- a/old_file.rs
+            +++ /dev/null
+            @@ -1,3 +0,0 @@
+            -fn main() {
+            -    println!(\"goodbye\");
+            -}
         "}
         );
     }

@@ -586,3 +586,121 @@ async fn test_fuzzy_search_users(cx: &mut gpui::TestAppContext) {
             .collect::<Vec<_>>()
     }
 }
+
+test_both_dbs!(
+    test_upsert_shared_thread,
+    test_upsert_shared_thread_postgres,
+    test_upsert_shared_thread_sqlite
+);
+
+async fn test_upsert_shared_thread(db: &Arc<Database>) {
+    use crate::db::SharedThreadId;
+    use uuid::Uuid;
+
+    let user_id = new_test_user(db, "user1@example.com").await;
+
+    let thread_id = SharedThreadId(Uuid::new_v4());
+    let title = "My Test Thread";
+    let data = b"test thread data".to_vec();
+
+    db.upsert_shared_thread(thread_id, user_id, title, data.clone())
+        .await
+        .unwrap();
+
+    let result = db.get_shared_thread(thread_id).await.unwrap();
+    assert!(result.is_some(), "Should find the shared thread");
+
+    let (thread, username) = result.unwrap();
+    assert_eq!(thread.title, title);
+    assert_eq!(thread.data, data);
+    assert_eq!(thread.user_id, user_id);
+    assert_eq!(username, "user1");
+}
+
+test_both_dbs!(
+    test_upsert_shared_thread_updates_existing,
+    test_upsert_shared_thread_updates_existing_postgres,
+    test_upsert_shared_thread_updates_existing_sqlite
+);
+
+async fn test_upsert_shared_thread_updates_existing(db: &Arc<Database>) {
+    use crate::db::SharedThreadId;
+    use uuid::Uuid;
+
+    let user_id = new_test_user(db, "user1@example.com").await;
+
+    let thread_id = SharedThreadId(Uuid::new_v4());
+
+    // Create initial thread.
+    db.upsert_shared_thread(
+        thread_id,
+        user_id,
+        "Original Title",
+        b"original data".to_vec(),
+    )
+    .await
+    .unwrap();
+
+    // Update the same thread.
+    db.upsert_shared_thread(
+        thread_id,
+        user_id,
+        "Updated Title",
+        b"updated data".to_vec(),
+    )
+    .await
+    .unwrap();
+
+    let result = db.get_shared_thread(thread_id).await.unwrap();
+    let (thread, _) = result.unwrap();
+
+    assert_eq!(thread.title, "Updated Title");
+    assert_eq!(thread.data, b"updated data".to_vec());
+}
+
+test_both_dbs!(
+    test_cannot_update_another_users_shared_thread,
+    test_cannot_update_another_users_shared_thread_postgres,
+    test_cannot_update_another_users_shared_thread_sqlite
+);
+
+async fn test_cannot_update_another_users_shared_thread(db: &Arc<Database>) {
+    use crate::db::SharedThreadId;
+    use uuid::Uuid;
+
+    let user1_id = new_test_user(db, "user1@example.com").await;
+    let user2_id = new_test_user(db, "user2@example.com").await;
+
+    let thread_id = SharedThreadId(Uuid::new_v4());
+
+    db.upsert_shared_thread(thread_id, user1_id, "User 1 Thread", b"user1 data".to_vec())
+        .await
+        .unwrap();
+
+    let result = db
+        .upsert_shared_thread(thread_id, user2_id, "User 2 Title", b"user2 data".to_vec())
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Should not allow updating another user's thread"
+    );
+}
+
+test_both_dbs!(
+    test_get_nonexistent_shared_thread,
+    test_get_nonexistent_shared_thread_postgres,
+    test_get_nonexistent_shared_thread_sqlite
+);
+
+async fn test_get_nonexistent_shared_thread(db: &Arc<Database>) {
+    use crate::db::SharedThreadId;
+    use uuid::Uuid;
+
+    let result = db
+        .get_shared_thread(SharedThreadId(Uuid::new_v4()))
+        .await
+        .unwrap();
+
+    assert!(result.is_none(), "Should not find non-existent thread");
+}

@@ -129,9 +129,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return cx
-                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
-                        .ok();
+                    return Some(
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
+                    );
                 }
                 None
             })
@@ -345,9 +345,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return cx
-                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
-                        .ok();
+                    return Some(
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
+                    );
                 }
                 None
             })

@@ -23,10 +23,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
-    RunnableVariant, Task, WindowAppearance, WindowParams, px,
+    ForegroundExecutor, GpuiRunnable, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
+    PriorityQueueCalloopReceiver, Result, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -149,7 +149,10 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+    pub fn new(
+        signal: LoopSignal,
+        liveness: std::sync::Weak<()>,
+    ) -> (Self, PriorityQueueCalloopReceiver<GpuiRunnable>) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -165,7 +168,7 @@ impl LinuxCommon {
 
         let common = LinuxCommon {
             background_executor,
-            foreground_executor: ForegroundExecutor::new(dispatcher),
+            foreground_executor: ForegroundExecutor::new(dispatcher, liveness),
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,

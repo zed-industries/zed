@@ -18251,7 +18251,7 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
                         "fn c() {\n    d()\n        .\n}\n",
                         "OnTypeFormatting should triggered after autoindent applied"
                     )
-                })?;
+                });
 
                 Ok(Some(vec![]))
             }

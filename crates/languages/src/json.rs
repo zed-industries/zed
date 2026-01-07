@@ -58,10 +58,9 @@ impl ContextProvider for JsonTaskProvider {
             let contents = file
                 .worktree
                 .update(cx, |this, cx| this.load_file(&file.path, cx))
-                .ok()?
                 .await
                 .ok()?;
-            let path = cx.update(|cx| file.abs_path(cx)).ok()?.as_path().into();
+            let path = cx.update(|cx| file.abs_path(cx)).as_path().into();
 
             let task_templates = if is_package_json {
                 let package_json = serde_json_lenient::from_str::<
@@ -273,11 +272,11 @@ impl LspAdapter for JsonLspAdapter {
                     "schemas": schemas
                 }
             })
-        })?;
+        });
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut config);

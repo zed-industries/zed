@@ -71,7 +71,7 @@ impl LspInstaller for GoLspAdapter {
             {
                 cx.update(|cx| {
                     delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                })?
+                });
             }
             anyhow::bail!(
                 "Could not install the Go language server `gopls`, because `go` was not found."

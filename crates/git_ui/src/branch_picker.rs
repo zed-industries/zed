@@ -397,7 +397,7 @@ impl BranchListDelegate {
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name, base_branch)
-            })?
+            })
             .await??;
 
             Ok(())
@@ -444,11 +444,11 @@ impl BranchListDelegate {
                 Entry::Branch { branch, .. } => match branch.remote_name() {
                     Some(remote_name) => {
                         is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))?
+                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
                             .await?
                     }
                     None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))?
+                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
                             .await?
                     }
                 },
@@ -763,7 +763,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 let branch = branch.clone();
                 cx.spawn(async move |_, cx| {
-                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
                         .await??;
 
                     anyhow::Ok(())
@@ -1433,7 +1433,6 @@ mod tests {
         cx.spawn(async move |mut cx| {
             for branch in branch_names {
                 repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
-                    .unwrap()
                     .await
                     .unwrap()
                     .unwrap();
@@ -1498,7 +1497,6 @@ mod tests {
                 repo.update(&mut cx, |repo, _| {
                     repo.create_remote(branch, String::from("test"))
                 })
-                .unwrap()
                 .await
                 .unwrap()
                 .unwrap();

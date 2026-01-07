@@ -687,11 +687,11 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                                     h_flex()
                                         .flex_1()
+                                        .h_full()
                                         .track_focus(&focus_handle)
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border_transparent)
                                         .when(is_focused, |this| {
-                                            this.border_color(cx.theme().colors().border_focused)
+                                            this.border_1()
+                                                .border_color(cx.theme().colors().border_focused)
                                         })
                                         .child(editor)
                                         .on_action::<menu::Confirm>({

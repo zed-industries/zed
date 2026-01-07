@@ -408,6 +408,12 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
+    /// Checks if a language server adapter with the given name is available to be loaded.
+    pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
+        let state = self.state.read();
+        state.available_lsp_adapters.contains_key(name)
+    }
+
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
 

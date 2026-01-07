@@ -709,11 +709,7 @@ impl BladeRenderer {
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
                     view: frame.texture_view(),
-                    init_op: gpu::InitOp::Clear(if self.surface_config.transparent {
-                        gpu::TextureColor::TransparentBlack
-                    } else {
-                        gpu::TextureColor::White
-                    }),
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
                     finish_op: gpu::FinishOp::Store,
                 }],
                 depth_stencil: None,
