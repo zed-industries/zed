@@ -10,6 +10,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_settings",
  "anyhow",
+ "base64 0.22.1",
  "buffer_diff",
  "collections",
  "editor",
@@ -17,6 +18,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.31",
  "gpui",
+ "image",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -338,6 +340,7 @@ dependencies = [
  "assistant_text_thread",
  "async-fs",
  "audio",
+ "base64 0.22.1",
  "buffer_diff",
  "chrono",
  "client",
@@ -20663,10 +20666,13 @@ dependencies = [
 name = "zed"
 version = "0.219.0"
 dependencies = [
+ "acp_thread",
  "acp_tools",
+ "action_log",
  "activity_indicator",
  "agent",
  "agent-client-protocol",
+ "agent_servers",
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",

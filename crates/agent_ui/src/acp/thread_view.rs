@@ -29,9 +29,9 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription,
+    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -2850,11 +2850,11 @@ impl AcpThreadView {
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
+        let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
-        let should_show_raw_input = !is_terminal_tool && !is_edit;
+        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
@@ -2880,6 +2880,7 @@ impl AcpThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
+                                        has_image_content,
                                         window,
                                         cx,
                                     ))
@@ -2997,6 +2998,7 @@ impl AcpThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
+                                        has_image_content,
                                         window,
                                         cx,
                                     ),
@@ -3236,6 +3238,7 @@ impl AcpThreadView {
         context_ix: usize,
         tool_call: &ToolCall,
         card_layout: bool,
+        is_image_tool_call: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3250,6 +3253,16 @@ impl AcpThreadView {
                         context_ix,
                         card_layout,
                         window,
+                        cx,
+                    )
+                } else if let Some(image) = content.image() {
+                    let location = tool_call.locations.first().cloned();
+                    self.render_image_output(
+                        entry_ix,
+                        image.clone(),
+                        location,
+                        card_layout,
+                        is_image_tool_call,
                         cx,
                     )
                 } else {
@@ -3307,6 +3320,79 @@ impl AcpThreadView {
                         })),
                 )
             })
+            .into_any_element()
+    }
+
+    fn render_image_output(
+        &self,
+        entry_ix: usize,
+        image: Arc<gpui::Image>,
+        location: Option<acp::ToolCallLocation>,
+        card_layout: bool,
+        show_dimensions: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let dimensions_label = if show_dimensions {
+            let format_name = match image.format() {
+                gpui::ImageFormat::Png => "PNG",
+                gpui::ImageFormat::Jpeg => "JPEG",
+                gpui::ImageFormat::Webp => "WebP",
+                gpui::ImageFormat::Gif => "GIF",
+                gpui::ImageFormat::Svg => "SVG",
+                gpui::ImageFormat::Bmp => "BMP",
+                gpui::ImageFormat::Tiff => "TIFF",
+                gpui::ImageFormat::Ico => "ICO",
+            };
+            let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok());
+            dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
+        } else {
+            None
+        };
+
+        v_flex()
+            .gap_2()
+            .map(|this| {
+                if card_layout {
+                    this
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                }
+            })
+            .when(dimensions_label.is_some() || location.is_some(), |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .children(dimensions_label.map(|label| {
+                            Label::new(label)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx)
+                        }))
+                        .when_some(location, |this, _loc| {
+                            this.child(
+                                Button::new(("go-to-file", entry_ix), "Go to File")
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_tool_call_location(entry_ix, 0, window, cx);
+                                    })),
+                            )
+                        }),
+                )
+            })
+            .child(
+                img(image)
+                    .max_w_96()
+                    .max_h_96()
+                    .object_fit(ObjectFit::ScaleDown),
+            )
             .into_any_element()
     }
 
@@ -6684,6 +6770,16 @@ impl Focusable for AcpThreadView {
             | ThreadState::LoadError(_)
             | ThreadState::Unauthenticated { .. } => self.focus_handle.clone(),
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl AcpThreadView {
+    /// Expands a tool call so its content is visible.
+    /// This is primarily useful for visual testing.
+    pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
+        self.expanded_tool_calls.insert(tool_call_id);
+        cx.notify();
     }
 }
 
