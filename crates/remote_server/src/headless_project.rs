@@ -654,8 +654,7 @@ impl HeadlessProject {
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
-        let worktree_store =
-            this.read_with(&cx, |project, _| project.worktree_store.downgrade());
+        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.downgrade());
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             let restricted_paths = envelope
                 .payload

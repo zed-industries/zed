@@ -366,10 +366,7 @@ impl Default for VisualTestAppContext {
 }
 
 impl AppContext for VisualTestAppContext {
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Entity<T> {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
     }
@@ -404,11 +401,7 @@ impl AppContext for VisualTestAppContext {
         panic!("Cannot use as_mut with a visual test app context. Try calling update() first")
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> R
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
