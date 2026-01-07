@@ -5,6 +5,7 @@ mod remote_connections;
 mod remote_servers;
 mod ssh_config;
 
+use anyhow::Context as _;
 use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
@@ -570,6 +571,48 @@ impl PickerDelegate for RecentProjectsDelegate {
                             workspace.open_workspace_for_paths(false, paths, window, cx)
                         }
                     }
+                    SerializedWorkspaceLocation::LocalFromFile {
+                        workspace_file_path,
+                        workspace_file_kind,
+                    } => {
+                        let app_state = workspace.app_state().clone();
+                        let replace_window = if replace_current_window {
+                            window.window_handle().downcast::<Workspace>()
+                        } else {
+                            None
+                        };
+                        cx.spawn_in(window, async move |_, cx| {
+                            let workspace_source = workspace::WorkspaceFileSource {
+                                path: workspace_file_path.clone(),
+                                kind: workspace_file_kind
+                                    .parse()
+                                    .unwrap_or(workspace::WorkspaceFileKind::CodeWorkspace),
+                            };
+                            let content = app_state
+                                .fs
+                                .load(&workspace_file_path)
+                                .await
+                                .context("Failed to read workspace file")?;
+                            let parsed = workspace_source
+                                .parse(&content)
+                                .context("Failed to parse workspace file")?;
+                            let paths: Vec<PathBuf> = parsed.folders;
+                            cx.update(|_, cx| {
+                                workspace::open_paths(
+                                    &paths,
+                                    app_state,
+                                    workspace::OpenOptions {
+                                        replace_window,
+                                        workspace_file_source: Some(workspace_source),
+                                        ..Default::default()
+                                    },
+                                    cx,
+                                )
+                            })?
+                            .await?;
+                            Ok(())
+                        })
+                    }
                     SerializedWorkspaceLocation::Remote(mut connection) => {
                         let app_state = workspace.app_state().clone();
 
@@ -714,6 +757,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
                                     .into_any_element(),
+                                SerializedWorkspaceLocation::LocalFromFile { .. } => {
+                                    Icon::new(IconName::FileTree)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                }
                                 SerializedWorkspaceLocation::Remote(options) => {
                                     Icon::new(match options {
                                         RemoteConnectionOptions::Ssh { .. } => IconName::Server,
