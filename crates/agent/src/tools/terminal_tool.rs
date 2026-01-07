@@ -124,7 +124,10 @@ impl AgentTool for TerminalTool {
 
             let timeout = input.timeout_ms.map(Duration::from_millis);
 
-            let (exit_status, timed_out) = match timeout {
+            // Track when we started to determine if timeout actually elapsed
+            let started_at = std::time::Instant::now();
+
+            let exit_status = match timeout {
                 Some(timeout) => {
                     let wait_for_exit = terminal.wait_for_exit(cx)?;
                     let timeout_task = cx.background_spawn(async move {
@@ -132,15 +135,21 @@ impl AgentTool for TerminalTool {
                     });
 
                     futures::select! {
-                        status = wait_for_exit.clone().fuse() => (status, false),
+                        status = wait_for_exit.clone().fuse() => status,
                         _ = timeout_task.fuse() => {
                             terminal.kill(cx)?;
-                            (wait_for_exit.await, true)
+                            wait_for_exit.await
                         }
                     }
                 }
-                None => (terminal.wait_for_exit(cx)?.await, false),
+                None => terminal.wait_for_exit(cx)?.await,
             };
+
+            // Determine if the timeout actually fired by checking elapsed time.
+            // This correctly handles the case where user clicks stop just before
+            // the timeout would fire - we check actual elapsed time, not which
+            // select! branch happened to win the race.
+            let timed_out = timeout.map(|t| started_at.elapsed() >= t).unwrap_or(false);
 
             let output = terminal.current_output(cx)?;
 
