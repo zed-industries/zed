@@ -5075,6 +5075,7 @@ impl Project {
             let (batcher, batches) = project_search::AdaptiveBatcher::new(cx.background_executor());
             let mut batches = Box::pin(batches.fuse());
             let mut new_matches = Box::pin(results.rx).fuse();
+            let mut batcher = Some(batcher);
             loop {
                 select_biased! {
                     new_batch = batches.next() => {
@@ -5100,9 +5101,10 @@ impl Project {
                                 let buffer_id = this.update(cx, |this, cx| {
                                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                                 });
-                                batcher.push(buffer_id).await;
+                                batcher.as_ref().unwrap().push(buffer_id).await;
                             } else {
-                                break;
+
+                                batcher.take().unwrap().flush().await;
                             }
                         }
                         complete => {

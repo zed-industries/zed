@@ -782,7 +782,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use futures::stream::StreamExt as _;
-        use smol::future::FutureExt;
+        use smol::future::FutureExt as _;
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
@@ -809,13 +809,13 @@ impl HeadlessProject {
             });
             let (batcher, batches) =
                 project::project_search::AdaptiveBatcher::new(cx.background_executor());
+            let mut batcher = Some(batcher);
             let mut batches = Box::pin(batches.fuse());
             let mut new_matches = Box::pin(results.rx.fuse());
             loop {
                 select_biased! {
                     new_batch = batches.next() => {
                         if let Some(buffer_ids) = new_batch {
-
                             let _ = client
                                 .request(proto::FindSearchCandidatesChunk {
                                     handle,
@@ -827,26 +827,25 @@ impl HeadlessProject {
                                         ),
                                     ),
                                 })
-                                .await.unwrap();
+                                .await?;
                             } else {
                                 break;
                             }
-                        }
+                    }
                         new_match =  new_matches.next() => {
                             if let Some(buffer) = new_match {
                                 let _ = buffer_store.update(cx, |this, cx| {
                                     this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                                 }).await;
                                 let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
-                                batcher.push(buffer_id).await;
+                                batcher.as_ref().unwrap().push(buffer_id).await;
                             } else {
-                                log::error!("Bailing because the matches are just uhh");
-                                break;
+                                // Don't break, as we may still have pending batches to send out. We'll never hit this branch again though.
+                                batcher.take().unwrap().flush().await;
+
                             }
                         }
                         complete => {
-                            log::error!("Complete yay");
-
                             break;
                         }
 

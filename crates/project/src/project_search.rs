@@ -4,7 +4,7 @@ use std::{
     io::{BufRead, BufReader},
     ops::Range,
     path::{Path, PathBuf},
-    pin::{Pin, pin},
+    pin::pin,
     sync::Arc,
     time::Duration,
 };
@@ -13,10 +13,12 @@ use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
 use futures::{
-    SinkExt, StreamExt, select_biased,
+    SinkExt, StreamExt,
+    future::FusedFuture,
+    select, select_biased,
     stream::{FusedStream, FuturesOrdered},
 };
-use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
@@ -932,11 +934,13 @@ impl PathInclusionMatcher {
     }
 }
 
+type IsTerminating = bool;
 /// Adaptive batcher that starts eager (small batches) and grows batch size
 /// when items arrive quickly, reducing RPC overhead while preserving low latency
 /// for slow streams.
 pub struct AdaptiveBatcher<T> {
     items: Sender<T>,
+    flush_batch: Sender<IsTerminating>,
     _batch_task: Task<()>,
 }
 
@@ -945,31 +949,52 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
         use futures::future::FutureExt as _;
         let (items, rx) = unbounded();
         let (batch_tx, batch_rx) = unbounded();
+        let (flush_batch_tx, flush_batch_rx) = unbounded();
+        let flush_batch = flush_batch_tx.clone();
         let executor = cx.clone();
-        let _batch_task = cx.spawn(async move {
+        let _batch_task = cx.spawn_with_priority(gpui::Priority::High, async move {
             let mut current_batch = vec![];
             let mut items_produced_so_far = 0_u64;
             let mut get_next_item = Box::pin(rx.fuse());
-            let timer =
-                Box::pin(futures::stream::pending().fuse()) as Pin<Box<dyn FusedStream<Item = ()> + Send>>;
-            let mut timer = timer;
 
+            #[expect(unused, reason = "This task is flushing a batch, hence it's not read, but it's crucial that it's alive.")]
+            let mut _schedule_flush_after_delay;
+            let time_elapsed_since_start_of_search = std::time::Instant::now();
+            let mut flush  = pin!(flush_batch_rx);
             loop {
-                select_biased! {
-                    _ = timer.next() => {
+                select! {
+                    should_break_afterwards = flush.next() => {
+                        log::error!("batch_size: {}", current_batch.len());
                         if !current_batch.is_empty() {
+                            let elapsed = time_elapsed_since_start_of_search.elapsed().as_millis();
+                            log::error!("Sending out a batch of size {} {elapsed}ms since start of search", current_batch.len());
                             _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                            _schedule_flush_after_delay = None;
+                        }
+                        if should_break_afterwards.unwrap_or_default() {
+                            break;
                         }
                     }
-                    next_item = get_next_item.next() => {
-                        if let Some(item) = next_item {
+                    items_batch = get_next_item.next() => {
+                        let elapsed = time_elapsed_since_start_of_search.elapsed().as_millis();
+                        // log::error!("push batch_size: {} {elapsed}ms since start of search", current_batch.len());
+                        if let Some(new_item) = items_batch {
+                            let is_fresh_batch = current_batch.is_empty();
                             items_produced_so_far += 1;
-                            current_batch.push(item);
-                            if current_batch.len() == 1 {
+                            current_batch.push(new_item);
+                            if is_fresh_batch {
                                 // Chosen arbitrarily based on some experimentation with plots.
                                 let desired_duration_ms = (20 * (items_produced_so_far + 2).ilog2() as u64 ).min(300);
-                                let new_timer = Box::pin(executor.timer(Duration::from_millis(desired_duration_ms)).into_stream().fuse()) as Pin<Box<dyn FusedStream<Item = ()> + Send>>;
-                                timer = new_timer;
+                                let desired_duration = Duration::from_millis(desired_duration_ms);
+                                let _executor = executor.clone();
+                                let _flush = flush_batch_tx.clone();
+                                let new_timer = executor.spawn_with_priority(Priority::High, async move {
+                                    _executor.timer(desired_duration).await;
+                                    _ = _flush.send(false).await;
+                                });
+                                _schedule_flush_after_delay = Some(new_timer);
+                                log::error!("sleeping for {:?}", desired_duration);
+
                             }
                         } else {
                             break;
@@ -979,13 +1004,23 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
                 }
             }
         });
-        let this = Self { items, _batch_task };
+        let this = Self {
+            items,
+            _batch_task,
+            flush_batch,
+        };
         (this, batch_rx)
     }
 
-    /// Push an item and return items to send if batch is ready.
     pub async fn push(&self, item: T) {
         _ = self.items.send(item).await;
+    }
+
+    pub async fn flush(self) {
+        log::error!("{}", self.items.len());
+        _ = self.flush_batch.send(true).await;
+        self._batch_task.await;
+        log::error!("Done awaiting");
     }
 }
 
