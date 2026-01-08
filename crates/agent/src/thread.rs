@@ -1055,11 +1055,21 @@ impl Thread {
         }
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(running_turn) = self.running_turn.take() {
-            running_turn.cancel();
-        }
-        self.flush_pending_message(cx);
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let Some(running_turn) = self.running_turn.take() else {
+            self.flush_pending_message(cx);
+            return Task::ready(());
+        };
+
+        let turn_task = running_turn.cancel();
+
+        cx.spawn(async move |this, cx| {
+            turn_task.await;
+            this.update(cx, |this, cx| {
+                this.flush_pending_message(cx);
+            })
+            .ok();
+        })
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -1074,7 +1084,10 @@ impl Thread {
     }
 
     pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
-        self.cancel(cx);
+        self.cancel(cx).detach();
+        // Clear pending message since cancel will try to flush it asynchronously,
+        // and we don't want that content to be added after we truncate
+        self.pending_message.take();
         let Some(position) = self.messages.iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
@@ -1255,7 +1268,11 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.cancel(cx);
+        // Flush the old pending message synchronously before cancelling,
+        // to avoid a race where the detached cancel task might flush the NEW
+        // turn's pending message instead of the old one.
+        self.flush_pending_message(cx);
+        self.cancel(cx).detach();
 
         let model = self.model.clone().context("No language model configured")?;
         let profile = AgentSettings::get_global(cx)
@@ -1267,7 +1284,7 @@ impl Thread {
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
         self.clear_summary();
-        let (cancellation_tx, cancellation_rx) = watch::channel(false);
+        let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
@@ -1275,8 +1292,23 @@ impl Thread {
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result =
-                    Self::run_turn_internal(&this, model, &event_stream, cancellation_rx, cx).await;
+                let turn_result = Self::run_turn_internal(
+                    &this,
+                    model,
+                    &event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await;
+
+                // Check if we were cancelled - if so, cancel() already took running_turn
+                // and we shouldn't touch it (it might be a NEW turn now)
+                let was_cancelled = *cancellation_rx.borrow();
+                if was_cancelled {
+                    log::debug!("Turn was cancelled, skipping cleanup");
+                    return;
+                }
+
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
                 match turn_result {
@@ -1311,7 +1343,7 @@ impl Thread {
         this: &WeakEntity<Self>,
         model: Arc<dyn LanguageModel>,
         event_stream: &ThreadEventStream,
-        cancellation_rx: watch::Receiver<bool>,
+        mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut attempt = 0;
@@ -1336,7 +1368,22 @@ impl Thread {
                 Err(err) => (stream::empty().boxed(), Some(err)),
             };
             let mut tool_results = FuturesUnordered::new();
-            while let Some(event) = events.next().await {
+            let mut cancelled = false;
+            loop {
+                // Race between getting the next event and cancellation
+                let event = futures::select! {
+                    event = events.next().fuse() => event,
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            cancelled = true;
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let Some(event) = event else {
+                    break;
+                };
                 log::trace!("Received completion event: {:?}", event);
                 match event {
                     Ok(event) => {
@@ -1383,6 +1430,11 @@ impl Thread {
                     this.generate_title(cx);
                 }
             })?;
+
+            if cancelled {
+                log::debug!("Turn cancelled by user, exiting");
+                return Ok(());
+            }
 
             if let Some(error) = error {
                 attempt += 1;
@@ -2264,10 +2316,11 @@ struct RunningTurn {
 }
 
 impl RunningTurn {
-    fn cancel(mut self) {
+    fn cancel(mut self) -> Task<()> {
         log::debug!("Cancelling in progress turn");
         self.cancellation_tx.send(true).ok();
         self.event_stream.send_canceled();
+        self._task
     }
 }
 
