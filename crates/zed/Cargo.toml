@@ -23,6 +23,7 @@ test-support = [
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
+    "recent_projects/test-support",
 ]
 visual-tests = [
     "gpui/test-support",
