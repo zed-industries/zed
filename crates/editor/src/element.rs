@@ -5791,6 +5791,10 @@ impl EditorElement {
 
                     let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
 
+                    if x < text_hitbox.bounds.left() {
+                        continue;
+                    }
+
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));
 
