@@ -36,7 +36,6 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
-use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
@@ -1267,11 +1266,7 @@ impl EditorElement {
             }
         }
 
-        // Check if we're on the row where the diff review button is shown
-        let is_on_diff_review_button_row = editor.show_diff_review_button()
-            && valid_point.row() == position_map.snapshot.display_snapshot.max_point().row();
-
-        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
+        let breakpoint_indicator = if gutter_hovered {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -3018,7 +3013,7 @@ impl EditorElement {
                     let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
-                        button.into_any_element(),
+                        button,
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -3032,67 +3027,6 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout_diff_review_button(
-        &self,
-        line_height: Pixels,
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        snapshot: &EditorSnapshot,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        if !cx.has_flag::<DiffReviewFeatureFlag>() {
-            return None;
-        }
-
-        let show_diff_review_button = self.editor.read(cx).show_diff_review_button();
-        if !show_diff_review_button {
-            return None;
-        }
-
-        let max_point = snapshot.display_snapshot.max_point();
-        let last_row = max_point.row();
-
-        let element_bg = cx.theme().colors().element_background;
-        let border_color = cx.theme().colors().border;
-
-        // Use a custom button with Icon for better visibility in prepaint_as_root context
-        let button = div()
-            .id("diff_review_button")
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(ui::ButtonSize::Compact.rems())
-            .rounded_sm()
-            .bg(element_bg)
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .hover(move |style| style.border_color(border_color))
-            .child(
-                ui::Icon::new(IconName::Plus)
-                    .size(IconSize::Small)
-                    .color(ui::Color::Default),
-            )
-            .into_any_element();
-
-        let button = prepaint_gutter_button(
-            button,
-            last_row,
-            line_height,
-            gutter_dimensions,
-            scroll_position,
-            gutter_hitbox,
-            display_hunks,
-            window,
-            cx,
-        );
-
-        Some(button)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3190,7 +3124,7 @@ impl EditorElement {
                     );
 
                     let button = prepaint_gutter_button(
-                        button.into_any_element(),
+                        button,
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -6536,10 +6470,6 @@ impl EditorElement {
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
             }
-
-            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
-                diff_review_button.paint(window, cx);
-            }
         });
     }
 
@@ -8270,7 +8200,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    mut button: AnyElement,
+    button: IconButton,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
@@ -8280,6 +8210,8 @@ fn prepaint_gutter_button(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let mut button = button.into_any_element();
+
     let available_space = size(
         AvailableSpace::MinContent,
         AvailableSpace::Definite(line_height),
@@ -10361,17 +10293,6 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let diff_review_button = self.layout_diff_review_button(
-                        line_height,
-                        scroll_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &display_hunks,
-                        &snapshot,
-                        window,
-                        cx,
-                    );
-
                     self.layout_signature_help(
                         &hitbox,
                         content_origin,
@@ -10569,7 +10490,6 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
-                        diff_review_button,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -10748,7 +10668,6 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
-    diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,
