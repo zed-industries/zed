@@ -192,13 +192,49 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) -> Vec<[AnyElement; 4]> {
         let row_height = self.row_height;
-        let date_width = px(140.0);
-        let author_width = px(120.0);
-        let commit_width = px(80.0);
 
         range
             .map(|idx| {
-                self.render_commit_row(idx, row_height, date_width, author_width, commit_width, cx)
+                if (idx + CHUNK_SIZE).min(self.graph.max_commit_count.count())
+                    > self.graph.commits.len()
+                {
+                    self.load_data(true, cx);
+                }
+
+                let Some(commit) = self.graph.commits.get(idx) else {
+                    return [
+                        div().h(row_height).into_any_element(),
+                        div().h(row_height).into_any_element(),
+                        div().h(row_height).into_any_element(),
+                        div().h(row_height).into_any_element(),
+                    ];
+                };
+
+                let subject: SharedString = commit.data.subject.clone().into();
+                let author_name: SharedString = commit.data.author_name.clone().into();
+                let short_sha: SharedString = commit.data.sha.display_short().into();
+                let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
+
+                [
+                    div()
+                        .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
+                        .overflow_hidden()
+                        .tooltip(Tooltip::text(subject.clone()))
+                        .child(Label::new(subject).single_line())
+                        .into_any_element(),
+                    Label::new(formatted_time)
+                        .color(Color::Muted)
+                        .single_line()
+                        .into_any_element(),
+                    Label::new(author_name)
+                        .color(Color::Muted)
+                        .single_line()
+                        .into_any_element(),
+                    Label::new(short_sha)
+                        .color(Color::Accent)
+                        .single_line()
+                        .into_any_element(),
+                ]
             })
             .collect()
     }
@@ -231,55 +267,6 @@ impl GitGraph {
             table_state.set_scroll_offset(new_offset);
             cx.notify();
         }
-    }
-
-    fn render_commit_row(
-        &mut self,
-        idx: usize,
-        row_height: Pixels,
-        _date_width: Pixels,
-        _author_width: Pixels,
-        _commit_width: Pixels,
-        cx: &mut Context<Self>,
-    ) -> [AnyElement; 4] {
-        if (idx + CHUNK_SIZE).min(self.graph.max_commit_count.count()) > self.graph.commits.len() {
-            self.load_data(true, cx);
-        }
-
-        let Some(commit) = self.graph.commits.get(idx) else {
-            return [
-                div().h(row_height).into_any_element(),
-                div().h(row_height).into_any_element(),
-                div().h(row_height).into_any_element(),
-                div().h(row_height).into_any_element(),
-            ];
-        };
-
-        let subject: SharedString = commit.data.subject.clone().into();
-        let author_name: SharedString = commit.data.author_name.clone().into();
-        let short_sha: SharedString = commit.data.sha.display_short().into();
-        let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
-
-        [
-            div()
-                .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
-                .overflow_hidden()
-                .tooltip(Tooltip::text(subject.clone()))
-                .child(Label::new(subject).single_line())
-                .into_any_element(),
-            Label::new(formatted_time)
-                .color(Color::Muted)
-                .single_line()
-                .into_any_element(),
-            Label::new(author_name)
-                .color(Color::Muted)
-                .single_line()
-                .into_any_element(),
-            Label::new(short_sha)
-                .color(Color::Accent)
-                .single_line()
-                .into_any_element(),
-        ]
     }
 }
 
