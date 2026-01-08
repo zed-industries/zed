@@ -1,10 +1,9 @@
-use std::{iter, ops::Range, path::PathBuf, rc::Rc, str::FromStr, usize::MAX};
+use std::{ops::Range, path::PathBuf, rc::Rc, str::FromStr};
 
 use anyhow::Result;
 use collections::HashMap;
 use git::Oid;
 use gpui::SharedString;
-use itertools::Either;
 use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
 use util::command::new_smol_command;

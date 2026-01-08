@@ -1,8 +1,6 @@
 use gpui::{
-    App, Bounds, Hsla, IntoElement, PathBuilder, PathStyle, Pixels, Point, StrokeOptions, Styled,
-    Window, canvas, point, px,
+    App, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Styled, Window, canvas, point, px,
 };
-use project::debugger::dap_store::DapAdapterDelegate;
 use theme::AccentColors;
 use ui::ActiveTheme as _;
 
@@ -53,10 +51,8 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
         .lines
         .iter()
         .filter(|line| {
-            (line.full_interval.start >= viewport_range.start
-                && line.full_interval.start <= viewport_range.end)
-                || (line.full_interval.end >= viewport_range.start
-                    && line.full_interval.end <= viewport_range.end)
+            line.full_interval.start <= viewport_range.end
+                && line.full_interval.end >= viewport_range.start
         })
         .cloned()
         .collect();
@@ -87,7 +83,6 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                     };
 
                     let line_color = accent_colors.color_for_index(line.color_idx as u32);
-                    dbg!(&line);
                     let line_x = lane_center_x(bounds, left_padding, start_column as f32);
 
                     let start_row = line.full_interval.start as i32 - first_visible_row as i32;
