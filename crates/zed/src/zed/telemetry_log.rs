@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Instant;
+
+use time::OffsetDateTime;
 
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
@@ -66,7 +67,7 @@ pub struct TelemetryLogView {
 }
 
 struct TelemetryLogEntry {
-    received_at: Instant,
+    received_at: OffsetDateTime,
     event_type: SharedString,
     event_properties: HashMap<String, serde_json::Value>,
     signed_in: bool,
@@ -74,54 +75,49 @@ struct TelemetryLogEntry {
     expanded_md: Option<Entity<Markdown>>,
 }
 
+impl TelemetryLogEntry {
+    fn props_as_json_object(&self) -> serde_json::Value {
+        serde_json::Value::Object(
+            self.event_properties
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        )
+    }
+}
+
 impl TelemetryLogView {
     pub fn new(project: Entity<Project>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let telemetry = client::Client::global(cx).telemetry().clone();
         let fs = <dyn Fs>::global(cx);
-        let language_registry = project.read(cx).languages().clone();
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.));
 
         let subscription = cx.spawn(async move |this, cx| {
             let subscription = telemetry.subscribe_with_history(fs).await;
 
-            let result = this.update(cx, |this, cx| {
-                match subscription.historical_events {
+            this.update(cx, |this, cx| {
+                let historical_events = match subscription.historical_events {
                     Ok(historical) => {
                         if historical.parse_error_count > 0 {
                             this.show_parse_error_toast(historical.parse_error_count, cx);
                         }
-                        for event_wrapper in historical.events {
-                            let entry = Self::event_wrapper_to_entry(
-                                &event_wrapper,
-                                &language_registry,
-                                cx,
-                            );
-                            this.events.push_back(entry);
-                        }
+                        historical.events
                     }
                     Err(err) => {
                         this.show_read_error_toast(&err, cx);
+                        Vec::new()
                     }
-                }
+                };
 
-                for event_wrapper in subscription.queued_events {
-                    let entry =
-                        Self::event_wrapper_to_entry(&event_wrapper, &language_registry, cx);
-                    this.events.push_back(entry);
-                }
-
-                while this.events.len() > MAX_EVENTS {
-                    this.events.pop_front();
-                }
-
-                this.recompute_filtered_indices();
-                cx.notify();
-            });
-
-            if result.is_err() {
-                return;
-            }
+                this.push_events(
+                    historical_events
+                        .into_iter()
+                        .chain(subscription.queued_events),
+                    cx,
+                );
+            })
+            .ok();
 
             let mut live_events = subscription.live_events;
             while let Some(event_wrapper) = live_events.next().await {
@@ -164,53 +160,59 @@ impl TelemetryLogView {
         let event_properties: HashMap<String, serde_json::Value> =
             std_event_properties.into_iter().collect();
 
-        let collapsed_md = if !event_properties.is_empty() {
-            let props_value = serde_json::Value::Object(
-                event_properties
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-            );
-            Some(collapsed_params_md(&props_value, language_registry, cx))
+        let entry = TelemetryLogEntry {
+            received_at: OffsetDateTime::now_utc(),
+            event_type,
+            event_properties,
+            signed_in: event_wrapper.signed_in,
+            collapsed_md: None,
+            expanded_md: None,
+        };
+
+        let collapsed_md = if !entry.event_properties.is_empty() {
+            Some(collapsed_params_md(
+                &entry.props_as_json_object(),
+                language_registry,
+                cx,
+            ))
         } else {
             None
         };
 
         TelemetryLogEntry {
-            received_at: Instant::now(),
-            event_type,
-            event_properties,
-            signed_in: event_wrapper.signed_in,
             collapsed_md,
-            expanded_md: None,
+            ..entry
         }
     }
 
     fn push_event(&mut self, event_wrapper: EventWrapper, cx: &mut Context<Self>) {
+        self.push_events(std::iter::once(event_wrapper), cx);
+    }
+
+    fn push_events(
+        &mut self,
+        event_wrappers: impl Iterator<Item = EventWrapper>,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
-        let entry = Self::event_wrapper_to_entry(&event_wrapper, &language_registry, cx);
 
-        let matches_filter = self.entry_matches_filter(&entry);
-
-        self.events.push_back(entry);
-
-        if self.events.len() > MAX_EVENTS {
-            self.events.pop_front();
-            self.expanded = self
-                .expanded
-                .iter()
-                .filter_map(|&idx| if idx > 0 { Some(idx - 1) } else { None })
-                .collect();
-            self.recompute_filtered_indices();
-        } else if matches_filter {
-            let new_index = self.events.len() - 1;
-            self.filtered_indices.push(new_index);
-            self.list_state.splice(
-                self.filtered_indices.len() - 1..self.filtered_indices.len() - 1,
-                1,
-            );
+        for event_wrapper in event_wrappers {
+            let entry = Self::event_wrapper_to_entry(&event_wrapper, &language_registry, cx);
+            self.events.push_back(entry);
         }
 
+        while self.events.len() > MAX_EVENTS {
+            self.events.pop_front();
+        }
+
+        self.expanded = self
+            .expanded
+            .iter()
+            .filter(|&&idx| idx < self.events.len())
+            .copied()
+            .collect();
+
+        self.recompute_filtered_indices();
         cx.notify();
     }
 
@@ -310,8 +312,14 @@ impl TelemetryLogView {
         let syntax = theme.syntax().clone();
         let expanded = self.expanded.contains(&event_index);
 
-        let elapsed = entry.received_at.elapsed();
-        let time_ago = format_duration(elapsed);
+        let local_timezone =
+            time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+        let timestamp_str = time_format::format_localized_timestamp(
+            entry.received_at,
+            OffsetDateTime::now_utc(),
+            local_timezone,
+            time_format::TimestampFormat::EnhancedAbsolute,
+        );
 
         let event_type = entry.event_type.clone();
         let signed_in = entry.signed_in;
@@ -320,15 +328,8 @@ impl TelemetryLogView {
 
         let expanded_md =
             if expanded && entry.expanded_md.is_none() && !entry.event_properties.is_empty() {
-                let props_value = serde_json::Value::Object(
-                    entry
-                        .event_properties
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                );
                 let language_registry = self.project.read(cx).languages().clone();
-                let md = expanded_params_md(&props_value, &language_registry, cx);
+                let md = expanded_params_md(&entry.props_as_json_object(), &language_registry, cx);
                 if let Some(entry_mut) = self.events.get_mut(event_index) {
                     entry_mut.expanded_md = Some(md.clone());
                 }
@@ -391,7 +392,7 @@ impl TelemetryLogView {
                         .size(IconSize::Small),
                     )
                     .child(
-                        Label::new(time_ago)
+                        Label::new(timestamp_str)
                             .buffer_font(cx)
                             .color(Color::Muted)
                             .size(LabelSize::Small),
@@ -415,7 +416,7 @@ impl TelemetryLogView {
                                 base_text_style: text_style,
                                 selection_background_color,
                                 syntax: syntax.clone(),
-                                code_block_overflow_x_scroll: true,
+                                code_block_overflow_x_scroll: expanded,
                                 code_block: StyleRefinement {
                                     text: TextStyleRefinement {
                                         font_family: Some(buffer_font_family.clone()),
@@ -436,19 +437,6 @@ impl TelemetryLogView {
                 )
             })
             .into_any()
-    }
-}
-
-fn format_duration(duration: std::time::Duration) -> String {
-    let secs = duration.as_secs();
-    if secs < 60 {
-        format!("{}s ago", secs)
-    } else if secs < 3600 {
-        format!("{}m ago", secs / 60)
-    } else if secs < 86400 {
-        format!("{}h ago", secs / 3600)
-    } else {
-        format!("{}d ago", secs / 86400)
     }
 }
 
