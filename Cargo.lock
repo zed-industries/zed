@@ -5308,6 +5308,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sqlez_macros",
+ "tempfile",
  "terminal_view",
  "util",
  "wasmtime",
