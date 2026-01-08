@@ -205,12 +205,7 @@ impl TelemetryLogView {
             self.events.pop_front();
         }
 
-        self.expanded = self
-            .expanded
-            .iter()
-            .filter(|&&idx| idx < self.events.len())
-            .copied()
-            .collect();
+        self.expanded.retain(|&idx| idx < self.events.len());
 
         self.recompute_filtered_indices();
         cx.notify();
