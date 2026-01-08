@@ -225,87 +225,6 @@ impl BackgroundExecutor {
         task.await
     }
 
-    /// Used by the test harness to run an async test in a synchronous fashion.
-    #[cfg(any(test, feature = "test-support"))]
-    #[track_caller]
-    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        use std::cell::Cell;
-
-        let test_dispatcher = self
-            .dispatcher
-            .as_test()
-            .expect("block_test requires a test dispatcher");
-        let scheduler = test_dispatcher.scheduler();
-
-        let output = Cell::new(None);
-        let future = async {
-            output.set(Some(future.await));
-        };
-        let mut future = std::pin::pin!(future);
-
-        // In async GPUI tests, we must allow foreground tasks scheduled by the test itself
-        // (which are associated with the test session) to make progress while we block.
-        // Otherwise, awaiting futures that depend on same-session foreground work can deadlock.
-        scheduler.block(None, future.as_mut(), None);
-
-        output.take().expect("block_test future did not complete")
-    }
-
-    /// Block the current thread until the given future resolves.
-    /// Consider using `block_with_timeout` instead.
-    pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        use std::cell::Cell;
-
-        let output = Cell::new(None);
-        let future = async {
-            output.set(Some(future.await));
-        };
-        let mut future = std::pin::pin!(future);
-
-        #[cfg(any(test, feature = "test-support"))]
-        let session_id = self.dispatcher.as_test().map(|t| t.session_id());
-        #[cfg(not(any(test, feature = "test-support")))]
-        let session_id = None;
-
-        self.inner.scheduler().block(session_id, future.as_mut(), None);
-
-        output.take().expect("block future did not complete")
-    }
-
-    /// Block the current thread until the given future resolves or the timeout elapses.
-    pub fn block_with_timeout<R, Fut: Future<Output = R>>(
-        &self,
-        duration: Duration,
-        future: Fut,
-    ) -> Result<R, impl Future<Output = R> + use<R, Fut>> {
-        use std::cell::Cell;
-
-        let output = Cell::new(None);
-        let mut future = Box::pin(future);
-
-        {
-            let future_ref = &mut future;
-            let wrapper = async {
-                output.set(Some(future_ref.await));
-            };
-            let mut wrapper = std::pin::pin!(wrapper);
-
-            #[cfg(any(test, feature = "test-support"))]
-            let session_id = self.dispatcher.as_test().map(|t| t.session_id());
-            #[cfg(not(any(test, feature = "test-support")))]
-            let session_id = None;
-
-            self.inner
-                .scheduler()
-                .block(session_id, wrapper.as_mut(), Some(duration));
-        }
-
-        match output.take() {
-            Some(value) => Ok(value),
-            None => Err(future),
-        }
-    }
-
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
@@ -572,6 +491,43 @@ impl ForegroundExecutor {
         Task::from_scheduler(self.inner.spawn(future))
     }
 
+    /// Used by the test harness to run an async test in a synchronous fashion.
+    #[cfg(any(test, feature = "test-support"))]
+    #[track_caller]
+    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
+        use std::cell::Cell;
+
+        let scheduler = self.inner.scheduler();
+
+        let output = Cell::new(None);
+        let future = async {
+            output.set(Some(future.await));
+        };
+        let mut future = std::pin::pin!(future);
+
+        // In async GPUI tests, we must allow foreground tasks scheduled by the test itself
+        // (which are associated with the test session) to make progress while we block.
+        // Otherwise, awaiting futures that depend on same-session foreground work can deadlock.
+        scheduler.block(None, future.as_mut(), None);
+
+        output.take().expect("block_test future did not complete")
+    }
+
+    /// Block the current thread until the given future resolves.
+    /// Consider using `block_with_timeout` instead.
+    pub fn block_on<R>(&self, future: impl Future<Output = R>) -> R {
+        self.inner.block_on(future)
+    }
+
+    /// Block the current thread until the given future resolves or the timeout elapses.
+    pub fn block_with_timeout<R, Fut: Future<Output = R>>(
+        &self,
+        duration: Duration,
+        future: Fut,
+    ) -> Result<R, impl Future<Output = R> + use<R, Fut>> {
+        self.inner.block_with_timeout(duration, future)
+    }
+
     #[doc(hidden)]
     pub fn dispatcher(&self) -> &Arc<dyn PlatformDispatcher> {
         &self.dispatcher
@@ -635,7 +591,11 @@ impl Drop for Scope<'_> {
 
         // Wait until the channel is closed, which means that all of the spawned
         // futures have resolved.
-        self.executor.block(self.rx.next());
+        let future = async {
+            self.rx.next().await;
+        };
+        let mut future = std::pin::pin!(future);
+        self.executor.inner.scheduler().block(None, future.as_mut(), None);
     }
 }
 
@@ -794,7 +754,7 @@ mod test {
     #[test]
     #[should_panic]
     fn test_polling_cancelled_task_panics() {
-        let (dispatcher, background_executor, app) = create_test_app();
+        let (dispatcher, _background_executor, app) = create_test_app();
         let foreground_executor = app.borrow().foreground_executor.clone();
         let app_weak = Rc::downgrade(&app);
 
@@ -806,12 +766,12 @@ mod test {
 
         dispatcher.run_until_parked();
 
-        background_executor.block(task);
+        foreground_executor.block_on(task);
     }
 
     #[test]
     fn test_polling_cancelled_task_returns_none_with_fallible() {
-        let (dispatcher, background_executor, app) = create_test_app();
+        let (dispatcher, _background_executor, app) = create_test_app();
         let foreground_executor = app.borrow().foreground_executor.clone();
         let app_weak = Rc::downgrade(&app);
 
@@ -823,7 +783,7 @@ mod test {
 
         dispatcher.run_until_parked();
 
-        let result = background_executor.block(task);
+        let result = foreground_executor.block_on(task);
         assert_eq!(result, None, "Cancelled task should return None");
     }
 }

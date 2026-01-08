@@ -1339,7 +1339,8 @@ impl EvalAssertion {
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<EditEvalMetadata> {
     let dispatcher = gpui::TestDispatcher::new(rand::random());
     let mut cx = TestAppContext::build(dispatcher, None);
-    let result = cx.executor().block_test(async {
+    let foreground_executor = cx.foreground_executor().clone();
+    let result = foreground_executor.block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await
     });

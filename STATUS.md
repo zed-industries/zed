@@ -1,144 +1,260 @@
-# Scheduler Integration - Debugging Status
+# Migration Status: Move `block` from `BackgroundExecutor` to `ForegroundExecutor`
 
-## Problem
+## Testing Order (Topological Sort)
 
-PR #44810 causes Zed to hang on startup on Linux/Windows, but works fine on Mac.
+Test crates in this order to catch issues early. If a tier fails, fix it before proceeding.
 
-From PR comment by @yara-blue and @localcc:
-> "With it applied zed hangs without ever responding when you open it"
-
-## What Was Cleaned Up
-
-Removed unrelated changes that were accidentally committed:
-- `ConfiguredApiCard`, `InstructionListItem`, `api_key.rs` (UI components)
-- Debug instrumentation in `terminal_tool.rs`, `capability_granter.rs`, `wasm_host/wit/since_v0_8_0.rs`, `lsp_store.rs`
-- Planning docs (`.rules`, `PLAN.md`, old `STATUS.md`)
-
-Kept `language_registry.rs` changes as they may be relevant to debugging.
-
-## Analysis So Far
-
-### Code paths verified as correct:
-
-1. **Priority queue algorithm** - The weighted random selection in `crates/gpui/src/queue.rs` is mathematically sound. When the last non-empty queue is checked, the probability is always 100%.
-
-2. **`async_task::Task` implements `Unpin`** - So `Pin::new(task).poll(cx)` is valid.
-
-3. **`parking::Parker` semantics** - If `unpark()` is called before `park()`, the `park()` returns immediately. This is correct.
-
-4. **Waker creation** - `waker_fn` with `Unparker` (which is `Clone + Send + Sync`) should work correctly.
-
-5. **`PlatformScheduler::block` implementation** - Identical logic to the old `block_internal` for production builds.
-
-### The blocking flow:
-
-1. Task spawned → runnable scheduled → sent to priority queue
-2. Background thread waiting on condvar in `PriorityQueueReceiver::recv()`
-3. `send()` pushes to queue and calls `condvar.notify_one()`
-4. Background thread wakes, pops item, runs runnable
-5. When task completes, `async_task` wakes the registered waker
-6. Waker calls `unparker.unpark()`
-7. `parker.park()` returns
-8. Future is polled again, returns `Ready`
-
-### Files involved:
-
-- `crates/gpui/src/platform_scheduler.rs` - `PlatformScheduler::block()` implementation
-- `crates/gpui/src/executor.rs` - `BackgroundExecutor::block()` wraps futures
-- `crates/gpui/src/queue.rs` - Priority queue with `parking_lot::Condvar`
-- `crates/gpui/src/platform/linux/dispatcher.rs` - Background thread pool
-- `crates/scheduler/src/executor.rs` - `scheduler::BackgroundExecutor::spawn_with_priority`
-
-## What to investigate next
-
-### 1. Verify background threads are actually running
-
-Add logging at the start of background worker threads in `LinuxDispatcher::new()`:
-```rust
-.spawn(move || {
-    log::info!("[LinuxDispatcher] background worker {} started", i);
-    for runnable in receiver.iter() {
-        // ...
-    }
-})
-```
-
-### 2. Verify tasks are being dispatched
-
-Add logging in `PlatformScheduler::schedule_background_with_priority`:
-```rust
-fn schedule_background_with_priority(&self, runnable: Runnable<RunnableMeta>, priority: Priority) {
-    log::info!("[PlatformScheduler] dispatching task priority={:?}", priority);
-    self.dispatcher.dispatch(runnable, priority);
-}
-```
-
-### 3. Verify the priority queue send/receive
-
-In `crates/gpui/src/queue.rs`, add logging to `send()` and `recv()`:
-```rust
-fn send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
-    // ...
-    self.condvar.notify_one();
-    log::debug!("[PriorityQueue] sent item, notified condvar");
-    Ok(())
-}
-
-fn recv(&self) -> Result<...> {
-    log::debug!("[PriorityQueue] recv() waiting...");
-    while queues.is_empty() {
-        self.condvar.wait(&mut queues);
-    }
-    log::debug!("[PriorityQueue] recv() got item");
-    // ...
-}
-```
-
-### 4. Check timing of dispatcher creation vs task spawning
-
-Trace when `LinuxDispatcher::new()` is called vs when the first `spawn()` happens. If tasks are spawned before background threads are ready, they might be lost.
-
-### 5. Check for platform-specific differences in `parking` or `parking_lot`
-
-The `parking` crate (used for `Parker`/`Unparker`) and `parking_lot` (used for `Condvar` in the priority queue) may have platform-specific behavior. Check their GitHub issues for Linux-specific bugs.
-
-### 6. Verify the startup sequence
-
-The hang happens during startup. Key calls in `crates/zed/src/main.rs`:
-```rust
-// Line ~292: Tasks spawned BEFORE app.run()
-let system_id = app.background_executor().spawn(system_id());
-let installation_id = app.background_executor().spawn(installation_id());
-let session = app.background_executor().spawn(Session::new(session_id.clone()));
-
-// Line ~513-515: Inside app.run() callback, these BLOCK waiting for the tasks
-let system_id = cx.background_executor().block(system_id).ok();
-let installation_id = cx.background_executor().block(installation_id).ok();
-let session = cx.background_executor().block(session);
-```
-
-If background threads aren't running yet when `block()` is called, or if the tasks never got dispatched, it will hang forever.
-
-## Hypotheses to test
-
-1. **Background threads not started yet** - Race condition where tasks are dispatched before threads are listening on the queue.
-
-2. **Condvar notification lost** - `notify_one()` called but no thread was waiting yet, and subsequent waits miss it.
-
-3. **Platform-specific parking behavior** - `parking::Parker` or `parking_lot::Condvar` behaves differently on Linux.
-
-4. **Priority queue never releases items** - Something in the weighted random selection is wrong on Linux (different RNG behavior?).
-
-## Running tests
-
-To get logs, set `RUST_LOG=info` or `RUST_LOG=debug` when running Zed.
-
-For the extension_host test hang (separate issue):
+### Tier 0: Foundation (no `#[gpui::test]`)
 ```bash
-cargo test -p extension_host extension_store_test::test_extension_store_with_test_extension -- --nocapture
+cargo test -q -p scheduler
 ```
 
-## Key commits
+### Tier 1: Core Test Infrastructure
+```bash
+cargo test -q -p gpui_macros
+cargo test -q -p gpui
+```
 
-- `5b07e2b242` - "WIP: scheduler integration debugging" - This accidentally added unrelated UI components
-- `d8ebd8101f` - "WIP: scheduler integration debugging + agent terminal diagnostics" - Added debug instrumentation (now removed)
+### Tier 2: Core Dependencies
+```bash
+cargo test -q -p text
+cargo test -q -p rope
+cargo test -q -p clock
+cargo test -q -p sum_tree
+cargo test -q -p collections
+cargo test -q -p util
+```
+
+### Tier 3: Language Infrastructure
+```bash
+cargo test -q -p language
+cargo test -q -p lsp
+cargo test -q -p buffer_diff
+cargo test -q -p multi_buffer
+```
+
+### Tier 4: Project Infrastructure
+```bash
+cargo test -q -p worktree
+cargo test -q -p project
+cargo test -q -p fs
+cargo test -q -p git
+```
+
+### Tier 5: Editor & Workspace
+```bash
+cargo test -q -p editor
+cargo test -q -p workspace
+cargo test -q -p command_palette
+cargo test -q -p search
+```
+
+### Tier 6: Agent & Collab
+```bash
+cargo test -q -p agent
+cargo test -q -p agent_ui
+cargo test -q -p collab
+cargo test -q -p collab_ui
+```
+
+### Tier 7: Application
+```bash
+cargo test -q -p zed
+```
+
+### Full workspace test (after all tiers pass)
+```bash
+cargo test --workspace
+```
+
+---
+
+## Reference PR
+https://github.com/zed-industries/zed/pull/37837
+
+## Rationale
+- If you're on a **background thread**, you're already async - just `await`. No need to block.
+- If you're on the **foreground/main thread**, you may need to block the UI thread synchronously - that's when `block_on` is needed.
+- `ForegroundExecutor` has a session ID that needs to be passed to the scheduler to avoid deadlocks.
+
+## What Was Done
+
+### 1. Added blocking methods to `ForegroundExecutor` in GPUI
+**File:** `crates/gpui/src/executor.rs`
+- Added `block_test()` - for test harness
+- Added `block_on()` - delegates to inner scheduler's `block_on`
+- Added `block_with_timeout()` - delegates to inner scheduler's `block_with_timeout`
+
+### 2. Removed blocking methods from `BackgroundExecutor` in GPUI
+**File:** `crates/gpui/src/executor.rs`
+- Removed `block_test()`
+- Removed `block()`
+- Removed `block_with_timeout()`
+
+### 3. Updated `Scope::drop` to use scheduler directly
+**File:** `crates/gpui/src/executor.rs`
+- Changed from `self.executor.block(...)` to `self.executor.inner.scheduler().block(None, future, None)`
+- This bypasses the public API and calls the scheduler directly with `session_id: None`
+
+### 4. Updated all call sites from `background_executor().block()` to `foreground_executor().block_on()`
+
+Files updated:
+- `crates/agent_ui/src/completion_provider.rs`
+- `crates/agent_ui/src/language_model_selector.rs` (also added `fg_executor` field to `ModelMatcher`)
+- `crates/agent_ui/src/profile_selector.rs` (also added `foreground` field to `ProfilePickerDelegate`)
+- `crates/collab_ui/src/collab_panel/channel_modal.rs`
+- `crates/collab_ui/src/collab_panel.rs`
+- `crates/component_preview/src/component_preview_example.rs`
+- `crates/extension_host/src/extension_host.rs`
+- `crates/extension_host/benches/extension_compilation_benchmark.rs`
+- `crates/project/src/project_settings.rs`
+- `crates/project/src/project_tests.rs`
+- `crates/project_symbols/src/project_symbols.rs`
+- `crates/remote_server/src/unix.rs`
+- `crates/storybook/src/stories/picker.rs`
+- `crates/zed/src/main.rs`
+- `crates/zed/src/zed.rs`
+- `crates/buffer_diff/src/buffer_diff.rs`
+- `crates/language/src/buffer_tests.rs`
+- `crates/language/src/buffer.rs`
+- `crates/language_models/src/provider/open_ai.rs`
+- `crates/multi_buffer/src/multi_buffer_tests.rs`
+- `crates/gpui/src/app.rs` (shutdown method)
+- `crates/editor/src/display_map/wrap_map.rs`
+- `crates/editor/src/indent_guides.rs`
+- `crates/command_palette/src/command_palette.rs`
+- `crates/agent/src/edit_agent/evals.rs`
+
+### 5. Special cases handled
+
+#### Worktree (background thread blocking)
+**File:** `crates/worktree/src/worktree.rs`
+- Changed `self.executor.block(...)` to `futures::executor::block_on(...)` 
+- This is legitimate blocking on a background thread for I/O operations
+- Removed unused `executor` field from `LocalSnapshot` struct
+
+#### LiveKit (Priority::Realtime removal)
+**File:** `crates/livekit_client/src/livekit_client/playback/source.rs`
+- Changed `Priority::Realtime(RealtimePriority::Audio)` to `Priority::High`
+- The scheduler crate's `Priority` enum doesn't have `Realtime` variant
+
+#### Dead code warnings
+**File:** `crates/buffer_diff/src/buffer_diff.rs`
+- Added `#[allow(dead_code)]` to `empty()`, `unchanged()`, and `new_with_base_text()` functions
+
+### 6. Updated `gpui_macros` test macro ✅ COMPLETED
+**File:** `crates/gpui_macros/src/test.rs`
+
+The `#[gpui::test]` macro was updated to use `ForegroundExecutor::block_test()` instead of `BackgroundExecutor::block_test()`:
+
+Changed:
+```rust
+let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+executor.block_test(#inner_fn_name(#inner_fn_args));
+```
+
+To:
+```rust
+let foreground_executor = gpui::ForegroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+foreground_executor.block_test(#inner_fn_name(#inner_fn_args));
+```
+
+### 7. Fixed remaining test compilation issues ✅ COMPLETED
+
+#### `crates/collab_ui/src/collab_panel.rs`
+- Removed redundant `.clone()` on the last usage of `executor` (line 856)
+
+#### `crates/agent_ui/src/inline_assistant.rs`
+- Extracted `foreground_executor` before `block_test` calls to avoid borrow conflicts
+- Changed from `cx.executor().block_test(...)` to `foreground_executor.block_test(...)`
+
+#### `crates/agent_ui/src/language_model_selector.rs`
+- Added `.clone()` when calling `cx.foreground_executor()` since it returns a reference
+
+#### `crates/agent_ui/src/profile_selector.rs`
+- Added missing `foreground` field to `ProfilePickerDelegate` in tests
+
+#### `crates/agent/src/edit_agent/evals.rs`
+- Extracted `foreground_executor` before `block_test` call to avoid borrow conflicts
+
+## Current Build Status
+- `cargo check --workspace` - ✅ PASSES
+- `./script/clippy` - ✅ PASSES
+
+## Known Test Failures
+
+### Pre-existing (not caused by this migration)
+| Crate | Test | Status | Notes |
+|-------|------|--------|-------|
+| gpui | `key_dispatch::tests::test_pending_input_observers_notified_on_focus_change` | ❌ FAILS | Pre-existing failure, verified by testing before/after stash |
+
+### Caused by Migration (need fixing)
+| Crate | Test | Status | Notes |
+|-------|------|--------|-------|
+| (none yet) | | | |
+
+### Hanging Tests (timeout)
+| Crate | Test | Status | Notes |
+|-------|------|--------|-------|
+| (none yet) | | | |
+
+## Test Progress
+
+| Tier | Crate | Build | Tests | Notes |
+|------|-------|-------|-------|-------|
+| 0 | scheduler | ✅ | ✅ 13 passed | |
+| 1 | gpui_macros | ✅ | ✅ 9 passed | |
+| 1 | gpui | ✅ | ⚠️ 82/83 passed | 1 pre-existing failure (see above) |
+| 2 | text | | | |
+| 2 | rope | | | |
+| 2 | clock | | | |
+| 2 | sum_tree | | | |
+| 2 | collections | | | |
+| 2 | util | | | |
+| 3 | language | | | |
+| 3 | lsp | | | |
+| 3 | buffer_diff | | | |
+| 3 | multi_buffer | | | |
+| 4 | worktree | | | |
+| 4 | project | | | |
+| 4 | fs | | | |
+| 4 | git | | | |
+| 5 | editor | | | |
+| 5 | workspace | | | |
+| 5 | command_palette | | | |
+| 5 | search | | | |
+| 6 | agent | | | |
+| 6 | agent_ui | | | |
+| 6 | collab | | | |
+| 6 | collab_ui | | | |
+| 7 | zed | | | |
+
+## What Still Needs To Be Done
+
+### 1. Run full test suite
+Follow the tiered testing order above to validate the migration.
+
+## Commands to Verify Progress
+```bash
+# Check compilation
+cargo check -q --workspace
+
+# Run clippy
+./script/clippy
+
+# Run tests (tiered - see above)
+cargo test -q -p gpui
+cargo test --workspace
+```
+
+## Key Insight from PR
+In the PR's `Scope::drop` implementation (commit 57e5a38), blocking is done by calling the scheduler directly:
+```rust
+self.executor.scheduler().block(
+    None,  // session_id is None for internal blocking
+    async { ... }.boxed(),
+    None,
+);
+```
+
+This pattern allows internal blocking without exposing a public `block` method on `BackgroundExecutor`.

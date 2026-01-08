@@ -2103,9 +2103,9 @@ pub mod test {
             cx.set_global(inline_assistant);
         });
 
-        let project = cx
-            .executor()
-            .block_test(async { Project::test(fs.clone(), [], cx).await });
+        let foreground_executor = cx.foreground_executor().clone();
+        let project =
+            foreground_executor.block_test(async { Project::test(fs.clone(), [], cx).await });
 
         // Create workspace with window
         let (workspace, cx) = cx.add_window_view(|window, cx| {
@@ -2164,8 +2164,7 @@ pub mod test {
 
         test(cx);
 
-        let assist_id = cx
-            .executor()
+        let assist_id = foreground_executor
             .block_test(async { completion_rx.next().await })
             .unwrap()
             .unwrap();

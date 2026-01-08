@@ -282,7 +282,7 @@ impl ExtensionStore {
         // list of the installed extensions and the resources that they provide.
         // This index is loaded synchronously on startup.
         let (index_content, index_metadata, extensions_metadata) =
-            cx.background_executor().block(async {
+            cx.foreground_executor().block_on(async {
                 futures::join!(
                     this.fs.load(&this.index_path),
                     this.fs.metadata(&this.index_path),

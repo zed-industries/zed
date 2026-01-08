@@ -196,6 +196,7 @@ impl BufferDiffSnapshot {
         self.inner.base_text.remote_id()
     }
 
+    #[allow(dead_code)]
     fn empty(buffer: &text::BufferSnapshot, cx: &mut App) -> BufferDiffSnapshot {
         BufferDiffSnapshot {
             inner: BufferDiffInner {
@@ -208,6 +209,7 @@ impl BufferDiffSnapshot {
         }
     }
 
+    #[allow(dead_code)]
     fn unchanged(
         buffer: &text::BufferSnapshot,
         base_text: language::BufferSnapshot,
@@ -224,6 +226,7 @@ impl BufferDiffSnapshot {
         }
     }
 
+    #[allow(dead_code)]
     fn new_with_base_text(
         buffer: text::BufferSnapshot,
         base_text: Option<Arc<String>>,
@@ -1249,10 +1252,9 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = BufferDiff::new(&buffer, cx);
-        let executor = cx.background_executor().clone();
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
-        let inner = executor.block(this.update_diff(
+        let inner = cx.foreground_executor().block_on(this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
             true,
@@ -1614,10 +1616,10 @@ impl BufferDiff {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
-        let executor = cx.background_executor().clone();
-        let snapshot = executor.block(fut);
+        let fg_executor = cx.foreground_executor().clone();
+        let snapshot = fg_executor.block_on(fut);
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
-        let (changed_range, base_text_changed_range) = executor.block(fut);
+        let (changed_range, base_text_changed_range) = fg_executor.block_on(fut);
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range,
             base_text_changed_range,
