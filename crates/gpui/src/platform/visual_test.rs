@@ -1,7 +1,7 @@
-//! Visual test platform that combines real Mac rendering with controllable TestDispatcher.
+//! Visual test platform that combines real rendering (macOs-only for now) with controllable TestDispatcher.
 //!
 //! This platform is used for visual tests that need:
-//! - Real Metal/compositor rendering for accurate screenshots
+//! - Real rendering (e.g. Metal/compositor) for accurate screenshots
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
