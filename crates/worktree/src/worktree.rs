@@ -267,6 +267,7 @@ struct BackgroundScannerState {
     removed_entries: HashMap<u64, Entry>,
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
+    scanning_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -447,7 +448,11 @@ impl Worktree {
                     snapshot.root_char_bag,
                     None,
                 );
-                if !metadata.is_dir {
+                if metadata.is_dir {
+                    if !scanning_enabled {
+                        entry.kind = EntryKind::UnloadedDir;
+                    }
+                } else {
                     if let Some(file_name) = abs_path.file_name()
                         && let Some(file_name) = file_name.to_str()
                         && let Ok(path) = RelPath::unix(file_name)
@@ -1101,6 +1106,7 @@ impl LocalWorktree {
                         prev_snapshot: snapshot.snapshot.clone(),
                         snapshot,
                         scanned_dirs: Default::default(),
+                        scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
                         removed_entries: Default::default(),
@@ -1108,7 +1114,6 @@ impl LocalWorktree {
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
-                    scanning_enabled,
                     settings,
                     watcher,
                 };
@@ -2777,7 +2782,7 @@ impl LocalSnapshot {
 
 impl BackgroundScannerState {
     fn should_scan_directory(&self, entry: &Entry) -> bool {
-        (!entry.is_external && (!entry.is_ignored || entry.is_always_included))
+        (self.scanning_enabled && !entry.is_external && (!entry.is_ignored || entry.is_always_included))
             || entry.path.file_name() == Some(DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_name())
             || entry.path.file_name() == Some(local_vscode_folder_name())
@@ -3726,7 +3731,6 @@ struct BackgroundScanner {
     watcher: Arc<dyn Watcher>,
     settings: WorktreeSettings,
     share_private_files: bool,
-    scanning_enabled: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -3738,12 +3742,18 @@ enum BackgroundScannerPhase {
 
 impl BackgroundScanner {
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
+        let root_abs_path;
+        let scanning_enabled;
+        {
+            let state = self.state.lock().await;
+            root_abs_path = state.snapshot.abs_path.clone();
+            scanning_enabled = state.scanning_enabled;
+        }
+
         // If the worktree root does not contain a git repository, then find
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
-        let root_abs_path = self.state.lock().await.snapshot.abs_path.clone();
-
-        let repo = if self.scanning_enabled {
+        let repo = if scanning_enabled {
             let (ignores, exclude, repo) =
                 discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
             self.state
@@ -3767,7 +3777,7 @@ impl BackgroundScanner {
         };
 
         let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
-            && self.scanning_enabled
+            && scanning_enabled
         {
             maybe!(async {
                 self.state
@@ -3792,7 +3802,7 @@ impl BackgroundScanner {
 
         let mut global_gitignore_events = if let Some(global_gitignore_path) =
             &paths::global_gitignore_path()
-            && self.scanning_enabled
+            && scanning_enabled
         {
             let is_file = self.fs.is_file(&global_gitignore_path).await;
             self.state.lock().await.snapshot.global_gitignore = if is_file {
@@ -3835,7 +3845,7 @@ impl BackgroundScanner {
                         .insert_entry(root_entry, self.fs.as_ref(), self.watcher.as_ref())
                         .await;
                 }
-                if root_entry.is_dir() && self.scanning_enabled {
+                if root_entry.is_dir() && state.scanning_enabled {
                     state
                         .enqueue_scan_dir(
                             root_abs_path.as_path().into(),
