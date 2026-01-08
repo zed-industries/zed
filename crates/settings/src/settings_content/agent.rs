@@ -119,6 +119,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Whether to show turn statistics (elapsed time during generation, final turn duration).
+    ///
+    /// Default: true
+    pub show_turn_stats: Option<bool>,
 }
 
 impl AgentSettingsContent {

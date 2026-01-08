@@ -2596,7 +2596,7 @@ impl AcpThreadView {
                 .child(primary)
                 .map(|this| {
                     if needs_confirmation {
-                        this.child(self.render_generating(true))
+                        this.child(self.render_generating(true, cx))
                     } else {
                         this.child(self.render_thread_controls(&thread, cx))
                     }
@@ -5889,15 +5889,20 @@ impl AcpThreadView {
         }
     }
 
-    fn render_generating(&self, confirmation: bool) -> impl IntoElement {
-        let elapsed_label = self.turn_started_at.and_then(|started_at| {
-            let elapsed = started_at.elapsed();
-            if elapsed >= Duration::from_secs(30) {
-                Some(duration_alt_display(elapsed))
-            } else {
-                None
-            }
-        });
+    fn render_generating(&self, confirmation: bool, cx: &App) -> impl IntoElement {
+        let show_stats = AgentSettings::get_global(cx).show_turn_stats;
+        let elapsed_label = show_stats
+            .then(|| {
+                self.turn_started_at.and_then(|started_at| {
+                    let elapsed = started_at.elapsed();
+                    if elapsed >= Duration::from_secs(30) {
+                        Some(duration_alt_display(elapsed))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .flatten();
 
         h_flex()
             .id("generating-spinner")
@@ -5937,7 +5942,7 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if is_generating {
-            return self.render_generating(false).into_any_element();
+            return self.render_generating(false, cx).into_any_element();
         }
 
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
@@ -5971,11 +5976,16 @@ impl AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
-        let last_turn_label = self.last_turn_duration.map(|duration| {
-            Label::new(duration_alt_display(duration))
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-        });
+        let show_stats = AgentSettings::get_global(cx).show_turn_stats;
+        let last_turn_label = show_stats
+            .then(|| {
+                self.last_turn_duration.map(|duration| {
+                    Label::new(duration_alt_display(duration))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                })
+            })
+            .flatten();
 
         let mut container = h_flex()
             .w_full()

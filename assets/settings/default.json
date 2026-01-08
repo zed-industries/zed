@@ -1044,6 +1044,10 @@
     //
     // Default: 4
     "message_editor_min_lines": 4,
+    // Whether to show turn statistics (elapsed time during generation, final turn duration).
+    //
+    // Default: true
+    "show_turn_stats": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
