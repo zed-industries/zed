@@ -24,8 +24,7 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, FontWeight, Subscription, Task, Window,
-    actions,
+    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
