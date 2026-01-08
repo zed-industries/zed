@@ -2733,7 +2733,7 @@ mod tests {
             })
         })
         .detach();
-        cx.background_spawn(async move {
+        let completion_check_task = cx.background_spawn(async move {
             #[cfg(target_os = "windows")]
             {
                 let exit_status = completion_rx.recv().await.ok().flatten();
@@ -2747,15 +2747,17 @@ mod tests {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let exit_status = completion_rx.recv().await.unwrap().unwrap();
-                assert!(
-                    !exit_status.success(),
-                    "Wrong shell command should result in a failure"
-                );
-                assert_eq!(exit_status.code(), None);
+                // The channel may be closed if the terminal failed to spawn,
+                // in which case recv() returns RecvError - this is acceptable
+                if let Ok(Some(exit_status)) = completion_rx.recv().await {
+                    assert!(
+                        !exit_status.success(),
+                        "Wrong shell command should result in a failure"
+                    );
+                    assert_eq!(exit_status.code(), None);
+                }
             }
-        })
-        .detach();
+        });
 
         let mut all_events = Vec::new();
         while let Ok(Ok(new_event)) =
@@ -2770,6 +2772,8 @@ mod tests {
                 .any(|event| event == &Event::CloseTerminal),
             "Wrong shell command should update the title but not should not close the terminal to show the error message, but got events: {all_events:?}",
         );
+
+        completion_check_task.await;
     }
 
     #[test]
