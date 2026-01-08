@@ -632,31 +632,6 @@ impl PickerDelegate for WorktreeListDelegate {
             .take(7)
             .collect::<String>();
 
-        let focus_handle = self.focus_handle.clone();
-        let icon = if let Some(default_branch) = self.default_branch.clone()
-            && entry.is_new
-        {
-            Some(
-                IconButton::new("worktree-from-default", IconName::GitBranchAlt)
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(WorktreeFromDefault.boxed_clone(), cx)
-                    })
-                    .on_right_click(|_, window, cx| {
-                        window.dispatch_action(WorktreeFromDefaultOnWindow.boxed_clone(), cx)
-                    })
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action_in(
-                            format!("From default branch {default_branch}"),
-                            &WorktreeFromDefault,
-                            &focus_handle,
-                            cx,
-                        )
-                    }),
-            )
-        } else {
-            None
-        };
-
         let (branch_name, sublabel) = if entry.is_new {
             (
                 Label::new(format!("Create Worktree: \"{}\"…", entry.worktree.branch()))
@@ -716,8 +691,7 @@ impl PickerDelegate for WorktreeListDelegate {
                                 .truncate()
                                 .into_any_element(),
                         ),
-                )
-                .end_slot::<IconButton>(icon),
+                ),
         )
     }
 
@@ -727,17 +701,42 @@ impl PickerDelegate for WorktreeListDelegate {
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
+        let selected_entry = self.matches.get(self.selected_index);
+        let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
 
-        Some(
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .gap_0p5()
-                .justify_end()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("open-in-new-window", "Open in New Window")
+        let footer_container = h_flex()
+            .w_full()
+            .p_1p5()
+            .gap_0p5()
+            .justify_end()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant);
+
+        if is_creating {
+            let from_default_button = self.default_branch.as_ref().map(|default_branch| {
+                Button::new(
+                    "worktree-from-default",
+                    format!("Create from: {default_branch}"),
+                )
+                .key_binding(
+                    KeyBinding::for_action_in(&WorktreeFromDefault, &focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(WorktreeFromDefault.boxed_clone(), cx)
+                })
+            });
+
+            let current_branch = self.base_branch(cx).unwrap_or("current branch");
+
+            Some(
+                footer_container
+                    .when_some(from_default_button, |this, button| this.child(button))
+                    .child(
+                        Button::new(
+                            "worktree-from-current",
+                            format!("Create from: {current_branch}"),
+                        )
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -745,18 +744,38 @@ impl PickerDelegate for WorktreeListDelegate {
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)
                         }),
-                )
-                .child(
-                    Button::new("open-in-window", "Open")
-                        .key_binding(
-                            KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
+                    )
+                    .into_any(),
+            )
+        } else {
+            Some(
+                footer_container
+                    .child(
+                        Button::new("open-in-new-window", "Open in New Window")
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .child(
+                        Button::new("open-in-window", "Open")
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
+                                )
                                 .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                        }),
-                )
-                .into_any(),
-        )
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .into_any(),
+            )
+        }
     }
 }
