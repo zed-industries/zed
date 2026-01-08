@@ -952,7 +952,7 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
             let mut get_next_item = Box::pin(rx.fuse());
 
             let mut _schedule_flush_after_delay;
-            let time_elapsed_since_start_of_search = std::time::Instant::now();
+            let _time_elapsed_since_start_of_search = std::time::Instant::now();
             let mut flush  = pin!(flush_batch_rx);
             loop {
                 select! {
