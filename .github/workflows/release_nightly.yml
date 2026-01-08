@@ -20,8 +20,7 @@ jobs:
       with:
         clean: false
         fetch-depth: 0
-    - id: cargo_fmt
-      name: steps::cargo_fmt
+    - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
     - name: ./script/clippy
@@ -45,8 +44,7 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - id: clippy
-      name: steps::clippy
+    - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::clear_target_dir_if_large

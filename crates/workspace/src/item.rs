@@ -15,6 +15,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
     SharedString, Task, WeakEntity, Window,
 };
+use language::Capability;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -76,7 +77,13 @@ impl Settings for ItemSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
-            git_status: tabs.git_status.unwrap(),
+            git_status: tabs.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             close_position: tabs.close_position.unwrap(),
             activate_on_close: tabs.activate_on_close.unwrap(),
             file_icons: tabs.file_icons.unwrap(),
@@ -118,6 +125,7 @@ pub enum ItemEvent {
 }
 
 // TODO: Combine this with existing HighlightedText struct?
+#[derive(Debug)]
 pub struct BreadcrumbText {
     pub text: String,
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
@@ -249,6 +257,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+    fn capability(&self, _: &App) -> Capability {
+        Capability::ReadWrite
+    }
+
+    fn toggle_read_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
     fn has_deleted_file(&self, _: &App) -> bool {
         false
     }
@@ -470,6 +484,8 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn capability(&self, cx: &App) -> Capability;
+    fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
@@ -836,7 +852,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                                         close_item_task.await?;
                                         pane.update(cx, |pane, _cx| {
                                             pane.nav_history_mut().remove_item(item_id);
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -941,6 +958,16 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn capability(&self, cx: &App) -> Capability {
+        self.read(cx).capability(cx)
+    }
+
+    fn toggle_read_only(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.toggle_read_only(window, cx);
+        })
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {

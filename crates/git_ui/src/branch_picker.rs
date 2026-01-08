@@ -70,27 +70,34 @@ pub fn open(
 ) {
     let workspace_handle = workspace.weak_handle();
     let repository = workspace.project().read(cx).active_repository(cx);
-    let style = BranchListStyle::Modal;
+
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(workspace_handle, repository, style, rems(34.), window, cx)
+        BranchList::new(
+            workspace_handle,
+            repository,
+            BranchListStyle::Modal,
+            rems(34.),
+            window,
+            cx,
+        )
     })
 }
 
 pub fn popover(
     workspace: WeakEntity<Workspace>,
+    modal_style: bool,
     repository: Option<Entity<Repository>>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<BranchList> {
+    let (style, width) = if modal_style {
+        (BranchListStyle::Modal, rems(34.))
+    } else {
+        (BranchListStyle::Popover, rems(20.))
+    };
+
     cx.new(|cx| {
-        let list = BranchList::new(
-            workspace,
-            repository,
-            BranchListStyle::Popover,
-            rems(20.),
-            window,
-            cx,
-        );
+        let list = BranchList::new(workspace, repository, style, width, window, cx);
         list.focus_handle(cx).focus(window, cx);
         list
     })
@@ -390,7 +397,7 @@ impl BranchListDelegate {
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name, base_branch)
-            })?
+            })
             .await??;
 
             Ok(())
@@ -437,11 +444,11 @@ impl BranchListDelegate {
                 Entry::Branch { branch, .. } => match branch.remote_name() {
                     Some(remote_name) => {
                         is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))?
+                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
                             .await?
                     }
                     None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))?
+                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
                             .await?
                     }
                 },
@@ -756,7 +763,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 let branch = branch.clone();
                 cx.spawn(async move |_, cx| {
-                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
                         .await??;
 
                     anyhow::Ok(())
@@ -1426,7 +1433,6 @@ mod tests {
         cx.spawn(async move |mut cx| {
             for branch in branch_names {
                 repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
-                    .unwrap()
                     .await
                     .unwrap()
                     .unwrap();
@@ -1491,7 +1497,6 @@ mod tests {
                 repo.update(&mut cx, |repo, _| {
                     repo.create_remote(branch, String::from("test"))
                 })
-                .unwrap()
                 .await
                 .unwrap()
                 .unwrap();

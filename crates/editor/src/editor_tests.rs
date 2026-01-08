@@ -36,7 +36,7 @@ use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::CompletionParams;
 use multi_buffer::{
-    IndentGuide, MultiBufferFilterMode, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
+    ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
 };
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
@@ -13220,30 +13220,28 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     // Handle formatting requests to the language server.
     cx.lsp
         .set_request_handler::<lsp::request::Formatting, _, _>({
-            let buffer_changes = buffer_changes.clone();
             move |_, _| {
-                let buffer_changes = buffer_changes.clone();
                 // Insert blank lines between each line of the buffer.
                 async move {
-                    // When formatting is requested, trailing whitespace has already been stripped,
-                    // and the trailing newline has already been added.
-                    assert_eq!(
-                        &buffer_changes.lock()[1..],
-                        &[
-                            (
-                                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                                "".into()
-                            ),
-                            (
-                                lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                                "".into()
-                            ),
-                            (
-                                lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                                "\n".into()
-                            ),
-                        ]
-                    );
+                    // TODO: this assertion is not reliably true. Currently nothing guarantees that we deliver
+                    // DidChangedTextDocument to the LSP before sending the formatting request.
+                    // assert_eq!(
+                    //     &buffer_changes.lock()[1..],
+                    //     &[
+                    //         (
+                    //             lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                    //             "".into()
+                    //         ),
+                    //         (
+                    //             lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                    //             "".into()
+                    //         ),
+                    //         (
+                    //             lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                    //             "\n".into()
+                    //         ),
+                    //     ]
+                    // );
 
                     Ok(Some(vec![
                         lsp::TextEdit {
@@ -13275,7 +13273,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         ]
         .join("\n"),
     );
-    cx.run_until_parked();
 
     // Submit a format request.
     let format = cx
@@ -18236,7 +18233,7 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
 
     cx.update_buffer(|buffer, _| {
         // This causes autoindent to be async.
-        buffer.set_sync_parse_timeout(Duration::ZERO)
+        buffer.set_sync_parse_timeout(None)
     });
 
     cx.set_state("fn c() {\n    d()ˇ\n}\n");
@@ -18254,7 +18251,7 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
                         "fn c() {\n    d()\n        .\n}\n",
                         "OnTypeFormatting should triggered after autoindent applied"
                     )
-                })?;
+                });
 
                 Ok(Some(vec![]))
             }
@@ -18345,7 +18342,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             "Some other server name".into(),
             LspSettings {
                 binary: None,
@@ -18366,7 +18363,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -18387,7 +18384,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -18408,7 +18405,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -19883,7 +19880,9 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(diff_base, &buffer, cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
+            });
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
@@ -20508,7 +20507,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let diff = cx.new(|cx| BufferDiff::new_with_base_text(diff_base, &buffer, cx));
+                let diff = cx.new(|cx| {
+                    BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
+                });
                 editor
                     .buffer
                     .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
@@ -20614,7 +20615,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base, &buffer.read(cx).text_snapshot(), cx)
+            });
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
@@ -22048,7 +22051,9 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut TestAppContext) {
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+            });
 
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_diff(diff, cx);
@@ -27310,6 +27315,38 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
             &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
     });
+
+    // Set up text where selections are in the middle of a soft-wrapped line.
+    // When adding selection below with `skip_soft_wrap` set to `true`, the new
+    // selection should be at the same buffer column, not the same pixel
+    // position.
+    cx.set_state(indoc!(
+        r#"1. Very long line to show «howˇ» a wrapped line would look
+           2. Very long line to show how a wrapped line would look"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        // Enable soft wrapping with a narrow width to force soft wrapping and
+        // confirm that more than 2 rows are being displayed.
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        assert!(editor.display_text(cx).lines().count() > 2);
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        // Assert that there's now 2 selections, both selecting the same column
+        // range in the buffer row.
+        let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = editor.selections.all::<Point>(&display_map);
+        assert_eq!(selections.len(), 2);
+        assert_eq!(selections[0].start.column, selections[1].start.column);
+        assert_eq!(selections[0].end.column, selections[1].end.column);
+    });
 }
 
 #[gpui::test]
@@ -28021,7 +28058,7 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         "
     });
 
-    // Case 2: Test adding new line after nested list preserves indent of previous line
+    // Case 2: Test adding new line after nested list continues the list with unchecked task
     cx.set_state(&indoc! {"
         - [ ] Item 1
             - [ ] Item 1.a
@@ -28038,20 +28075,12 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         - [x] Item 2
             - [x] Item 2.a
             - [x] Item 2.b
-            ˇ"
+            - [ ] ˇ"
     });
 
-    // Case 3: Test adding a new nested list item preserves indent
-    cx.set_state(&indoc! {"
-        - [ ] Item 1
-            - [ ] Item 1.a
-        - [x] Item 2
-            - [x] Item 2.a
-            - [x] Item 2.b
-            ˇ"
-    });
+    // Case 3: Test adding content to continued list item
     cx.update_editor(|editor, window, cx| {
-        editor.handle_input("-", window, cx);
+        editor.handle_input("Item 2.c", window, cx);
     });
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
@@ -28060,22 +28089,10 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         - [x] Item 2
             - [x] Item 2.a
             - [x] Item 2.b
-            -ˇ"
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(" [x] Item 2.c", window, cx);
-    });
-    cx.run_until_parked();
-    cx.assert_editor_state(indoc! {"
-        - [ ] Item 1
-            - [ ] Item 1.a
-        - [x] Item 2
-            - [x] Item 2.a
-            - [x] Item 2.b
-            - [x] Item 2.cˇ"
+            - [ ] Item 2.cˇ"
     });
 
-    // Case 4: Test adding new line after nested ordered list preserves indent of previous line
+    // Case 4: Test adding new line after nested ordered list continues with next number
     cx.set_state(indoc! {"
         1. Item 1
             1. Item 1.a
@@ -28092,44 +28109,12 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         2. Item 2
             1. Item 2.a
             2. Item 2.b
-            ˇ"
+            3. ˇ"
     });
 
-    // Case 5: Adding new ordered list item preserves indent
-    cx.set_state(indoc! {"
-        1. Item 1
-            1. Item 1.a
-        2. Item 2
-            1. Item 2.a
-            2. Item 2.b
-            ˇ"
-    });
+    // Case 5: Adding content to continued ordered list item
     cx.update_editor(|editor, window, cx| {
-        editor.handle_input("3", window, cx);
-    });
-    cx.run_until_parked();
-    cx.assert_editor_state(indoc! {"
-        1. Item 1
-            1. Item 1.a
-        2. Item 2
-            1. Item 2.a
-            2. Item 2.b
-            3ˇ"
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(".", window, cx);
-    });
-    cx.run_until_parked();
-    cx.assert_editor_state(indoc! {"
-        1. Item 1
-            1. Item 1.a
-        2. Item 2
-            1. Item 2.a
-            2. Item 2.b
-            3.ˇ"
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(" Item 2.c", window, cx);
+        editor.handle_input("Item 2.c", window, cx);
     });
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
@@ -28686,6 +28671,131 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_relative_line_numbers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer_1 = cx.new(|cx| Buffer::local("aaaaaaaaaa\nbbb\n", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("cccccccccc\nddd\n", cx));
+    let buffer_3 = cx.new(|cx| Buffer::local("eee\nffffffffff\n", cx));
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            cx,
+        );
+        multibuffer
+    });
+
+    // wrapped contents of multibuffer:
+    //    aaa
+    //    aaa
+    //    aaa
+    //    a
+    //    bbb
+    //
+    //    ccc
+    //    ccc
+    //    ccc
+    //    c
+    //    ddd
+    //
+    //    eee
+    //    fff
+    //    fff
+    //    fff
+    //    f
+
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_wrap_width(Some(30.0.into()), cx); // every 3 characters
+
+        // includes trailing newlines.
+        let expected_line_numbers = [2, 6, 7, 10, 14, 15, 18, 19, 23];
+        let expected_wrapped_line_numbers = [
+            2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21, 22, 23,
+        ];
+
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([
+                Point::new(7, 0)..Point::new(7, 1), // second row of `ccc`
+            ]);
+        });
+
+        let snapshot = editor.snapshot(window, cx);
+
+        // these are all 0-indexed
+        let base_display_row = DisplayRow(11);
+        let base_row = 3;
+        let wrapped_base_row = 7;
+
+        // test not counting wrapped lines
+        let expected_relative_numbers = expected_line_numbers
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| (DisplayRow(row), i.abs_diff(base_row) as u32))
+            .collect_vec();
+        let actual_relative_numbers = snapshot
+            .calculate_relative_line_numbers(
+                &(DisplayRow(0)..DisplayRow(24)),
+                base_display_row,
+                false,
+            )
+            .into_iter()
+            .sorted()
+            .collect_vec();
+        assert_eq!(expected_relative_numbers, actual_relative_numbers);
+        // check `calculate_relative_line_numbers()` against `relative_line_delta()` for each line
+        for (display_row, relative_number) in expected_relative_numbers {
+            assert_eq!(
+                relative_number,
+                snapshot
+                    .relative_line_delta(display_row, base_display_row, false)
+                    .unsigned_abs() as u32,
+            );
+        }
+
+        // test counting wrapped lines
+        let expected_wrapped_relative_numbers = expected_wrapped_line_numbers
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| (DisplayRow(row), i.abs_diff(wrapped_base_row) as u32))
+            .filter(|(row, _)| *row != base_display_row)
+            .collect_vec();
+        let actual_relative_numbers = snapshot
+            .calculate_relative_line_numbers(
+                &(DisplayRow(0)..DisplayRow(24)),
+                base_display_row,
+                true,
+            )
+            .into_iter()
+            .sorted()
+            .collect_vec();
+        assert_eq!(expected_wrapped_relative_numbers, actual_relative_numbers);
+        // check `calculate_relative_line_numbers()` against `relative_wrapped_line_delta()` for each line
+        for (display_row, relative_number) in expected_wrapped_relative_numbers {
+            assert_eq!(
+                relative_number,
+                snapshot
+                    .relative_line_delta(display_row, base_display_row, true)
+                    .unsigned_abs() as u32,
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {
@@ -29150,208 +29260,6 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_filtered_editor_pair(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-    let mut leader_cx = EditorTestContext::new(cx).await;
-
-    let diff_base = indoc!(
-        r#"
-        one
-        two
-        three
-        four
-        five
-        six
-        "#
-    );
-
-    let initial_state = indoc!(
-        r#"
-        ˇone
-        two
-        THREE
-        four
-        five
-        six
-        "#
-    );
-
-    leader_cx.set_state(initial_state);
-
-    leader_cx.set_head_text(&diff_base);
-    leader_cx.run_until_parked();
-
-    let follower = leader_cx.update_multibuffer(|leader, cx| {
-        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-        leader.set_all_diff_hunks_expanded(cx);
-        leader.get_or_create_follower(cx)
-    });
-    follower.update(cx, |follower, cx| {
-        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-        follower.set_all_diff_hunks_expanded(cx);
-    });
-
-    let follower_editor =
-        leader_cx.new_window_entity(|window, cx| build_editor(follower, window, cx));
-    // leader_cx.window.focus(&follower_editor.focus_handle(cx));
-
-    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut leader_cx).await;
-    cx.run_until_parked();
-
-    leader_cx.assert_editor_state(initial_state);
-    follower_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        three
-        four
-        five
-        six
-        "#
-    });
-
-    follower_cx.editor(|editor, _window, cx| {
-        assert!(editor.read_only(cx));
-    });
-
-    leader_cx.update_editor(|editor, _window, cx| {
-        editor.edit([(Point::new(4, 0)..Point::new(5, 0), "FIVE\n")], cx);
-    });
-    cx.run_until_parked();
-
-    leader_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        THREE
-        four
-        FIVE
-        six
-        "#
-    });
-
-    follower_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        three
-        four
-        five
-        six
-        "#
-    });
-
-    leader_cx.update_editor(|editor, _window, cx| {
-        editor.edit([(Point::new(6, 0)..Point::new(6, 0), "SEVEN")], cx);
-    });
-    cx.run_until_parked();
-
-    leader_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        THREE
-        four
-        FIVE
-        six
-        SEVEN"#
-    });
-
-    follower_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        three
-        four
-        five
-        six
-        "#
-    });
-
-    leader_cx.update_editor(|editor, window, cx| {
-        editor.move_down(&MoveDown, window, cx);
-        editor.refresh_selected_text_highlights(true, window, cx);
-    });
-    leader_cx.run_until_parked();
-}
-
-#[gpui::test]
-async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-    let base_text = "base\n";
-    let buffer_text = "buffer\n";
-
-    let buffer1 = cx.new(|cx| Buffer::local(buffer_text, cx));
-    let diff1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer1, cx));
-
-    let extra_buffer_1 = cx.new(|cx| Buffer::local("dummy text 1\n", cx));
-    let extra_diff_1 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_1, cx));
-    let extra_buffer_2 = cx.new(|cx| Buffer::local("dummy text 2\n", cx));
-    let extra_diff_2 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_2, cx));
-
-    let leader = cx.new(|cx| {
-        let mut leader = MultiBuffer::new(Capability::ReadWrite);
-        leader.set_all_diff_hunks_expanded(cx);
-        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-        leader
-    });
-    let follower = leader.update(cx, |leader, cx| leader.get_or_create_follower(cx));
-    follower.update(cx, |follower, _| {
-        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-    });
-
-    leader.update(cx, |leader, cx| {
-        leader.insert_excerpts_after(
-            ExcerptId::min(),
-            extra_buffer_2.clone(),
-            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-            cx,
-        );
-        leader.add_diff(extra_diff_2.clone(), cx);
-
-        leader.insert_excerpts_after(
-            ExcerptId::min(),
-            extra_buffer_1.clone(),
-            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-            cx,
-        );
-        leader.add_diff(extra_diff_1.clone(), cx);
-
-        leader.insert_excerpts_after(
-            ExcerptId::min(),
-            buffer1.clone(),
-            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-            cx,
-        );
-        leader.add_diff(diff1.clone(), cx);
-    });
-
-    cx.run_until_parked();
-    let mut cx = cx.add_empty_window();
-
-    let leader_editor = cx
-        .new_window_entity(|window, cx| Editor::for_multibuffer(leader.clone(), None, window, cx));
-    let follower_editor = cx.new_window_entity(|window, cx| {
-        Editor::for_multibuffer(follower.clone(), None, window, cx)
-    });
-
-    let mut leader_cx = EditorTestContext::for_editor_in(leader_editor.clone(), &mut cx).await;
-    leader_cx.assert_editor_state(indoc! {"
-       ˇbuffer
-
-       dummy text 1
-
-       dummy text 2
-    "});
-    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor.clone(), &mut cx).await;
-    follower_cx.assert_editor_state(indoc! {"
-        ˇbase
-
-
-    "});
-}
-
-#[gpui::test]
 async fn test_multibuffer_scroll_cursor_top_margin(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -29498,6 +29406,535 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Adding newline after (whitespace + prefix + any non-whitespace) adds marker
+    cx.set_state(indoc! {"
+        - [ ] taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+        - [ ] ˇ
+    "});
+
+    // Case 2: Works with checked task items too
+    cx.set_state(indoc! {"
+        - [x] completed taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [x] completed task
+        - [ ] ˇ
+    "});
+
+    // Case 2.1: Works with uppercase checked marker too
+    cx.set_state(indoc! {"
+        - [X] completed taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [X] completed task
+        - [ ] ˇ
+    "});
+
+    // Case 3: Cursor position doesn't matter - content after marker is what counts
+    cx.set_state(indoc! {"
+        - [ ] taˇsk
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [ ] ta
+        - [ ] ˇsk
+    "});
+
+    // Case 4: Adding newline after (whitespace + prefix + some whitespace) does NOT add marker
+    cx.set_state(indoc! {"
+        - [ ]  ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        - [ ]$$
+        ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+
+    // Case 5: Adding newline with content adds marker preserving indentation
+    cx.set_state(indoc! {"
+        - [ ] task
+          - [ ] indentedˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+          - [ ] indented
+          - [ ] ˇ
+    "});
+
+    // Case 6: Adding newline with cursor right after prefix, unindents
+    cx.set_state(indoc! {"
+        - [ ] task
+          - [ ] sub task
+            - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+          - [ ] sub task
+          - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+
+    // Case 7: Adding newline with cursor right after prefix, removes marker
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+          - [ ] sub task
+        - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+          - [ ] sub task
+        ˇ
+    "});
+
+    // Case 8: Cursor before or inside prefix does not add marker
+    cx.set_state(indoc! {"
+        ˇ- [ ] task
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+
+        ˇ- [ ] task
+    "});
+
+    cx.set_state(indoc! {"
+        - [ˇ ] task
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [
+        ˇ
+        ] task
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Adding newline after (whitespace + marker + any non-whitespace) adds marker
+    cx.set_state(indoc! {"
+        - itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+        - ˇ
+    "});
+
+    // Case 2: Works with different markers
+    cx.set_state(indoc! {"
+        * starred itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        * starred item
+        * ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        + plus itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        + plus item
+        + ˇ
+    "});
+
+    // Case 3: Cursor position doesn't matter - content after marker is what counts
+    cx.set_state(indoc! {"
+        - itˇem
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - it
+        - ˇem
+    "});
+
+    // Case 4: Adding newline after (whitespace + marker + some whitespace) does NOT add marker
+    cx.set_state(indoc! {"
+        -  ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        - $
+        ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+
+    // Case 5: Adding newline with content adds marker preserving indentation
+    cx.set_state(indoc! {"
+        - item
+          - indentedˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+          - indented
+          - ˇ
+    "});
+
+    // Case 6: Adding newline with cursor right after marker, unindents
+    cx.set_state(indoc! {"
+        - item
+          - sub item
+            - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+          - sub item
+          - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+
+    // Case 7: Adding newline with cursor right after marker, removes marker
+    cx.assert_editor_state(indoc! {"
+        - item
+          - sub item
+        - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+          - sub item
+        ˇ
+    "});
+
+    // Case 8: Cursor before or inside prefix does not add marker
+    cx.set_state(indoc! {"
+        ˇ- item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+
+        ˇ- item
+    "});
+
+    cx.set_state(indoc! {"
+        -ˇ item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        -
+        ˇitem
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Adding newline after (whitespace + marker + any non-whitespace) increments number
+    cx.set_state(indoc! {"
+        1. first itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+        2. ˇ
+    "});
+
+    // Case 2: Works with larger numbers
+    cx.set_state(indoc! {"
+        10. tenth itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        10. tenth item
+        11. ˇ
+    "});
+
+    // Case 3: Cursor position doesn't matter - content after marker is what counts
+    cx.set_state(indoc! {"
+        1. itˇem
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. it
+        2. ˇem
+    "});
+
+    // Case 4: Adding newline after (whitespace + marker + some whitespace) does NOT add marker
+    cx.set_state(indoc! {"
+        1.  ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        1. $
+        ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+
+    // Case 5: Adding newline with content adds marker preserving indentation
+    cx.set_state(indoc! {"
+        1. item
+          2. indentedˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. item
+          2. indented
+          3. ˇ
+    "});
+
+    // Case 6: Adding newline with cursor right after marker, unindents
+    cx.set_state(indoc! {"
+        1. item
+          2. sub item
+            3. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. item
+          2. sub item
+          1. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+
+    // Case 7: Adding newline with cursor right after marker, removes marker
+    cx.assert_editor_state(indoc! {"
+        1. item
+          2. sub item
+        1. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. item
+          2. sub item
+        ˇ
+    "});
+
+    // Case 8: Cursor before or inside prefix does not add marker
+    cx.set_state(indoc! {"
+        ˇ1. item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+
+        ˇ1. item
+    "});
+
+    cx.set_state(indoc! {"
+        1ˇ. item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1
+        ˇ. item
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_should_not_autoindent_ordered_list(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Adding newline after (whitespace + marker + any non-whitespace) increments number
+    cx.set_state(indoc! {"
+        1. first item
+          1. sub first item
+          2. sub second item
+          3. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. sub first item
+          2. sub second item
+        1. ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_tab_list_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Unordered list - cursor after prefix, adds indent before prefix
+    cx.set_state(indoc! {"
+        - ˇitem
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$- ˇitem
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 2: Task list - cursor after prefix
+    cx.set_state(indoc! {"
+        - [ ] ˇtask
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$- [ ] ˇtask
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 3: Ordered list - cursor after prefix
+    cx.set_state(indoc! {"
+        1. ˇfirst
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$1. ˇfirst
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 4: With existing indentation - adds more indent
+    let initial = indoc! {"
+        $$- ˇitem
+    "};
+    cx.set_state(initial.replace("$", " ").as_str());
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$$$- ˇitem
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 5: Empty list item
+    cx.set_state(indoc! {"
+        - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$- ˇ
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 6: Cursor at end of line with content
+    cx.set_state(indoc! {"
+        - itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$- itemˇ
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 7: Cursor at start of list item, indents it
+    cx.set_state(indoc! {"
+        - item
+        ˇ  - sub item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        - item
+          ˇ  - sub item
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 8: Cursor at start of list item, moves the cursor when "indent_list_on_tab" is false
+    cx.update_editor(|_, _, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.indent_list_on_tab = Some(false);
+            });
+        });
+    });
+    cx.set_state(indoc! {"
+        - item
+        ˇ  - sub item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        - item
+          ˇ- sub item
+    "};
+    cx.assert_editor_state(expected);
+}
+
+#[gpui::test]
 async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| project::trusted_worktrees::init(HashMap::default(), None, None, cx));
@@ -29578,11 +30015,14 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
             .map(|wt| wt.read(cx).id())
             .expect("should have a worktree")
     });
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
 
     let trusted_worktrees =
         cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
 
-    let can_trust = trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
     assert!(!can_trust, "worktree should be restricted initially");
 
     let buffer_before_approval = project
@@ -29628,8 +30068,8 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
 
     trusted_worktrees.update(cx, |store, cx| {
         store.trust(
+            &worktree_store,
             std::collections::HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
-            None,
             cx,
         );
     });
@@ -29656,8 +30096,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
         "inlay hints should be queried after trust approval"
     );
 
-    let can_trust_after =
-        trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
+    let can_trust_after = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
     assert!(can_trust_after, "worktree should be trusted after trust()");
 }
 

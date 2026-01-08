@@ -50,6 +50,63 @@ pub struct DbThread {
     pub completion_mode: Option<CompletionMode>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
+    #[serde(default)]
+    pub imported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedThread {
+    pub title: SharedString,
+    pub messages: Vec<DbMessage>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub model: Option<DbLanguageModel>,
+    #[serde(default)]
+    pub completion_mode: Option<CompletionMode>,
+    pub version: String,
+}
+
+impl SharedThread {
+    pub const VERSION: &'static str = "1.0.0";
+
+    pub fn from_db_thread(thread: &DbThread) -> Self {
+        Self {
+            title: thread.title.clone(),
+            messages: thread.messages.clone(),
+            updated_at: thread.updated_at,
+            model: thread.model.clone(),
+            completion_mode: thread.completion_mode,
+            version: Self::VERSION.to_string(),
+        }
+    }
+
+    pub fn to_db_thread(self) -> DbThread {
+        DbThread {
+            title: format!("🔗 {}", self.title).into(),
+            messages: self.messages,
+            updated_at: self.updated_at,
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: Default::default(),
+            model: self.model,
+            completion_mode: self.completion_mode,
+            profile: None,
+            imported: true,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        const COMPRESSION_LEVEL: i32 = 3;
+        let json = serde_json::to_vec(self)?;
+        let compressed = zstd::encode_all(json.as_slice(), COMPRESSION_LEVEL)?;
+        Ok(compressed)
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        let decompressed = zstd::decode_all(data)?;
+        Ok(serde_json::from_slice(&decompressed)?)
+    }
 }
 
 impl DbThread {
@@ -209,6 +266,7 @@ impl DbThread {
             model: thread.model,
             completion_mode: thread.completion_mode,
             profile: thread.profile,
+            imported: false,
         })
     }
 }
@@ -439,5 +497,47 @@ impl ThreadsDatabase {
 
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_shared_thread_roundtrip() {
+        let original = SharedThread {
+            title: "Test Thread".into(),
+            messages: vec![],
+            updated_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            model: None,
+            completion_mode: None,
+            version: SharedThread::VERSION.to_string(),
+        };
+
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let restored = SharedThread::from_bytes(&bytes).expect("Failed to deserialize");
+
+        assert_eq!(restored.title, original.title);
+        assert_eq!(restored.version, original.version);
+        assert_eq!(restored.updated_at, original.updated_at);
+    }
+
+    #[test]
+    fn test_imported_flag_defaults_to_false() {
+        // Simulate deserializing a thread without the imported field (backwards compatibility).
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            !db_thread.imported,
+            "Legacy threads without imported field should default to false"
+        );
     }
 }

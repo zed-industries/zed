@@ -19,7 +19,7 @@ use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Ta
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
@@ -304,8 +304,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiZed
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiZed)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -755,7 +755,7 @@ impl LanguageModel for CloudLanguageModel {
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;
         let mode = request.mode;
-        let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
+        let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let thinking_allowed = request.thinking_allowed;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {

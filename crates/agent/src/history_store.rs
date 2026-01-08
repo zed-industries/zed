@@ -43,7 +43,7 @@ pub fn load_agent_thread(
     cx.spawn(async move |cx| {
         let (agent, _) = connection.await?;
         let agent = agent.downcast::<crate::NativeAgentConnection>().unwrap();
-        cx.update(|cx| agent.load_thread(session_id, cx))?.await
+        cx.update(|cx| agent.load_thread(session_id, cx)).await
     })
 }
 
@@ -172,6 +172,20 @@ impl HistoryStore {
         cx.background_spawn(async move {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.load_thread(id).await
+        })
+    }
+
+    pub fn save_thread(
+        &mut self,
+        id: acp::SessionId,
+        thread: crate::DbThread,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.save_thread(id, thread).await?;
+            this.update(cx, |this, cx| this.reload(cx))
         })
     }
 

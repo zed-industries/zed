@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -93,7 +93,7 @@ impl LanguageModels {
     fn refresh_list(&mut self, cx: &App) {
         let providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
@@ -153,7 +153,10 @@ impl LanguageModels {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon: Some(provider.icon()),
+            icon: Some(match provider.icon() {
+                IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
+                IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
+            }),
         }
     }
 
@@ -164,7 +167,7 @@ impl LanguageModels {
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
         let authenticate_all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
@@ -247,10 +250,10 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         let project_context = cx
-            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))?
+            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))
             .await;
 
-        cx.new(|cx| {
+        Ok(cx.new(|cx| {
             let context_server_store = project.read(cx).context_server_store();
             let context_server_registry =
                 cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
@@ -292,7 +295,7 @@ impl NativeAgent {
                 fs,
                 _subscriptions: subscriptions,
             }
-        })
+        }))
     }
 
     fn register_session(
@@ -426,7 +429,7 @@ impl NativeAgent {
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(UserRulesContext {
-                        uuid: prompt_metadata.id.user_id()?,
+                        uuid: prompt_metadata.id.as_user()?,
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
@@ -509,10 +512,12 @@ impl NativeAgent {
             let buffer_task =
                 project.update(cx, |project, cx| project.open_buffer(project_path, cx));
             let rope_task = cx.spawn(async move |cx| {
-                buffer_task.await?.read_with(cx, |buffer, cx| {
+                let buffer = buffer_task.await?;
+                let (project_entry_id, rope) = buffer.read_with(cx, |buffer, cx| {
                     let project_entry_id = buffer.entry_id(cx).context("buffer has no file")?;
                     anyhow::Ok((project_entry_id, buffer.as_rope().clone()))
-                })?
+                })?;
+                anyhow::Ok((project_entry_id, rope))
             });
             // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
@@ -758,10 +763,10 @@ impl NativeAgent {
             let thread = task.await?;
             let acp_thread =
                 this.update(cx, |this, cx| this.register_session(thread.clone(), cx))?;
-            let events = thread.update(cx, |thread, cx| thread.replay(cx))?;
+            let events = thread.update(cx, |thread, cx| thread.replay(cx));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
-            })?
+            })
             .await?;
             Ok(acp_thread)
         })
@@ -808,7 +813,7 @@ impl NativeAgent {
             };
             let db_thread = db_thread.await;
             database.save_thread(id, db_thread).await.log_err();
-            history.update(cx, |history, cx| history.reload(cx)).ok();
+            history.update(cx, |history, cx| history.reload(cx));
         });
     }
 
@@ -846,7 +851,7 @@ impl NativeAgent {
                     path_style,
                     cx,
                 );
-            })?;
+            });
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
@@ -863,13 +868,11 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                            anyhow::Ok(())
-                        })??;
+                        })?;
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_user_block(id, [block], path_style, cx);
-                            anyhow::Ok(())
-                        })??;
+                        });
                     }
                     context_server::types::Role::Assistant => {
                         acp_thread.update(cx, |acp_thread, cx| {
@@ -879,13 +882,11 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                            anyhow::Ok(())
-                        })??;
+                        })?;
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_agent_block(block, cx);
-                            anyhow::Ok(())
-                        })??;
+                        });
                     }
                 }
 
@@ -899,11 +900,11 @@ impl NativeAgent {
                     // Resume if MCP prompt did not end with a user message
                     thread.resume(cx)
                 }
-            })??;
+            })?;
 
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(response_stream, acp_thread, cx)
-            })?
+            })
             .await
         })
     }
@@ -1164,10 +1165,6 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn should_render_footer(&self) -> bool {
         true
     }
-
-    fn supports_favorites(&self) -> bool {
-        true
-    }
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
@@ -1188,33 +1185,30 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             log::debug!("Starting thread creation in async context");
 
             // Create Thread
-            let thread = agent.update(
-                cx,
-                |agent, cx: &mut gpui::Context<NativeAgent>| -> Result<_> {
-                    // Fetch default model from registry settings
-                    let registry = LanguageModelRegistry::read_global(cx);
-                    // Log available models for debugging
-                    let available_count = registry.available_models(cx).count();
-                    log::debug!("Total available models: {}", available_count);
+            let thread = agent.update(cx, |agent, cx| {
+                // Fetch default model from registry settings
+                let registry = LanguageModelRegistry::read_global(cx);
+                // Log available models for debugging
+                let available_count = registry.available_models(cx).count();
+                log::debug!("Total available models: {}", available_count);
 
-                    let default_model = registry.default_model().and_then(|default_model| {
-                        agent
-                            .models
-                            .model_from_id(&LanguageModels::model_id(&default_model.model))
-                    });
-                    Ok(cx.new(|cx| {
-                        Thread::new(
-                            project.clone(),
-                            agent.project_context.clone(),
-                            agent.context_server_registry.clone(),
-                            agent.templates.clone(),
-                            default_model,
-                            cx,
-                        )
-                    }))
-                },
-            )??;
-            agent.update(cx, |agent, cx| agent.register_session(thread, cx))
+                let default_model = registry.default_model().and_then(|default_model| {
+                    agent
+                        .models
+                        .model_from_id(&LanguageModels::model_id(&default_model.model))
+                });
+                cx.new(|cx| {
+                    Thread::new(
+                        project.clone(),
+                        agent.project_context.clone(),
+                        agent.context_server_registry.clone(),
+                        agent.templates.clone(),
+                        default_model,
+                        cx,
+                    )
+                })
+            });
+            Ok(agent.update(cx, |agent, cx| agent.register_session(thread, cx)))
         })
     }
 
@@ -1315,7 +1309,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
             if let Some(agent) = agent.sessions.get(session_id) {
-                agent.thread.update(cx, |thread, cx| thread.cancel(cx));
+                agent
+                    .thread
+                    .update(cx, |thread, cx| thread.cancel(cx))
+                    .detach();
             }
         });
     }
@@ -1447,7 +1444,7 @@ impl ThreadEnvironment for AcpThreadEnvironment {
             let terminal = task?.await?;
 
             let (drop_tx, drop_rx) = oneshot::channel();
-            let terminal_id = terminal.read_with(cx, |terminal, _cx| terminal.id().clone())?;
+            let terminal_id = terminal.read_with(cx, |terminal, _cx| terminal.id().clone());
 
             cx.spawn(async move |cx| {
                 drop_rx.await.ok();
@@ -1472,17 +1469,19 @@ pub struct AcpTerminalHandle {
 
 impl TerminalHandle for AcpTerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
-        self.terminal.read_with(cx, |term, _cx| term.id().clone())
+        Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
-        self.terminal
-            .read_with(cx, |term, _cx| term.wait_for_exit())
+        Ok(self
+            .terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit()))
     }
 
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
-        self.terminal
-            .read_with(cx, |term, cx| term.current_output(cx))
+        Ok(self
+            .terminal
+            .read_with(cx, |term, cx| term.current_output(cx)))
     }
 
     fn kill(&self, cx: &AsyncApp) -> Result<()> {
@@ -1490,8 +1489,14 @@ impl TerminalHandle for AcpTerminalHandle {
             self.terminal.update(cx, |terminal, cx| {
                 terminal.kill(cx);
             });
-        })?;
+        });
         Ok(())
+    }
+
+    fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool> {
+        Ok(self
+            .terminal
+            .read_with(cx, |term, _cx| term.was_stopped_by_user()))
     }
 }
 
@@ -1630,7 +1635,9 @@ mod internal_tests {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(ui::IconName::ZedAssistant),
+                    icon: Some(acp_thread::AgentModelIcon::Named(
+                        ui::IconName::ZedAssistant
+                    )),
                 }]
             )])
         );

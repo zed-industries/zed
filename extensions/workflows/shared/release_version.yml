@@ -1,0 +1,16 @@
+# Generated from xtask::workflows::extensions::release_version within the Zed repository.
+# Rebuild with `cargo xtask workflows`.
+name: extensions::release_version
+on:
+  push:
+    tags:
+    - v**
+jobs:
+  call_release_version:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: zed-industries/zed/.github/workflows/extension_release.yml@main
+    secrets:
+      app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+      app-secret: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}

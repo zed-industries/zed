@@ -80,7 +80,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -285,6 +285,8 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Toggles read-only mode for the active item (if supported by that item).
+        ToggleReadOnlyFile,
         /// Zooms in on the active pane.
         ZoomIn,
         /// Zooms out of the active pane.
@@ -568,8 +570,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
             Ok(Some(paths)) => {
                 cx.update(|cx| {
                     open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
-                })
-                .ok();
+                });
             }
             Ok(None) => {}
             Err(err) => {
@@ -585,8 +586,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
                             })
                             .ok();
                     }
-                })
-                .ok();
+                });
             }
         },
     )
@@ -687,7 +687,7 @@ impl ProjectItemRegistry {
                         Ok(project_item) => {
                             let project_item = project_item;
                             let project_entry_id: Option<ProjectEntryId> =
-                                project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                                project_item.read_with(cx, project::ProjectItem::entry_id);
                             let build_workspace_item = Box::new(
                                 |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
                                     Box::new(cx.new(|cx| {
@@ -1192,7 +1192,6 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
-    _schedule_serialize_worktree_trust: Task<()>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1239,23 +1238,26 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-            cx.subscribe(&trusted_worktrees, |workspace, worktrees_store, e, cx| {
+            cx.subscribe(&trusted_worktrees, |_, worktrees_store, e, cx| {
                 if let TrustedWorktreesEvent::Trusted(..) = e {
                     // Do not persist auto trusted worktrees
                     if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                        let new_trusted_worktrees =
-                            worktrees_store.update(cx, |worktrees_store, cx| {
-                                worktrees_store.trusted_paths_for_serialization(cx)
-                            });
-                        let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
-                        workspace._schedule_serialize_worktree_trust =
-                            cx.background_spawn(async move {
-                                timeout.await;
-                                persistence::DB
-                                    .save_trusted_worktrees(new_trusted_worktrees)
-                                    .await
-                                    .log_err();
-                            });
+                        worktrees_store.update(cx, |worktrees_store, cx| {
+                            worktrees_store.schedule_serialization(
+                                cx,
+                                |new_trusted_worktrees, cx| {
+                                    let timeout =
+                                        cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
+                                    cx.background_spawn(async move {
+                                        timeout.await;
+                                        persistence::DB
+                                            .save_trusted_worktrees(new_trusted_worktrees)
+                                            .await
+                                            .log_err();
+                                    })
+                                },
+                            )
+                        });
                     }
                 }
             })
@@ -1283,24 +1285,11 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
-                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(*worktree_id, cx);
-                        });
-                    }
-                }
-
                 project::Event::WorktreeRemoved(_) => {
                     this.update_worktree_data(window, cx);
                 }
 
-                project::Event::WorktreeAdded(worktree_id) => {
-                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(*worktree_id, cx);
-                        });
-                    }
+                project::Event::WorktreeUpdatedEntries(..) | project::Event::WorktreeAdded(..) => {
                     this.update_worktree_data(window, cx);
                 }
 
@@ -1313,7 +1302,7 @@ impl Workspace {
                     }
                 }
 
-                project::Event::DisconnectedFromSshRemote => {
+                project::Event::DisconnectedFromRemote => {
                     this.update_window_edited(window, cx);
                 }
 
@@ -1603,7 +1592,6 @@ impl Workspace {
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
             _schedule_serialize_ssh_paths: None,
-            _schedule_serialize_worktree_trust: Task::ready(()),
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -1667,11 +1655,9 @@ impl Workspace {
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
                 paths_to_open = paths.ordered_paths().cloned().collect();
                 if !paths.is_lexicographically_ordered() {
-                    project_handle
-                        .update(cx, |project, cx| {
-                            project.set_worktrees_reordered(true, cx);
-                        })
-                        .log_err();
+                    project_handle.update(cx, |project, cx| {
+                        project.set_worktrees_reordered(true, cx);
+                    });
                 }
             }
 
@@ -1683,7 +1669,7 @@ impl Workspace {
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
-                    })?
+                    })
                     .await
                     .log_err()
                 {
@@ -1701,8 +1687,21 @@ impl Workspace {
 
             let toolchains = DB.toolchains(workspace_id).await?;
 
-            for (toolchain, worktree_id, path) in toolchains {
+            for (toolchain, worktree_path, path) in toolchains {
                 let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                }) else {
+                    // We did not find a worktree with a given path, but that's whatever.
+                    continue;
+                };
                 if !app_state.fs.is_file(toolchain_path.as_path()).await {
                     continue;
                 }
@@ -1710,7 +1709,7 @@ impl Workspace {
                 project_handle
                     .update(cx, |this, cx| {
                         this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
-                    })?
+                    })
                     .await;
             }
             if let Some(workspace) = serialized_workspace.as_ref() {
@@ -1720,7 +1719,7 @@ impl Workspace {
                             this.add_toolchain(toolchain.clone(), scope.clone(), cx);
                         }
                     }
-                })?;
+                });
             }
 
             let window = if let Some(window) = requesting_window {
@@ -1770,7 +1769,7 @@ impl Workspace {
                 };
 
                 // Use the serialized workspace to construct the new window
-                let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
+                let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx));
                 options.window_bounds = window_bounds;
                 let centered_layout = serialized_workspace
                     .as_ref()
@@ -2506,7 +2505,7 @@ impl Workspace {
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
-                && active_call.read_with(cx, |call, _| call.room().is_some())?
+                && active_call.read_with(cx, |call, _| call.room().is_some())
             {
                 if close_intent == CloseIntent::CloseWindow {
                     let answer = cx.update(|window, cx| {
@@ -2523,7 +2522,7 @@ impl Workspace {
                         return anyhow::Ok(false);
                     } else {
                         active_call
-                            .update(cx, |call, cx| call.hang_up(cx))?
+                            .update(cx, |call, cx| call.hang_up(cx))
                             .await
                             .log_err();
                     }
@@ -2769,7 +2768,7 @@ impl Workspace {
                     },
                     cx,
                 )
-            })?
+            })
             .await?;
             Ok(())
         })
@@ -2978,7 +2977,7 @@ impl Workspace {
         });
         cx.spawn(async move |cx| {
             let (worktree, path) = entry.await?;
-            let worktree_id = worktree.read_with(cx, |t, _| t.id())?;
+            let worktree_id = worktree.read_with(cx, |t, _| t.id());
             Ok((
                 worktree,
                 ProjectPath {
@@ -4236,7 +4235,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane.clone();
-        self.active_item_path_changed(window, cx);
+        self.active_item_path_changed(true, window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
     }
 
@@ -4259,16 +4258,19 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split {
-                direction,
-                clone_active_item,
-            } => {
-                if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx)
-                        .detach();
-                } else {
-                    self.split_and_move(pane.clone(), *direction, window, cx);
-                }
+            pane::Event::Split { direction, mode } => {
+                match mode {
+                    SplitMode::ClonePane => {
+                        self.split_and_clone(pane.clone(), *direction, window, cx)
+                            .detach();
+                    }
+                    SplitMode::EmptyPane => {
+                        self.split_pane(pane.clone(), *direction, window, cx);
+                    }
+                    SplitMode::MovePane => {
+                        self.split_and_move(pane.clone(), *direction, window, cx);
+                    }
+                };
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -4293,7 +4295,7 @@ impl Workspace {
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
-                    self.active_item_path_changed(window, cx);
+                    self.active_item_path_changed(*focus_changed, window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
                     self.set_active_pane(pane, window, cx);
@@ -4309,7 +4311,7 @@ impl Workspace {
             }
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
-                    self.active_item_path_changed(window, cx);
+                    self.active_item_path_changed(false, window, cx);
                 }
                 serialize_workspace = false;
             }
@@ -4478,7 +4480,7 @@ impl Workspace {
 
             cx.notify();
         } else {
-            self.active_item_path_changed(window, cx);
+            self.active_item_path_changed(true, window, cx);
         }
         cx.emit(Event::PaneRemoved);
     }
@@ -4732,14 +4734,19 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn active_item_path_changed(
+        &mut self,
+        focus_changed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         self.project.update(cx, |project, cx| {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        if let Some(project_path) = &active_entry {
+        if focus_changed && let Some(project_path) = &active_entry {
             let git_store_entity = self.project.read(cx).git_store().clone();
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
@@ -4925,8 +4932,6 @@ impl Workspace {
 
         cx.notify();
         proto::FollowResponse {
-            // TODO: Remove after version 0.145.x stabilizes.
-            active_view_id: active_view.as_ref().and_then(|view| view.id.clone()),
             views: active_view.iter().cloned().collect(),
             active_view,
         }
@@ -5037,7 +5042,7 @@ impl Workspace {
                 .get(&leader_id.into())
                 .context("stopped following")?;
             anyhow::Ok(state.pane().clone())
-        })??;
+        })?;
         let existing_item = pane.update_in(cx, |pane, window, cx| {
             let client = this.read(cx).client().clone();
             pane.items().find_map(|item| {
@@ -5106,7 +5111,8 @@ impl Workspace {
             );
 
             Some(())
-        })?;
+        })
+        .context("no follower state")?;
 
         Ok(())
     }
@@ -5200,19 +5206,14 @@ impl Workspace {
                         && let Some(variant) = item.to_state_proto(window, cx)
                     {
                         let view = Some(proto::View {
-                            id: id.clone(),
+                            id,
                             leader_id: leader_peer_id,
                             variant: Some(variant),
                             panel_id: panel_id.map(|id| id as i32),
                         });
 
                         is_project_item = item.is_project_item(window, cx);
-                        update = proto::UpdateActiveView {
-                            view,
-                            // TODO: Remove after version 0.145.x stabilizes.
-                            id,
-                            leader_id: leader_peer_id,
-                        };
+                        update = proto::UpdateActiveView { view };
                     };
                 }
             }
@@ -5869,7 +5870,7 @@ impl Workspace {
                             breakpoint_store
                                 .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
                         })
-                })?
+                })
                 .await;
 
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
@@ -6082,7 +6083,7 @@ impl Workspace {
                         let clear_task = persistence::DB.clear_trusted_worktrees();
                         cx.spawn(async move |_, cx| {
                             if clear_task.await.log_err().is_some() {
-                                cx.update(|cx| reload(cx)).ok();
+                                cx.update(|cx| reload(cx));
                             }
                         })
                         .detach();
@@ -6243,6 +6244,14 @@ impl Workspace {
                     cx.propagate();
                 },
             ))
+            .on_action(
+                cx.listener(|workspace, _: &ToggleReadOnlyFile, window, cx| {
+                    let pane = workspace.active_pane().clone();
+                    if let Some(item) = pane.read(cx).active_item() {
+                        item.toggle_read_only(window, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(Workspace::cancel))
     }
 
@@ -6596,7 +6605,9 @@ impl Workspace {
                 .unwrap_or(false);
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
-                let remote_host = project.remote_connection_options(cx);
+                let remote_host = project
+                    .remote_connection_options(cx)
+                    .map(RemoteHostLocation::from);
                 let worktree_store = project.worktree_store().downgrade();
                 self.toggle_modal(window, cx, |_, cx| {
                     SecurityModal::new(worktree_store, remote_host, cx)
@@ -7498,7 +7509,7 @@ impl WorkspaceStore {
             });
 
             Ok(response)
-        })?
+        })
     }
 
     async fn handle_update_followers(
@@ -7522,7 +7533,7 @@ impl WorkspaceStore {
                     .is_ok()
             });
             Ok(())
-        })?
+        })
     }
 
     pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
@@ -7648,7 +7659,7 @@ async fn join_channel_internal(
             None
         };
         (should_prompt, open_room)
-    })?;
+    });
 
     if let Some(room) = open_room {
         let task = room.update(cx, |room, cx| {
@@ -7657,7 +7668,7 @@ async fn join_channel_internal(
             }
 
             None
-        })?;
+        });
         if let Some(task) = task {
             task.await?;
         }
@@ -7686,7 +7697,7 @@ async fn join_channel_internal(
         }
     }
 
-    let client = cx.update(|cx| active_call.read(cx).client())?;
+    let client = cx.update(|cx| active_call.read(cx).client());
 
     let mut client_status = client.status();
 
@@ -7717,14 +7728,14 @@ async fn join_channel_internal(
     let room = active_call
         .update(cx, |active_call, cx| {
             active_call.join_channel(channel_id, cx)
-        })?
+        })
         .await?;
 
     let Some(room) = room else {
         return anyhow::Ok(true);
     };
 
-    room.update(cx, |room, _| room.room_update_completed())?
+    room.update(cx, |room, _| room.room_update_completed())
         .await;
 
     let task = room.update(cx, |room, cx| {
@@ -7766,7 +7777,7 @@ async fn join_channel_internal(
         }
 
         None
-    })?;
+    });
     if let Some(task) = task {
         task.await?;
         return anyhow::Ok(true);
@@ -7805,14 +7816,13 @@ pub fn join_channel(
                         None,
                         cx,
                     )
-                })?
+                })
                 .await?;
 
             if result.is_ok() {
                 cx.update(|cx| {
                     cx.dispatch_action(&OpenChannelNotes);
-                })
-                .log_err();
+                });
             }
 
             active_window = Some(window_handle);
@@ -7870,7 +7880,7 @@ pub async fn get_any_active_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))?
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -7895,8 +7905,6 @@ fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Works
         }
         None
     })
-    .ok()
-    .flatten()
 }
 
 pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
@@ -7970,7 +7978,7 @@ pub fn open_paths(
                         }
                     }
                 }
-            })?;
+            });
 
             if open_options.open_new_workspace.is_none()
                 && (existing.is_none() || open_options.prefer_focused_window)
@@ -8000,7 +8008,7 @@ pub fn open_paths(
                             break;
                         }
                     }
-                })?;
+                });
             }
         }
 
@@ -8040,7 +8048,7 @@ pub fn open_paths(
                     None,
                     cx,
                 )
-            })?
+            })
             .await
         };
 
@@ -8157,7 +8165,7 @@ pub fn open_remote_project_with_new_connection(
                     delegate,
                     cx,
                 )
-            })?
+            })
             .await?
         {
             Some(result) => result,
@@ -8175,7 +8183,7 @@ pub fn open_remote_project_with_new_connection(
                 true,
                 cx,
             )
-        })?;
+        });
 
         open_remote_project_inner(
             project,
@@ -8225,11 +8233,24 @@ async fn open_remote_project_inner(
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
-    for (toolchain, worktree_id, path) in toolchains {
+    for (toolchain, worktree_path, path) in toolchains {
         project
             .update(cx, |this, cx| {
+                let Some(worktree_id) =
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                else {
+                    return Task::ready(None);
+                };
+
                 this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
-            })?
+            })
             .await;
     }
     let mut project_paths_to_open = vec![];
@@ -8237,7 +8258,7 @@ async fn open_remote_project_inner(
 
     for path in paths {
         let result = cx
-            .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
+            .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))
             .await;
         match result {
             Ok((_, project_path)) => {
@@ -8354,9 +8375,9 @@ pub fn join_in_room_project(
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace
         } else {
-            let active_call = cx.update(|cx| ActiveCall::global(cx))?;
+            let active_call = cx.update(|cx| ActiveCall::global(cx));
             let room = active_call
-                .read_with(cx, |call, _| call.room().cloned())?
+                .read_with(cx, |call, _| call.room().cloned())
                 .context("not in a call")?;
             let project = room
                 .update(cx, |room, cx| {
@@ -8366,7 +8387,7 @@ pub fn join_in_room_project(
                         app_state.fs.clone(),
                         cx,
                     )
-                })?
+                })
                 .await?;
 
             let window_bounds_override = window_bounds_env_override();
@@ -8378,7 +8399,7 @@ pub fn join_in_room_project(
                         Workspace::new(Default::default(), project, app_state.clone(), window, cx)
                     })
                 })
-            })??
+            })?
         };
 
         workspace.update(cx, |workspace, window, cx| {
@@ -8444,7 +8465,7 @@ pub fn reload(cx: &mut App) {
         if let Some(prompt) = prompt {
             let answer = prompt.await?;
             if answer != 0 {
-                return Ok(());
+                return anyhow::Ok(());
             }
         }
 
@@ -8454,10 +8475,11 @@ pub fn reload(cx: &mut App) {
                 workspace.prepare_to_close(CloseIntent::Quit, window, cx)
             }) && !should_close.await?
             {
-                return Ok(());
+                return anyhow::Ok(());
             }
         }
-        cx.update(|cx| cx.restart())
+        cx.update(|cx| cx.restart());
+        anyhow::Ok(())
     })
     .detach_and_log_err(cx);
 }
@@ -9390,7 +9412,7 @@ mod tests {
         let right_pane = right_pane.await.unwrap();
         cx.focus(&right_pane);
 
-        let mut close = right_pane.update_in(cx, |pane, window, cx| {
+        let close = right_pane.update_in(cx, |pane, window, cx| {
             pane.close_all_items(&CloseAllItems::default(), window, cx)
                 .unwrap()
         });
@@ -9402,9 +9424,16 @@ mod tests {
         assert!(!msg.contains("3.txt"));
         assert!(!msg.contains("4.txt"));
 
+        // With best-effort close, cancelling item 1 keeps it open but items 4
+        // and (3,4) still close since their entries exist in left pane.
         cx.simulate_prompt_answer("Cancel");
         close.await;
 
+        right_pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 1);
+        });
+
+        // Remove item 3 from left pane, making (2,3) the only item with entry 3.
         left_pane
             .update_in(cx, |left_pane, window, cx| {
                 left_pane.close_item_by_id(
@@ -9417,26 +9446,25 @@ mod tests {
             .await
             .unwrap();
 
-        close = right_pane.update_in(cx, |pane, window, cx| {
+        let close = left_pane.update_in(cx, |pane, window, cx| {
             pane.close_all_items(&CloseAllItems::default(), window, cx)
                 .unwrap()
         });
         cx.executor().run_until_parked();
 
         let details = cx.pending_prompt().unwrap().1;
-        assert!(details.contains("1.txt"));
-        assert!(!details.contains("2.txt"));
+        assert!(details.contains("0.txt"));
         assert!(details.contains("3.txt"));
-        // ideally this assertion could be made, but today we can only
-        // save whole items not project items, so the orphaned item 3 causes
-        // 4 to be saved too.
-        // assert!(!details.contains("4.txt"));
+        assert!(details.contains("4.txt"));
+        // Ideally 2.txt wouldn't appear since entry 2 still exists in item 2.
+        // But we can only save whole items, so saving (2,3) for entry 3 includes 2.
+        // assert!(!details.contains("2.txt"));
 
         cx.simulate_prompt_answer("Save all");
-
         cx.executor().run_until_parked();
         close.await;
-        right_pane.read_with(cx, |pane, _| {
+
+        left_pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
     }
@@ -11579,7 +11607,7 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
-                    Some(cx.spawn(async move |cx| cx.new(|_| TestPngItem {})))
+                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestPngItem {}))))
                 } else {
                     None
                 }
@@ -11654,7 +11682,7 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
-                    Some(cx.spawn(async move |cx| cx.new(|_| TestIpynbItem {})))
+                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestIpynbItem {}))))
                 } else {
                     None
                 }

@@ -1,8 +1,8 @@
 use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::BurnModeTooltip,
+    ui::{BurnModeTooltip, ModelSelectorTooltip},
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -33,7 +33,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, Role,
+    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
+    Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -2231,10 +2232,10 @@ impl TextThreadEditor {
             .default_model()
             .map(|default| default.provider);
 
-        let provider_icon = match active_provider {
-            Some(provider) => provider.icon(),
-            None => IconName::Ai,
-        };
+        let provider_icon = active_provider
+            .as_ref()
+            .map(|p| p.icon())
+            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
         let focus_handle = self.editor().focus_handle(cx);
 
@@ -2244,43 +2245,25 @@ impl TextThreadEditor {
             (Color::Muted, IconName::ChevronDown)
         };
 
-        let tooltip = Tooltip::element({
-            move |_, cx| {
-                let focus_handle = focus_handle.clone();
-                let should_show_cycle_row = !AgentSettings::get_global(cx)
-                    .favorite_model_ids()
-                    .is_empty();
+        let provider_icon_element = match provider_icon {
+            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+            IconOrSvg::Icon(name) => Icon::new(name),
+        }
+        .color(color)
+        .size(IconSize::XSmall);
 
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Change Model"))
-                            .child(KeyBinding::for_action_in(
-                                &ToggleModelSelector,
-                                &focus_handle,
-                                cx,
-                            )),
-                    )
-                    .when(should_show_cycle_row, |this| {
-                        this.child(
-                            h_flex()
-                                .pt_1()
-                                .gap_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .justify_between()
-                                .child(Label::new("Cycle Favorited Models"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleFavoriteModels,
-                                    &focus_handle,
-                                    cx,
-                                )),
-                        )
-                    })
-                    .into_any()
+        let show_cycle_row = self
+            .language_model_selector
+            .read(cx)
+            .delegate
+            .favorites_count()
+            > 1;
+
+        let tooltip = Tooltip::element({
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
             }
         });
 
@@ -2291,7 +2274,7 @@ impl TextThreadEditor {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(Icon::new(provider_icon).color(color).size(IconSize::XSmall))
+                        .child(provider_icon_element)
                         .child(
                             Label::new(model_name)
                                 .color(color)

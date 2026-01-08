@@ -13,7 +13,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{
     DirectoryLister,
     git_store::Repository,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
@@ -264,7 +264,7 @@ impl WorktreeListDelegate {
 
             repo.update(cx, |repo, _| {
                 repo.create_worktree(branch.clone(), path.clone(), commit)
-            })?
+            })
             .await??;
             let new_worktree_path = path.join(branch);
 
@@ -275,16 +275,18 @@ impl WorktreeListDelegate {
                     if let Some((parent_worktree, _)) =
                         project.read(cx).find_worktree(repo_path, cx)
                     {
+                        let worktree_store = project.read(cx).worktree_store();
                         trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            if trusted_worktrees.can_trust(parent_worktree.read(cx).id(), cx) {
+                            if trusted_worktrees.can_trust(
+                                &worktree_store,
+                                parent_worktree.read(cx).id(),
+                                cx,
+                            ) {
                                 trusted_worktrees.trust(
+                                    &worktree_store,
                                     HashSet::from_iter([PathTrust::AbsPath(
                                         new_worktree_path.clone(),
                                     )]),
-                                    project
-                                        .read(cx)
-                                        .remote_connection_options(cx)
-                                        .map(RemoteHostLocation::from),
                                     cx,
                                 );
                             }
@@ -446,7 +448,7 @@ async fn open_remote_worktree(
         return Ok(());
     };
 
-    let new_project = cx.update(|cx| {
+    let new_project: Entity<project::Project> = cx.update(|cx| {
         project::Project::remote(
             session,
             app_state.client.clone(),
@@ -457,7 +459,7 @@ async fn open_remote_worktree(
             true,
             cx,
         )
-    })?;
+    });
 
     let window_to_use = if replace_current_window {
         workspace_window
@@ -465,12 +467,12 @@ async fn open_remote_worktree(
         let workspace_position = cx
             .update(|cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })?
+            })
             .await
             .context("fetching workspace position from db")?;
 
         let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {

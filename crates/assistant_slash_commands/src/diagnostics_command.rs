@@ -300,7 +300,7 @@ fn collect_diagnostics(
                 .await
                 .log_err()
             {
-                let snapshot = cx.read_entity(&buffer, |buffer, _| buffer.snapshot())?;
+                let snapshot = cx.read_entity(&buffer, |buffer, _| buffer.snapshot());
                 collect_buffer_diagnostics(&mut output, &snapshot, options.include_warnings);
             }
 

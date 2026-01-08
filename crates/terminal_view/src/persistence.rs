@@ -136,7 +136,7 @@ pub(crate) fn deserialize_terminal_panel(
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
-                    })?;
+                    });
                 }
             }
         }
@@ -251,30 +251,27 @@ async fn deserialize_pane_group(
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
-                        let Some(terminal) = project
+                        let terminal = project
                             .update(cx, |project, cx| {
                                 project.create_terminal_shell(working_directory, cx)
                             })
-                            .log_err()
-                        else {
+                            .await
+                            .log_err();
+                        let Some(terminal) = terminal else {
                             return;
                         };
-
-                        let terminal = terminal.await.log_err();
                         pane.update_in(cx, |pane, window, cx| {
-                            if let Some(terminal) = terminal {
-                                let terminal_view = Box::new(cx.new(|cx| {
-                                    TerminalView::new(
-                                        terminal,
-                                        workspace.clone(),
-                                        Some(workspace_id),
-                                        project.downgrade(),
-                                        window,
-                                        cx,
-                                    )
-                                }));
-                                pane.add_item(terminal_view, true, false, None, window, cx);
-                            }
+                            let terminal_view = Box::new(cx.new(|cx| {
+                                TerminalView::new(
+                                    terminal,
+                                    workspace.clone(),
+                                    Some(workspace_id),
+                                    project.downgrade(),
+                                    window,
+                                    cx,
+                                )
+                            }));
+                            pane.add_item(terminal_view, true, false, None, window, cx);
                         })
                         .ok();
                     }
