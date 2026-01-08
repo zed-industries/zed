@@ -95,6 +95,8 @@ impl FakeTerminalHandle {
 
     fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
+        let stopped_by_user = Arc::new(AtomicBool::new(false));
+        let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
 
         let wait_for_exit = cx
             .spawn(async move |_cx| acp::TerminalExitStatus::new().exit_code(exit_code))
@@ -102,6 +104,8 @@ impl FakeTerminalHandle {
 
         Self {
             killed,
+            stopped_by_user,
+            exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
             output: acp::TerminalOutputResponse::new("command output".to_string(), false),
             id: acp::TerminalId::new("fake_terminal".to_string()),
