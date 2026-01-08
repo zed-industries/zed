@@ -20,7 +20,8 @@ use ui::{
     Icon, IconButton, IconName, IconSize, Label, TextSize, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
-    Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Item, ItemHandle, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    notifications::NotificationId,
 };
 
 const MAX_EVENTS: usize = 10_000;
@@ -31,10 +32,21 @@ pub fn init(cx: &mut App) {
             workspace.register_action(
                 |workspace, _: &zed_actions::OpenTelemetryLog, window, cx| {
                     let telemetry_log =
-                        Box::new(cx.new(|cx| {
-                            TelemetryLogView::new(workspace.project().clone(), window, cx)
-                        }));
-                    workspace.add_item_to_active_pane(telemetry_log, None, true, window, cx);
+                        cx.new(|cx| TelemetryLogView::new(workspace.project().clone(), window, cx));
+
+                    cx.subscribe(&telemetry_log, |workspace, _, event, cx| {
+                        let TelemetryLogEvent::ShowToast(toast) = event;
+                        workspace.show_toast(toast.clone(), cx);
+                    })
+                    .detach();
+
+                    workspace.add_item_to_active_pane(
+                        Box::new(telemetry_log),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
                 },
             );
         },
@@ -74,7 +86,26 @@ impl TelemetryLogView {
             let subscription = telemetry.subscribe_with_history(fs).await;
 
             let result = this.update(cx, |this, cx| {
-                for event_wrapper in subscription.historical_events {
+                match subscription.historical_events {
+                    Ok(historical) => {
+                        if historical.parse_error_count > 0 {
+                            this.show_parse_error_toast(historical.parse_error_count, cx);
+                        }
+                        for event_wrapper in historical.events {
+                            let entry = Self::event_wrapper_to_entry(
+                                &event_wrapper,
+                                &language_registry,
+                                cx,
+                            );
+                            this.events.push_back(entry);
+                        }
+                    }
+                    Err(err) => {
+                        this.show_read_error_toast(&err, cx);
+                    }
+                }
+
+                for event_wrapper in subscription.queued_events {
                     let entry =
                         Self::event_wrapper_to_entry(&event_wrapper, &language_registry, cx);
                     this.events.push_back(entry);
@@ -232,6 +263,27 @@ impl TelemetryLogView {
         self.filtered_indices.clear();
         self.list_state.reset(0);
         cx.notify();
+    }
+
+    fn show_read_error_toast(&self, error: &anyhow::Error, cx: &mut Context<Self>) {
+        struct TelemetryLogReadError;
+        cx.emit(TelemetryLogEvent::ShowToast(Toast::new(
+            NotificationId::unique::<TelemetryLogReadError>(),
+            format!("Failed to read telemetry log: {}", error),
+        )));
+    }
+
+    fn show_parse_error_toast(&self, count: usize, cx: &mut Context<Self>) {
+        struct TelemetryLogParseError;
+        let message = if count == 1 {
+            "1 telemetry log entry failed to parse".to_string()
+        } else {
+            format!("{} telemetry log entries failed to parse", count)
+        };
+        cx.emit(TelemetryLogEvent::ShowToast(Toast::new(
+            NotificationId::unique::<TelemetryLogParseError>(),
+            message,
+        )));
     }
 
     fn render_entry(
@@ -432,7 +484,9 @@ fn expanded_params_md(
     cx.new(|cx| Markdown::new(params_md.into(), Some(language_registry.clone()), None, cx))
 }
 
-pub enum TelemetryLogEvent {}
+pub enum TelemetryLogEvent {
+    ShowToast(Toast),
+}
 
 impl EventEmitter<TelemetryLogEvent> for TelemetryLogView {}
 

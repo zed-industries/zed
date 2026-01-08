@@ -1,7 +1,7 @@
 mod event_coalescer;
 
 use crate::TelemetrySettings;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clock::SystemClock;
 use fs::Fs;
 use futures::channel::mpsc;
@@ -21,12 +21,15 @@ use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
 
-/// Result of subscribing to telemetry events.
 pub struct TelemetrySubscription {
-    /// Historical events from the log file plus any queued events not yet flushed.
-    pub historical_events: Vec<EventWrapper>,
-    /// Channel for receiving live events as they occur.
+    pub historical_events: Result<HistoricalEvents>,
+    pub queued_events: Vec<EventWrapper>,
     pub live_events: mpsc::UnboundedReceiver<EventWrapper>,
+}
+
+pub struct HistoricalEvents {
+    pub events: Vec<EventWrapper>,
+    pub parse_error_count: usize,
 }
 use util::ResultExt as _;
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -285,46 +288,36 @@ impl Telemetry {
         paths::logs_dir().join("telemetry.log")
     }
 
-    /// Subscribe to telemetry events with full history.
-    ///
-    /// Returns a [`TelemetrySubscription`] containing historical events from the log file,
-    /// queued events not yet flushed, and a channel for receiving live events.
-    ///
-    /// The state lock is held during setup to ensure no events are lost between
-    /// reading the queue and subscribing to live events.
     pub async fn subscribe_with_history(
         self: &Arc<Self>,
         fs: Arc<dyn Fs>,
     ) -> TelemetrySubscription {
-        let historical = self.read_log_file(fs).await;
+        let historical_events = self.read_log_file(fs).await;
 
         let mut state = self.state.lock();
-
-        let queued: Vec<EventWrapper> = state.events_queue.clone();
+        let queued_events: Vec<EventWrapper> = state.events_queue.clone();
 
         let (tx, rx) = mpsc::unbounded();
         state.subscribers.push(tx);
 
         drop(state);
 
-        let mut historical_events = historical;
-        historical_events.extend(queued);
-
         TelemetrySubscription {
             historical_events,
+            queued_events,
             live_events: rx,
         }
     }
 
-    async fn read_log_file(self: &Arc<Self>, fs: Arc<dyn Fs>) -> Vec<EventWrapper> {
+    async fn read_log_file(self: &Arc<Self>, fs: Arc<dyn Fs>) -> anyhow::Result<HistoricalEvents> {
         const MAX_LOG_READ: usize = 5 * 1024 * 1024;
 
         let path = Self::log_file_path();
 
-        let content = match fs.load_bytes(&path).await {
-            Ok(bytes) => bytes,
-            Err(_) => return Vec::new(),
-        };
+        let content = fs
+            .load_bytes(&path)
+            .await
+            .with_context(|| format!("failed to load telemetry log from {:?}", path))?;
 
         let start_offset = if content.len() > MAX_LOG_READ {
             let skip = content.len() - MAX_LOG_READ;
@@ -337,22 +330,26 @@ impl Telemetry {
             0
         };
 
-        let content_str = match std::str::from_utf8(&content[start_offset..]) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
+        let content_str = std::str::from_utf8(&content[start_offset..])
+            .context("telemetry log file contains invalid UTF-8")?;
 
         let mut events = Vec::new();
+        let mut parse_error_count = 0;
+
         for line in content_str.lines() {
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(event) = serde_json::from_str::<EventWrapper>(line) {
-                events.push(event);
+            match serde_json::from_str::<EventWrapper>(line) {
+                Ok(event) => events.push(event),
+                Err(_) => parse_error_count += 1,
             }
         }
 
-        events
+        Ok(HistoricalEvents {
+            events,
+            parse_error_count,
+        })
     }
 
     pub fn has_checksum_seed(&self) -> bool {
