@@ -264,6 +264,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub prompt_cache_key: bool,
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default)]
+    pub thinking_mode: ThinkingMode,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -274,6 +276,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             parallel_tool_calls: false,
             prompt_cache_key: false,
             chat_completions: default_true(),
+            thinking_mode: ThinkingMode::default(),
         }
     }
 }
@@ -430,6 +433,22 @@ pub struct LanguageModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub should_speculate: bool,
     pub min_total_token: u64,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingMode {
+    /// OpenAI mode: treat Thinking content as regular text
+    #[default]
+    Openai,
+
+    /// Interleave mode: only preserve thinking in the most recent assistant message
+    Interleave,
+
+    /// Preserved mode: preserve all thinking content across the entire conversation history
+    Preserved,
 }
 
 #[derive(
