@@ -5313,6 +5313,7 @@ dependencies = [
  "util",
  "wasmtime",
  "watch",
+ "workspace",
  "zeta_prompt",
 ]
 
