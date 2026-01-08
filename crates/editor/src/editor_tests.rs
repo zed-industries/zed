@@ -14677,6 +14677,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     });
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -15046,6 +15047,7 @@ async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let _fake_server = fake_servers.next().await.unwrap();
+    cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
         cx.focus_self(window);
