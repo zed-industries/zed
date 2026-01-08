@@ -440,7 +440,7 @@ pub struct TableColumnWidths {
 }
 
 impl TableColumnWidths {
-    pub fn new(_: &mut App, cols: usize) -> Self {
+    pub fn new(cols: usize, _: &mut App) -> Self {
         Self {
             widths: vec![DefiniteLength::default(); cols].into_table_row(cols),
             visible_widths: vec![DefiniteLength::default(); cols].into_table_row(cols),
@@ -660,8 +660,7 @@ impl TableColumnWidths {
         }
         let mut curr_column = col_idx + step_right - step_left;
 
-        let cols = widths.cols();
-        while diff_remaining != 0.0 && curr_column < cols {
+        while diff_remaining != 0.0 && curr_column < widths.cols() {
             let Some(min_size) = resize_behavior[curr_column].min_size() else {
                 if curr_column == 0 {
                     break;

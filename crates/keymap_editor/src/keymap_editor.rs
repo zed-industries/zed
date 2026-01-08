@@ -561,7 +561,7 @@ impl KeymapEditor {
             actions_with_schemas: HashSet::default(),
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| TableColumnWidths::new(cx, COLS)),
+            current_widths: cx.new(|cx| TableColumnWidths::new(COLS, cx)),
         };
 
         this.on_keymap_changed(window, cx);
