@@ -1,39 +1,90 @@
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write as _, mem, path::Path, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
     #[serde(default)]
     pub name: String,
     pub repository_url: String,
     pub revision: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     #[serde(default)]
     pub uncommitted_diff: String,
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
-    pub expected_patch: String,
+    pub expected_patches: Vec<String>,
 }
 
+const REASONING_HEADING: &str = "Reasoning";
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
-const REPOSITORY_URL_FIELD: &str = "repository_url";
-const REVISION_FIELD: &str = "revision";
+
+#[derive(Serialize, Deserialize)]
+struct FrontMatter<'a> {
+    repository_url: Cow<'a, str>,
+    revision: Cow<'a, str>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+}
 
 impl ExampleSpec {
+    /// Generate a sanitized filename for this example.
+    pub fn filename(&self) -> String {
+        self.name
+            .chars()
+            .map(|c| match c {
+                ' ' | ':' | '~' | '^' | '?' | '*' | '[' | '\\' | '@' | '{' | '/' | '<' | '>'
+                | '|' | '"' => '-',
+                c => c,
+            })
+            .collect()
+    }
+
     /// Format this example spec as markdown.
     pub fn to_markdown(&self) -> String {
+        use std::fmt::Write as _;
+
+        let front_matter = FrontMatter {
+            repository_url: Cow::Borrowed(&self.repository_url),
+            revision: Cow::Borrowed(&self.revision),
+            tags: self.tags.clone(),
+        };
+        let front_matter_toml =
+            toml::to_string_pretty(&front_matter).unwrap_or_else(|_| String::new());
+
         let mut markdown = String::new();
+
+        _ = writeln!(markdown, "+++");
+        markdown.push_str(&front_matter_toml);
+        if !markdown.ends_with('\n') {
+            markdown.push('\n');
+        }
+        _ = writeln!(markdown, "+++");
+        markdown.push('\n');
 
         _ = writeln!(markdown, "# {}", self.name);
         markdown.push('\n');
 
-        _ = writeln!(markdown, "repository_url = {}", self.repository_url);
-        _ = writeln!(markdown, "revision = {}", self.revision);
-        markdown.push('\n');
+        if let Some(reasoning) = &self.reasoning {
+            _ = writeln!(markdown, "## {}", REASONING_HEADING);
+            markdown.push('\n');
+            markdown.push_str(reasoning);
+            if !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            markdown.push('\n');
+        }
 
         if !self.uncommitted_diff.is_empty() {
             _ = writeln!(markdown, "## {}", UNCOMMITTED_DIFF_HEADING);
@@ -75,34 +126,48 @@ impl ExampleSpec {
 
         _ = writeln!(markdown, "## {}", EXPECTED_PATCH_HEADING);
         markdown.push('\n');
-        _ = writeln!(markdown, "```diff");
-        markdown.push_str(&self.expected_patch);
-        if !markdown.ends_with('\n') {
+        for patch in &self.expected_patches {
+            _ = writeln!(markdown, "```diff");
+            markdown.push_str(patch);
+            if !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            _ = writeln!(markdown, "```");
             markdown.push('\n');
         }
-        _ = writeln!(markdown, "```");
-        markdown.push('\n');
 
         markdown
     }
 
     /// Parse an example spec from markdown.
-    pub fn from_markdown(name: String, input: &str) -> anyhow::Result<Self> {
+    pub fn from_markdown(mut input: &str) -> anyhow::Result<Self> {
         use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Parser, Tag, TagEnd};
 
-        let parser = Parser::new(input);
-
         let mut spec = ExampleSpec {
-            name,
+            name: String::new(),
             repository_url: String::new(),
             revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
             uncommitted_diff: String::new(),
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
-            expected_patch: String::new(),
+            expected_patches: Vec::new(),
         };
 
+        if let Some(rest) = input.strip_prefix("+++\n")
+            && let Some((front_matter, rest)) = rest.split_once("+++\n")
+        {
+            if let Ok(data) = toml::from_str::<FrontMatter<'_>>(front_matter) {
+                spec.repository_url = data.repository_url.into_owned();
+                spec.revision = data.revision.into_owned();
+                spec.tags = data.tags;
+            }
+            input = rest.trim_start();
+        }
+
+        let parser = Parser::new(input);
         let mut text = String::new();
         let mut block_info: CowStr = "".into();
 
@@ -123,20 +188,9 @@ impl ExampleSpec {
             match event {
                 Event::Text(line) => {
                     text.push_str(&line);
-
-                    if let Section::Start = current_section
-                        && let Some((field, value)) = line.split_once('=')
-                    {
-                        match field.trim() {
-                            REPOSITORY_URL_FIELD => {
-                                spec.repository_url = value.trim().to_string();
-                            }
-                            REVISION_FIELD => {
-                                spec.revision = value.trim().to_string();
-                            }
-                            _ => {}
-                        }
-                    }
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
+                    spec.name = mem::take(&mut text);
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
                     let title = mem::take(&mut text);
@@ -194,7 +248,7 @@ impl ExampleSpec {
                             mem::take(&mut text);
                         }
                         Section::ExpectedPatch => {
-                            spec.expected_patch = mem::take(&mut text);
+                            spec.expected_patches.push(mem::take(&mut text));
                         }
                         Section::Start | Section::Other => {}
                     }
@@ -208,5 +262,327 @@ impl ExampleSpec {
         }
 
         Ok(spec)
+    }
+
+    /// Returns the excerpt of text around the cursor, and the offset of the cursor within that
+    /// excerpt.
+    ///
+    /// The cursor's position is marked with a special comment that appears
+    /// below the cursor line, which contains the string `[CURSOR_POSITION]`,
+    /// preceded by an arrow marking the cursor's column. The arrow can be
+    /// either:
+    /// - `^` - The cursor column is at the position of the `^` character (pointing up to the cursor)
+    /// - `<` - The cursor column is at the first non-whitespace character on that line.
+    pub fn cursor_excerpt(&self) -> Result<(String, usize)> {
+        let input = &self.cursor_position;
+
+        // Check for inline cursor marker first
+        if let Some(inline_offset) = input.find(INLINE_CURSOR_MARKER) {
+            let excerpt = input[..inline_offset].to_string()
+                + &input[inline_offset + INLINE_CURSOR_MARKER.len()..];
+            return Ok((excerpt, inline_offset));
+        }
+
+        let marker_offset = input
+            .find(CURSOR_POSITION_MARKER)
+            .context("missing [CURSOR_POSITION] marker")?;
+        let marker_line_start = input[..marker_offset]
+            .rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+        let marker_line_end = input[marker_line_start..]
+            .find('\n')
+            .map(|pos| marker_line_start + pos + 1)
+            .unwrap_or(input.len());
+        let marker_line = &input[marker_line_start..marker_line_end].trim_end_matches('\n');
+
+        let cursor_column = if let Some(cursor_offset) = marker_line.find('^') {
+            cursor_offset
+        } else if let Some(less_than_pos) = marker_line.find('<') {
+            marker_line
+                .find(|c: char| !c.is_whitespace())
+                .unwrap_or(less_than_pos)
+        } else {
+            anyhow::bail!(
+                "cursor position marker line must contain '^' or '<' before [CURSOR_POSITION]"
+            );
+        };
+
+        let mut excerpt = input[..marker_line_start].to_string() + &input[marker_line_end..];
+        excerpt.truncate(excerpt.trim_end_matches('\n').len());
+
+        // The cursor is on the line above the marker line.
+        let cursor_line_end = marker_line_start.saturating_sub(1);
+        let cursor_line_start = excerpt[..cursor_line_end]
+            .rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+        let cursor_offset = cursor_line_start + cursor_column;
+
+        Ok((excerpt, cursor_offset))
+    }
+
+    /// Sets the cursor position excerpt from a plain excerpt and cursor byte offset.
+    ///
+    /// The `line_comment_prefix` is used to format the marker line as a comment.
+    /// If the cursor column is less than the comment prefix length, the `<` format is used.
+    /// Otherwise, the `^` format is used.
+    pub fn set_cursor_excerpt(
+        &mut self,
+        excerpt: &str,
+        cursor_offset: usize,
+        line_comment_prefix: &str,
+    ) {
+        // Find which line the cursor is on and its column
+        let cursor_line_start = excerpt[..cursor_offset]
+            .rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+        let cursor_line_end = excerpt[cursor_line_start..]
+            .find('\n')
+            .map(|pos| cursor_line_start + pos + 1)
+            .unwrap_or(excerpt.len());
+        let cursor_line = &excerpt[cursor_line_start..cursor_line_end];
+        let cursor_line_indent = &cursor_line[..cursor_line.len() - cursor_line.trim_start().len()];
+        let cursor_column = cursor_offset - cursor_line_start;
+
+        // Build the marker line
+        let mut marker_line = String::new();
+        if cursor_column < line_comment_prefix.len() {
+            for _ in 0..cursor_column {
+                marker_line.push(' ');
+            }
+            marker_line.push_str(line_comment_prefix);
+            write!(marker_line, " <{}", CURSOR_POSITION_MARKER).unwrap();
+        } else {
+            if cursor_column >= cursor_line_indent.len() + line_comment_prefix.len() {
+                marker_line.push_str(cursor_line_indent);
+            }
+            marker_line.push_str(line_comment_prefix);
+            while marker_line.len() < cursor_column {
+                marker_line.push(' ');
+            }
+            write!(marker_line, "^{}", CURSOR_POSITION_MARKER).unwrap();
+        }
+
+        // Build the final cursor_position string
+        let mut result = String::with_capacity(excerpt.len() + marker_line.len() + 2);
+        result.push_str(&excerpt[..cursor_line_end]);
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&marker_line);
+        if cursor_line_end < excerpt.len() {
+            result.push('\n');
+            result.push_str(&excerpt[cursor_line_end..]);
+        }
+
+        self.cursor_position = result;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+
+    #[test]
+    fn test_cursor_excerpt_with_caret() {
+        let mut spec = ExampleSpec {
+            name: String::new(),
+            repository_url: String::new(),
+            revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
+            uncommitted_diff: String::new(),
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: String::new(),
+            edit_history: String::new(),
+            expected_patches: Vec::new(),
+        };
+
+        // Cursor before `42`
+        let excerpt = indoc! {"
+            fn main() {
+                let x = 42;
+                println!(\"{}\", x);
+            }"
+        };
+        let offset = excerpt.find("42").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+                //      ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor after `l` in `let`
+        let offset = excerpt.find("et x").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+            //   ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor before `let`
+        let offset = excerpt.find("let").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+            //  ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor at beginning of the line with `let`
+        let offset = excerpt.find("    let").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+            // <[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor at end of line, after the semicolon
+        let offset = excerpt.find(';').unwrap() + 1;
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+                //         ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Caret at end of file (no trailing newline)
+        let excerpt = indoc! {"
+            fn main() {
+                let x = 42;"
+        };
+        let offset = excerpt.find(';').unwrap() + 1;
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+                //         ^[CURSOR_POSITION]"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+    }
+
+    #[test]
+    fn test_cursor_excerpt_with_inline_marker() {
+        let mut spec = ExampleSpec {
+            name: String::new(),
+            repository_url: String::new(),
+            revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
+            uncommitted_diff: String::new(),
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: String::new(),
+            edit_history: String::new(),
+            expected_patches: Vec::new(),
+        };
+
+        // Cursor before `42` using inline marker
+        spec.cursor_position = indoc! {"
+            fn main() {
+                let x = <|user_cursor|>42;
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        let expected_excerpt = indoc! {"
+            fn main() {
+                let x = 42;
+                println!(\"{}\", x);
+            }"
+        };
+        let expected_offset = expected_excerpt.find("42").unwrap();
+
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (expected_excerpt.to_string(), expected_offset)
+        );
+
+        // Cursor at beginning of line
+        spec.cursor_position = indoc! {"
+            fn main() {
+            <|user_cursor|>    let x = 42;
+            }"
+        }
+        .to_string();
+
+        let expected_excerpt = indoc! {"
+            fn main() {
+                let x = 42;
+            }"
+        };
+        let expected_offset = expected_excerpt.find("    let").unwrap();
+
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (expected_excerpt.to_string(), expected_offset)
+        );
+
+        // Cursor at end of file
+        spec.cursor_position = "fn main() {}<|user_cursor|>".to_string();
+        let expected_excerpt = "fn main() {}";
+        let expected_offset = expected_excerpt.len();
+
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (expected_excerpt.to_string(), expected_offset)
+        );
     }
 }

@@ -122,7 +122,6 @@ message Envelope {
         PerformRenameResponse perform_rename_response = 86;
 
         UpdateContacts update_contacts = 89;
-        UpdateInviteInfo update_invite_info = 90;
         ShowContacts show_contacts = 91;
 
         GetUsers get_users = 92;
@@ -217,9 +216,6 @@ message Envelope {
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
         OpenNewBuffer open_new_buffer = 196;
-
-        GetSupermavenApiKey get_supermaven_api_key = 198;
-        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
@@ -451,34 +447,34 @@ message Envelope {
         GitRemoveRemote git_remove_remote = 403;
 
         TrustWorktrees trust_worktrees = 404;
-        RestrictWorktrees restrict_worktrees = 405; // current max
+        RestrictWorktrees restrict_worktrees = 405;
+        
+        ShareAgentThread share_agent_thread = 406;
+        GetSharedAgentThread get_shared_agent_thread = 407;
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; // current max
     }
 
-    reserved 87 to 88, 396;
+    reserved 87 to 88;
+    reserved 90;
     reserved 102 to 103;
     reserved 158 to 161;
     reserved 164;
     reserved 166 to 169;
     reserved 175 to 185;
-    reserved 188;
-    reserved 189 to 192;
-    reserved 193 to 195;
+    reserved 188 to 195;
     reserved 197;
-    reserved 200 to 202;
+    reserved 198 to 202;
     reserved 205 to 206;
     reserved 221;
-    reserved 224 to 229;
-    reserved 230 to 231;
+    reserved 224 to 231;
     reserved 234 to 236;
     reserved 239 to 240;
-    reserved 246;
-    reserved 247 to 254;
-    reserved 255 to 256;
+    reserved 246 to 256;
     reserved 259;
     reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
-    reserved 394 to 395;
+    reserved 394 to 396;
 }
 
 message Hello {

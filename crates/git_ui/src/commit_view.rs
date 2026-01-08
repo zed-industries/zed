@@ -1,8 +1,10 @@
 use anyhow::{Context as _, Result};
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::BufferDiff;
+use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, RepoPath};
+use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
+use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
     parse_git_remote_url,
@@ -20,6 +22,7 @@ use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
+    collections::HashSet,
     path::PathBuf,
     sync::Arc,
 };
@@ -30,7 +33,7 @@ use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{BreadcrumbText, ItemEvent, TabContentParams},
+    item::{ItemEvent, TabContentParams},
     notifications::NotifyTaskExt,
     pane::SaveIntent,
     searchable::SearchableItemHandle,
@@ -69,7 +72,26 @@ struct GitBlob {
     path: RepoPath,
     worktree_id: WorktreeId,
     is_deleted: bool,
+    is_binary: bool,
     display_name: String,
+}
+
+struct CommitDiffAddon {
+    file_statuses: HashMap<language::BufferId, FileStatus>,
+}
+
+impl Addon for CommitDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn override_status_for_buffer_id(
+        &self,
+        buffer_id: language::BufferId,
+        _cx: &App,
+    ) -> Option<FileStatus> {
+        self.file_statuses.get(&buffer_id).copied()
+    }
 }
 
 const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
@@ -226,17 +248,34 @@ impl CommitView {
         let repository_clone = repository.clone();
 
         cx.spawn(async move |this, cx| {
+            let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
+            let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
+
             for file in commit_diff.files {
+                let is_created = file.old_text.is_none();
                 let is_deleted = file.new_text.is_none();
-                let new_text = file.new_text.unwrap_or_default();
-                let old_text = file.old_text;
+                let raw_new_text = file.new_text.unwrap_or_default();
+                let raw_old_text = file.old_text;
+
+                let is_binary = file.is_binary
+                    || is_binary_content(raw_new_text.as_bytes())
+                    || raw_old_text
+                        .as_ref()
+                        .is_some_and(|text| is_binary_content(text.as_bytes()));
+
+                let new_text = if is_binary {
+                    "(binary file not shown)".to_string()
+                } else {
+                    raw_new_text
+                };
+                let old_text = if is_binary { None } else { raw_old_text };
                 let worktree_id = repository_clone
                     .update(cx, |repository, cx| {
                         repository
                             .repo_path_to_project_path(&file.path, cx)
                             .map(|path| path.worktree_id)
                             .or(first_worktree_id)
-                    })?
+                    })
                     .context("project has no worktrees")?;
                 let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
                 let file_name = file
@@ -249,20 +288,48 @@ impl CommitView {
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
                     is_deleted,
+                    is_binary,
                     worktree_id,
                     display_name,
                 }) as Arc<dyn language::File>;
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                let buffer_diff =
-                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
+                let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
+
+                let status_code = if is_created {
+                    StatusCode::Added
+                } else if is_deleted {
+                    StatusCode::Deleted
+                } else {
+                    StatusCode::Modified
+                };
+                file_statuses.insert(
+                    buffer_id,
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: status_code,
+                        worktree_status: StatusCode::Unmodified,
+                    }),
+                );
+
+                if is_binary {
+                    binary_buffer_ids.insert(buffer_id);
+                }
+
+                let buffer_diff = if is_binary {
+                    None
+                } else {
+                    Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await?)
+                };
 
                 this.update(cx, |this, cx| {
                     this.multibuffer.update(cx, |multibuffer, cx| {
                         let snapshot = buffer.read(cx).snapshot();
                         let path = snapshot.file().unwrap().path().clone();
-                        let excerpt_ranges = {
-                            let mut hunks = buffer_diff.read(cx).hunks(&snapshot, cx).peekable();
+                        let excerpt_ranges = if is_binary {
+                            vec![language::Point::zero()..snapshot.max_point()]
+                        } else if let Some(buffer_diff) = &buffer_diff {
+                            let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+                            let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
                             if hunks.peek().is_none() {
                                 vec![language::Point::zero()..snapshot.max_point()]
                             } else {
@@ -270,6 +337,8 @@ impl CommitView {
                                     .map(|hunk| hunk.buffer_range.to_point(&snapshot))
                                     .collect::<Vec<_>>()
                             }
+                        } else {
+                            vec![language::Point::zero()..snapshot.max_point()]
                         };
 
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
@@ -279,10 +348,25 @@ impl CommitView {
                             multibuffer_context_lines(cx),
                             cx,
                         );
-                        multibuffer.add_diff(buffer_diff, cx);
+                        if let Some(buffer_diff) = buffer_diff {
+                            multibuffer.add_diff(buffer_diff, cx);
+                        }
                     });
                 })?;
             }
+
+            this.update(cx, |this, cx| {
+                this.editor.update(cx, |editor, _cx| {
+                    editor.register_addon(CommitDiffAddon { file_statuses });
+                });
+                if !binary_buffer_ids.is_empty() {
+                    this.editor.update(cx, |editor, cx| {
+                        for buffer_id in binary_buffer_ids {
+                            editor.fold_buffer(buffer_id, cx);
+                        }
+                    });
+                }
+            })?;
 
             anyhow::Ok(())
         })
@@ -554,7 +638,7 @@ impl CommitView {
                         return Err(anyhow::anyhow!("Stash has changed, not applying"));
                     }
                     Ok(repo.stash_apply(Some(stash), cx))
-                })?;
+                });
 
                 match result {
                     Ok(task) => task.await?,
@@ -581,7 +665,7 @@ impl CommitView {
                         return Err(anyhow::anyhow!("Stash has changed, pop aborted"));
                     }
                     Ok(repo.stash_pop(Some(stash), cx))
-                })?;
+                });
 
                 match result {
                     Ok(task) => task.await?,
@@ -608,7 +692,7 @@ impl CommitView {
                         return Err(anyhow::anyhow!("Stash has changed, drop aborted"));
                     }
                     Ok(repo.stash_drop(Some(stash), cx))
-                })?;
+                });
 
                 match result {
                     Ok(task) => task.await??,
@@ -672,7 +756,7 @@ impl CommitView {
                     workspace
                         .panel::<GitPanel>(cx)
                         .and_then(|p| p.read(cx).active_repository.clone())
-                })?;
+                });
 
                 let Some(repo) = repo else {
                     return Ok(());
@@ -740,6 +824,10 @@ impl language::File for GitBlob {
     fn is_private(&self) -> bool {
         false
     }
+
+    fn can_open(&self) -> bool {
+        !self.is_binary
+    }
 }
 
 async fn build_buffer(
@@ -751,7 +839,7 @@ async fn build_buffer(
     let line_ending = LineEnding::detect(&text);
     LineEnding::normalize(&mut text);
     let text = Rope::from(text);
-    let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
+    let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx));
     let language = if let Some(language) = language {
         language_registry
             .load_language(&language)
@@ -771,7 +859,7 @@ async fn build_buffer(
         let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite);
         buffer.set_language_async(language, cx);
         buffer
-    })?;
+    });
     Ok(buffer)
 }
 
@@ -785,35 +873,30 @@ async fn build_buffer_diff(
         LineEnding::normalize(old_text);
     }
 
-    let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
+    let language = cx.update(|cx| buffer.read(cx).language().cloned());
+    let buffer = cx.update(|cx| buffer.read(cx).snapshot());
 
-    let base_buffer = cx
-        .update(|cx| {
-            Buffer::build_snapshot(
-                old_text.as_deref().unwrap_or("").into(),
-                buffer.language().cloned(),
-                Some(language_registry.clone()),
-                cx,
-            )
-        })?
-        .await;
+    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
 
-    let diff_snapshot = cx
-        .update(|cx| {
-            BufferDiffSnapshot::new_with_base_buffer(
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
                 buffer.text.clone(),
-                old_text.map(Arc::new),
-                base_buffer,
+                old_text.map(|old_text| Arc::from(old_text.as_str())),
+                true,
+                language.clone(),
                 cx,
             )
-        })?
+        })
         .await;
 
-    cx.new(|cx| {
-        let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
-        diff
+    diff.update(cx, |diff, cx| {
+        diff.language_changed(language, Some(language_registry.clone()), cx);
+        diff.set_snapshot(update, &buffer.text, cx)
     })
+    .await;
+
+    Ok(diff)
 }
 
 impl EventEmitter<EditorEvent> for CommitView {}
@@ -929,14 +1012,6 @@ impl Item for CommitView {
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::Hidden
-    }
-
-    fn breadcrumbs(&self, _theme: &theme::Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
-        None
-    }
-
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
@@ -961,10 +1036,22 @@ impl Item for CommitView {
     where
         Self: Sized,
     {
+        let file_statuses = self
+            .editor
+            .read(cx)
+            .addon::<CommitDiffAddon>()
+            .map(|addon| addon.file_statuses.clone())
+            .unwrap_or_default();
         Task::ready(Some(cx.new(|cx| {
-            let editor = cx.new(|cx| {
-                self.editor
-                    .update(cx, |editor, cx| editor.clone(window, cx))
+            let editor = cx.new({
+                let file_statuses = file_statuses.clone();
+                |cx| {
+                    let mut editor = self
+                        .editor
+                        .update(cx, |editor, cx| editor.clone(window, cx));
+                    editor.register_addon(CommitDiffAddon { file_statuses });
+                    editor
+                }
             });
             let multibuffer = editor.read(cx).buffer().clone();
             Self {

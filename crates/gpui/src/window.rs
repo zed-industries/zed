@@ -12,12 +12,12 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
-    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -838,6 +838,7 @@ pub struct Window {
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
+    text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
     /// The stack of override values for the window's rem size.
     ///
@@ -1312,6 +1313,7 @@ impl Window {
             display_id,
             sprite_atlas,
             text_system,
+            text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
@@ -1820,6 +1822,15 @@ impl Window {
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.platform_window.bounds()
+    }
+
+    /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
+    /// This does not present the frame to screen - useful for visual testing where we want
+    /// to capture what would be rendered without displaying it or requiring the window to be visible.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
+        self.platform_window
+            .render_to_image(&self.rendered_frame.scene)
     }
 
     /// Set the content size of the window.
@@ -3121,6 +3132,7 @@ impl Window {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
         };
+        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -3128,6 +3140,7 @@ impl Window {
             subpixel_variant,
             scale_factor,
             is_emoji: false,
+            subpixel_rendering,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3144,17 +3157,49 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            self.next_frame.scene.insert_primitive(MonochromeSprite {
-                order: 0,
-                pad: 0,
-                bounds,
-                content_mask,
-                color: color.opacity(element_opacity),
-                tile,
-                transformation: TransformationMatrix::unit(),
-            });
+
+            if subpixel_rendering {
+                self.next_frame.scene.insert_primitive(SubpixelSprite {
+                    order: 0,
+                    pad: 0,
+                    bounds,
+                    content_mask,
+                    color: color.opacity(element_opacity),
+                    tile,
+                    transformation: TransformationMatrix::unit(),
+                });
+            } else {
+                self.next_frame.scene.insert_primitive(MonochromeSprite {
+                    order: 0,
+                    pad: 0,
+                    bounds,
+                    content_mask,
+                    color: color.opacity(element_opacity),
+                    tile,
+                    transformation: TransformationMatrix::unit(),
+                });
+            }
         }
         Ok(())
+    }
+
+    fn should_use_subpixel_rendering(&self, font_id: FontId, font_size: Pixels) -> bool {
+        if self.platform_window.background_appearance() != WindowBackgroundAppearance::Opaque {
+            return false;
+        }
+
+        if !self.platform_window.is_subpixel_rendering_supported() {
+            return false;
+        }
+
+        let mode = match self.text_rendering_mode.get() {
+            TextRenderingMode::PlatformDefault => self
+                .text_system()
+                .recommended_rendering_mode(font_id, font_size),
+            mode => mode,
+        };
+
+        mode == TextRenderingMode::Subpixel
     }
 
     /// Paints an emoji glyph into the scene for the next frame at the current z-index.
@@ -3184,6 +3229,7 @@ impl Window {
             subpixel_variant: Default::default(),
             scale_factor,
             is_emoji: true,
+            subpixel_rendering: false,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -4909,11 +4955,11 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        crate::Flatten::flatten(cx.update_window(self.any_handle, |root_view, _, _| {
+        cx.update_window(self.any_handle, |root_view, _, _| {
             root_view
                 .downcast::<V>()
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))
-        }))
+        })?
     }
 
     /// Updates the root view of this window.

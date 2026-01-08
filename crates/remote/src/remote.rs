@@ -14,3 +14,8 @@ pub use remote_client::{
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use transport::mock::{
+    MockConnection, MockConnectionOptions, MockConnectionRegistry, MockDelegate,
+};

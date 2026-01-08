@@ -169,6 +169,15 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // The text rendering mode to use.
+  // May take 3 values:
+  //  1. Use platform default behavior:
+  //         "text_rendering_mode": "platform_default"
+  //  2. Use subpixel (ClearType-style) text rendering:
+  //         "text_rendering_mode": "subpixel"
+  //  3. Use grayscale text rendering:
+  //         "text_rendering_mode": "grayscale"
+  "text_rendering_mode": "platform_default",
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
@@ -284,6 +293,8 @@
   // 4. Never show the scrollbar:
   //    "never" (default)
   "completion_menu_scrollbar": "never",
+  // Whether to align detail text in code completions context menus left or right.
+  "completion_detail_alignment": "left",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -1308,6 +1319,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
     "**/.repo",
     "**/CVS",
     "**/.DS_Store",
@@ -1323,6 +1335,9 @@
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
   "hidden_files": ["**/.*"],
+  // Globs to match files that will be opened as read-only. You can still view these files,
+  // but cannot edit them. This is useful for generated files or external dependencies.
+  "read_only_files": [],
   // Git gutter behavior configuration.
   "git": {
     // Global switch to enable or disable all git integration features.
@@ -1458,6 +1473,8 @@
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
+    // Control when to show the active encoding in the status bar.
+    "active_encoding_button": "non_utf8",
   },
   // Settings specific to the terminal
   "terminal": {
@@ -2230,7 +2247,7 @@
   // Examples:
   //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
-  "proxy": null,
+  "proxy": "",
   // Set to configure aliases for the command palette.
   // When typing a query which is a key of this object, the value will be used instead.
   //
@@ -2257,6 +2274,17 @@
   "ssh_connections": [],
   // Whether to read ~/.ssh/config for ssh connection sources.
   "read_ssh_config": true,
+  // Default timeout in seconds for all context server tool calls.
+  // Individual servers can override this in their configuration.
+  // Examples:
+  // "context_servers": {
+  //   "my-stdio-server": {
+  //     "command": "/path/to/server",
+  //     "timeout": 120  // Override: 2 minutes for this server
+  //   },
+  // }
+  // Default: 60
+  "context_server_timeout": 60,
   // Configures context servers for use by the agent.
   "context_servers": {},
   // Configures agent servers available in the agent panel.

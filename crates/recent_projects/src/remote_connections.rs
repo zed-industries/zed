@@ -34,14 +34,14 @@ use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(RegisterSetting)]
-pub struct SshSettings {
+pub struct RemoteSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
 
-impl SshSettings {
+impl RemoteSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().0.into_iter()
     }
@@ -117,7 +117,7 @@ impl From<WslConnection> for Connection {
     }
 }
 
-impl Settings for SshSettings {
+impl Settings for RemoteSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let remote = &content.remote;
         Self {
@@ -309,6 +309,10 @@ impl RemoteConnectionModal {
                 (options.distro_name.clone(), None, true, false)
             }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => {
+                (format!("mock-{}", options.id), None, false, false)
+            }
         };
         Self {
             prompt: cx.new(|cx| {
@@ -611,7 +615,7 @@ pub fn connect(
 
     cx.spawn(async move |cx| {
         let connection = remote::connect(connection_options, delegate.clone(), cx).await?;
-        cx.update(|cx| remote::RemoteClient::new(unique_identifier, connection, rx, delegate, cx))?
+        cx.update(|cx| remote::RemoteClient::new(unique_identifier, connection, rx, delegate, cx))
             .await
     })
 }
@@ -631,12 +635,12 @@ pub async fn open_remote_project(
             .update(|cx| {
                 // todo: These paths are wrong they may have column and line information
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })?
+            })
             .await
-            .context("fetching ssh workspace position from db")?;
+            .context("fetching remote workspace position from db")?;
 
         let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {
@@ -720,6 +724,10 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Docker(_) => {
                                         "Failed to connect to Dev Container"
                                     }
+                                    #[cfg(any(test, feature = "test-support"))]
+                                    RemoteConnectionOptions::Mock(_) => {
+                                        "Failed to connect to mock server"
+                                    }
                                 },
                                 Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
@@ -755,7 +763,7 @@ pub async fn open_remote_project(
                     paths.clone(),
                     cx,
                 )
-            })?
+            })
             .await;
 
         window
@@ -778,6 +786,10 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
+                                }
+                                #[cfg(any(test, feature = "test-support"))]
+                                RemoteConnectionOptions::Mock(_) => {
+                                    "Failed to connect to mock server"
                                 }
                             },
                             Some(&format!("{e:#}")),

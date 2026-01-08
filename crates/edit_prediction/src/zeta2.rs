@@ -3,20 +3,23 @@ use crate::EvalCacheEntryKind;
 use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
 use crate::{
-    DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
+    CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore,
 };
 use anyhow::{Result, anyhow};
-use cloud_llm_client::EditPredictionRejectReason;
-use gpui::{Task, prelude::*};
+use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
+use gpui::{App, Task, prelude::*};
 use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
 use release_channel::AppVersion;
+
+use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
 
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
+pub const MAX_CONTEXT_TOKENS: usize = 150;
+pub const MAX_REWRITE_TOKENS: usize = 350;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -227,6 +230,54 @@ pub fn zeta2_prompt_input(
     (editable_offset_range, prompt_input)
 }
 
+pub(crate) fn edit_prediction_accepted(
+    store: &EditPredictionStore,
+    current_prediction: CurrentEditPrediction,
+    cx: &App,
+) {
+    let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
+    if store.custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
+        return;
+    }
+
+    let request_id = current_prediction.prediction.id.to_string();
+    let require_auth = custom_accept_url.is_none();
+    let client = store.client.clone();
+    let llm_token = store.llm_token.clone();
+    let app_version = AppVersion::global(cx);
+
+    cx.background_spawn(async move {
+        let url = if let Some(accept_edits_url) = custom_accept_url {
+            gpui::http_client::Url::parse(&accept_edits_url)?
+        } else {
+            client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/accept", &[])?
+        };
+
+        let response = EditPredictionStore::send_api_request::<()>(
+            move |builder| {
+                let req = builder.uri(url.as_ref()).body(
+                    serde_json::to_string(&AcceptEditPredictionBody {
+                        request_id: request_id.clone(),
+                    })?
+                    .into(),
+                );
+                Ok(req?)
+            },
+            client,
+            llm_token,
+            app_version,
+            require_auth,
+        )
+        .await;
+
+        response?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
+}
+
 #[cfg(feature = "cli-support")]
 pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
     let text = &input.cursor_excerpt;
@@ -234,7 +285,23 @@ pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str)
     let old_prefix = &text[..editable_region.start];
     let old_suffix = &text[editable_region.end..];
 
-    let new = crate::udiff::apply_diff_to_string(patch, text)?;
+    // Try applying the patch directly first
+    let new = match crate::udiff::apply_diff_to_string(patch, text) {
+        Ok(new) => new,
+        Err(_) if !text.ends_with('\n') => {
+            // If the text doesn't end with a newline, the patch context may expect one
+            // (due to missing "no newline at EOF" markers). Try again with a trailing newline.
+            let text_with_newline = format!("{}\n", text);
+            let mut new = crate::udiff::apply_diff_to_string(patch, &text_with_newline)?;
+            // Remove the trailing newline we added if the result still has it
+            if new.ends_with('\n') && !text.ends_with('\n') {
+                new.pop();
+            }
+            new
+        }
+        Err(e) => return Err(e),
+    };
+
     if !new.starts_with(old_prefix) || !new.ends_with(old_suffix) {
         anyhow::bail!("Patch shouldn't affect text outside of editable region");
     }

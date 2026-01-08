@@ -3,10 +3,9 @@ use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, PromptFormat};
 use cloud_llm_client::{
-    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason,
-    EditPredictionRejection, MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST,
-    MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
-    ZED_VERSION_HEADER_NAME,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
+    MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+    PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
@@ -26,7 +25,7 @@ use gpui::{
     prelude::*,
 };
 use language::language_settings::all_language_settings;
-use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToPoint};
+use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
@@ -43,7 +42,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, mem};
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
@@ -68,6 +67,7 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::capture_example::should_sample_edit_prediction_example_capture;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -141,6 +141,16 @@ impl FeatureFlag for Zeta2FeatureFlag {
     }
 }
 
+pub struct EditPredictionExampleCaptureFeatureFlag;
+
+impl FeatureFlag for EditPredictionExampleCaptureFeatureFlag {
+    const NAME: &'static str = "edit-prediction-example-capture";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
 #[derive(Clone)]
 struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
 
@@ -187,6 +197,7 @@ pub struct EditPredictionModelInput {
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
+    pub user_actions: Vec<UserActionRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -233,6 +244,26 @@ pub struct EditPredictionFinishedDebugEvent {
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
+const USER_ACTION_HISTORY_SIZE: usize = 16;
+
+#[derive(Clone, Debug)]
+pub struct UserActionRecord {
+    pub action_type: UserActionType,
+    pub buffer_id: EntityId,
+    pub line_number: u32,
+    pub offset: usize,
+    pub timestamp_epoch_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserActionType {
+    InsertChar,
+    InsertSelection,
+    DeleteChar,
+    DeleteSelection,
+    CursorMovement,
+}
+
 /// An event with associated metadata for reconstructing buffer state.
 #[derive(Clone)]
 pub struct StoredEvent {
@@ -253,10 +284,18 @@ struct ProjectState {
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
+    user_actions: VecDeque<UserActionRecord>,
     _subscription: gpui::Subscription,
 }
 
 impl ProjectState {
+    fn record_user_action(&mut self, action: UserActionRecord) {
+        if self.user_actions.len() >= USER_ACTION_HISTORY_SIZE {
+            self.user_actions.pop_front();
+        }
+        self.user_actions.push_back(action);
+    }
+
     pub fn events(&self, cx: &App) -> Vec<StoredEvent> {
         self.events
             .iter()
@@ -320,6 +359,7 @@ struct CurrentEditPrediction {
     pub requested_by: PredictionRequestedBy,
     pub prediction: EditPrediction,
     pub was_shown: bool,
+    pub shown_with: Option<edit_prediction_types::SuggestionDisplayType>,
 }
 
 impl CurrentEditPrediction {
@@ -414,7 +454,7 @@ struct LastEvent {
     new_snapshot: TextBufferSnapshot,
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
-    end_edit_anchor: Option<Anchor>,
+    edit_range: Option<Range<Anchor>>,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
 }
@@ -468,7 +508,7 @@ impl LastEvent {
             new_snapshot: boundary_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            end_edit_anchor: self.end_edit_anchor,
+            edit_range: None,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -478,7 +518,7 @@ impl LastEvent {
             new_snapshot: self.new_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            end_edit_anchor: self.end_edit_anchor,
+            edit_range: None,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -688,12 +728,14 @@ impl EditPredictionStore {
     pub fn clear_history(&mut self) {
         for project_state in self.projects.values_mut() {
             project_state.events.clear();
+            project_state.last_event.take();
         }
     }
 
     pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.events.clear();
+            project_state.last_event.take();
         }
     }
 
@@ -790,6 +832,7 @@ impl EditPredictionStore {
                 next_pending_prediction_id: 0,
                 last_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
+                user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
                 _subscription: cx.subscribe(&project, Self::handle_project_event),
             })
     }
@@ -986,10 +1029,51 @@ impl EditPredictionStore {
 
         let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-        let end_edit_anchor = new_snapshot
-            .anchored_edits_since::<Point>(&old_snapshot.version)
-            .last()
-            .map(|(_, range)| range.end);
+        let mut num_edits = 0usize;
+        let mut total_deleted = 0usize;
+        let mut total_inserted = 0usize;
+        let mut edit_range: Option<Range<Anchor>> = None;
+        let mut last_offset: Option<usize> = None;
+
+        for (edit, anchor_range) in
+            new_snapshot.anchored_edits_since::<usize>(&old_snapshot.version)
+        {
+            num_edits += 1;
+            total_deleted += edit.old.len();
+            total_inserted += edit.new.len();
+            edit_range = Some(match edit_range {
+                None => anchor_range,
+                Some(acc) => acc.start..anchor_range.end,
+            });
+            last_offset = Some(edit.new.end);
+        }
+
+        if num_edits > 0 {
+            let action_type = match (total_deleted, total_inserted, num_edits) {
+                (0, ins, n) if ins == n => UserActionType::InsertChar,
+                (0, _, _) => UserActionType::InsertSelection,
+                (del, 0, n) if del == n => UserActionType::DeleteChar,
+                (_, 0, _) => UserActionType::DeleteSelection,
+                (_, ins, n) if ins == n => UserActionType::InsertChar,
+                (_, _, _) => UserActionType::InsertSelection,
+            };
+
+            if let Some(offset) = last_offset {
+                let point = new_snapshot.offset_to_point(offset);
+                let timestamp_epoch_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                project_state.record_user_action(UserActionRecord {
+                    action_type,
+                    buffer_id: buffer.entity_id(),
+                    line_number: point.row,
+                    offset,
+                    timestamp_epoch_ms,
+                });
+            }
+        }
+
         let events = &mut project_state.events;
 
         let now = cx.background_executor().now();
@@ -999,13 +1083,19 @@ impl EditPredictionStore {
                 && old_snapshot.version == last_event.new_snapshot.version;
 
             let should_coalesce = is_next_snapshot_of_same_buffer
-                && end_edit_anchor
+                && edit_range
                     .as_ref()
-                    .zip(last_event.end_edit_anchor.as_ref())
+                    .zip(last_event.edit_range.as_ref())
                     .is_some_and(|(a, b)| {
                         let a = a.to_point(&new_snapshot);
                         let b = b.to_point(&new_snapshot);
-                        a.row.abs_diff(b.row) <= CHANGE_GROUPING_LINE_SPAN
+                        if a.start > b.end {
+                            a.start.row.abs_diff(b.end.row) <= CHANGE_GROUPING_LINE_SPAN
+                        } else if b.start > a.end {
+                            b.start.row.abs_diff(a.end.row) <= CHANGE_GROUPING_LINE_SPAN
+                        } else {
+                            true
+                        }
                     });
 
             if should_coalesce {
@@ -1018,19 +1108,20 @@ impl EditPredictionStore {
                         Some(last_event.new_snapshot.clone());
                 }
 
-                last_event.end_edit_anchor = end_edit_anchor;
+                last_event.edit_range = edit_range;
                 last_event.new_snapshot = new_snapshot;
                 last_event.last_edit_time = Some(now);
                 return;
             }
         }
 
-        if events.len() + 1 >= EVENT_COUNT_MAX {
-            events.pop_front();
-        }
-
         if let Some(event) = project_state.last_event.take() {
-            events.extend(event.finalize(&project_state.license_detection_watchers, cx));
+            if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
+                if events.len() + 1 >= EVENT_COUNT_MAX {
+                    events.pop_front();
+                }
+                events.push_back(event);
+            }
         }
 
         project_state.last_event = Some(LastEvent {
@@ -1038,7 +1129,7 @@ impl EditPredictionStore {
             new_file,
             old_snapshot,
             new_snapshot,
-            end_edit_anchor,
+            edit_range,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
         });
@@ -1085,65 +1176,27 @@ impl EditPredictionStore {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
-        match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                if self.custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
-                    return;
-                }
-            }
-            EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
-        }
-
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
 
-        let Some(prediction) = project_state.current_prediction.take() else {
+        let Some(current_prediction) = project_state.current_prediction.take() else {
             return;
         };
-        let request_id = prediction.prediction.id.to_string();
+
         for pending_prediction in mem::take(&mut project_state.pending_predictions) {
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
 
-        let client = self.client.clone();
-        let llm_token = self.llm_token.clone();
-        let app_version = AppVersion::global(cx);
-        cx.spawn(async move |this, cx| {
-            let (url, require_auth) = if let Some(accept_edits_url) = custom_accept_url {
-                (http_client::Url::parse(&accept_edits_url)?, false)
-            } else {
-                (
-                    client
-                        .http_client()
-                        .build_zed_llm_url("/predict_edits/accept", &[])?,
-                    true,
-                )
-            };
-
-            let response = cx
-                .background_spawn(Self::send_api_request::<()>(
-                    move |builder| {
-                        let req = builder.uri(url.as_ref()).body(
-                            serde_json::to_string(&AcceptEditPredictionBody {
-                                request_id: request_id.clone(),
-                            })?
-                            .into(),
-                        );
-                        Ok(req?)
-                    },
-                    client,
-                    llm_token,
-                    app_version,
-                    require_auth,
-                ))
-                .await;
-
-            Self::handle_api_response(&this, response, cx)?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        match self.edit_prediction_model {
+            EditPredictionModel::Sweep => {
+                sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
+            }
+            EditPredictionModel::Mercury => {}
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                zeta2::edit_prediction_accepted(self, current_prediction, cx)
+            }
+        }
     }
 
     async fn handle_rejected_predictions(
@@ -1218,18 +1271,51 @@ impl EditPredictionStore {
         };
     }
 
-    fn did_show_current_prediction(&mut self, project: &Entity<Project>, _cx: &mut Context<Self>) {
-        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
-            if let Some(current_prediction) = project_state.current_prediction.as_mut() {
-                if !current_prediction.was_shown {
-                    current_prediction.was_shown = true;
-                    self.shown_predictions
-                        .push_front(current_prediction.prediction.clone());
-                    if self.shown_predictions.len() > 50 {
-                        let completion = self.shown_predictions.pop_back().unwrap();
-                        self.rated_predictions.remove(&completion.id);
-                    }
-                }
+    fn did_show_current_prediction(
+        &mut self,
+        project: &Entity<Project>,
+        display_type: edit_prediction_types::SuggestionDisplayType,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
+            return;
+        };
+
+        let Some(current_prediction) = project_state.current_prediction.as_mut() else {
+            return;
+        };
+
+        let is_jump = display_type == edit_prediction_types::SuggestionDisplayType::Jump;
+        let previous_shown_with = current_prediction.shown_with;
+
+        if previous_shown_with.is_none() || !is_jump {
+            current_prediction.shown_with = Some(display_type);
+        }
+
+        let is_first_non_jump_show = !current_prediction.was_shown && !is_jump;
+
+        if is_first_non_jump_show {
+            current_prediction.was_shown = true;
+        }
+
+        let display_type_changed = previous_shown_with != Some(display_type);
+
+        if self.edit_prediction_model == EditPredictionModel::Sweep && display_type_changed {
+            sweep_ai::edit_prediction_shown(
+                &self.sweep_ai,
+                self.client.clone(),
+                &current_prediction.prediction,
+                display_type,
+                cx,
+            );
+        }
+
+        if is_first_non_jump_show {
+            self.shown_predictions
+                .push_front(current_prediction.prediction.clone());
+            if self.shown_predictions.len() > 50 {
+                let completion = self.shown_predictions.pop_back().unwrap();
+                self.rated_predictions.remove(&completion.id);
             }
         }
     }
@@ -1490,6 +1576,7 @@ impl EditPredictionStore {
                                 requested_by,
                                 prediction,
                                 was_shown: false,
+                                shown_with: None,
                             };
 
                             if let Some(current_prediction) =
@@ -1602,6 +1689,28 @@ impl EditPredictionStore {
 
         let snapshot = active_buffer.read(cx).snapshot();
         let cursor_point = position.to_point(&snapshot);
+        let current_offset = position.to_offset(&snapshot);
+
+        let mut user_actions: Vec<UserActionRecord> =
+            project_state.user_actions.iter().cloned().collect();
+
+        if let Some(last_action) = user_actions.last() {
+            if last_action.buffer_id == active_buffer.entity_id()
+                && current_offset != last_action.offset
+            {
+                let timestamp_epoch_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                user_actions.push(UserActionRecord {
+                    action_type: UserActionType::CursorMovement,
+                    buffer_id: active_buffer.entity_id(),
+                    line_number: cursor_point.row,
+                    offset: current_offset,
+                    timestamp_epoch_ms,
+                });
+            }
+        }
         let diagnostic_search_start = cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
         let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
         let diagnostic_search_range =
@@ -1624,8 +1733,32 @@ impl EditPredictionStore {
             trigger,
             diagnostic_search_range: diagnostic_search_range.clone(),
             debug_tx,
+            user_actions,
         };
 
+        let can_collect_example = snapshot
+            .file()
+            .is_some_and(|file| self.can_collect_file(&project, file, cx))
+            && self.can_collect_events(&inputs.events, cx);
+
+        if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
+            let events_for_capture =
+                self.edit_history_for_project_with_pause_split_last_event(&project, cx);
+            if let Some(example_task) = capture_example::capture_example(
+                project.clone(),
+                active_buffer.clone(),
+                position,
+                events_for_capture,
+                cx,
+            ) {
+                cx.spawn(async move |_this, _cx| {
+                    let example = example_task.await?;
+                    telemetry::event!("Edit Prediction Example Captured", example = example);
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
             EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
@@ -1708,7 +1841,7 @@ impl EditPredictionStore {
                     worktree_id: file.worktree_id(cx),
                     path: file.path().clone(),
                 })
-            })?;
+            });
 
             let buffer_task = project.update(cx, |project, cx| {
                 let (path, _, _) = project
@@ -1729,7 +1862,7 @@ impl EditPredictionStore {
                     })?;
 
                 Some(project.open_buffer(path, cx))
-            })?;
+            });
 
             if let Some(buffer_task) = buffer_task {
                 let closest_buffer = buffer_task.await?;
@@ -1741,7 +1874,7 @@ impl EditPredictionStore {
                             .into_iter()
                             .min_by_key(|entry| entry.diagnostic.severity)
                             .map(|entry| entry.range.start)
-                    })?
+                    })
                     .map(|position| (closest_buffer, position));
             }
         }
@@ -1840,8 +1973,7 @@ impl EditPredictionStore {
                                 })
                             },
                         );
-                    })
-                    .ok();
+                    });
                 }
                 Err(err)
             }
@@ -1974,11 +2106,11 @@ impl EditPredictionStore {
     }
 
     fn can_collect_file(&self, project: &Entity<Project>, file: &Arc<dyn File>, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
+        self.data_collection_choice.is_enabled(cx) && self.is_file_open_source(project, file, cx)
     }
 
-    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>]) -> bool {
-        if !self.data_collection_choice.is_enabled() {
+    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>], cx: &App) -> bool {
+        if !self.data_collection_choice.is_enabled(cx) {
             return false;
         }
         events.iter().all(|event| {
@@ -2012,10 +2144,11 @@ impl EditPredictionStore {
     fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
         self.data_collection_choice = self.data_collection_choice.toggle();
         let new_choice = self.data_collection_choice;
+        let is_enabled = new_choice.is_enabled(cx);
         db::write_and_log(cx, move || {
             KEY_VALUE_STORE.write_kvp(
                 ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                new_choice.is_enabled().to_string(),
+                is_enabled.to_string(),
             )
         });
     }
@@ -2044,7 +2177,9 @@ impl EditPredictionStore {
             "Edit Prediction Rated",
             rating,
             inputs = prediction.inputs,
-            output = prediction.edit_preview.as_unified_diff(&prediction.edits),
+            output = prediction
+                .edit_preview
+                .as_unified_diff(prediction.snapshot.file(), &prediction.edits),
             feedback
         );
         self.client.telemetry().flush_events().detach();
@@ -2101,17 +2236,13 @@ pub enum DataCollectionChoice {
 }
 
 impl DataCollectionChoice {
-    pub fn is_enabled(self) -> bool {
+    pub fn is_enabled(self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return true;
+        }
         match self {
             Self::Enabled => true,
             Self::NotAnswered | Self::Disabled => false,
-        }
-    }
-
-    pub fn is_answered(self) -> bool {
-        match self {
-            Self::Enabled | Self::Disabled => true,
-            Self::NotAnswered => false,
         }
     }
 

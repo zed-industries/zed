@@ -7,8 +7,8 @@ use ::util::ResultExt;
 use windows::Win32::UI::{
     Shell::{ABM_GETSTATE, ABM_GETTASKBARPOS, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
     WindowsAndMessaging::{
-        SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-        SystemParametersInfoW,
+        SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SPI_SETWORKAREA,
+        SYSTEM_PARAMETERS_INFO_ACTION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
     },
 };
 
@@ -39,18 +39,16 @@ impl WindowsSystemSettings {
         settings
     }
 
-    fn init(&self, display: WindowsDisplay) {
+    fn init(&mut self, display: WindowsDisplay) {
         self.mouse_wheel_settings.update();
         self.auto_hide_taskbar_position
             .set(AutoHideTaskbarPosition::new(display).log_err().flatten());
     }
 
     pub(crate) fn update(&self, display: WindowsDisplay, wparam: usize) {
-        match wparam {
-            // SPI_SETWORKAREA
-            47 => self.update_taskbar_position(display),
-            // SPI_GETWHEELSCROLLLINES, SPI_GETWHEELSCROLLCHARS
-            104 | 108 => self.update_mouse_wheel_settings(),
+        match SYSTEM_PARAMETERS_INFO_ACTION(wparam as u32) {
+            SPI_SETWORKAREA => self.update_taskbar_position(display),
+            SPI_GETWHEELSCROLLLINES | SPI_GETWHEELSCROLLCHARS => self.update_mouse_wheel_settings(),
             _ => {}
         }
     }

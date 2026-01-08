@@ -115,19 +115,19 @@ impl AgentTool for DeletePathTool {
         cx.spawn(async move |cx| {
             while let Some(path) = paths_rx.next().await {
                 if let Ok(buffer) = project
-                    .update(cx, |project, cx| project.open_buffer(path, cx))?
+                    .update(cx, |project, cx| project.open_buffer(path, cx))
                     .await
                 {
                     action_log.update(cx, |action_log, cx| {
                         action_log.will_delete_buffer(buffer.clone(), cx)
-                    })?;
+                    });
                 }
             }
 
             let deletion_task = project
                 .update(cx, |project, cx| {
                     project.delete_file(project_path, false, cx)
-                })?
+                })
                 .with_context(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;

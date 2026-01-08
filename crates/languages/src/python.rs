@@ -2,16 +2,17 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::language_settings;
-use language::{ContextLocation, LanguageToolchainStore, LspInstaller};
+use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::LanguageServerName;
 use lsp::{LanguageServerBinary, Uri};
+use lsp::{LanguageServerBinaryOptions, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
@@ -248,7 +249,7 @@ impl LspAdapter for TyLspAdapter {
             .update(|cx| {
                 language_server_settings(delegate.as_ref(), &self.name(), cx)
                     .and_then(|s| s.settings.clone())
-            })?
+            })
             .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
             serde_json::from_value::<PythonToolchainData>(toolchain.as_json).ok()
@@ -573,7 +574,7 @@ impl LspAdapter for PyrightLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
+        Ok(cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
@@ -635,7 +636,7 @@ impl LspAdapter for PyrightLspAdapter {
             }
 
             user_settings
-        })
+        }))
     }
 }
 
@@ -1357,7 +1358,12 @@ impl ToolchainLister for PythonToolchainProvider {
                     activation_script.push(format!("{manager} activate base"));
                 }
             }
-            Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+            Some(
+                PythonEnvironmentKind::Venv
+                | PythonEnvironmentKind::VirtualEnv
+                | PythonEnvironmentKind::Uv
+                | PythonEnvironmentKind::UvWorkspace,
+            ) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
                         let activate_keyword = shell.activate_keyword();
@@ -1414,9 +1420,12 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
 
     let mut activation_scripts = HashMap::default();
     match venv.kind {
-        Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
-            resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await
-        }
+        Some(
+            PythonEnvironmentKind::Venv
+            | PythonEnvironmentKind::VirtualEnv
+            | PythonEnvironmentKind::Uv
+            | PythonEnvironmentKind::UvWorkspace,
+        ) => resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await,
         _ => {}
     }
     let data = PythonToolchainData {
@@ -1694,7 +1703,7 @@ impl LspAdapter for PyLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
+        Ok(cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
@@ -1752,7 +1761,7 @@ impl LspAdapter for PyLspAdapter {
             )]));
 
             user_settings
-        })
+        }))
     }
 }
 
@@ -1986,7 +1995,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
+        Ok(cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
@@ -2052,10 +2061,16 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     }
                     Some(())
                 });
+                // Disable basedpyright's organizeImports so ruff handles it instead
+                if let serde_json::map::Entry::Vacant(v) =
+                    object.entry("basedpyright.disableOrganizeImports")
+                {
+                    v.insert(Value::Bool(true));
+                }
             }
 
             user_settings
-        })
+        }))
     }
 }
 
@@ -2342,9 +2357,27 @@ impl LspAdapter for RuffLspAdapter {
 
     async fn initialization_options_schema(
         self: Arc<Self>,
-        language_server_binary: &LanguageServerBinary,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
-        let mut command = util::command::new_smol_command(&language_server_binary.path);
+        let binary = self
+            .get_language_server_command(
+                delegate.clone(),
+                None,
+                LanguageServerBinaryOptions {
+                    allow_path_lookup: true,
+                    allow_binary_download: false,
+                    pre_release: false,
+                },
+                cached_binary,
+                cx.clone(),
+            )
+            .await
+            .0
+            .ok()?;
+
+        let mut command = util::command::new_smol_command(&binary.path);
         command
             .args(&["config", "--output-format", "json"])
             .stdout(Stdio::piped())

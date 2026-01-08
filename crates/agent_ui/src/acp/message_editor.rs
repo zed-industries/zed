@@ -1,3 +1,4 @@
+use crate::QueueMessage;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -50,6 +51,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
+    Queue,
     Cancel,
     Focus,
     LostFocus,
@@ -464,9 +466,9 @@ impl MessageEditor {
                         }
                     }
                 });
-                Ok((chunks, all_tracked_buffers))
+                anyhow::Ok((chunks, all_tracked_buffers))
             })?;
-            result
+            Ok(result)
         })
     }
 
@@ -493,6 +495,18 @@ impl MessageEditor {
             editor.clear_inlay_hints(cx);
         });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    pub fn queue(&mut self, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::Queue)
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -536,6 +550,10 @@ impl MessageEditor {
 
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         self.send(cx);
+    }
+
+    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
+        self.queue(cx);
     }
 
     fn chat_with_follow(
@@ -660,28 +678,24 @@ impl MessageEditor {
                                     .update(cx, |project, cx| {
                                         project.project_path_for_absolute_path(&file_path, cx)
                                     })
-                                    .map_err(|e| e.to_string())?
                                     .ok_or_else(|| "project path not found".to_string())?;
 
                                 let buffer = project
                                     .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                                    .map_err(|e| e.to_string())?
                                     .await
                                     .map_err(|e| e.to_string())?;
 
-                                buffer
-                                    .update(cx, |buffer, cx| {
-                                        let start = Point::new(*line_range.start(), 0)
-                                            .min(buffer.max_point());
-                                        let end = Point::new(*line_range.end() + 1, 0)
-                                            .min(buffer.max_point());
-                                        let content = buffer.text_for_range(start..end).collect();
-                                        Mention::Text {
-                                            content,
-                                            tracked_buffers: vec![cx.entity()],
-                                        }
-                                    })
-                                    .map_err(|e| e.to_string())
+                                Ok(buffer.update(cx, |buffer, cx| {
+                                    let start =
+                                        Point::new(*line_range.start(), 0).min(buffer.max_point());
+                                    let end = Point::new(*line_range.end() + 1, 0)
+                                        .min(buffer.max_point());
+                                    let content = buffer.text_for_range(start..end).collect();
+                                    Mention::Text {
+                                        content,
+                                        tracked_buffers: vec![cx.entity()],
+                                    }
+                                }))
                             }
                         })
                         .shared();
@@ -984,6 +998,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::queue_message))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::paste_raw))
