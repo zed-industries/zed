@@ -167,14 +167,14 @@ impl AgentTool for ReadFileTool {
                         self.project.update(cx, |project, cx| {
                             project.open_image(project_path.clone(), cx)
                         })
-                    })?
+                    })
                     .await?;
 
                 let image =
-                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
+                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image));
 
                 let language_model_image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await
                     .context("processing image")?;
 
@@ -197,21 +197,21 @@ impl AgentTool for ReadFileTool {
                     project.update(cx, |project, cx| {
                         project.open_buffer(project_path.clone(), cx)
                     })
-                })?
+                })
                 .await?;
             if buffer.read_with(cx, |buffer, _| {
                 buffer
                     .file()
                     .as_ref()
                     .is_none_or(|file| !file.disk_state().exists())
-            })? {
+            }) {
                 anyhow::bail!("{file_path} not found");
             }
 
             // Record the file read time and mtime
             if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
                 buffer.file().and_then(|file| file.disk_state().mtime())
-            })? {
+            }) {
                 self.thread
                     .update(cx, |thread, _| {
                         thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
@@ -239,11 +239,11 @@ impl AgentTool for ReadFileTool {
                     let start = buffer.anchor_before(Point::new(start_row, 0));
                     let end = buffer.anchor_before(Point::new(end_row, 0));
                     buffer.text_for_range(start..end).collect::<String>()
-                })?;
+                });
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
                 Ok(result.into())
             } else {
@@ -257,7 +257,7 @@ impl AgentTool for ReadFileTool {
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
@@ -297,7 +297,7 @@ impl AgentTool for ReadFileTool {
                         acp::ToolCallContent::Content(acp::Content::new(markdown)),
                     ]));
                 }
-            })?;
+            });
 
             result
         })

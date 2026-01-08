@@ -19,7 +19,7 @@ struct ProgressInner {
     terminal_width: usize,
     max_example_name_len: usize,
     status_lines_displayed: usize,
-    total_steps: usize,
+    total_examples: usize,
     failed_examples: usize,
     last_line_is_logging: bool,
     ticker: Option<std::thread::JoinHandle<()>>,
@@ -99,26 +99,27 @@ impl Progress {
                     inner: Mutex::new(ProgressInner {
                         completed: Vec::new(),
                         in_progress: HashMap::new(),
-                        is_tty: std::io::stderr().is_terminal(),
+                        is_tty: std::env::var("NO_COLOR").is_err()
+                            && std::io::stderr().is_terminal(),
                         terminal_width: get_terminal_width(),
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
-                        total_steps: 0,
+                        total_examples: 0,
                         failed_examples: 0,
                         last_line_is_logging: false,
                         ticker: None,
                     }),
                 });
                 let _ = log::set_logger(&LOGGER);
-                log::set_max_level(log::LevelFilter::Error);
+                log::set_max_level(log::LevelFilter::Info);
                 progress
             })
             .clone()
     }
 
-    pub fn set_total_steps(&self, total: usize) {
+    pub fn set_total_examples(&self, total: usize) {
         let mut inner = self.inner.lock().unwrap();
-        inner.total_steps = total;
+        inner.total_examples = total;
     }
 
     pub fn increment_failed(&self) {
@@ -316,7 +317,7 @@ impl Progress {
 
         let range_label = format!(
             " {}/{}/{} ",
-            done_count, in_progress_count, inner.total_steps
+            done_count, in_progress_count, inner.total_examples
         );
 
         // Print a divider line with failed count on left, range label on right
@@ -396,15 +397,15 @@ impl Progress {
 
         // Print summary if there were failures
         if inner.failed_examples > 0 {
-            let total_processed = inner.completed.len();
-            let percentage = if total_processed > 0 {
-                inner.failed_examples as f64 / total_processed as f64 * 100.0
+            let total_examples = inner.total_examples;
+            let percentage = if total_examples > 0 {
+                inner.failed_examples as f64 / total_examples as f64 * 100.0
             } else {
                 0.0
             };
             eprintln!(
                 "\n{} of {} examples failed ({:.1}%)",
-                inner.failed_examples, total_processed, percentage
+                inner.failed_examples, total_examples, percentage
             );
         }
     }

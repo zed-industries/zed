@@ -2179,7 +2179,7 @@ impl CollabPanel {
             cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
-                        .update(cx, |channels, _| channels.remove_channel(channel_id))?
+                        .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                         .notify_async_err(cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
@@ -2213,7 +2213,7 @@ impl CollabPanel {
         cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
-                    .update(cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                     .notify_async_err(cx);
             }

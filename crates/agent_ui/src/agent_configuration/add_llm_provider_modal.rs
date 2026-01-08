@@ -262,7 +262,7 @@ fn save_provider_to_settings(
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
     cx.spawn(async move |cx| {
         task.await
-            .map_err(|_| "Failed to write API key to keychain")?;
+            .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
         cx.update(|cx| {
             update_settings_file(fs, cx, |settings, _cx| {
                 settings
@@ -278,8 +278,7 @@ fn save_provider_to_settings(
                         },
                     );
             });
-        })
-        .ok();
+        });
         Ok(())
     })
 }
