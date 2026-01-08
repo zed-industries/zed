@@ -3058,26 +3058,20 @@ impl EditorElement {
         let max_point = snapshot.display_snapshot.max_point();
         let last_row = max_point.row();
 
-        let element_bg = cx.theme().colors().element_background;
-        let border_color = cx.theme().colors().border;
-
-        // Use a custom button with Icon for better visibility in prepaint_as_root context
         let button = div()
             .id("diff_review_button")
             .flex()
             .items_center()
             .justify_center()
-            .size(ui::ButtonSize::Compact.rems())
-            .rounded_sm()
-            .bg(element_bg)
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .hover(move |style| style.border_color(border_color))
-            .child(
-                ui::Icon::new(IconName::Plus)
-                    .size(IconSize::Small)
-                    .color(ui::Color::Default),
-            )
+            .w(px(20.0))
+            .h(px(20.0))
+            .rounded(px(4.0))
+            .bg(cx.theme().colors().element_background)
+            .text_color(cx.theme().colors().text)
+            .text_size(px(14.0))
+            .font_weight(gpui::FontWeight::BOLD)
+            .child("+")
+            .tooltip(|window, cx| ui::Tooltip::text("Add Review")(window, cx))
             .into_any_element();
 
         let button = prepaint_gutter_button(
