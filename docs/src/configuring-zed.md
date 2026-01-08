@@ -244,6 +244,26 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Update extensions
+
+- Description: Define extensions to be autoupdated or manually updated.
+- Setting: `auto_update_extensions`
+- Default: `null`
+
+**Options**
+
+Define extensions which will be autoupdated (`true`) vs. those that will be manually updated (`false`).
+
+```json [settings]
+{
+  "auto_update_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
@@ -1451,6 +1471,47 @@ or
 
 `boolean` values
 
+### Session
+
+- Description: Controls Zed lifecycle-related behavior.
+- Setting: `session`
+- Default:
+
+```json
+{
+  "session": {
+    "restore_unsaved_buffers": true,
+    "trust_all_worktrees": false
+  }
+}
+```
+
+**Options**
+
+1.  Whether or not to restore unsaved buffers on restart:
+
+```json [settings]
+{
+  "session": {
+    "restore_unsaved_buffers": true
+  }
+}
+```
+
+If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
+
+2. Whether or not to skip worktree and workspace trust checks:
+
+```json [settings]
+{
+  "session": {
+    "trust_all_worktrees": false
+  }
+}
+```
+
+When trusted, project settings are synchronized automatically, language and MCP servers are downloaded and started automatically.
+
 ### Drag And Drop Selection
 
 - Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
@@ -1544,6 +1605,26 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 `boolean` values
 
+## Extend List On Newline
+
+- Description: Whether to continue lists when pressing Enter at the end of a list item. Supports unordered, ordered, and task lists. Pressing Enter on an empty list item removes the marker and exits the list.
+- Setting: `extend_list_on_newline`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Indent List On Tab
+
+- Description: Whether to indent list items when pressing Tab on a line containing only a list marker. This enables quick creation of nested lists.
+- Setting: `indent_list_on_tab`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Status Bar
 
 - Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
@@ -1554,7 +1635,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 "status_bar": {
   "active_language_button": true,
   "cursor_position_button": true,
-  "line_endings_button": false
+  "line_endings_button": false,
+  "active_encoding_button": "non_utf8"
 },
 ```
 
@@ -1841,6 +1923,8 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.svn",
   "**/.hg",
   "**/.jj",
+  "**/.sl",
+  "**/.repo",
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
@@ -3142,7 +3226,15 @@ List of strings containing any combination of:
 
 ```json [settings]
 {
-  "restore_on_startup": "none"
+  "restore_on_startup": "empty_tab"
+}
+```
+
+4. Always start with the welcome launchpad:
+
+```json [settings]
+{
+  "restore_on_startup": "launchpad"
 }
 ```
 
@@ -3443,6 +3535,7 @@ Positive integer values
 2. `selection`
 3. `none`
 4. `boundary`
+5. `trailing`
 
 ## Whitespace Map
 
@@ -4309,6 +4402,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "show_project_items": true,
   "show_onboarding_banner": true,
   "show_user_picture": true,
+  "show_user_menu": true,
   "show_sign_in": true,
   "show_menus": false
 }
@@ -4321,6 +4415,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
+- `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 

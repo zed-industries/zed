@@ -12,6 +12,7 @@ workspace = true
 tracy = ["tracing-tracy"]
 
 [dependencies]
+zlog.workspace = true
 tracing.workspace = true
 
 tracing-subscriber = "0.3.22"

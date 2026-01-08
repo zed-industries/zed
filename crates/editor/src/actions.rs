@@ -327,6 +327,23 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Inserts a snippet at the cursor.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct InsertSnippet {
+    /// Language name if using a named snippet, or `None` for a global snippet
+    ///
+    /// This is typically lowercase and matches the filename containing the snippet, without the `.json` extension.
+    pub language: Option<String>,
+    /// Name if using a named snippet
+    pub name: Option<String>,
+
+    /// Snippet body, if not using a named snippet
+    // todo(andrew): use `ListOrDirect` or similar for multiline snippet body
+    pub snippet: Option<String>,
+}
+
 actions!(
     debugger,
     [
@@ -353,7 +370,8 @@ actions!(
         AcceptEditPrediction,
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
-        AcceptPartialEditPrediction,
+        AcceptNextWordEditPrediction,
+        AcceptNextLineEditPrediction,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.
@@ -663,6 +681,10 @@ actions!(
         ReloadFile,
         /// Rewraps text to fit within the preferred line length.
         Rewrap,
+        /// Rotates selections or lines backward.
+        RotateSelectionsBackward,
+        /// Rotates selections or lines forward.
+        RotateSelectionsForward,
         /// Runs flycheck diagnostics.
         RunFlycheck,
         /// Scrolls the cursor to the bottom of the viewport.
@@ -822,7 +844,7 @@ actions!(
         /// from the current selections.
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
-        WrapSelectionsInTag
+        WrapSelectionsInTag,
     ]
 );
 

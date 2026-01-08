@@ -11,6 +11,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
+use serde_json::to_string_pretty;
 use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
@@ -43,6 +44,7 @@ pub struct UserMessage {
     pub content: ContentBlock,
     pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<Checkpoint>,
+    pub indented: bool,
 }
 
 #[derive(Debug)]
@@ -73,6 +75,7 @@ impl UserMessage {
 #[derive(Debug, PartialEq)]
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
+    pub indented: bool,
 }
 
 impl AssistantMessage {
@@ -123,6 +126,14 @@ pub enum AgentThreadEntry {
 }
 
 impl AgentThreadEntry {
+    pub fn is_indented(&self) -> bool {
+        match self {
+            Self::UserMessage(message) => message.indented,
+            Self::AssistantMessage(message) => message.indented,
+            Self::ToolCall(_) => false,
+        }
+    }
+
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
@@ -182,6 +193,7 @@ pub struct ToolCall {
     pub locations: Vec<acp::ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
+    pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
 }
 
@@ -212,6 +224,11 @@ impl ToolCall {
             }
         }
 
+        let raw_input_markdown = tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -222,6 +239,7 @@ impl ToolCall {
             resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
+            raw_input_markdown,
             raw_output: tool_call.raw_output,
         };
         Ok(result)
@@ -297,6 +315,7 @@ impl ToolCall {
         }
 
         if let Some(raw_input) = raw_input {
+            self.raw_input_markdown = markdown_for_raw_output(&raw_input, &language_registry, cx);
             self.raw_input = Some(raw_input);
         }
 
@@ -356,18 +375,16 @@ impl ToolCall {
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;
-        let position = buffer
-            .update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                if let Some(row) = location.line {
-                    let column = snapshot.indent_size_for_line(row).len;
-                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
-                    snapshot.anchor_before(point)
-                } else {
-                    Anchor::min_for_buffer(snapshot.remote_id())
-                }
-            })
-            .ok()?;
+        let position = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            if let Some(row) = location.line {
+                let column = snapshot.indent_size_for_line(row).len;
+                let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                snapshot.anchor_before(point)
+            } else {
+                Anchor::min_for_buffer(snapshot.remote_id())
+            }
+        });
 
         Some(ResolvedLocation { buffer, position })
     }
@@ -464,6 +481,7 @@ pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
     ResourceLink { resource_link: acp::ResourceLink },
+    Image { image: Arc<gpui::Image> },
 }
 
 impl ContentBlock {
@@ -498,29 +516,50 @@ impl ContentBlock {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        if matches!(self, ContentBlock::Empty)
-            && let acp::ContentBlock::ResourceLink(resource_link) = block
-        {
-            *self = ContentBlock::ResourceLink { resource_link };
-            return;
-        }
-
-        let new_content = self.block_string_contents(block, path_style);
-
-        match self {
-            ContentBlock::Empty => {
+        match (&mut *self, &block) {
+            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
+                *self = ContentBlock::ResourceLink {
+                    resource_link: resource_link.clone(),
+                };
+            }
+            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
+                if let Some(image) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image };
+                } else {
+                    let new_content = Self::image_md(image_content);
+                    *self = Self::create_markdown_block(new_content, language_registry, cx);
+                }
+            }
+            (ContentBlock::Empty, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
-            ContentBlock::Markdown { markdown } => {
+            (ContentBlock::Markdown { markdown }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
-            ContentBlock::ResourceLink { resource_link } => {
+            (ContentBlock::ResourceLink { resource_link }, _) => {
                 let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
-
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+            (ContentBlock::Image { .. }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("`Image`\n{}", new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
         }
+    }
+
+    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+        use base64::Engine as _;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(image_content.data.as_bytes())
+            .ok()?;
+        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
     }
 
     fn create_markdown_block(
@@ -534,9 +573,9 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: acp::ContentBlock, path_style: PathStyle) -> String {
+    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
-            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
                 Self::resource_link_md(&resource_link.uri, path_style)
             }
@@ -547,8 +586,8 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_md(&uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(&image),
+            }) => Self::resource_link_md(uri, path_style),
+            acp::ContentBlock::Image(image) => Self::image_md(image),
             _ => String::new(),
         }
     }
@@ -570,6 +609,7 @@ impl ContentBlock {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
             ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
+            ContentBlock::Image { .. } => "`Image`",
         }
     }
 
@@ -578,12 +618,20 @@ impl ContentBlock {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
             ContentBlock::ResourceLink { .. } => None,
+            ContentBlock::Image { .. } => None,
         }
     }
 
     pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
         match self {
             ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            ContentBlock::Image { image } => Some(image),
             _ => None,
         }
     }
@@ -665,6 +713,13 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            Self::ContentBlock(content) => content.image(),
+            _ => None,
         }
     }
 }
@@ -865,6 +920,7 @@ pub enum AcpThreadEvent {
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
     ModeUpdated(acp::SessionModeId),
+    ConfigOptionsUpdated(Vec<acp::SessionConfigOption>),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1174,6 +1230,10 @@ impl AcpThread {
                 current_mode_id,
                 ..
             }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
+            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate {
+                config_options,
+                ..
+            }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(config_options)),
             _ => {}
         }
         Ok(())
@@ -1185,6 +1245,16 @@ impl AcpThread {
         chunk: acp::ContentBlock,
         cx: &mut Context<Self>,
     ) {
+        self.push_user_content_block_with_indent(message_id, chunk, false, cx)
+    }
+
+    pub fn push_user_content_block_with_indent(
+        &mut self,
+        message_id: Option<UserMessageId>,
+        chunk: acp::ContentBlock,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
@@ -1194,8 +1264,10 @@ impl AcpThread {
                 id,
                 content,
                 chunks,
+                indented: existing_indented,
                 ..
             }) = last_entry
+            && *existing_indented == indented
         {
             *id = message_id.or(id.take());
             content.append(chunk.clone(), &language_registry, path_style, cx);
@@ -1210,6 +1282,7 @@ impl AcpThread {
                     content,
                     chunks: vec![chunk],
                     checkpoint: None,
+                    indented,
                 }),
                 cx,
             );
@@ -1222,11 +1295,25 @@ impl AcpThread {
         is_thought: bool,
         cx: &mut Context<Self>,
     ) {
+        self.push_assistant_content_block_with_indent(chunk, is_thought, false, cx)
+    }
+
+    pub fn push_assistant_content_block_with_indent(
+        &mut self,
+        chunk: acp::ContentBlock,
+        is_thought: bool,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
+            && let AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks,
+                indented: existing_indented,
+            }) = last_entry
+            && *existing_indented == indented
         {
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
@@ -1255,6 +1342,7 @@ impl AcpThread {
             self.push_entry(
                 AgentThreadEntry::AssistantMessage(AssistantMessage {
                     chunks: vec![chunk],
+                    indented,
                 }),
                 cx,
             );
@@ -1317,6 +1405,7 @@ impl AcpThread {
                     locations: Vec::new(),
                     resolved_locations: Vec::new(),
                     raw_input: None,
+                    raw_input_markdown: None,
                     raw_output: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
@@ -1372,7 +1461,7 @@ impl AcpThread {
         let path_style = self.project.read(cx).path_style(cx);
         let id = update.tool_call_id.clone();
 
-        let agent = self.connection().telemetry_id();
+        let agent_telemetry_id = self.connection().telemetry_id();
         let session = self.session_id();
         if let ToolCallStatus::Completed | ToolCallStatus::Failed = status {
             let status = if matches!(status, ToolCallStatus::Completed) {
@@ -1380,7 +1469,12 @@ impl AcpThread {
             } else {
                 "failed"
             };
-            telemetry::event!("Agent Tool Call Completed", agent, session, status);
+            telemetry::event!(
+                "Agent Tool Call Completed",
+                agent_telemetry_id,
+                session,
+                status
+            );
         }
 
         if let Some(ix) = self.index_for_tool_call(&id) {
@@ -1699,6 +1793,7 @@ impl AcpThread {
                         content: block,
                         chunks: message,
                         checkpoint: None,
+                        indented: false,
                     }),
                     cx,
                 );
@@ -1706,7 +1801,7 @@ impl AcpThread {
             .ok();
 
             let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))?
+                .update(cx, |git, cx| git.checkpoint(cx))
                 .await
                 .context("failed to get old checkpoint")
                 .log_err();
@@ -1886,7 +1981,7 @@ impl AcpThread {
             rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
                     .await?;
             }
 
@@ -1904,7 +1999,7 @@ impl AcpThread {
 
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
+            cx.update(|cx| truncate.run(id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     // Collect all terminals from entries that will be removed
@@ -1939,37 +2034,42 @@ impl AcpThread {
     fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let git_store = self.project.read(cx).git_store().clone();
 
-        let old_checkpoint = if let Some((_, message)) = self.last_user_message() {
-            if let Some(checkpoint) = message.checkpoint.as_ref() {
-                checkpoint.git_checkpoint.clone()
-            } else {
-                return Task::ready(Ok(()));
-            }
-        } else {
+        let Some((_, message)) = self.last_user_message() else {
             return Task::ready(Ok(()));
         };
+        let Some(user_message_id) = message.id.clone() else {
+            return Task::ready(Ok(()));
+        };
+        let Some(checkpoint) = message.checkpoint.as_ref() else {
+            return Task::ready(Ok(()));
+        };
+        let old_checkpoint = checkpoint.git_checkpoint.clone();
 
         let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
         cx.spawn(async move |this, cx| {
-            let new_checkpoint = new_checkpoint
+            let Some(new_checkpoint) = new_checkpoint
                 .await
                 .context("failed to get new checkpoint")
-                .log_err();
-            if let Some(new_checkpoint) = new_checkpoint {
-                let equal = git_store
-                    .update(cx, |git, cx| {
-                        git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                    })?
-                    .await
-                    .unwrap_or(true);
-                this.update(cx, |this, cx| {
-                    let (ix, message) = this.last_user_message().context("no user message")?;
-                    let checkpoint = message.checkpoint.as_mut().context("no checkpoint")?;
-                    checkpoint.show = !equal;
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                    anyhow::Ok(())
-                })??;
-            }
+                .log_err()
+            else {
+                return Ok(());
+            };
+
+            let equal = git_store
+                .update(cx, |git, cx| {
+                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                })
+                .await
+                .unwrap_or(true);
+
+            this.update(cx, |this, cx| {
+                if let Some((ix, message)) = this.user_message_mut(&user_message_id) {
+                    if let Some(checkpoint) = message.checkpoint.as_mut() {
+                        checkpoint.show = !equal;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
+                }
+            })?;
 
             Ok(())
         })
@@ -2017,17 +2117,14 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project
-                .update(cx, |project, cx| {
-                    let path = project
-                        .project_path_for_absolute_path(&path, cx)
-                        .ok_or_else(|| {
-                            acp::Error::resource_not_found(Some(path.display().to_string()))
-                        })?;
-                    Ok(project.open_buffer(path, cx))
-                })
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))
-                .flatten()?;
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .ok_or_else(|| {
+                        acp::Error::resource_not_found(Some(path.display().to_string()))
+                    })?;
+                Ok::<_, acp::Error>(project.open_buffer(path, cx))
+            })?;
 
             let buffer = load.await?;
 
@@ -2046,9 +2143,9 @@ impl AcpThread {
             } else {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
                     this.shared_buffers.insert(buffer.clone(), snapshot.clone());
                 })?;
@@ -2077,7 +2174,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2098,7 +2195,7 @@ impl AcpThread {
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
-            let buffer = load??.await?;
+            let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
                     .get(&buffer)
@@ -2133,7 +2230,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
@@ -2155,7 +2252,7 @@ impl AcpThread {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
                 format_on_save
-            })?;
+            });
 
             if format_on_save {
                 let format_task = project.update(cx, |project, cx| {
@@ -2166,16 +2263,16 @@ impl AcpThread {
                         FormatTrigger::Save,
                         cx,
                     )
-                })?;
+                });
                 format_task.await.log_err();
 
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
-                })?;
+                });
             }
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))
                 .await
         })
     }
@@ -2221,7 +2318,7 @@ impl AcpThread {
                         project
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
-                    })?
+                    })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
@@ -2239,10 +2336,10 @@ impl AcpThread {
                             },
                             cx,
                         )
-                    })?
+                    })
                     .await?;
 
-                cx.new(|cx| {
+                anyhow::Ok(cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
                         &format!("{} {}", command, args.join(" ")),
@@ -2252,7 +2349,7 @@ impl AcpThread {
                         language_registry,
                         cx,
                     )
-                })
+                }))
             }
         });
 
@@ -2369,8 +2466,10 @@ fn markdown_for_raw_output(
             )
         })),
         value => Some(cx.new(|cx| {
+            let pretty_json = to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+
             Markdown::new(
-                format!("```json\n{}\n```", value).into(),
+                format!("```json\n{}\n```", pretty_json).into(),
                 Some(language_registry.clone()),
                 None,
                 cx,
@@ -3556,8 +3655,8 @@ mod tests {
     }
 
     impl AgentConnection for FakeAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "fake"
+        fn telemetry_id(&self) -> SharedString {
+            "fake".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -3707,6 +3806,9 @@ mod tests {
                         ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
+                        }
+                        ContentBlock::Image { .. } => {
+                            panic!("Expected markdown content, got image")
                         }
                     }
                 } else {
@@ -4011,6 +4113,69 @@ mod tests {
         assert_eq!(
             terminal_count, 2,
             "Should have exactly 2 terminals (the completed ones from before checkpoint)"
+        );
+    }
+
+    /// Tests that update_last_checkpoint correctly updates the original message's checkpoint
+    /// even when a new user message is added while the async checkpoint comparison is in progress.
+    ///
+    /// This is a regression test for a bug where update_last_checkpoint would fail with
+    /// "no checkpoint" if a new user message (without a checkpoint) was added between when
+    /// update_last_checkpoint started and when its async closure ran.
+    #[gpui::test]
+    async fn test_update_last_checkpoint_with_new_message_added(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({".git": {}, "file.txt": "content"}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/test"))], cx).await;
+
+        let handler_done = Arc::new(AtomicBool::new(false));
+        let handler_done_clone = handler_done.clone();
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            move |_, _thread, _cx| {
+                handler_done_clone.store(true, SeqCst);
+                async move { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }.boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let send_future = thread.update(cx, |thread, cx| thread.send_raw("First message", cx));
+        let send_task = cx.background_executor.spawn(send_future);
+
+        // Tick until handler completes, then a few more to let update_last_checkpoint start
+        while !handler_done.load(SeqCst) {
+            cx.executor().tick();
+        }
+        for _ in 0..5 {
+            cx.executor().tick();
+        }
+
+        thread.update(cx, |thread, cx| {
+            thread.push_entry(
+                AgentThreadEntry::UserMessage(UserMessage {
+                    id: Some(UserMessageId::new()),
+                    content: ContentBlock::Empty,
+                    chunks: vec!["Injected message (no checkpoint)".into()],
+                    checkpoint: None,
+                    indented: false,
+                }),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+        let result = send_task.await;
+
+        assert!(
+            result.is_ok(),
+            "send should succeed even when new message added during update_last_checkpoint: {:?}",
+            result.err()
         );
     }
 }

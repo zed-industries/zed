@@ -48,7 +48,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
             &excerpts,
             &[
                 (
-                    "src/company.rs",
+                    "root/src/company.rs",
                     &[indoc! {"
                         pub struct Company {
                             owner: Arc<Person>,
@@ -56,7 +56,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                         }"}],
                 ),
                 (
-                    "src/main.rs",
+                    "root/src/main.rs",
                     &[
                         indoc! {"
                         pub struct Session {
@@ -71,7 +71,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                     ],
                 ),
                 (
-                    "src/person.rs",
+                    "root/src/person.rs",
                     &[
                         indoc! {"
                         impl Person {
@@ -446,7 +446,7 @@ fn assert_related_files(actual_files: &[RelatedFile], expected_files: &[(&str, &
                 .iter()
                 .map(|excerpt| excerpt.text.to_string())
                 .collect::<Vec<_>>();
-            (file.path.path.as_unix_str(), excerpts)
+            (file.path.to_str().unwrap(), excerpts)
         })
         .collect::<Vec<_>>();
     let expected_excerpts = expected_files
@@ -492,10 +492,10 @@ fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
         if excerpt.text.is_empty() {
             continue;
         }
-        if current_row < excerpt.point_range.start.row {
+        if current_row < excerpt.row_range.start {
             writeln!(&mut output, "…").unwrap();
         }
-        current_row = excerpt.point_range.start.row;
+        current_row = excerpt.row_range.start;
 
         for line in excerpt.text.to_string().lines() {
             output.push_str(line);

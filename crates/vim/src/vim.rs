@@ -252,6 +252,12 @@ actions!(
         ToggleProjectPanelFocus,
         /// Starts a match operation.
         PushHelixMatch,
+        /// Adds surrounding characters in Helix mode.
+        PushHelixSurroundAdd,
+        /// Replaces surrounding characters in Helix mode.
+        PushHelixSurroundReplace,
+        /// Deletes surrounding characters in Helix mode.
+        PushHelixSurroundDelete,
     ]
 );
 
@@ -924,6 +930,7 @@ impl Vim {
                 |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
                     Mode::Replace => vim.paste_replace(window, cx),
                     Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                        vim.selected_register.replace('+');
                         vim.paste(&VimPaste::default(), window, cx);
                     }
                     _ => {
@@ -1887,6 +1894,60 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
+            Some(Operator::HelixSurroundAdd) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.move_with(|map, selection| {
+                                if selection.is_empty() {
+                                    selection.end = movement::right(map, selection.start);
+                                }
+                            });
+                        });
+                    });
+                    self.helix_surround_add(&text, window, cx);
+                    self.switch_mode(Mode::HelixNormal, false, window, cx);
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundReplace {
+                replaced_char: Some(old),
+            }) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(new_char) = text.chars().next() {
+                        self.helix_surround_replace(old, new_char, window, cx);
+                    }
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundReplace {
+                replaced_char: None,
+            }) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(ch) = text.chars().next() {
+                        self.pop_operator(window, cx);
+                        self.push_operator(
+                            Operator::HelixSurroundReplace {
+                                replaced_char: Some(ch),
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundDelete) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(ch) = text.chars().next() {
+                        self.helix_surround_delete(ch, window, cx);
+                    }
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
             Some(Operator::Mark) => self.create_mark(text, window, cx),
             Some(Operator::RecordRegister) => {
                 self.record_register(text.chars().next().unwrap(), window, cx)
@@ -1942,6 +2003,7 @@ impl Vim {
             editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
+            editor.set_cursor_offset_on_selection(vim.mode.is_visual());
             editor
                 .selections
                 .set_line_mode(matches!(vim.mode, Mode::VisualLine));

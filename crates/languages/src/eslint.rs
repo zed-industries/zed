@@ -126,11 +126,11 @@ impl LspInstaller for EsLintLspAdapter {
             }
 
             self.node
-                .run_npm_subcommand(&repo_root, "install", &[])
+                .run_npm_subcommand(Some(&repo_root), "install", &[])
                 .await?;
 
             self.node
-                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
+                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
                 .await?;
         }
 
@@ -237,7 +237,7 @@ impl LspAdapter for EsLintLspAdapter {
                 cx,
             )
             .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         if let Some(override_options) = override_options {
             let working_directories = override_options.get("workingDirectories").and_then(|wd| {

@@ -3,9 +3,12 @@ use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
-use std::{borrow::Cow, path::PathBuf, sync::Arc};
+use std::sync::Arc;
+use std::{borrow::Cow, path::PathBuf};
 
-use crate::DockPosition;
+use crate::ExtendingVec;
+
+use crate::{DockPosition, DockSide};
 
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
@@ -22,6 +25,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Where to dock the utility pane (the thread view pane).
+    ///
+    /// Default: left
+    pub agents_panel_dock: Option<DockSide>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -34,9 +41,18 @@ pub struct AgentSettingsContent {
     pub default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// Favorite models to show at the top of the model selector.
+    #[serde(default)]
+    pub favorite_models: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
-    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    /// Model to use for the inline assistant when streaming tools are enabled.
+    ///
+    /// Default: true
+    pub inline_assistant_use_streaming_tools: Option<bool>,
+    /// Model to use for generating git commit messages.
+    ///
+    /// Default: true
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -106,6 +122,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Per-tool permission rules for granular control over which tool actions require confirmation.
+    ///
+    /// This setting only applies to the native Zed agent. External agent servers (Claude Code, Gemini CLI, etc.)
+    /// have their own permission systems and are not affected by these settings.
+    pub tool_permissions: Option<ToolPermissionsContent>,
 }
 
 impl AgentSettingsContent {
@@ -128,6 +149,9 @@ impl AgentSettingsContent {
             provider: provider.into(),
             model,
         });
+    }
+    pub fn set_inline_assistant_use_streaming_tools(&mut self, use_tools: bool) {
+        self.inline_assistant_use_streaming_tools = Some(use_tools);
     }
 
     pub fn set_commit_message_model(&mut self, provider: String, model: String) {
@@ -162,6 +186,16 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
+        if !self.favorite_models.contains(&model) {
+            self.favorite_models.push(model);
+        }
+    }
+
+    pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
+        self.favorite_models.retain(|m| m != model);
     }
 }
 
@@ -337,6 +371,27 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: None
     pub default_model: Option<String>,
+    /// The favorite models for this agent.
+    ///
+    /// These are the model IDs as reported by the agent.
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub favorite_models: Vec<String>,
+    /// Default values for session config options.
+    ///
+    /// This is a map from config option ID to value ID.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub default_config_options: HashMap<String, String>,
+    /// Favorited values for session config options.
+    ///
+    /// This is a map from config option ID to a list of favorited value IDs.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
 #[with_fallible_options]
@@ -361,6 +416,27 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -375,5 +451,84 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ToolPermissionsContent {
+    /// Per-tool permission rules.
+    /// Keys: terminal, edit_file, delete_path, move_path, create_directory,
+    ///       save_file, fetch, web_search
+    #[serde(default)]
+    pub tools: HashMap<Arc<str>, ToolRulesContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ToolRulesContent {
+    /// Default mode when no regex rules match.
+    /// Default: confirm
+    pub default_mode: Option<ToolPermissionMode>,
+
+    /// Regexes for inputs to auto-approve.
+    /// For terminal: matches command. For file tools: matches path. For fetch: matches URL.
+    /// Default: []
+    pub always_allow: Option<ExtendingVec<ToolRegexRule>>,
+
+    /// Regexes for inputs to auto-reject.
+    /// **SECURITY**: These take precedence over ALL other rules, across ALL settings layers.
+    /// Default: []
+    pub always_deny: Option<ExtendingVec<ToolRegexRule>>,
+
+    /// Regexes for inputs that must always prompt.
+    /// Takes precedence over always_allow but not always_deny.
+    /// Default: []
+    pub always_confirm: Option<ExtendingVec<ToolRegexRule>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ToolRegexRule {
+    /// The regex pattern to match.
+    pub pattern: String,
+
+    /// Whether the regex is case-sensitive.
+    /// Default: false (case-insensitive)
+    pub case_sensitive: Option<bool>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPermissionMode {
+    /// Auto-approve without prompting.
+    Allow,
+    /// Auto-reject with an error.
+    Deny,
+    /// Always prompt for confirmation (default behavior).
+    #[default]
+    Confirm,
 }

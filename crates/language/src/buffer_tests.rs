@@ -151,7 +151,7 @@ fn test_select_language(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: LanguageName::new("Rust"),
+            name: LanguageName::new_static("Rust"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
@@ -173,7 +173,7 @@ fn test_select_language(cx: &mut App) {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: LanguageName::new("Make"),
+            name: LanguageName::new_static("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
@@ -622,9 +622,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    buffer.update(cx, |buffer, _| {
-        buffer.set_sync_parse_timeout(Duration::ZERO)
-    });
+    buffer.update(cx, |buffer, _| buffer.set_sync_parse_timeout(None));
 
     // Perform some edits (add parameter and variable reference)
     // Parsing doesn't begin until the transaction is complete
@@ -736,7 +734,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local("{}", cx).with_language(rust_lang(), cx);
-        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer.set_sync_parse_timeout(None);
         buffer
     });
 
@@ -1139,6 +1137,104 @@ fn test_text_objects(cx: &mut App) {
             ),
         ],
     )
+}
+
+#[gpui::test]
+fn test_text_objects_with_has_parent_predicate(cx: &mut App) {
+    use std::borrow::Cow;
+
+    // Create a language with a custom text_objects query that uses #has-parent?
+    // This query only matches closure_expression when it's inside a call_expression
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        text_objects: Some(Cow::from(indoc! {r#"
+            ; Only match closures that are arguments to function calls
+            (closure_expression) @function.around
+              (#has-parent? @function.around arguments)
+        "#})),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            fn main() {
+                let standalone = |x| x + 1;
+                let result = foo(|y| y * ˇ2);
+            }"#
+        },
+        false,
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(language), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    // Should only match the closure inside foo(), not the standalone closure
+    assert_eq!(matches, &[("|y| y * 2", TextObject::AroundFunction),]);
+}
+
+#[gpui::test]
+fn test_text_objects_with_not_has_parent_predicate(cx: &mut App) {
+    use std::borrow::Cow;
+
+    // Create a language with a custom text_objects query that uses #not-has-parent?
+    // This query only matches closure_expression when it's NOT inside a call_expression
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        text_objects: Some(Cow::from(indoc! {r#"
+            ; Only match closures that are NOT arguments to function calls
+            (closure_expression) @function.around
+              (#not-has-parent? @function.around arguments)
+        "#})),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            fn main() {
+                let standalone = |x| x +ˇ 1;
+                let result = foo(|y| y * 2);
+            }"#
+        },
+        false,
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(language), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    // Should only match the standalone closure, not the one inside foo()
+    assert_eq!(matches, &[("|x| x + 1", TextObject::AroundFunction),]);
 }
 
 #[gpui::test]
@@ -2261,7 +2357,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
 
         // This causes autoindent to be async.
-        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer.set_sync_parse_timeout(None);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         buffer.refresh_preview();
@@ -3728,7 +3824,7 @@ fn ruby_lang() -> Language {
 fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: LanguageName::new("HTML"),
+            name: LanguageName::new_static("HTML"),
             block_comment: Some(BlockCommentConfig {
                 start: "<!--".into(),
                 prefix: "".into(),

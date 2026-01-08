@@ -1,79 +1,117 @@
+use crate::paths::WORKTREES_DIR;
+use crate::{PredictionProvider, PromptFormat};
+use anyhow::{Context as _, Result};
+use collections::HashMap;
+use edit_prediction::example_spec::ExampleSpec;
+use edit_prediction::udiff::OpenedBuffers;
+use gpui::Entity;
+use http_client::Url;
+use language::{Anchor, Buffer};
+use project::Project;
+use serde::{Deserialize, Serialize};
+use std::ops::Range;
+use std::sync::Arc;
 use std::{
     borrow::Cow,
-    cell::RefCell,
-    fmt::{self, Display},
-    fs,
-    hash::Hash,
-    hash::Hasher,
-    io::Write,
-    mem,
+    io::Read,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
 };
+use zeta_prompt::RelatedFile;
 
-use crate::headless::ZetaCliAppState;
-use anyhow::{Context as _, Result, anyhow};
-use clap::ValueEnum;
-use cloud_zeta2_prompt::CURSOR_MARKER;
-use collections::HashMap;
-use edit_prediction::udiff::OpenedBuffers;
-use futures::{
-    AsyncWriteExt as _,
-    lock::{Mutex, OwnedMutexGuard},
-};
-use futures::{FutureExt as _, future::Shared};
-use gpui::{AsyncApp, Entity, Task, http_client::Url};
-use language::{Anchor, Buffer};
-use project::{Project, ProjectPath};
-use pulldown_cmark::CowStr;
-use serde::{Deserialize, Serialize};
-use util::{paths::PathStyle, rel_path::RelPath};
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Example {
+    #[serde(flatten)]
+    pub spec: ExampleSpec,
 
-use crate::paths::{REPOS_DIR, WORKTREES_DIR};
+    /// The full content of the file where an edit is being predicted, and the
+    /// actual cursor offset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buffer: Option<ExampleBuffer>,
 
-const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
-const EDIT_HISTORY_HEADING: &str = "Edit History";
-const CURSOR_POSITION_HEADING: &str = "Cursor Position";
-const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
-const REPOSITORY_URL_FIELD: &str = "repository_url";
-const REVISION_FIELD: &str = "revision";
+    /// The context retrieved for the prediction. This requires the worktree to
+    /// be loaded and the language server to be started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ExampleContext>,
 
-#[derive(Debug, Clone)]
-pub struct NamedExample {
-    pub name: String,
-    pub example: Example,
+    /// The input and expected output from the edit prediction model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<ExamplePrompt>,
+
+    /// The actual predictions from the model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predictions: Vec<ExamplePrediction>,
+
+    /// The scores, for how well the actual predictions match the expected
+    /// predictions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub score: Vec<ExampleScore>,
+
+    /// The application state used to process this example.
+    #[serde(skip)]
+    pub state: Option<ExampleState>,
 }
 
-#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
-pub struct Example {
-    pub repository_url: String,
-    pub revision: String,
-    pub uncommitted_diff: String,
-    pub cursor_path: PathBuf,
-    pub cursor_position: String,
-    pub edit_history: String,
-    pub expected_patch: String,
+#[derive(Clone, Debug)]
+pub struct ExampleState {
+    pub project: Entity<Project>,
+    pub buffer: Entity<Buffer>,
+    pub cursor_position: Anchor,
+    pub _open_buffers: OpenedBuffers,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExampleContext {
+    pub files: Arc<[RelatedFile]>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExampleBuffer {
+    pub content: String,
+    pub cursor_row: u32,
+    pub cursor_column: u32,
+    pub cursor_offset: usize,
+    pub context_range: Range<usize>,
+    pub editable_range: Range<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExamplePrompt {
+    pub input: String,
+    pub expected_output: String,
+    pub format: PromptFormat,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExamplePrediction {
+    pub actual_patch: String,
+    pub actual_output: String,
+    pub provider: PredictionProvider,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExampleScore {
+    pub delta_chr_f: f32,
 }
 
 impl Example {
-    fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
+    pub fn repo_name(&self) -> Result<RepoName<'_>> {
         // git@github.com:owner/repo.git
-        if self.repository_url.contains('@') {
+        if self.spec.repository_url.contains('@') {
             let (owner, repo) = self
+                .spec
                 .repository_url
                 .split_once(':')
                 .context("expected : in git url")?
                 .1
                 .split_once('/')
                 .context("expected / in git url")?;
-            Ok((
-                Cow::Borrowed(owner),
-                Cow::Borrowed(repo.trim_end_matches(".git")),
-            ))
+            Ok(RepoName {
+                owner: Cow::Borrowed(owner),
+                name: Cow::Borrowed(repo.trim_end_matches(".git")),
+            })
         // http://github.com/owner/repo.git
         } else {
-            let url = Url::parse(&self.repository_url)?;
+            let url = Url::parse(&self.spec.repository_url)?;
             let mut segments = url.path_segments().context("empty http url")?;
             let owner = segments
                 .next()
@@ -86,489 +124,127 @@ impl Example {
                 .to_string();
             assert!(segments.next().is_none());
 
-            Ok((owner.into(), repo.into()))
+            Ok(RepoName {
+                owner: Cow::Owned(owner),
+                name: Cow::Owned(repo),
+            })
         }
     }
+}
 
-    pub async fn setup_worktree(&self, file_name: String) -> Result<PathBuf> {
-        let (repo_owner, repo_name) = self.repo_name()?;
+pub struct RepoName<'a> {
+    pub owner: Cow<'a, str>,
+    pub name: Cow<'a, str>,
+}
 
-        let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
-        let repo_lock = lock_repo(&repo_dir).await;
+impl RepoName<'_> {
+    pub fn worktree_path(&self) -> PathBuf {
+        WORKTREES_DIR
+            .join(self.owner.as_ref())
+            .join(self.name.as_ref())
+    }
+}
 
-        if !repo_dir.is_dir() {
-            fs::create_dir_all(&repo_dir)?;
-            run_git(&repo_dir, &["init"]).await?;
-            run_git(
-                &repo_dir,
-                &["remote", "add", "origin", &self.repository_url],
-            )
-            .await?;
-        }
+pub fn read_example_files(inputs: &[PathBuf]) -> Vec<Example> {
+    let mut examples = Vec::new();
 
-        // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(
-            &repo_dir,
-            &["rev-parse", &format!("{}^{{commit}}", self.revision)],
-        )
-        .await;
-        let revision = if let Ok(revision) = revision {
-            revision
+    for path in inputs {
+        let is_stdin = path.as_path() == Path::new("-");
+        let content = if is_stdin {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .expect("Failed to read from stdin");
+            buffer
         } else {
-            if run_git(
-                &repo_dir,
-                &["fetch", "--depth", "1", "origin", &self.revision],
-            )
-            .await
-            .is_err()
-            {
-                run_git(&repo_dir, &["fetch", "origin"]).await?;
-            }
-            let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
-            if revision != self.revision {
-                run_git(&repo_dir, &["tag", &self.revision, &revision]).await?;
-            }
-            revision
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|_| panic!("Failed to read path: {:?}", &path))
+        };
+        let filename = path.file_stem().unwrap().to_string_lossy().to_string();
+        let ext = if !is_stdin {
+            path.extension()
+                .map(|ext| ext.to_string_lossy().to_string())
+                .unwrap_or_else(|| panic!("{} should have an extension", path.display()))
+        } else {
+            "jsonl".to_string()
         };
 
-        // Create the worktree for this example if needed.
-        let worktree_path = WORKTREES_DIR.join(&file_name).join(repo_name.as_ref());
-        if worktree_path.is_dir() {
-            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
-        } else {
-            let worktree_path_string = worktree_path.to_string_lossy();
-            run_git(&repo_dir, &["branch", "-f", &file_name, revision.as_str()]).await?;
-            run_git(
-                &repo_dir,
-                &["worktree", "add", "-f", &worktree_path_string, &file_name],
-            )
-            .await?;
-        }
-        drop(repo_lock);
-
-        // Apply the uncommitted diff for this example.
-        if !self.uncommitted_diff.is_empty() {
-            let mut apply_process = smol::process::Command::new("git")
-                .current_dir(&worktree_path)
-                .args(&["apply", "-"])
-                .stdin(std::process::Stdio::piped())
-                .spawn()?;
-
-            let mut stdin = apply_process.stdin.take().unwrap();
-            stdin.write_all(self.uncommitted_diff.as_bytes()).await?;
-            stdin.close().await?;
-            drop(stdin);
-
-            let apply_result = apply_process.output().await?;
-            if !apply_result.status.success() {
-                anyhow::bail!(
-                    "Failed to apply uncommitted diff patch with status: {}\nstderr:\n{}\nstdout:\n{}",
-                    apply_result.status,
-                    String::from_utf8_lossy(&apply_result.stderr),
-                    String::from_utf8_lossy(&apply_result.stdout),
-                );
+        match ext.as_ref() {
+            "json" => {
+                let mut example =
+                    serde_json::from_str::<Example>(&content).unwrap_or_else(|error| {
+                        panic!("Failed to parse example file: {}\n{error}", path.display())
+                    });
+                if example.spec.name.is_empty() {
+                    example.spec.name = filename;
+                }
+                examples.push(example);
             }
-        }
-
-        Ok(worktree_path)
-    }
-
-    pub fn unique_name(&self) -> String {
-        let mut hasher = std::hash::DefaultHasher::new();
-        self.hash(&mut hasher);
-        let disambiguator = hasher.finish();
-        let hash = format!("{:04x}", disambiguator);
-        format!("{}_{}", &self.revision[..8], &hash[..4])
-    }
-}
-
-pub type ActualExcerpt = Excerpt;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Excerpt {
-    pub path: PathBuf,
-    pub text: String,
-}
-
-#[derive(ValueEnum, Debug, Clone)]
-pub enum ExampleFormat {
-    Json,
-    Toml,
-    Md,
-}
-
-impl NamedExample {
-    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path)?;
-        let ext = path.extension();
-
-        match ext.and_then(|s| s.to_str()) {
-            Some("json") => Ok(Self {
-                name: path.file_stem().unwrap_or_default().display().to_string(),
-                example: serde_json::from_str(&content)?,
-            }),
-            Some("toml") => Ok(Self {
-                name: path.file_stem().unwrap_or_default().display().to_string(),
-                example: toml::from_str(&content)?,
-            }),
-            Some("md") => Self::parse_md(&content),
-            Some(_) => {
-                anyhow::bail!("Unrecognized example extension: {}", ext.unwrap().display());
+            "jsonl" => examples.extend(
+                content
+                    .lines()
+                    .enumerate()
+                    .map(|(line_ix, line)| {
+                        let mut example =
+                            serde_json::from_str::<Example>(line).unwrap_or_else(|error| {
+                                panic!(
+                                    "Failed to parse example on {}:{}\n{error}",
+                                    path.display(),
+                                    line_ix + 1
+                                )
+                            });
+                        if example.spec.name.is_empty() {
+                            example.spec.name = format!("{filename}-{line_ix}")
+                        }
+                        example
+                    })
+                    .collect::<Vec<Example>>(),
+            ),
+            "md" => {
+                let mut example = parse_markdown_example(&content).unwrap();
+                if example.spec.name.is_empty() {
+                    example.spec.name = filename;
+                }
+                examples.push(example);
             }
-            None => {
-                anyhow::bail!(
-                    "Failed to determine example type since the file does not have an extension."
-                );
+            ext => {
+                panic!("{} has invalid example extension `{ext}`", path.display())
             }
         }
     }
 
-    pub fn parse_md(input: &str) -> Result<Self> {
-        use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
-
-        let parser = Parser::new(input);
-
-        let mut named = NamedExample {
-            name: String::new(),
-            example: Example {
-                repository_url: String::new(),
-                revision: String::new(),
-                uncommitted_diff: String::new(),
-                cursor_path: PathBuf::new(),
-                cursor_position: String::new(),
-                edit_history: String::new(),
-                expected_patch: String::new(),
-            },
-        };
-
-        let mut text = String::new();
-        let mut block_info: CowStr = "".into();
-
-        #[derive(PartialEq)]
-        enum Section {
-            UncommittedDiff,
-            EditHistory,
-            CursorPosition,
-            ExpectedExcerpts,
-            ExpectedPatch,
-            Other,
-        }
-
-        let mut current_section = Section::Other;
-
-        for event in parser {
-            match event {
-                Event::Text(line) => {
-                    text.push_str(&line);
-
-                    if !named.name.is_empty()
-                        && current_section == Section::Other
-                        // in h1 section
-                        && let Some((field, value)) = line.split_once('=')
-                    {
-                        match field.trim() {
-                            REPOSITORY_URL_FIELD => {
-                                named.example.repository_url = value.trim().to_string();
-                            }
-                            REVISION_FIELD => {
-                                named.example.revision = value.trim().to_string();
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
-                    if !named.name.is_empty() {
-                        anyhow::bail!(
-                            "Found multiple H1 headings. There should only be one with the name of the example."
-                        );
-                    }
-                    named.name = mem::take(&mut text);
-                }
-                Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
-                    let title = mem::take(&mut text);
-                    current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
-                        Section::UncommittedDiff
-                    } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                        Section::EditHistory
-                    } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                        Section::CursorPosition
-                    } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
-                        Section::ExpectedPatch
-                    } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
-                        Section::ExpectedExcerpts
-                    } else {
-                        Section::Other
-                    };
-                }
-                Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
-                    mem::take(&mut text);
-                }
-                Event::End(TagEnd::Heading(HeadingLevel::H4)) => {
-                    mem::take(&mut text);
-                }
-                Event::End(TagEnd::Heading(level)) => {
-                    anyhow::bail!("Unexpected heading level: {level}");
-                }
-                Event::Start(Tag::CodeBlock(kind)) => {
-                    match kind {
-                        CodeBlockKind::Fenced(info) => {
-                            block_info = info;
-                        }
-                        CodeBlockKind::Indented => {
-                            anyhow::bail!("Unexpected indented codeblock");
-                        }
-                    };
-                }
-                Event::Start(_) => {
-                    text.clear();
-                    block_info = "".into();
-                }
-                Event::End(TagEnd::CodeBlock) => {
-                    let block_info = block_info.trim();
-                    match current_section {
-                        Section::UncommittedDiff => {
-                            named.example.uncommitted_diff = mem::take(&mut text);
-                        }
-                        Section::EditHistory => {
-                            named.example.edit_history.push_str(&mem::take(&mut text));
-                        }
-                        Section::CursorPosition => {
-                            named.example.cursor_path = block_info.into();
-                            named.example.cursor_position = mem::take(&mut text);
-                        }
-                        Section::ExpectedExcerpts => {
-                            mem::take(&mut text);
-                        }
-                        Section::ExpectedPatch => {
-                            named.example.expected_patch = mem::take(&mut text);
-                        }
-                        Section::Other => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if named.example.cursor_path.as_path() == Path::new("")
-            || named.example.cursor_position.is_empty()
-        {
-            anyhow::bail!("Missing cursor position codeblock");
-        }
-
-        Ok(named)
-    }
-
-    pub fn write(&self, format: ExampleFormat, mut out: impl Write) -> Result<()> {
-        match format {
-            ExampleFormat::Json => Ok(serde_json::to_writer(out, &self.example)?),
-            ExampleFormat::Toml => {
-                Ok(out.write_all(toml::to_string_pretty(&self.example)?.as_bytes())?)
-            }
-            ExampleFormat::Md => Ok(write!(out, "{}", self)?),
-        }
-    }
-
-    pub async fn setup_project(
-        &self,
-        app_state: &Arc<ZetaCliAppState>,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<Project>> {
-        let worktree_path = self.setup_worktree().await?;
-
-        static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
-
-        AUTHENTICATED
-            .get_or_init(|| {
-                let client = app_state.client.clone();
-                cx.spawn(async move |cx| {
-                    client
-                        .sign_in_with_optional_connect(true, cx)
-                        .await
-                        .unwrap();
-                })
-                .shared()
-            })
-            .clone()
-            .await;
-
-        let project = cx.update(|cx| {
-            Project::local(
-                app_state.client.clone(),
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                None,
-                cx,
-            )
-        })?;
-
-        let worktree = project
-            .update(cx, |project, cx| {
-                project.create_worktree(&worktree_path, true, cx)
-            })?
-            .await?;
-        worktree
-            .read_with(cx, |worktree, _cx| {
-                worktree.as_local().unwrap().scan_complete()
-            })?
-            .await;
-
-        anyhow::Ok(project)
-    }
-
-    pub async fn setup_worktree(&self) -> Result<PathBuf> {
-        self.example.setup_worktree(self.file_name()).await
-    }
-
-    pub fn file_name(&self) -> String {
-        self.name
-            .chars()
-            .map(|c| {
-                if c.is_whitespace() {
-                    '-'
-                } else {
-                    c.to_ascii_lowercase()
-                }
-            })
-            .collect()
-    }
-
-    pub async fn cursor_position(
-        &self,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<(Entity<Buffer>, Anchor)> {
-        let worktree = project.read_with(cx, |project, cx| {
-            project.visible_worktrees(cx).next().unwrap()
-        })?;
-        let cursor_path = RelPath::new(&self.example.cursor_path, PathStyle::Posix)?.into_arc();
-        let cursor_buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer(
-                    ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path: cursor_path,
-                    },
-                    cx,
-                )
-            })?
-            .await?;
-        let cursor_offset_within_excerpt = self
-            .example
-            .cursor_position
-            .find(CURSOR_MARKER)
-            .ok_or_else(|| anyhow!("missing cursor marker"))?;
-        let mut cursor_excerpt = self.example.cursor_position.clone();
-        cursor_excerpt.replace_range(
-            cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
-            "",
-        );
-        let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
-            let text = buffer.text();
-
-            let mut matches = text.match_indices(&cursor_excerpt);
-            let Some((excerpt_offset, _)) = matches.next() else {
-                anyhow::bail!(
-                    "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
-                );
-            };
-            assert!(matches.next().is_none());
-
-            Ok(excerpt_offset)
-        })??;
-
-        let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
-        let cursor_anchor =
-            cursor_buffer.read_with(cx, |buffer, _| buffer.anchor_after(cursor_offset))?;
-        Ok((cursor_buffer, cursor_anchor))
-    }
-
-    #[must_use]
-    pub async fn apply_edit_history(
-        &self,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<OpenedBuffers<'_>> {
-        edit_prediction::udiff::apply_diff(&self.example.edit_history, project, cx).await
-    }
+    examples
 }
 
-async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = smol::process::Command::new("git")
-        .current_dir(repo_path)
-        .args(args)
-        .output()
-        .await?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
-        args.join(" "),
-        repo_path.display(),
-        output.status,
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout),
-    );
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
+    examples.sort_by(|a, b| {
+        a.spec
+            .repository_url
+            .cmp(&b.spec.repository_url)
+            .then(b.spec.revision.cmp(&a.spec.revision))
+    });
 }
 
-impl Display for NamedExample {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "# {}\n\n", self.name)?;
-        write!(
-            f,
-            "{REPOSITORY_URL_FIELD} = {}\n",
-            self.example.repository_url
-        )?;
-        write!(f, "{REVISION_FIELD} = {}\n\n", self.example.revision)?;
-
-        write!(f, "## {UNCOMMITTED_DIFF_HEADING}\n\n")?;
-        write!(f, "`````diff\n")?;
-        write!(f, "{}", self.example.uncommitted_diff)?;
-        write!(f, "`````\n")?;
-
-        if !self.example.edit_history.is_empty() {
-            write!(f, "`````diff\n{}`````\n", self.example.edit_history)?;
-        }
-
-        write!(
-            f,
-            "## {CURSOR_POSITION_HEADING}\n\n`````{}\n{}`````\n",
-            self.example.cursor_path.display(),
-            self.example.cursor_position
-        )?;
-        write!(f, "## {EDIT_HISTORY_HEADING}\n\n")?;
-
-        if !self.example.expected_patch.is_empty() {
-            write!(
-                f,
-                "\n## {EXPECTED_PATCH_HEADING}\n\n`````diff\n{}`````\n",
-                self.example.expected_patch
-            )?;
-        }
-
-        Ok(())
+pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+    let mut examples_by_repo = HashMap::default();
+    for example in examples.iter_mut() {
+        examples_by_repo
+            .entry(example.spec.repository_url.clone())
+            .or_insert_with(Vec::new)
+            .push(example);
     }
+    examples_by_repo.into_values().collect()
 }
 
-thread_local! {
-    static REPO_LOCKS: RefCell<HashMap<PathBuf, Arc<Mutex<()>>>> = RefCell::new(HashMap::default());
-}
-
-#[must_use]
-pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
-    REPO_LOCKS
-        .with(|cell| {
-            cell.borrow_mut()
-                .entry(path.as_ref().to_path_buf())
-                .or_default()
-                .clone()
-        })
-        .lock_owned()
-        .await
+fn parse_markdown_example(input: &str) -> Result<Example> {
+    let spec = ExampleSpec::from_markdown(input)?;
+    Ok(Example {
+        spec,
+        buffer: None,
+        context: None,
+        prompt: None,
+        predictions: Vec::new(),
+        score: Vec::new(),
+        state: None,
+    })
 }

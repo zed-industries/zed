@@ -1,22 +1,23 @@
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, EditPredictionStore, ZedUpdateRequiredError,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore, ZedUpdateRequiredError,
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
-    prediction::{EditPredictionInputs, EditPredictionResult},
+    prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::{
     PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger, PredictEditsResponse,
-    predict_edits_v3::Event,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use language::{
-    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _, text_diff,
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset, ToPoint as _, text_diff,
 };
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
+use zeta_prompt::{Event, ZetaPromptInput};
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
@@ -29,24 +30,27 @@ pub(crate) const MAX_EVENT_TOKENS: usize = 500;
 
 pub(crate) fn request_prediction_with_zeta1(
     store: &mut EditPredictionStore,
-    project: &Entity<Project>,
-    buffer: &Entity<Buffer>,
-    snapshot: BufferSnapshot,
-    position: language::Anchor,
-    events: Vec<Arc<Event>>,
-    trigger: PredictEditsRequestTrigger,
+    EditPredictionModelInput {
+        project,
+        buffer,
+        snapshot,
+        position,
+        events,
+        trigger,
+        debug_tx,
+        ..
+    }: EditPredictionModelInput,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
-    let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
-        let can_collect_file = store.can_collect_file(project, file, cx);
+        let can_collect_file = store.can_collect_file(&project, file, cx);
         let git_info = if can_collect_file {
-            git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+            git_info_for_file(&project, &ProjectPath::from_file(file.as_ref(), cx), cx)
         } else {
             None
         };
@@ -74,6 +78,19 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
+    let (uri, require_auth) = match &store.custom_predict_edits_url {
+        Some(custom_url) => (custom_url.clone(), false),
+        None => {
+            match client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/v2", &[])
+            {
+                Ok(url) => (url.into(), true),
+                Err(err) => return Task::ready(Err(err)),
+            }
+        }
+    };
+
     cx.spawn(async move |this, cx| {
         let GatherContextOutput {
             mut body,
@@ -86,7 +103,7 @@ pub(crate) fn request_prediction_with_zeta1(
         let included_events = &events[events.len() - included_events_count..events.len()];
         body.can_collect_data = can_collect_file
             && this
-                .read_with(cx, |this, _| this.can_collect_events(included_events))
+                .read_with(cx, |this, cx| this.can_collect_events(included_events, cx))
                 .unwrap_or(false);
         if body.can_collect_data {
             body.git_info = git_info;
@@ -98,55 +115,46 @@ pub(crate) fn request_prediction_with_zeta1(
             body.input_excerpt
         );
 
-        let http_client = client.http_client();
-
         let response = EditPredictionStore::send_api_request::<PredictEditsResponse>(
             |request| {
-                let uri = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
-                    predict_edits_url
-                } else {
-                    http_client
-                        .build_zed_llm_url("/predict_edits/v2", &[])?
-                        .as_str()
-                        .into()
-                };
                 Ok(request
-                    .uri(uri)
+                    .uri(uri.as_str())
                     .body(serde_json::to_string(&body)?.into())?)
             },
             client,
             llm_token,
             app_version,
+            require_auth,
         )
         .await;
 
-        let inputs = EditPredictionInputs {
+        let context_start_offset = context_range.start.to_offset(&snapshot);
+        let editable_offset_range = editable_range.to_offset(&snapshot);
+
+        let inputs = ZetaPromptInput {
             events: included_events.into(),
-            included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
-                path: full_path.clone(),
-                max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
-                excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
-                    start_line: cloud_llm_client::predict_edits_v3::Line(context_range.start.row),
-                    text: snapshot
-                        .text_for_range(context_range)
-                        .collect::<String>()
-                        .into(),
-                }],
-            }],
-            cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                column: cursor_point.column,
-                line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
-            },
+            related_files: vec![].into(),
             cursor_path: full_path,
+            cursor_excerpt: snapshot
+                .text_for_range(context_range)
+                .collect::<String>()
+                .into(),
+            editable_range_in_excerpt: (editable_range.start - context_start_offset)
+                ..(editable_offset_range.end - context_start_offset),
+            cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot) - context_start_offset,
         };
 
-        // let response = perform_predict_edits(PerformPredictEditsParams {
-        //     client,
-        //     llm_token,
-        //     app_version,
-        //     body,
-        // })
-        // .await;
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(DebugEvent::EditPredictionStarted(
+                    EditPredictionStartedDebugEvent {
+                        buffer: buffer.downgrade(),
+                        prompt: Some(serde_json::to_string(&inputs).unwrap()),
+                        position,
+                    },
+                ))
+                .ok();
+        }
 
         let (response, usage) = match response {
             Ok(response) => response,
@@ -169,8 +177,7 @@ pub(crate) fn request_prediction_with_zeta1(
                                 })
                             },
                         );
-                    })
-                    .ok();
+                    });
                 }
 
                 return Err(err);
@@ -187,6 +194,18 @@ pub(crate) fn request_prediction_with_zeta1(
                 });
             })
             .ok();
+        }
+
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(DebugEvent::EditPredictionFinished(
+                    EditPredictionFinishedDebugEvent {
+                        buffer: buffer.downgrade(),
+                        model_output: Some(response.output_excerpt.clone()),
+                        position,
+                    },
+                ))
+                .ok();
         }
 
         let edit_prediction = process_completion_response(
@@ -226,7 +245,7 @@ fn process_completion_response(
     buffer: Entity<Buffer>,
     snapshot: &BufferSnapshot,
     editable_range: Range<usize>,
-    inputs: EditPredictionInputs,
+    inputs: ZetaPromptInput,
     buffer_snapshotted_at: Instant,
     received_response_at: Instant,
     cx: &AsyncApp,

@@ -717,7 +717,7 @@ mod test {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.languages.0.insert(
-                    LanguageName::new("Rust").0,
+                    LanguageName::new_static("Rust").0,
                     LanguageSettingsContent {
                         auto_indent_on_paste: Some(false),
                         ..Default::default()
@@ -771,6 +771,52 @@ mod test {
             twotwotwotwˇo
             three
         "});
+    }
+
+    #[gpui::test]
+    async fn test_paste_system_clipboard_never(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                ˇThe quick brown
+                fox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.write_to_clipboard(ClipboardItem::new_string("something else".to_string()));
+
+        cx.simulate_keystrokes("d d");
+        cx.assert_state(
+            indoc! {"
+                ˇfox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("shift-v p");
+        cx.assert_state(
+            indoc! {"
+                ˇThe quick brown
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("shift-v");
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(
+            indoc! {"
+                ˇsomething else
+                the lazy dog"},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]

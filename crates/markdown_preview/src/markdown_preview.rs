@@ -11,9 +11,19 @@ actions!(
     markdown,
     [
         /// Scrolls up by one page in the markdown preview.
-        MovePageUp,
+        #[action(deprecated_aliases = ["markdown::MovePageUp"])]
+        ScrollPageUp,
         /// Scrolls down by one page in the markdown preview.
-        MovePageDown,
+        #[action(deprecated_aliases = ["markdown::MovePageDown"])]
+        ScrollPageDown,
+        /// Scrolls up by approximately one visual line.
+        ScrollUp,
+        /// Scrolls down by approximately one visual line.
+        ScrollDown,
+        /// Scrolls up by one markdown element in the markdown preview
+        ScrollUpByItem,
+        /// Scrolls down by one markdown element in the markdown preview
+        ScrollDownByItem,
         /// Opens a markdown preview for the current file.
         OpenPreview,
         /// Opens a markdown preview in a split pane.

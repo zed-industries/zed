@@ -12,8 +12,26 @@ impl FeatureFlag for PanicFeatureFlag {
     const NAME: &'static str = "panic";
 }
 
-pub struct InlineAssistantV2FeatureFlag;
+pub struct AgentV2FeatureFlag;
 
-impl FeatureFlag for InlineAssistantV2FeatureFlag {
-    const NAME: &'static str = "inline-assistant-v2";
+impl FeatureFlag for AgentV2FeatureFlag {
+    const NAME: &'static str = "agent-v2";
+}
+
+pub struct AcpBetaFeatureFlag;
+
+impl FeatureFlag for AcpBetaFeatureFlag {
+    const NAME: &'static str = "acp-beta";
+}
+
+pub struct ToolPermissionsFeatureFlag;
+
+impl FeatureFlag for ToolPermissionsFeatureFlag {
+    const NAME: &'static str = "tool-permissions";
+}
+
+pub struct AgentSharingFeatureFlag;
+
+impl FeatureFlag for AgentSharingFeatureFlag {
+    const NAME: &'static str = "agent-sharing";
 }

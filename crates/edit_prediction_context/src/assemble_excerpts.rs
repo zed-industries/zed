@@ -1,6 +1,6 @@
-use crate::RelatedExcerpt;
 use language::{BufferSnapshot, OffsetRangeExt as _, Point};
 use std::ops::Range;
+use zeta_prompt::RelatedExcerpt;
 
 #[cfg(not(test))]
 const MAX_OUTLINE_ITEM_BODY_SIZE: usize = 512;
@@ -76,14 +76,9 @@ pub fn assemble_excerpts(
 
     input_ranges
         .into_iter()
-        .map(|range| {
-            let offset_range = range.to_offset(buffer);
-            RelatedExcerpt {
-                point_range: range,
-                anchor_range: buffer.anchor_before(offset_range.start)
-                    ..buffer.anchor_after(offset_range.end),
-                text: buffer.as_rope().slice(offset_range),
-            }
+        .map(|range| RelatedExcerpt {
+            row_range: range.start.row..range.end.row,
+            text: buffer.text_for_range(range).collect(),
         })
         .collect()
 }

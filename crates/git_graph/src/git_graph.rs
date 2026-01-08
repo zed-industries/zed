@@ -190,7 +190,7 @@ impl GitGraph {
         range: Range<usize>,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<[AnyElement; 4]> {
+    ) -> Vec<Vec<AnyElement>> {
         let row_height = self.row_height;
 
         range
@@ -202,7 +202,7 @@ impl GitGraph {
                 }
 
                 let Some(commit) = self.graph.commits.get(idx) else {
-                    return [
+                    return vec![
                         div().h(row_height).into_any_element(),
                         div().h(row_height).into_any_element(),
                         div().h(row_height).into_any_element(),
@@ -215,7 +215,7 @@ impl GitGraph {
                 let short_sha: SharedString = commit.data.sha.display_short().into();
                 let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
 
-                [
+                vec![
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
@@ -377,20 +377,23 @@ impl Render for GitGraph {
                         .child({
                             let row_height = self.row_height;
                             div().flex_1().size_full().child(
-                                Table::<4>::new()
+                                Table::new(4)
                                     .interactable(&self.table_interaction_state)
-                                    .column_widths([
-                                        DefiniteLength::Fraction(0.5),
-                                        DefiniteLength::Absolute(AbsoluteLength::Pixels(
-                                            date_width,
-                                        )),
-                                        DefiniteLength::Absolute(AbsoluteLength::Pixels(
-                                            author_width,
-                                        )),
-                                        DefiniteLength::Absolute(AbsoluteLength::Pixels(
-                                            commit_width,
-                                        )),
-                                    ])
+                                    .column_widths(
+                                        [
+                                            DefiniteLength::Fraction(0.5),
+                                            DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                                                date_width,
+                                            )),
+                                            DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                                                author_width,
+                                            )),
+                                            DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                                                commit_width,
+                                            )),
+                                        ]
+                                        .to_vec(),
+                                    )
                                     .map_row(move |(_index, row), _window, _cx| {
                                         row.h(row_height).into_any_element()
                                     })

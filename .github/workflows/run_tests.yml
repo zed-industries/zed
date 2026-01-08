@@ -74,8 +74,11 @@ jobs:
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
         version: '9'
-    - name: ./script/prettier
+    - name: steps::prettier
       run: ./script/prettier
+      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
     - name: ./script/check-todos
       run: ./script/check-todos
@@ -87,9 +90,6 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
-    - name: steps::cargo_fmt
-      run: cargo fmt --all -- --check
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
     needs:
@@ -353,6 +353,9 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
+    - name: ./script/generate-action-metadata
+      run: ./script/generate-action-metadata
+      shell: bash -euxo pipefail {0}
     - name: run_tests::check_docs::install_mdbook
       uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08
       with:
@@ -497,6 +500,8 @@ jobs:
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
+      GIT_COMMITTER_NAME: Protobuf Action
+      GIT_COMMITTER_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
