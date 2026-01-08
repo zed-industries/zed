@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashSet;
-use futures::select_biased;
 use language::File;
 use lsp::LanguageServerId;
 
@@ -809,60 +808,43 @@ impl HeadlessProject {
             });
             let (batcher, batches) =
                 project::project_search::AdaptiveBatcher::new(cx.background_executor());
-            let mut batcher = Some(batcher);
-            let mut batches = Box::pin(batches.fuse());
-            let mut new_matches = Box::pin(results.rx.fuse());
-            loop {
-                select_biased! {
-                    new_batch = batches.next() => {
-                        if let Some(buffer_ids) = new_batch {
-                            let _ = client
-                                .request(proto::FindSearchCandidatesChunk {
-                                    handle,
-                                    peer_id: Some(peer_id),
-                                    project_id,
-                                    variant: Some(
-                                        proto::find_search_candidates_chunk::Variant::Matches(
-                                            proto::FindSearchCandidatesMatches { buffer_ids },
-                                        ),
+            let mut new_matches = Box::pin(results.rx);
+
+            let sender_task = cx.background_executor().spawn({
+                let client = client.clone();
+                async move {
+                    let mut batches = std::pin::pin!(batches);
+                    while let Some(buffer_ids) = batches.next().await {
+                        client
+                            .request(proto::FindSearchCandidatesChunk {
+                                handle,
+                                peer_id: Some(peer_id),
+                                project_id,
+                                variant: Some(
+                                    proto::find_search_candidates_chunk::Variant::Matches(
+                                        proto::FindSearchCandidatesMatches { buffer_ids },
                                     ),
-                                })
-                                .await?;
-                            } else {
-                                break;
-                            }
+                                ),
+                            })
+                            .await?;
                     }
-                        new_match =  new_matches.next() => {
-                            if let Some(buffer) = new_match {
-                                let _ = buffer_store.update(cx, |this, cx| {
-                                    this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                                }).await;
-                                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
-                                batcher.as_ref().unwrap().push(buffer_id).await;
-                            } else {
-                                // Don't break, as we may still have pending batches to send out. We'll never hit this branch again though.
-                                batcher.take().unwrap().flush().await;
+                    anyhow::Ok(())
+                }
+            });
 
-                            }
-                        }
-                        complete => {
-                            break;
-                        }
-
-                };
+            while let Some(buffer) = new_matches.next().await {
+                let _ = buffer_store
+                    .update(cx, |this, cx| {
+                        this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+                    })
+                    .await;
+                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
+                batcher.push(buffer_id).await;
             }
-            // if let Some(buffer_ids) = batcher.flush() {
-            //     client
-            //         .request(proto::FindSearchCandidatesChunk {
-            //             handle,
-            //             peer_id: Some(peer_id),
-            //             project_id,
-            //             variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
-            //                 proto::FindSearchCandidatesMatches { buffer_ids },
-            //             )),
-            //         })
-            //         .await?;
-            // }
+            batcher.flush().await;
+
+            sender_task.await?;
+
             client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,

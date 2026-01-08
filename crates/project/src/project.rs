@@ -75,7 +75,6 @@ use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
-    select_biased,
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -5073,58 +5072,40 @@ impl Project {
                 this.search_impl(query, cx).matching_buffers(cx)
             });
             let (batcher, batches) = project_search::AdaptiveBatcher::new(cx.background_executor());
-            let mut batches = Box::pin(batches.fuse());
-            let mut new_matches = Box::pin(results.rx).fuse();
-            let mut batcher = Some(batcher);
-            loop {
-                select_biased! {
-                    new_batch = batches.next() => {
-                        if let Some(buffer_ids) = new_batch {
-                            let _ = client
-                                .request(proto::FindSearchCandidatesChunk {
-                                    handle,
-                                    peer_id: Some(peer_id),
-                                    project_id,
-                                    variant: Some(
-                                        proto::find_search_candidates_chunk::Variant::Matches(
-                                            proto::FindSearchCandidatesMatches { buffer_ids },
-                                        ),
+            let mut new_matches = Box::pin(results.rx);
+
+            let sender_task = cx.background_executor().spawn({
+                let client = client.clone();
+                async move {
+                    let mut batches = std::pin::pin!(batches);
+                    while let Some(buffer_ids) = batches.next().await {
+                        client
+                            .request(proto::FindSearchCandidatesChunk {
+                                handle,
+                                peer_id: Some(peer_id),
+                                project_id,
+                                variant: Some(
+                                    proto::find_search_candidates_chunk::Variant::Matches(
+                                        proto::FindSearchCandidatesMatches { buffer_ids },
                                     ),
-                                })
-                                .await?;
-                            } else {
-                                break;
-                            }
-                        }
-                        new_match =  new_matches.next() => {
-                            if let Some(buffer) = new_match {
-                                let buffer_id = this.update(cx, |this, cx| {
-                                    this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
-                                });
-                                batcher.as_ref().unwrap().push(buffer_id).await;
-                            } else {
+                                ),
+                            })
+                            .await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
 
-                                batcher.take().unwrap().flush().await;
-                            }
-                        }
-                        complete => {
-                            break;
-                        }
-                };
+            while let Some(buffer) = new_matches.next().await {
+                let buffer_id = this.update(cx, |this, cx| {
+                    this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
+                });
+                batcher.push(buffer_id).await;
             }
+            batcher.flush().await;
 
-            // if let Some(buffer_ids) = batcher.flush() {
-            //     let _ = client
-            //         .request(proto::FindSearchCandidatesChunk {
-            //             handle,
-            //             peer_id: Some(peer_id),
-            //             project_id,
-            //             variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
-            //                 proto::FindSearchCandidatesMatches { buffer_ids },
-            //             )),
-            //         })
-            //         .await?;
-            // }
+            sender_task.await?;
+
             let _ = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,

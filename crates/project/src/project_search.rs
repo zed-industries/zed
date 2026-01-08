@@ -1005,7 +1005,6 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
     pub async fn flush(self) {
         _ = self.flush_batch.send(true).await;
         self._batch_task.await;
-        log::error!("Done awaiting");
     }
 }
 
