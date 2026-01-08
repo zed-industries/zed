@@ -1,7 +1,7 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -130,9 +130,7 @@ impl AgentTool for TerminalTool {
 
             match timeout {
                 Some(timeout) => {
-                    let timeout_task = cx.background_spawn(async move {
-                        smol::Timer::after(timeout).await;
-                    });
+                    let timeout_task = cx.background_executor().timer(timeout);
 
                     futures::select! {
                         _ = wait_for_exit.clone().fuse() => {},
