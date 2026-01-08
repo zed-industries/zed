@@ -214,7 +214,7 @@ impl GitBlame {
                     if !multi_buffer.read(cx).is_dirty(cx) {
                         let span = ztracing::info_span!("blame_trigger_dirty_changed");
                         let _enter = span.enter();
-                        git_blame.debounced_generate(cx);
+                        git_blame.generate(cx);
                     }
                 }
                 multi_buffer::Event::ExcerptsAdded { .. }
@@ -242,7 +242,7 @@ impl GitBlame {
                         let span = ztracing::info_span!("blame_trigger_worktree_updated");
                         let _enter = span.enter();
                         log::debug!("Updated buffers. Regenerating blame data...",);
-                        git_blame.debounced_generate(cx);
+                        git_blame.generate(cx);
                     }
                 }
             }
@@ -258,19 +258,19 @@ impl GitBlame {
                         "Repository updated ({:?}). Regenerating blame data...",
                         repo_event
                     );
-                    this.debounced_generate(cx);
+                    this.generate(cx);
                 }
                 GitStoreEvent::RepositoryAdded => {
                     let span = ztracing::info_span!("blame_trigger_repo_added");
                     let _enter = span.enter();
                     log::debug!("Repository added. Regenerating blame data...");
-                    this.debounced_generate(cx);
+                    this.generate(cx);
                 }
                 GitStoreEvent::RepositoryRemoved(_) => {
                     let span = ztracing::info_span!("blame_trigger_repo_removed");
                     let _enter = span.enter();
                     log::debug!("Repository removed. Regenerating blame data...");
-                    this.debounced_generate(cx);
+                    this.generate(cx);
                 }
                 _ => {}
             });
@@ -375,7 +375,7 @@ impl GitBlame {
             self.changed_while_blurred = false;
             let span = ztracing::info_span!("blame_trigger_focus");
             let _enter = span.enter();
-            self.debounced_generate(cx);
+            self.generate(cx);
         }
     }
 

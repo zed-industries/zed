@@ -21,7 +21,7 @@ pub struct Blame {
 }
 
 impl Blame {
-    #[ztracing::instrument(skip_all, fields(path = %path.as_unix_str(), generation_id = ?generation_id))]
+    // #[ztracing::instrument(skip_all, fields(path = %path.as_unix_str(), generation_id = ?generation_id))]
     pub async fn for_path(
         git_binary: &Path,
         working_directory: &Path,
@@ -30,8 +30,15 @@ impl Blame {
         line_ending: LineEnding,
         generation_id: Option<u64>,
     ) -> Result<Self> {
-        let output =
-            run_git_blame(git_binary, working_directory, path, content, line_ending).await?;
+        let output = run_git_blame(
+            git_binary,
+            working_directory,
+            path,
+            content,
+            line_ending,
+            generation_id,
+        )
+        .await?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -53,15 +60,14 @@ impl Blame {
 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 
-async fn run_git_blame(
+#[ztracing::instrument(skip_all, fields(path = %path.as_unix_str(), generation_id = ?generation_id))]
+fn spawn_git_blame(
     git_binary: &Path,
     working_directory: &Path,
     path: &RepoPath,
-    contents: &Rope,
-    line_ending: LineEnding,
-) -> Result<String> {
-    let mut child = util::command::new_smol_command(git_binary)
-        .kill_on_drop(true)
+    generation_id: Option<u64>,
+) -> Result<smol::process::Child> {
+    util::command::new_smol_command(git_binary)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
@@ -72,8 +78,18 @@ async fn run_git_blame(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("starting git blame process")?;
+        .context("starting git blame process")
+}
 
+async fn run_git_blame(
+    git_binary: &Path,
+    working_directory: &Path,
+    path: &RepoPath,
+    contents: &Rope,
+    line_ending: LineEnding,
+    generation_id: Option<u64>,
+) -> Result<String> {
+    let mut child = spawn_git_blame(git_binary, working_directory, path, generation_id)?;
     let stdin = child
         .stdin
         .as_mut()
