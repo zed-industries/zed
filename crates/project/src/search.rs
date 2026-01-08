@@ -782,6 +782,6 @@ mod tests {
             .await;
 
         let results = search_query.search(&snapshot, None).await;
-        assert_eq!(results.len(), 2);
+        assert_eq!(results, vec![0..6, 12..18]);
     }
 }
