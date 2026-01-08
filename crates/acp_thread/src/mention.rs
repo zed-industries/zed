@@ -566,6 +566,4 @@ mod tests {
             _ => panic!("Expected Selection variant"),
         }
     }
-
-    #[test]
 }
