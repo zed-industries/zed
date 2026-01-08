@@ -456,6 +456,52 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
+async fn test_external_editorconfig_not_loaded_without_internal_config(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "worktree": {
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx.background_executor().block(file_language).ok();
+        let file = file as _;
+        let settings =
+            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+
+        // file.rs should have default tab_size = 4, NOT 99 from parent's external .editorconfig
+        // because without an internal .editorconfig, external configs are not loaded
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
 async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
