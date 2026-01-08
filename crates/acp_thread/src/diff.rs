@@ -204,7 +204,7 @@ impl PendingDiff {
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
         self.update_diff = cx.spawn(async move |diff, cx| {
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
             let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
             let update = buffer_diff
