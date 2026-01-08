@@ -320,7 +320,12 @@ impl BatchingLlmClient {
                             success_count += 1;
                         }
                         anthropic::batches::BatchResult::Errored { error } => {
-                            log::error!("Batch request {} failed: {:?}", request_hash, error);
+                            log::error!(
+                                "Batch request {} failed: {}: {}",
+                                request_hash,
+                                error.error.error_type,
+                                error.error.message
+                            );
                         }
                         anthropic::batches::BatchResult::Canceled => {
                             log::warn!("Batch request {} was canceled", request_hash);
