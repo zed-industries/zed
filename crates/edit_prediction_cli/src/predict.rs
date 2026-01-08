@@ -21,7 +21,7 @@ use std::{
     },
 };
 
-static ANTHROPIC_CLIENT: OnceLock<Mutex<AnthropicClient>> = OnceLock::new();
+static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
 
 pub async fn run_prediction(
     example: &mut Example,
@@ -235,17 +235,14 @@ async fn predict_anthropic(
 ) -> anyhow::Result<()> {
     let llm_model_name = "claude-sonnet-4-5";
     let max_tokens = 16384;
-    let llm_client = ANTHROPIC_CLIENT
-        .get_or_init(|| {
-            let client = if batched {
-                AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
-            } else {
-                AnthropicClient::plain()
-            };
-            Mutex::new(client.expect("Failed to create Anthropic client"))
-        })
-        .lock()
-        .unwrap();
+    let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+        let client = if batched {
+            AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+        } else {
+            AnthropicClient::plain()
+        };
+        client.expect("Failed to create Anthropic client")
+    });
 
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
@@ -290,15 +287,10 @@ async fn predict_anthropic(
 pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
     match provider {
         PredictionProvider::Teacher => {
-            let llm_client = ANTHROPIC_CLIENT
-                .get_or_init(|| {
-                    Mutex::new(
-                        AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
-                            .expect("Failed to create Anthropic client"),
-                    )
-                })
-                .lock()
-                .unwrap();
+            let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+                AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+                    .expect("Failed to create Anthropic client")
+            });
             llm_client
                 .sync_batches()
                 .await
