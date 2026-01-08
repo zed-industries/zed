@@ -3318,118 +3318,245 @@ impl Pane {
                 .flatten()
                 .unwrap_or(false);
 
-        TabBar::new("tab_bar")
-            .map(|tab_bar| {
-                if let Some(open_aside_left) = open_aside_left
-                    && render_aside_toggle_left
-                {
-                    tab_bar.start_child(open_aside_left)
-                } else {
-                    tab_bar
-                }
-            })
-            .when(
-                self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| {
-                    tab_bar
-                        .start_child(navigate_backward)
-                        .start_child(navigate_forward)
-                },
-            )
-            .map(|tab_bar| {
-                if self.show_tab_bar_buttons {
-                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                    let (left_children, right_children) = render_tab_buttons(self, window, cx);
-                    tab_bar
-                        .start_children(left_children)
-                        .end_children(right_children)
-                } else {
-                    tab_bar
-                }
-            })
-            .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                // Avoid flickering when max_offset is very small (< 2px).
-                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
-                let is_scrollable = max_scroll > px(2.0);
-                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
-                h_flex()
-                    .children(pinned_tabs)
-                    .when(is_scrollable && is_scrolled, |this| {
-                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                            .border_color(cx.theme().colors().border)
-                    })
-            }))
-            .child(
-                h_flex()
-                    .id("unpinned tabs")
-                    .overflow_x_scroll()
-                    .w_full()
-                    .track_scroll(&self.tab_bar_scroll_handle)
-                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
-                        this.suppress_scroll = true;
-                    }))
-                    .children(unpinned_tabs)
-                    .child(
-                        div()
-                            .id("tab_bar_drop_target")
-                            .min_w_6()
-                            // HACK: This empty child is currently necessary to force the drop target to appear
-                            // despite us setting a min width above.
-                            .child("")
-                            // HACK: h_full doesn't occupy the complete height, using fixed height instead
-                            .h(Tab::container_height(cx))
-                            .flex_grow()
-                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .on_drop(cx.listener(
-                                move |this, dragged_tab: &DraggedTab, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
-                                },
-                            ))
-                            .on_drop(cx.listener(
-                                move |this, selection: &DraggedSelection, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_project_entry_drop(
-                                        &selection.active_selection.entry_id,
-                                        Some(tab_count),
-                                        window,
-                                        cx,
-                                    )
-                                },
-                            ))
-                            .on_drop(cx.listener(move |this, paths, window, cx| {
-                                this.drag_split_direction = None;
-                                this.handle_external_paths_drop(paths, window, cx)
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+        let use_separate_rows = tab_bar_settings.show_pinned_tabs_in_separate_row;
+
+        if use_separate_rows && !pinned_tabs.is_empty() && !unpinned_tabs.is_empty() {
+            // Two-row layout: pinned tabs on top, unpinned tabs on bottom
+            v_flex()
+                .w_full()
+                .flex_none()
+                .child(
+                    TabBar::new("pinned_tab_bar")
+                        .map(|tab_bar| {
+                            if let Some(open_aside_left) = open_aside_left
+                                && render_aside_toggle_left
+                            {
+                                tab_bar.start_child(open_aside_left)
+                            } else {
+                                tab_bar
+                            }
+                        })
+                        .when(
+                            self.display_nav_history_buttons.unwrap_or_default(),
+                            |tab_bar| {
+                                tab_bar
+                                    .start_child(navigate_backward)
+                                    .start_child(navigate_forward)
+                            },
+                        )
+                        .map(|tab_bar| {
+                            if self.show_tab_bar_buttons {
+                                let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                                let (left_children, right_children) =
+                                    render_tab_buttons(self, window, cx);
+                                tab_bar
+                                    .start_children(left_children)
+                                    .end_children(right_children)
+                            } else {
+                                tab_bar
+                            }
+                        })
+                        .child(
+                            h_flex()
+                                .id("pinned_tabs_row")
+                                .debug_selector(|| "pinned_tabs_row".into())
+                                .overflow_x_scroll()
+                                .w_full()
+                                .children(pinned_tabs),
+                        )
+                        .map(|tab_bar| {
+                            if let Some(open_aside_right) = open_aside_right
+                                && render_aside_toggle_right
+                            {
+                                tab_bar.end_child(open_aside_right)
+                            } else {
+                                tab_bar
+                            }
+                        }),
+                )
+                .child(
+                    TabBar::new("unpinned_tab_bar").child(
+                        h_flex()
+                            .id("unpinned tabs")
+                            .overflow_x_scroll()
+                            .w_full()
+                            .track_scroll(&self.tab_bar_scroll_handle)
+                            .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                                this.suppress_scroll = true;
                             }))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.click_count() == 2 {
-                                    window.dispatch_action(
-                                        this.double_click_dispatch_action.boxed_clone(),
-                                        cx,
-                                    );
-                                }
-                            })),
+                            .children(unpinned_tabs)
+                            .child(
+                                div()
+                                    .id("tab_bar_drop_target")
+                                    .min_w_6()
+                                    // HACK: This empty child is currently necessary to force
+                                    // the drop target to appear despite us setting a min width above.
+                                    .child("")
+                                    // HACK: h_full doesn't occupy the complete height, using fixed height instead
+                                    .h(Tab::container_height(cx))
+                                    .flex_grow()
+                                    .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                        bar.bg(cx.theme().colors().drop_target_background)
+                                    })
+                                    .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                                        bar.bg(cx.theme().colors().drop_target_background)
+                                    })
+                                    .on_drop(cx.listener(
+                                        move |this, dragged_tab: &DraggedTab, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_tab_drop(
+                                                dragged_tab,
+                                                this.items.len(),
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                    .on_drop(cx.listener(
+                                        move |this, selection: &DraggedSelection, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_project_entry_drop(
+                                                &selection.active_selection.entry_id,
+                                                Some(tab_count),
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                    .on_drop(cx.listener(move |this, paths, window, cx| {
+                                        this.drag_split_direction = None;
+                                        this.handle_external_paths_drop(paths, window, cx)
+                                    }))
+                                    .on_click(cx.listener(
+                                        move |this, event: &ClickEvent, window, cx| {
+                                            if event.click_count() == 2 {
+                                                window.dispatch_action(
+                                                    this.double_click_dispatch_action.boxed_clone(),
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    )),
+                            ),
                     ),
-            )
-            .map(|tab_bar| {
-                if let Some(open_aside_right) = open_aside_right
-                    && render_aside_toggle_right
-                {
-                    tab_bar.end_child(open_aside_right)
-                } else {
-                    tab_bar
-                }
-            })
-            .into_any_element()
+                )
+                .into_any_element()
+        } else {
+            // Original single-row layout: pinned tabs fixed, unpinned tabs scrollable
+            TabBar::new("tab_bar")
+                .map(|tab_bar| {
+                    if let Some(open_aside_left) = open_aside_left
+                        && render_aside_toggle_left
+                    {
+                        tab_bar.start_child(open_aside_left)
+                    } else {
+                        tab_bar
+                    }
+                })
+                .when(
+                    self.display_nav_history_buttons.unwrap_or_default(),
+                    |tab_bar| {
+                        tab_bar
+                            .start_child(navigate_backward)
+                            .start_child(navigate_forward)
+                    },
+                )
+                .map(|tab_bar| {
+                    if self.show_tab_bar_buttons {
+                        let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                        let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                        tab_bar
+                            .start_children(left_children)
+                            .end_children(right_children)
+                    } else {
+                        tab_bar
+                    }
+                })
+                .children(pinned_tabs.len().ne(&0).then(|| {
+                    let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
+                    // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                    let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                    // Avoid flickering when max_offset is very small (< 2px).
+                    // The border adds 1-2px which can push max_offset back to 0, creating a loop.
+                    let is_scrollable = max_scroll > px(2.0);
+                    let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+                    h_flex()
+                        .children(pinned_tabs)
+                        .when(is_scrollable && is_scrolled, |this| {
+                            this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                                .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                                .border_color(cx.theme().colors().border)
+                        })
+                }))
+                .child(
+                    h_flex()
+                        .id("unpinned tabs")
+                        .overflow_x_scroll()
+                        .w_full()
+                        .track_scroll(&self.tab_bar_scroll_handle)
+                        .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                            this.suppress_scroll = true;
+                        }))
+                        .children(unpinned_tabs)
+                        .child(
+                            div()
+                                .id("tab_bar_drop_target")
+                                .min_w_6()
+                                // HACK: This empty child is currently necessary to force the drop target to appear
+                                // despite us setting a min width above.
+                                .child("")
+                                // HACK: h_full doesn't occupy the complete height, using fixed height instead
+                                .h(Tab::container_height(cx))
+                                .flex_grow()
+                                .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                    bar.bg(cx.theme().colors().drop_target_background)
+                                })
+                                .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                                    bar.bg(cx.theme().colors().drop_target_background)
+                                })
+                                .on_drop(cx.listener(
+                                    move |this, dragged_tab: &DraggedTab, window, cx| {
+                                        this.drag_split_direction = None;
+                                        this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                                    },
+                                ))
+                                .on_drop(cx.listener(
+                                    move |this, selection: &DraggedSelection, window, cx| {
+                                        this.drag_split_direction = None;
+                                        this.handle_project_entry_drop(
+                                            &selection.active_selection.entry_id,
+                                            Some(tab_count),
+                                            window,
+                                            cx,
+                                        )
+                                    },
+                                ))
+                                .on_drop(cx.listener(move |this, paths, window, cx| {
+                                    this.drag_split_direction = None;
+                                    this.handle_external_paths_drop(paths, window, cx)
+                                }))
+                                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                    if event.click_count() == 2 {
+                                        window.dispatch_action(
+                                            this.double_click_dispatch_action.boxed_clone(),
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .map(|tab_bar| {
+                    if let Some(open_aside_right) = open_aside_right
+                        && render_aside_toggle_right
+                    {
+                        tab_bar.end_child(open_aside_right)
+                    } else {
+                        tab_bar
+                    }
+                })
+                .into_any_element()
+        }
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
@@ -5003,6 +5130,168 @@ mod tests {
 
         // Order has not changed
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_disabled_by_default(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+
+        // Pin one tab
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+
+        // Verify setting is disabled by default
+        let is_separate_row_enabled =
+            pane.read_with(cx, |_, cx| TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row);
+        assert!(!is_separate_row_enabled, "Separate pinned row should be disabled by default");
+
+        // Verify pinned_tabs_row element does NOT exist (single row layout)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "pinned_tabs_row should not exist when setting is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_two_rows_when_both_tab_types_exist(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+
+        // Pin one tab - now we have both pinned and unpinned tabs
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+
+        // Verify pinned_tabs_row element exists (two row layout)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_some(),
+            "pinned_tabs_row should exist when setting is enabled and both tab types exist"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_single_row_when_only_pinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+
+        // Pin all tabs - only pinned tabs exist
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*!"], cx);
+
+        // Verify pinned_tabs_row does NOT exist (single row layout for pinned-only)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "pinned_tabs_row should not exist when only pinned tabs exist (uses single row)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_single_row_when_only_unpinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        // Add only unpinned tabs
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Verify pinned_tabs_row does NOT exist (single row layout for unpinned-only)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "pinned_tabs_row should not exist when only unpinned tabs exist (uses single row)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_toggles_between_layouts(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        // Pin one tab
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        // Initially disabled - single row
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(pinned_row_bounds.is_none(), "Should be single row when disabled");
+
+        // Enable - two rows
+        set_pinned_tabs_separate_row(cx, true);
+        cx.run_until_parked();
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(pinned_row_bounds.is_some(), "Should be two rows when enabled");
+
+        // Disable again - back to single row
+        set_pinned_tabs_separate_row(cx, false);
+        cx.run_until_parked();
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(pinned_row_bounds.is_none(), "Should be single row when disabled again");
     }
 
     #[gpui::test]
@@ -7250,6 +7539,17 @@ mod tests {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
+            });
+        });
+    }
+
+    fn set_pinned_tabs_separate_row(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .tab_bar
+                    .get_or_insert_default()
+                    .show_pinned_tabs_in_separate_row = Some(enabled);
             });
         });
     }
