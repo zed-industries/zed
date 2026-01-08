@@ -76,6 +76,9 @@ use crate::{
     SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
+/// Maximum number of lines to show for a collapsed terminal command preview.
+const MAX_COLLAPSED_LINES: usize = 3;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
     Positive,
@@ -3038,7 +3041,7 @@ impl AcpThreadView {
                     let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
                     this.child(
-                        self.render_terminal_command_preview(is_expanded, tool_call, window, cx)
+                        self.render_terminal_command_preview(is_expanded, tool_call, cx)
                     )
                 } else {
                     this.child(
@@ -3594,20 +3597,32 @@ impl AcpThreadView {
         &self,
         expanded: bool,
         tool_call: &ToolCall,
-        window: &Window,
         cx: &Context<Self>,
     ) -> Div {
         let header_bg = self.tool_card_header_bg(cx);
+        let label_source = tool_call.label.read(cx).source();
+        let lines: Vec<&str> = label_source.lines().collect();
+        let line_count = lines.len();
+        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
+        let show_expand_button = extra_lines > 0;
+
         let icon = if expanded {
             IconName::ChevronUp
         } else {
             IconName::ChevronDown
         };
 
+        let max_lines = if expanded || !show_expand_button {
+            usize::MAX
+        } else {
+            MAX_COLLAPSED_LINES
+        };
+
+        let display_lines = lines.into_iter().take(max_lines);
+
         v_flex()
             .relative()
             .bg(header_bg)
-            .when(!expanded, |this| this.max_h(rems(12.0)).overflow_hidden())
             .child(
                 v_flex()
                     .p_1p5()
@@ -3620,50 +3635,59 @@ impl AcpThreadView {
                             .color(Color::Muted),
                     )
                     .child(
-                        MarkdownElement::new(
-                            tool_call.label.clone(),
-                            terminal_command_markdown_style(window, cx),
-                        )
-                        .code_block_renderer(
-                            markdown::CodeBlockRenderer::Default {
-                                copy_button: false,
-                                copy_button_on_hover: false,
-                                border: false,
-                            },
-                        ),
+                        v_flex()
+                            .text_buffer(cx)
+                            .text_size(TextSize::Small.rems(cx))
+                            .children(display_lines.map(|line| {
+                                let text: SharedString = if line.is_empty() {
+                                    " ".into()
+                                } else {
+                                    line.to_string().into()
+                                };
+
+                                div().child(text)
+                            })),
                     ),
             )
-            .child(
-                h_flex()
-                    .id("expand-command-btn")
-                    .cursor_pointer()
-                    .when(!expanded, |this| {
-                        this.absolute().left_0().bottom_0().bg(cx
-                            .theme()
-                            .colors()
-                            .element_active
-                            .opacity(0.2))
-                    })
-                    .w_full()
-                    .py_0p5()
-                    .justify_center()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_b_sm()
-                    .hover(|s| s.bg(cx.theme().colors().element_hover))
-                    .child(Icon::new(icon).size(IconSize::Small))
-                    .on_click(cx.listener({
-                        let tool_call_id = tool_call.id.clone();
-                        move |this, _event, _window, cx| {
-                            if expanded {
-                                this.expanded_tool_calls.remove(&tool_call_id);
-                            } else {
-                                this.expanded_tool_calls.insert(tool_call_id.clone());
+            .when(show_expand_button, |this| {
+                this.child(
+                    h_flex()
+                        .id(ElementId::Name(
+                            format!("expand-command-btn-{}", tool_call.id).into(),
+                        ))
+                        .cursor_pointer()
+                        .w_full()
+                        .min_h(rems(1.5))
+                        .py_0p5()
+                        .gap_1()
+                        .justify_center()
+                        .items_center()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_b_sm()
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
+                        .when(!expanded, |this| {
+                            let label = match extra_lines {
+                                1 => "1 more line".to_string(),
+                                _ => format!("{} more lines", extra_lines),
+                            };
+
+                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                        })
+                        .child(Icon::new(icon).size(IconSize::Small))
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call.id.clone();
+                            move |this, _event, _window, cx| {
+                                if expanded {
+                                    this.expanded_tool_calls.remove(&tool_call_id);
+                                } else {
+                                    this.expanded_tool_calls.insert(tool_call_id.clone());
+                                }
+                                cx.notify();
                             }
-                            cx.notify();
-                        }
-                    })),
-            )
+                        })),
+                )
+            })
     }
 
     fn render_terminal_tool_call(

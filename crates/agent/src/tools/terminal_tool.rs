@@ -11,7 +11,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use util::markdown::MarkdownInlineCode;
 
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream};
 
@@ -72,7 +71,7 @@ impl AgentTool for TerminalTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            MarkdownInlineCode(&input.command).to_string().into()
+            input.command.into()
         } else {
             "".into()
         }
@@ -431,12 +430,13 @@ mod tests {
 
     fn format_initial_title(input: Result<TerminalToolInput, serde_json::Value>) -> String {
         if let Ok(input) = input {
-            MarkdownInlineCode(&input.command).to_string()
+            input.command
         } else {
             String::new()
         }
     }
 
+    #[test]
     fn test_process_content_user_stopped_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
