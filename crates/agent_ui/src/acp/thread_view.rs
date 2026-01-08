@@ -311,6 +311,7 @@ pub struct AcpThreadView {
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
     turn_started_at: Option<Instant>,
+    last_turn_duration: Option<Duration>,
     _turn_timer_task: Option<Task<()>>,
 }
 
@@ -485,6 +486,7 @@ impl AcpThreadView {
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             turn_started_at: None,
+            last_turn_duration: None,
             _turn_timer_task: None,
         }
     }
@@ -503,6 +505,7 @@ impl AcpThreadView {
         self.new_server_version_available.take();
         self.message_queue.clear();
         self.turn_started_at = None;
+        self.last_turn_duration = None;
         self._turn_timer_task = None;
         cx.notify();
     }
@@ -1306,6 +1309,7 @@ impl AcpThreadView {
 
     fn start_turn_timer(&mut self, cx: &mut Context<Self>) {
         self.turn_started_at = Some(Instant::now());
+        self.last_turn_duration = None;
         self._turn_timer_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -1317,7 +1321,12 @@ impl AcpThreadView {
     }
 
     fn stop_turn_timer(&mut self) {
-        self.turn_started_at = None;
+        if let Some(started_at) = self.turn_started_at.take() {
+            let elapsed = started_at.elapsed();
+            if elapsed >= Duration::from_secs(30) {
+                self.last_turn_duration = Some(elapsed);
+            }
+        }
         self._turn_timer_task = None;
     }
 
@@ -1344,12 +1353,6 @@ impl AcpThreadView {
         self.editing_message.take();
         self.thread_feedback.clear();
 
-        let Some(thread) = self.thread() else {
-            return;
-        };
-        let session_id = thread.read(cx).session_id().clone();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -1357,6 +1360,38 @@ impl AcpThreadView {
                 })
                 .ok();
         }
+
+        let contents_task = cx.spawn_in(window, async move |this, cx| {
+            let (contents, tracked_buffers) = contents.await?;
+
+            if contents.is_empty() {
+                return Ok(None);
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                this.message_editor.update(cx, |message_editor, cx| {
+                    message_editor.clear(window, cx);
+                });
+            })?;
+
+            Ok(Some((contents, tracked_buffers)))
+        });
+
+        self.send_content(contents_task, window, cx);
+    }
+
+    fn send_content(
+        &mut self,
+        contents_task: Task<anyhow::Result<Option<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
+        let thread = thread.downgrade();
 
         self.is_loading_contents = true;
         let model_id = self.current_model_id(cx);
@@ -1369,11 +1404,9 @@ impl AcpThreadView {
         .detach();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            let (contents, tracked_buffers) = contents.await?;
-
-            if contents.is_empty() {
+            let Some((contents, tracked_buffers)) = contents_task.await? else {
                 return Ok(());
-            }
+            };
 
             let _stop_timer = defer({
                 let this = this.clone();
@@ -1386,14 +1419,11 @@ impl AcpThreadView {
                     .ok();
                 }
             });
-            this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, _window, cx| {
                 this.in_flight_prompt = Some(contents.clone());
                 this.start_turn_timer(cx);
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
-                this.message_editor.update(cx, |message_editor, cx| {
-                    message_editor.clear(window, cx);
-                });
             })?;
             let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
@@ -1532,101 +1562,23 @@ impl AcpThreadView {
         // Ensure we don't end up with multiple concurrent generations
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
-        let session_id = thread.read(cx).session_id().clone();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let thread = thread.downgrade();
-
         let should_be_following = self.should_be_following;
         let workspace = self.workspace.clone();
 
-        self.is_loading_contents = true;
-        let model_id = self.current_model_id(cx);
-        let mode_id = self.current_mode_id(cx);
-        let guard = cx.new(|_| ());
-
-        cx.observe_release(&guard, |this, _guard, cx| {
-            this.is_loading_contents = false;
-            cx.notify();
-        })
-        .detach();
-
-        let task = cx.spawn_in(window, async move |this, cx| {
+        let contents_task = cx.spawn_in(window, async move |_this, cx| {
             cancelled.await;
-            this.update_in(cx, |this, window, cx| {
-                if should_be_following {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.follow(CollaboratorId::Agent, window, cx);
-                        })
-                        .ok();
-                }
+            if should_be_following {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.follow(CollaboratorId::Agent, window, cx);
+                    })
+                    .ok();
+            }
 
-                this.in_flight_prompt = Some(content.clone());
-                this.start_turn_timer(cx);
-                this.set_editor_is_expanded(false, cx);
-                this.scroll_to_bottom(cx);
-            })?;
-
-            let turn_start_time = Instant::now();
-            let send = thread.update(cx, |thread, cx| {
-                thread.action_log().update(cx, |action_log, cx| {
-                    for buffer in tracked_buffers {
-                        action_log.buffer_read(buffer, cx)
-                    }
-                });
-                drop(guard);
-
-                telemetry::event!(
-                    "Agent Message Sent",
-                    agent = agent_telemetry_id,
-                    session = session_id,
-                    model = model_id,
-                    mode = mode_id
-                );
-
-                thread.send(content, cx)
-            })?;
-
-            let res = send.await;
-            let turn_time_ms = turn_start_time.elapsed().as_millis();
-            let status = if res.is_ok() {
-                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
-                "success"
-            } else {
-                "failure"
-            };
-
-            telemetry::event!(
-                "Agent Turn Completed",
-                agent = agent_telemetry_id,
-                session = session_id,
-                model = model_id,
-                mode = mode_id,
-                status,
-                turn_time_ms,
-            );
-            res
+            Ok(Some((content, tracked_buffers)))
         });
 
-        cx.spawn(async move |this, cx| {
-            if let Err(err) = task.await {
-                this.update(cx, |this, cx| {
-                    this.handle_thread_error(err, cx);
-                })
-                .ok();
-            } else {
-                this.update(cx, |this, cx| {
-                    this.should_be_following = this
-                        .workspace
-                        .update(cx, |workspace, _| {
-                            workspace.is_being_followed(CollaboratorId::Agent)
-                        })
-                        .unwrap_or_default();
-                })
-                .ok();
-            }
-        })
-        .detach();
+        self.send_content(contents_task, window, cx);
     }
 
     fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -5938,9 +5890,13 @@ impl AcpThreadView {
     }
 
     fn render_generating(&self, confirmation: bool) -> impl IntoElement {
-        let elapsed_label = self.turn_started_at.map(|started_at| {
+        let elapsed_label = self.turn_started_at.and_then(|started_at| {
             let elapsed = started_at.elapsed();
-            duration_alt_display(elapsed)
+            if elapsed >= Duration::from_secs(30) {
+                Some(duration_alt_display(elapsed))
+            } else {
+                None
+            }
         });
 
         h_flex()
@@ -6015,6 +5971,12 @@ impl AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
+        let last_turn_label = self.last_turn_duration.map(|duration| {
+            Label::new(duration_alt_display(duration))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+        });
+
         let mut container = h_flex()
             .w_full()
             .py_2()
@@ -6022,7 +5984,8 @@ impl AcpThreadView {
             .gap_px()
             .opacity(0.6)
             .hover(|s| s.opacity(1.))
-            .justify_end();
+            .justify_end()
+            .when_some(last_turn_label, |this, label| this.child(label));
 
         if AgentSettings::get_global(cx).enable_feedback
             && self
