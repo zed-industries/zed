@@ -6542,7 +6542,8 @@ mod tests {
         pane.update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_c.item_id()), cx);
         });
-        assert!(pane.read_with(cx, |pane, _| pane.preview_item_id() == Some(item_c.item_id())));
+        assert!(pane.read_with(cx, |pane, _| pane.preview_item_id()
+            == Some(item_c.item_id())));
 
         pane.update_in(cx, |pane, window, cx| {
             pane.close_other_items(
