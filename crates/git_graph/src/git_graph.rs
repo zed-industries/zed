@@ -271,11 +271,7 @@ impl GitGraph {
 
 impl Render for GitGraph {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let date_width = px(140.0);
-        let author_width = px(120.0);
-        let commit_width = px(80.0);
-
-        let description_width_fraction = 0.71;
+        let description_width_fraction = 0.72;
         let date_width_fraction = 0.12;
         let author_width_fraction = 0.10;
         let commit_width_fraction = 0.06;
@@ -330,87 +326,61 @@ impl Render for GitGraph {
             div()
                 .size_full()
                 .flex()
-                .flex_col()
+                .flex_row()
                 .child(
-                    h_flex()
-                        .w_full()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .flex_shrink_0()
+                    div()
+                        .w(graph_width)
+                        .h_full()
+                        .flex()
+                        .flex_col()
                         .child(
                             div()
-                                .w(graph_width)
-                                .px_1()
-                                .py_0p5()
+                                .p_2()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border)
                                 .child(Label::new("Graph").color(Color::Muted)),
                         )
                         .child(
                             div()
                                 .flex_1()
-                                .px_1()
-                                .py_0p5()
-                                .child(Label::new("Description").color(Color::Muted)),
-                        )
-                        .child(
-                            div()
-                                .w(date_width)
-                                .px_1()
-                                .py_0p5()
-                                .child(Label::new("Date").color(Color::Muted)),
-                        )
-                        .child(
-                            div()
-                                .w(author_width)
-                                .px_1()
-                                .py_0p5()
-                                .child(Label::new("Author").color(Color::Muted)),
-                        )
-                        .child(
-                            div()
-                                .w(commit_width)
-                                .px_1()
-                                .py_0p5()
-                                .child(Label::new("Commit").color(Color::Muted)),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .flex_1()
-                        .size_full()
-                        .child(
-                            div()
-                                .w(graph_width)
-                                .h_full()
                                 .overflow_hidden()
                                 .child(render_graph(&self, cx))
                                 .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
-                        )
-                        .child({
-                            let row_height = self.row_height;
-                            div().flex_1().size_full().child(
-                                Table::new(4)
-                                    .interactable(&self.table_interaction_state)
-                                    .hide_row_borders()
-                                    .column_widths(
-                                        [
-                                            DefiniteLength::Fraction(description_width_fraction),
-                                            DefiniteLength::Fraction(date_width_fraction),
-                                            DefiniteLength::Fraction(author_width_fraction),
-                                            DefiniteLength::Fraction(commit_width_fraction),
-                                        ]
-                                        .to_vec(),
-                                    )
-                                    .map_row(move |(_index, row), _window, _cx| {
-                                        row.h(row_height).into_any_element()
-                                    })
-                                    .uniform_list(
-                                        "git-graph-commits",
-                                        commit_count,
-                                        cx.processor(Self::render_table_rows),
-                                    ),
-                            )
-                        }),
+                        ),
                 )
+                .child({
+                    let row_height = self.row_height;
+                    div().flex_1().size_full().child(
+                        Table::new(4)
+                            .interactable(&self.table_interaction_state)
+                            .hide_row_borders()
+                            .header(vec![
+                                Label::new("Description")
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                                Label::new("Date").color(Color::Muted).into_any_element(),
+                                Label::new("Author").color(Color::Muted).into_any_element(),
+                                Label::new("Commit").color(Color::Muted).into_any_element(),
+                            ])
+                            .column_widths(
+                                [
+                                    DefiniteLength::Fraction(description_width_fraction),
+                                    DefiniteLength::Fraction(date_width_fraction),
+                                    DefiniteLength::Fraction(author_width_fraction),
+                                    DefiniteLength::Fraction(commit_width_fraction),
+                                ]
+                                .to_vec(),
+                            )
+                            .map_row(move |(_index, row), _window, _cx| {
+                                row.h(row_height).into_any_element()
+                            })
+                            .uniform_list(
+                                "git-graph-commits",
+                                commit_count,
+                                cx.processor(Self::render_table_rows),
+                            ),
+                    )
+                })
         };
 
         div()
