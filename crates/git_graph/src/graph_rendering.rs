@@ -1,5 +1,5 @@
 use gpui::{
-    App, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Styled, Window, canvas, point, px,
+    App, Bounds, Context, Hsla, IntoElement, PathBuilder, Pixels, Styled, Window, canvas, point, px,
 };
 use theme::AccentColors;
 use ui::ActiveTheme as _;
@@ -31,16 +31,26 @@ fn to_row_center(
     bounds.origin.y + to_row as f32 * row_height + row_height / 2.0 - scroll_offset
 }
 
-pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
-    let top_row = graph.list_state.logical_scroll_top();
+pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoElement {
     let row_height = graph.row_height;
-    let scroll_offset = top_row.offset_in_item;
-    let first_visible_row = top_row.item_ix;
-    // this goes one row over to draw the lines off the screen correctly
-    let last_visible_row = first_visible_row
-        + (graph.list_state.viewport_bounds().size.height / row_height).ceil() as usize;
-    let graph_width = px(16.0) * (4 as f32) + px(24.0);
+    let table_state = graph.table_interaction_state.read(cx);
+    let viewport_height = table_state
+        .scroll_handle
+        .0
+        .borrow()
+        .last_item_size
+        .map(|size| size.item.height)
+        .unwrap_or(px(600.0));
     let loaded_commit_count = graph.graph.commits.len();
+
+    let content_height = row_height * loaded_commit_count;
+    let max_scroll = (content_height - viewport_height).max(px(0.));
+    let scroll_offset_y = (-table_state.scroll_offset().y).clamp(px(0.), max_scroll);
+
+    let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
+    let scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
+    let graph_width = px(16.0) * (4 as f32) + px(24.0);
+    let last_visible_row = first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
     let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
         ..(last_visible_row).min(loaded_commit_count);

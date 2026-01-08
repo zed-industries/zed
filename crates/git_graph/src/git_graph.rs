@@ -3,10 +3,10 @@ mod graph_rendering;
 
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, ListAlignment, ListState, ParentElement, Pixels, Point, Render,
+    AbsoluteLength, AnyElement, App, Context, Corner, DefiniteLength, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels, Point, Render,
     ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, list, px,
+    anchored, deferred, px,
 };
 use graph_rendering::accent_colors_count;
 use project::{
@@ -14,9 +14,10 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
+use std::ops::Range;
 use std::path::PathBuf;
 use theme::ThemeSettings;
-use ui::{ContextMenu, Tooltip, prelude::*};
+use ui::{ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -64,7 +65,7 @@ pub struct GitGraph {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     work_dir: Option<PathBuf>,
     row_height: Pixels,
-    list_state: ListState,
+    table_interaction_state: Entity<TableInteractionState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -89,7 +90,7 @@ impl GitGraph {
         let font_size = settings.buffer_font_size(cx);
         let row_height = font_size + px(10.0);
 
-        let list_state = ListState::new(0, ListAlignment::Top, px(500.0));
+        let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
 
         let accent_colors = cx.theme().accents();
         let mut this = GitGraph {
@@ -105,7 +106,7 @@ impl GitGraph {
             context_menu: None,
             work_dir: None,
             row_height,
-            list_state,
+            table_interaction_state,
             // todo! We can just make this a simple Subscription instead of wrapping it
             _subscriptions: vec![git_store_subscription],
         };
@@ -170,7 +171,6 @@ impl GitGraph {
 
                         if let Some(commit_count) = commit_count {
                             this.graph.max_commit_count = AllCommitCount::Loaded(commit_count);
-                            this.list_state.reset(commit_count);
                         }
                     }
                     Err(e) => {
@@ -185,21 +185,22 @@ impl GitGraph {
         }));
     }
 
-    // todo unflatten this function
-    fn render_list_item(
+    fn render_table_rows(
         &mut self,
-        idx: usize,
+        range: Range<usize>,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Vec<[AnyElement; 4]> {
         let row_height = self.row_height;
-        // let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
-        // todo! make these widths constant
         let date_width = px(140.0);
         let author_width = px(120.0);
         let commit_width = px(80.0);
 
-        self.render_commit_row(idx, row_height, date_width, author_width, commit_width, cx)
+        range
+            .map(|idx| {
+                self.render_commit_row(idx, row_height, date_width, author_width, commit_width, cx)
+            })
+            .collect()
     }
 
     fn handle_graph_scroll(
@@ -211,13 +212,23 @@ impl GitGraph {
         let line_height = window.line_height();
         let delta = event.delta.pixel_delta(line_height);
 
-        let current_offset = -self.list_state.scroll_px_offset_for_scrollbar().y;
-        let max_offset = self.list_state.max_offset_for_scrollbar().height;
-        let new_offset = (current_offset - delta.y).clamp(px(0.), max_offset);
-        let clamped_delta = new_offset - current_offset;
+        let table_state = self.table_interaction_state.read(cx);
+        let current_offset = table_state.scroll_offset();
 
-        if clamped_delta != px(0.) {
-            self.list_state.scroll_by(clamped_delta);
+        let viewport_height = table_state.scroll_handle.viewport().size.height;
+
+        let commit_count = match self.graph.max_commit_count {
+            AllCommitCount::Loaded(count) => count,
+            AllCommitCount::NotLoaded => self.graph.commits.len(),
+        };
+        let content_height = self.row_height * commit_count;
+        let max_scroll = (viewport_height - content_height).min(px(0.));
+
+        let new_y = (current_offset.y + delta.y).clamp(max_scroll, px(0.));
+        let new_offset = Point::new(current_offset.x, new_y);
+
+        if new_offset != current_offset {
+            table_state.set_scroll_offset(new_offset);
             cx.notify();
         }
     }
@@ -226,18 +237,22 @@ impl GitGraph {
         &mut self,
         idx: usize,
         row_height: Pixels,
-        date_width: Pixels,
-        author_width: Pixels,
-        commit_width: Pixels,
+        _date_width: Pixels,
+        _author_width: Pixels,
+        _commit_width: Pixels,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> [AnyElement; 4] {
         if (idx + CHUNK_SIZE).min(self.graph.max_commit_count.count()) > self.graph.commits.len() {
             self.load_data(true, cx);
         }
 
         let Some(commit) = self.graph.commits.get(idx) else {
-            // todo! loading row element
-            return div().h(row_height).into_any_element();
+            return [
+                div().h(row_height).into_any_element(),
+                div().h(row_height).into_any_element(),
+                div().h(row_height).into_any_element(),
+                div().h(row_height).into_any_element(),
+            ];
         };
 
         let subject: SharedString = commit.data.subject.clone().into();
@@ -245,72 +260,31 @@ impl GitGraph {
         let short_sha: SharedString = commit.data.sha.display_short().into();
         let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
 
-        let is_selected = self.expanded_commit == Some(idx);
-        let bg = if is_selected {
-            cx.theme().colors().ghost_element_selected
-        } else {
-            cx.theme().colors().editor_background
-        };
-        let hover_bg = cx.theme().colors().ghost_element_hover;
-
-        h_flex()
-            .id(ElementId::NamedInteger("commit-row".into(), idx as u64))
-            .w_full()
-            .size_full()
-            .px_2()
-            .gap_4()
-            .h(row_height)
-            .min_h(row_height)
-            .flex_shrink_0()
-            .bg(bg)
-            .hover(move |style| style.bg(hover_bg))
-            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, _cx| {
-                this.selected_commit = Some(idx);
-            }))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap_2()
-                    .overflow_hidden()
-                    .items_center()
-                    .child(
-                        div()
-                            .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .tooltip(Tooltip::text(subject.clone()))
-                            .child(Label::new(subject).single_line()),
-                    ),
-            )
-            .child(
-                div()
-                    .w(date_width)
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(Label::new(formatted_time).color(Color::Muted).single_line()),
-            )
-            .child(
-                div()
-                    .w(author_width)
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(Label::new(author_name).color(Color::Muted).single_line()),
-            )
-            .child(
-                div()
-                    .w(commit_width)
-                    .flex_shrink_0()
-                    .child(Label::new(short_sha).color(Color::Accent).single_line()),
-            )
-            .into_any_element()
+        [
+            div()
+                .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
+                .overflow_hidden()
+                .tooltip(Tooltip::text(subject.clone()))
+                .child(Label::new(subject).single_line())
+                .into_any_element(),
+            Label::new(formatted_time)
+                .color(Color::Muted)
+                .single_line()
+                .into_any_element(),
+            Label::new(author_name)
+                .color(Color::Muted)
+                .single_line()
+                .into_any_element(),
+            Label::new(short_sha)
+                .color(Color::Accent)
+                .single_line()
+                .into_any_element(),
+        ]
     }
 }
 
 impl Render for GitGraph {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let graph_width = px(16.0) * (4 as f32) + px(24.0);
         let date_width = px(140.0);
         let author_width = px(120.0);
         let commit_width = px(80.0);
@@ -343,6 +317,11 @@ impl Render for GitGraph {
                 )
         });
 
+        let commit_count = match self.graph.max_commit_count {
+            AllCommitCount::Loaded(count) => count,
+            AllCommitCount::NotLoaded => self.graph.commits.len(),
+        };
+
         let content = if self.loading && self.graph.commits.is_empty() && false {
             let message = if self.loading {
                 "Loading commits..."
@@ -356,6 +335,7 @@ impl Render for GitGraph {
                 .justify_center()
                 .child(Label::new(message).color(Color::Muted))
         } else {
+            let graph_width = px(16.0) * (4 as f32) + px(24.0);
             div()
                 .size_full()
                 .flex()
@@ -401,20 +381,39 @@ impl Render for GitGraph {
                         .size_full()
                         .child(
                             div()
+                                .w(graph_width)
                                 .h_full()
                                 .overflow_hidden()
-                                .child(render_graph(&self))
+                                .child(render_graph(&self, cx))
                                 .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
                         )
-                        .child(
-                            list(
-                                self.list_state.clone(),
-                                cx.processor(Self::render_list_item),
+                        .child({
+                            let row_height = self.row_height;
+                            div().flex_1().size_full().child(
+                                Table::<4>::new()
+                                    .interactable(&self.table_interaction_state)
+                                    .column_widths([
+                                        DefiniteLength::Fraction(0.5),
+                                        DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                                            date_width,
+                                        )),
+                                        DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                                            author_width,
+                                        )),
+                                        DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                                            commit_width,
+                                        )),
+                                    ])
+                                    .map_row(move |(_index, row), _window, _cx| {
+                                        row.h(row_height).into_any_element()
+                                    })
+                                    .uniform_list(
+                                        "git-graph-commits",
+                                        commit_count,
+                                        cx.processor(Self::render_table_rows),
+                                    ),
                             )
-                            .flex_1()
-                            .h_full()
-                            .w_full(),
-                        ),
+                        }),
                 )
         };
 
