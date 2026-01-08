@@ -615,7 +615,7 @@ async fn handle_error(
         .await
         .unwrap();
 
-    let file_path = example
+    let cursor_path = example
         .repo_name()
         .unwrap()
         .worktree_path()
@@ -634,9 +634,9 @@ async fn handle_error(
         "},
         example.spec.name,
         error,
-        err_path.display(),
-        file_path.display(),
         failed_example_path.display(),
+        err_path.display(),
+        cursor_path.display(),
         command,
         failed_example_path.display(),
     );
