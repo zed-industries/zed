@@ -13,7 +13,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::{
     borrow::Cow,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 use zeta_prompt::RelatedFile;
@@ -214,20 +214,6 @@ pub fn read_example_files(inputs: &[PathBuf]) -> Vec<Example> {
     }
 
     examples
-}
-
-pub fn write_examples(examples: &[Example], output_path: Option<&PathBuf>) {
-    let mut content = String::new();
-    for example in examples {
-        let line = serde_json::to_string(example).unwrap();
-        content.push_str(&line);
-        content.push('\n');
-    }
-    if let Some(output_path) = output_path {
-        std::fs::write(output_path, content).expect("Failed to write examples");
-    } else {
-        std::io::stdout().write_all(&content.as_bytes()).unwrap();
-    }
 }
 
 pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
