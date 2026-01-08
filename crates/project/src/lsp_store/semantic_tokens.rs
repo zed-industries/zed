@@ -1,4 +1,6 @@
-use std::{collections::hash_map, iter::Peekable, slice::ChunksExact, sync::Arc};
+use std::{collections::hash_map, slice::ChunksExact, sync::Arc};
+
+use itertools::Itertools;
 
 use anyhow::Result;
 
@@ -320,10 +322,6 @@ pub struct BufferSemanticTokens {
     pub servers: HashMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
-struct BufferSemanticTokensIter<'a> {
-    iters: Vec<(lsp::LanguageServerId, Peekable<SemanticTokensIter<'a>>)>,
-}
-
 /// All the semantic tokens for a buffer, from a single language server.
 #[derive(Debug, Clone)]
 pub struct ServerSemanticTokens {
@@ -365,14 +363,11 @@ pub struct SemanticToken {
 }
 
 impl BufferSemanticTokens {
-    pub fn all_tokens(&self) -> impl Iterator<Item = (lsp::LanguageServerId, SemanticToken)> {
-        let iters = self
-            .servers
+    pub fn all_tokens(&self) -> impl Iterator<Item = (lsp::LanguageServerId, SemanticToken)> + '_ {
+        self.servers
             .iter()
-            .map(|(server_id, tokens)| (*server_id, tokens.tokens().peekable()))
-            .collect();
-
-        BufferSemanticTokensIter { iters }
+            .map(|(server_id, tokens)| tokens.tokens().map(move |token| (*server_id, token)))
+            .kmerge_by(|(_, a), (_, b)| (a.line, a.start) < (b.line, b.start))
     }
 }
 
@@ -394,25 +389,6 @@ impl ServerSemanticTokens {
             prev: None,
             data: self.data.chunks_exact(5),
         }
-    }
-}
-
-// TODO kb why is it necessary?
-// Preform the data in the task instead?
-impl Iterator for BufferSemanticTokensIter<'_> {
-    type Item = (lsp::LanguageServerId, SemanticToken);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (i, _) = self
-            .iters
-            // TODO kb can we avoid re-iterating each time?
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, (_, iter))| iter.peek().map(|peeked| (i, peeked)))
-            .min_by_key(|(_, tok)| (tok.line, tok.start))?;
-
-        let (id, iter) = &mut self.iters[i];
-        Some((*id, iter.next()?))
     }
 }
 
