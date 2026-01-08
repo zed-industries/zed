@@ -988,3 +988,188 @@ non-linear and counterproductive. Larger chunks lead to more total work, not les
 
 The real problem remains `BlockMap::sync` performance on large MultiBuffers, which needs to be
 addressed at the display_map level, not the blame level.
+
+# Definitive Test: Git Blame Disabled (run_13.tracy)
+
+## Purpose
+
+To definitively determine whether `BlockMap::sync` slowness is caused by git blame or is inherent
+to large MultiBuffers, we completely disabled all git blame generation.
+
+## Changes Made
+
+Commented out ALL `generate()` calls in `crates/editor/src/git/blame.rs`:
+
+| Location | Description |
+|----------|-------------|
+| Line 217 | `DirtyChanged` handler |
+| Line 246 | `WorktreeUpdatedEntries` handler |
+| Line 259 | `RepositoryUpdated` handler |
+| Line 265 | `RepositoryAdded` handler |
+| Line 271 | `RepositoryRemoved` handler |
+| Line 297 | Initial `generate()` in constructor |
+| Line 378 | `focus` handler |
+| Line 689 | Inside `regenerate_on_edit` |
+| Line 701 | Inside `debounced_generate` |
+
+## Test Scenario
+
+Same as previous runs: opened chromium repo with uncommitted changes in git diff view, scrolled around.
+
+## Results
+
+```bash
+# Verify no git blame activity
+tracy-csvexport -u -f "spawn_git_blame" run_13.tracy | grep -c "spawn_git_blame{"
+# Result: 0
+
+tracy-csvexport -u -f "generate" run_13.tracy | grep -c "^generate,"
+# Result: 0
+
+# Check sync durations
+tracy-csvexport -u run_13.tracy | awk -F, '$5 > 10000000 {print $1","$5/1000000"ms"}' | sort -t, -k2 -rn | head -15
+```
+
+Top sync operations:
+```
+sync{edits=Patch([Edit { old: WrapRow(130787)..WrapRow(130788),...  51662.7ms
+while edits{edit=Edit { old: WrapRow(152919)..WrapRow(152920),...  50642.7ms
+while edits{edit=Edit { old: WrapRow(123044)..WrapRow(123045),...  48955ms
+sync{edits=Patch([Edit { old: WrapRow(117767)..WrapRow(117768),...  47624.6ms
+sync{edits=Patch([Edit { old: WrapRow(112229)..WrapRow(112230),...  46805.8ms
+sync{edits=Patch([Edit { old: WrapRow(110926)..WrapRow(110927),...  46679.1ms
+...
+```
+
+## Comparison
+
+| Metric | run_9 (with blame) | run_13 (no blame) |
+|--------|-------------------|-------------------|
+| `spawn_git_blame` calls | 7 | **0** |
+| `generate` calls | 6 | **0** |
+| Max `sync` duration | 51.6s | **51.7s** |
+| Typical `sync` durations | 25-51s | **21-51s** |
+
+## Conclusion
+
+**Git blame is NOT the cause of the slow `BlockMap::sync` operations.**
+
+The sync times are essentially identical with or without git blame. This definitively proves:
+
+1. The slowness is **inherent to processing large MultiBuffers** (100,000+ rows)
+2. Git blame completion notifications were a red herring - they trigger syncs, but so does
+   everything else (initial load, scrolling, any editor interaction)
+3. The fix must be in `BlockMap::sync` itself, not in reducing what triggers it
+
+The investigation should now focus entirely on optimizing the `while edits` loop in
+`crates/editor/src/display_map/block_map.rs` (around line 572).
+
+# Debounce Refactoring Experiments (run_14, run_15, run_16)
+
+## Goal
+
+Simplify the debouncing logic by moving it directly into `generate()` and removing the
+separate `regenerate_on_edit` and `debounced_generate` tasks.
+
+## run_14: Debounce Inside generate() with Incremental Updates
+
+### Changes Made
+
+1. Removed `regenerate_on_edit_task` and `debounced_generate_task` fields
+2. Added 2-second debounce timer at start of spawned task inside `generate()`
+3. Updated buffers incrementally (calling `cx.notify()` after each chunk)
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| `generate` calls | **3103** ⚠️ |
+| `spawn_git_blame` calls | 36 |
+| `blame_task` completions | 1 |
+| Max `sync` duration | 47.6s |
+
+### Problem
+
+3103 `generate()` calls! The debounce inside the task doesn't prevent the overhead of:
+- Incrementing `generation_id`
+- Collecting all buffers from multi_buffer
+- Spawning a new task (cancelling previous)
+
+## run_15: Debounce Inside generate() with Bulk Updates
+
+### Changes Made
+
+Reverted incremental updates - now collects all results and does single `this.update()`
+at the end with one `cx.notify()` call.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| `generate` calls | **3102** ⚠️ |
+| `spawn_git_blame` calls | 144 |
+| `blame_task` completions | 1 |
+| Max `sync` duration | 49.3s |
+
+### Problem
+
+Still 3102 `generate()` calls. Bulk vs incremental updates didn't help - the fundamental
+issue is that debouncing inside the task doesn't prevent `generate()` from being called.
+
+Git blame also never appeared in the UI during this run - tasks kept getting cancelled.
+
+## run_16: Proper Debounce with Separate Tasks (WORKING)
+
+### Changes Made
+
+Reverted to proper debounce architecture:
+1. Restored `debounced_generate_task` and `regenerate_on_edit_task` fields
+2. `GENERATE_DEBOUNCE_INTERVAL` = 200ms (for event-triggered)
+3. `REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL` = 2 seconds (for edit-triggered)
+4. Event handlers call `debounced_generate(cx)` which starts a timer task
+5. Timer task calls `generate(cx)` after debounce period
+6. `generate()` has no internal debounce
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| `generate` calls | **4** ✅ |
+| `spawn_git_blame` calls | 42 |
+| `blame_task` completions | **2** ✅ |
+| Max `sync` duration | 55.5s |
+
+### Spawns by Generation
+
+| generation_id | spawns | notes |
+|---------------|--------|-------|
+| 0 | 2 | Completed (5.6s, 2 buffers) |
+| 1 | 8 | Completed (34s, 716 buffers) |
+| 2 | 32 | Cancelled |
+
+### Analysis
+
+Debouncing is now working correctly:
+- Only 4 `generate()` calls (vs 3000+ in broken versions)
+- 2 blame_tasks completed successfully
+- Git blame appeared in UI
+
+The sync times (~55s max) are consistent with previous findings - `BlockMap::sync` is
+inherently slow on large MultiBuffers regardless of git blame behavior.
+
+## Conclusion
+
+**Debouncing must happen BEFORE `generate()`, not inside it.**
+
+The correct architecture:
+```
+event → debounced_generate() → [200ms timer] → generate() → blame work
+```
+
+NOT:
+```
+event → generate() → [timer inside task] → blame work  (BROKEN)
+```
+
+When debouncing is inside `generate()`, every event still calls `generate()`, which does
+work (buffer collection, task spawning) before the debounce timer even starts.

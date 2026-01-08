@@ -48,6 +48,63 @@ With corrected tracing:
 
 The debouncing and kill_on_drop fixes we implemented had minimal effect because the actual spawn count was always low.
 
+## Debouncing Experiments (run_14, run_15, run_16)
+
+We tested various debouncing approaches to reduce `generate()` call frequency:
+
+### run_14 & run_15: Debounce Inside Task (FAILED)
+
+Placed debounce timer inside the spawned task in `generate()`:
+
+```rust
+self.task = cx.spawn(async move |this, cx| {
+    cx.background_executor().timer(DEBOUNCE_INTERVAL).await;  // Debounce here
+    // ... actual blame work
+});
+```
+
+**Problem:** Each `generate()` call still increments generation_id, collects buffers, and spawns a new task before the debounce. Result: 3000+ `generate()` calls instead of ~6.
+
+### run_16: Separate Debounce Task (SUCCESS)
+
+Debounce happens **before** entering `generate()`:
+
+```rust
+fn debounced_generate(&mut self, cx: &mut Context<Self>) {
+    self.debounced_generate_task = cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(GENERATE_DEBOUNCE_INTERVAL).await;
+        this.update(cx, |this, cx| this.generate(cx))
+    });
+}
+```
+
+| Metric | run_9 (baseline) | run_14/15 (broken) | run_16 (fixed) |
+|--------|------------------|-------------------|----------------|
+| `generate` calls | 6 | 3102-3103 | **4** ✅ |
+| `spawn_git_blame` calls | 7 | 36-144 | 42 |
+| `blame_task` completions | 1 | 1 | **2** ✅ |
+| Max `sync` duration | 51.6s | 47-49s | 55.5s |
+
+The debouncing now works correctly. Sync times remain ~50s, confirming the problem is in `BlockMap::sync`.
+
+## Definitive Proof: run_13 (Git Blame Disabled)
+
+To confirm that `BlockMap::sync` slowness is independent of git blame, we ran a test with
+all `generate()` calls commented out in `crates/editor/src/git/blame.rs`.
+
+| Metric | run_9 (with blame) | run_13 (no blame) |
+|--------|-------------------|-------------------|
+| `spawn_git_blame` calls | 7 | **0** |
+| `generate` calls | 6 | **0** |
+| Max `sync` duration | 51.6s | **51.7s** |
+| Typical `sync` durations | 25-51s | **21-51s** |
+
+**The sync times are essentially identical!** This definitively proves:
+
+1. **Git blame is NOT the cause** of the slow `BlockMap::sync` operations
+2. The slowness is inherent to processing a MultiBuffer with 100,000+ rows
+3. The stuttering occurs during initial loading/rendering and scrolling of the git diff view
+
 ## The REAL Culprit: block_map.rs
 
 After fixing tracing, analysis of long-running spans revealed the true cause:
@@ -133,16 +190,25 @@ tracy-csvexport -u -f "spawn_git_blame" trace.tracy | grep "spawn_git_blame{"
 tracy-csvexport -u -f "spawn_git_blame" trace.tracy | grep "spawn_git_blame{" | awk -F'generation_id=' '{print $2}' | cut -d'}' -f1 | sort | uniq -c
 ```
 
+## Current Code State
+
+`crates/editor/src/git/blame.rs`:
+- `GENERATE_DEBOUNCE_INTERVAL` = 200ms for event-triggered regeneration
+- `REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL` = 2 seconds for edit-triggered
+- Separate `debounced_generate_task` and `regenerate_on_edit_task` fields
+- Event handlers call `debounced_generate(cx)`, not `generate(cx)` directly
+- Bulk update pattern: collect all results, single `cx.notify()` at end
+
 ## Next Steps
 
-Two potential approaches:
+Since run_13 confirmed the problem is entirely in `BlockMap::sync` (not git blame), focus on:
 
 ### Approach 1: Optimize BlockMap::sync
-1. Profile the `while edits` loop in `block_map.rs`
+1. Profile the `while edits` loop in `block_map.rs` (around line 572)
 2. Understand why operations on large row counts are slow
-3. Consider optimizations for MultiBuffers with many files/rows
+3. Consider algorithmic optimizations (chunked/lazy updates, better data structures)
 
-### Approach 2: Reduce blame-triggered updates
-1. Investigate what updates git blame completion triggers
-2. Consider batching or deferring updates
-3. Avoid triggering full sync on blame completion
+### Approach 2: Architectural changes to display map
+1. Investigate if large MultiBuffers can use a different sync strategy
+2. Consider lazy/incremental sync that only processes visible regions
+3. Add size thresholds to skip or defer expensive operations

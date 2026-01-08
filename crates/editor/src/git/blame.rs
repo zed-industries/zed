@@ -84,15 +84,16 @@ pub struct GitBlame {
     multi_buffer: WeakEntity<MultiBuffer>,
     buffers: HashMap<BufferId, GitBlameBuffer>,
     task: Task<Result<()>>,
+    debounced_generate_task: Task<Result<()>>,
+    regenerate_on_edit_task: Task<Result<()>>,
     focused: bool,
     changed_while_blurred: bool,
     user_triggered: bool,
-    regenerate_on_edit_task: Task<Result<()>>,
-    debounced_generate_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
 }
 
-const DEBOUNCE_GENERATE_INTERVAL: Duration = Duration::from_millis(100);
+const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
+const GENERATE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(200);
 
 pub trait BlameRenderer {
     fn max_author_length(&self) -> usize;
@@ -214,7 +215,7 @@ impl GitBlame {
                     if !multi_buffer.read(cx).is_dirty(cx) {
                         let span = ztracing::info_span!("blame_trigger_dirty_changed");
                         let _enter = span.enter();
-                        git_blame.generate(cx);
+                        git_blame.debounced_generate(cx);
                     }
                 }
                 multi_buffer::Event::ExcerptsAdded { .. }
@@ -242,7 +243,7 @@ impl GitBlame {
                         let span = ztracing::info_span!("blame_trigger_worktree_updated");
                         let _enter = span.enter();
                         log::debug!("Updated buffers. Regenerating blame data...",);
-                        git_blame.generate(cx);
+                        git_blame.debounced_generate(cx);
                     }
                 }
             }
@@ -258,19 +259,19 @@ impl GitBlame {
                         "Repository updated ({:?}). Regenerating blame data...",
                         repo_event
                     );
-                    this.generate(cx);
+                    this.debounced_generate(cx);
                 }
                 GitStoreEvent::RepositoryAdded => {
                     let span = ztracing::info_span!("blame_trigger_repo_added");
                     let _enter = span.enter();
                     log::debug!("Repository added. Regenerating blame data...");
-                    this.generate(cx);
+                    this.debounced_generate(cx);
                 }
                 GitStoreEvent::RepositoryRemoved(_) => {
                     let span = ztracing::info_span!("blame_trigger_repo_removed");
                     let _enter = span.enter();
                     log::debug!("Repository removed. Regenerating blame data...");
-                    this.generate(cx);
+                    this.debounced_generate(cx);
                 }
                 _ => {}
             });
@@ -294,7 +295,7 @@ impl GitBlame {
         {
             let span = ztracing::info_span!("blame_trigger_init");
             let _enter = span.enter();
-            this.generate(cx);
+            this.debounced_generate(cx);
         }
         this
     }
@@ -375,7 +376,7 @@ impl GitBlame {
             self.changed_while_blurred = false;
             let span = ztracing::info_span!("blame_trigger_focus");
             let _enter = span.enter();
-            self.generate(cx);
+            self.debounced_generate(cx);
         }
     }
 
@@ -527,12 +528,37 @@ impl GitBlame {
     }
 
     #[ztracing::instrument(skip_all)]
+    fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
+        // todo(lw): hot foreground spawn
+        self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
+                .await;
+            this.update(cx, |this, cx| {
+                this.generate(cx);
+            })
+        });
+    }
+
+    fn debounced_generate(&mut self, cx: &mut Context<Self>) {
+        // todo(lw): hot foreground spawn
+        self.debounced_generate_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(GENERATE_DEBOUNCE_INTERVAL)
+                .await;
+            this.update(cx, |this, cx| {
+                this.generate(cx);
+            })
+        });
+    }
+
+    #[ztracing::instrument(skip_all)]
     fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
             return;
         }
-        // let buffers_to_blame: Vec<WeakEntity<language::Buffer>> = Vec::new();
+
         let buffers_to_blame = self
             .multi_buffer
             .update(cx, |multi_buffer, _| {
@@ -549,8 +575,13 @@ impl GitBlame {
         let generation_id = BLAME_GENERATION_ID.fetch_add(1, Ordering::SeqCst);
 
         self.task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(GENERATE_DEBOUNCE_INTERVAL)
+                .await;
+
             let span = ztracing::info_span!("blame_task", buffer_count, generation_id);
             let _enter = span.enter();
+            let mut all_results = Vec::new();
             let mut all_errors = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
@@ -631,31 +662,28 @@ impl GitBlame {
                     })
                     .await;
 
-                // Update buffers incrementally as each chunk completes
-                this.update(cx, |this, cx| {
-                    for (id, snapshot, buffer_edits, entries, commit_details) in results {
-                        let Some(entries) = entries else {
-                            continue;
-                        };
-                        this.buffers.insert(
-                            id,
-                            GitBlameBuffer {
-                                buffer_edits,
-                                buffer_snapshot: snapshot,
-                                entries,
-                                commit_details,
-                            },
-                        );
-                    }
-                    cx.notify();
-                })?;
-
+                all_results.extend(results);
                 all_errors.extend(errors);
             }
 
-            // Report any errors at the end
-            if !all_errors.is_empty() {
-                this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
+                this.buffers.clear();
+                for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
+                    let Some(entries) = entries else {
+                        continue;
+                    };
+                    this.buffers.insert(
+                        id,
+                        GitBlameBuffer {
+                            buffer_edits,
+                            buffer_snapshot: snapshot,
+                            entries,
+                            commit_details,
+                        },
+                    );
+                }
+                cx.notify();
+                if !all_errors.is_empty() {
                     this.project.update(cx, |_, cx| {
                         if this.user_triggered {
                             log::error!("failed to get git blame data: {all_errors:?}");
@@ -671,40 +699,11 @@ impl GitBlame {
                             log::debug!("failed to get git blame data: {all_errors:?}");
                         }
                     })
-                })?;
-            }
-
-            anyhow::Ok(())
-        });
-    }
-
-    fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
-        // todo(lw): hot foreground spawn
-        self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
-                .await;
-
-            this.update(cx, |this, cx| {
-                this.generate(cx);
-            })
-        });
-    }
-
-    fn debounced_generate(&mut self, cx: &mut Context<Self>) {
-        self.debounced_generate_task = cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(DEBOUNCE_GENERATE_INTERVAL)
-                .await;
-
-            this.update(cx, |this, cx| {
-                this.generate(cx);
+                }
             })
         });
     }
 }
-
-const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 
 fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
     let mut current_row = 0;
