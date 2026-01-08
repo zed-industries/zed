@@ -1324,7 +1324,7 @@ impl Component for Table {
                             ),
                             single_example(
                                 "Two Column Table",
-                                Table::new(3)
+                                Table::new(2)
                                     .header(vec!["Category", "Value"])
                                     .width(px(300.))
                                     .row(vec!["Revenue", "$100,000"])
@@ -1365,7 +1365,7 @@ impl Component for Table {
                         "Mixed Content Table",
                         vec![single_example(
                             "Table with Elements",
-                            Table::new(3)
+                            Table::new(5)
                                 .width(px(840.))
                                 .header(vec!["Status", "Name", "Priority", "Deadline", "Action"])
                                 .row(vec![
@@ -1428,12 +1428,11 @@ mod test {
         expected_cols: usize,
     ) -> Vec<TableResizeBehavior> {
         let mut resize_behavior = Vec::with_capacity(expected_cols);
-        for (index, col) in input.split('|').enumerate() {
+        for col in input.split('|') {
             if col.starts_with('X') || col.is_empty() {
-                resize_behavior[index] = TableResizeBehavior::None;
+                resize_behavior.push(TableResizeBehavior::None);
             } else if col.starts_with('*') {
-                resize_behavior[index] =
-                    TableResizeBehavior::MinSize(col.len() as f32 / total_size);
+                resize_behavior.push(TableResizeBehavior::MinSize(col.len() as f32 / total_size));
             } else {
                 panic!("invalid test input: unrecognized resize behavior: {}", col);
             }
@@ -1675,7 +1674,7 @@ mod test {
 
             let distance = distance as f32 / total_1;
 
-            let mut widths_table_row = TableRow::from_vec(widths.clone(), cols);
+            let mut widths_table_row = TableRow::from_vec(widths, cols);
             TableColumnWidths::drag_column_handle(
                 distance,
                 column_index,
