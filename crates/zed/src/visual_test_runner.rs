@@ -47,11 +47,9 @@ use anyhow::{Context as _, Result};
 #[cfg(target_os = "macos")]
 use assets::Assets;
 #[cfg(target_os = "macos")]
-use feature_flags::FeatureFlagAppExt as _;
-#[cfg(target_os = "macos")]
 use gpui::{
-    App, AppContext as _, Bounds, KeyBinding, VisualTestAppContext, WindowBounds, WindowHandle,
-    WindowOptions, point, px, size,
+    App, AppContext as _, Bounds, KeyBinding, Modifiers, VisualTestAppContext, WindowBounds,
+    WindowHandle, WindowOptions, point, px, size,
 };
 #[cfg(target_os = "macos")]
 use image::RgbaImage;
@@ -427,25 +425,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 4: Diff Review Button visual tests
-    println!("\n--- Test 4: diff_review_button (3 variants) ---");
-    match run_diff_review_visual_tests(app_state.clone(), &mut cx, update_baseline) {
-        Ok(TestResult::Passed) => {
-            println!("✓ diff_review_button: PASSED");
-            passed += 1;
-        }
-        Ok(TestResult::BaselineUpdated(_)) => {
-            println!("✓ diff_review_button: Baselines updated");
-            updated += 1;
-        }
-        Err(e) => {
-            eprintln!("✗ diff_review_button: FAILED - {}", e);
-            failed += 1;
-        }
-    }
-
-    // Run Test 5: Breakpoint Hover visual tests
-    println!("\n--- Test 5: breakpoint_hover (3 variants) ---");
+    // Run Test 4: Breakpoint Hover visual tests
+    println!("\n--- Test 4: breakpoint_hover (3 variants) ---");
     match run_breakpoint_hover_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ breakpoint_hover: PASSED");
@@ -838,539 +819,6 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     })
 }
 
-#[cfg(target_os = "macos")]
-fn run_diff_review_visual_tests(
-    app_state: Arc<AppState>,
-    cx: &mut VisualTestAppContext,
-    update_baseline: bool,
-) -> Result<TestResult> {
-    use editor::Editor;
-    use git_ui::project_diff::ProjectDiff;
-    use std::any::TypeId;
-
-    // Create a temporary directory with test files and a real git repo
-    // Canonicalize to resolve symlinks (on macOS, /var -> /private/var)
-    // Use keep() to prevent auto-cleanup - the directory persists until process exit
-    let temp_dir = tempfile::tempdir()?;
-    let temp_path = temp_dir.keep();
-    let canonical_temp = temp_path.canonicalize()?;
-    let project_path = canonical_temp.join("project");
-    std::fs::create_dir_all(&project_path)?;
-
-    // Initialize git repo
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(&project_path)
-        .output()?;
-
-    // Configure git user for commits
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@test.com"])
-        .current_dir(&project_path)
-        .output()?;
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test"])
-        .current_dir(&project_path)
-        .output()?;
-
-    // Create initial file and commit
-    let src_dir = project_path.join("src");
-    std::fs::create_dir_all(&src_dir)?;
-
-    let original_content = r#"// Original content
-import { ScrollArea } from 'components';
-import { ButtonAlt, Tooltip } from 'ui';
-import { Message, FileEdit } from 'types';
-import { AiPaneTabContext } from 'context';
-"#;
-    std::fs::write(src_dir.join("thread-view.tsx"), original_content)?;
-
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&project_path)
-        .output()?;
-
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&project_path)
-        .output()?;
-
-    // Modify the file to create a diff
-    let modified_content = r#"// Modified content with changes
-import { ScrollArea } from 'components';
-import { ButtonAlt, Tooltip } from 'ui';
-import { Message, FileEdit } from 'types';
-import { AiPaneTabContext } from 'context';
-"#;
-    std::fs::write(src_dir.join("thread-view.tsx"), modified_content)?;
-
-    // Create a new workspace window for this test
-    // Use a taller window to ensure all lines are visible including the button on the last row
-    let window_size = size(px(600.0), px(500.0));
-    let bounds = Bounds {
-        origin: point(px(0.0), px(0.0)),
-        size: window_size,
-    };
-
-    // Create project pointing to the git repo
-    let project = cx.update(|cx| {
-        project::Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    // Open workspace window
-    let workspace_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open diff workspace window")?;
-
-    cx.run_until_parked();
-
-    // Add the git repo as a worktree
-    let add_worktree_task = workspace_window
-        .update(cx, |workspace, _window, cx| {
-            let project = workspace.project().clone();
-            project.update(cx, |project, cx| {
-                project.find_or_create_worktree(&project_path, true, cx)
-            })
-        })
-        .context("Failed to start adding worktree")?;
-
-    cx.background_executor.allow_parking();
-    let worktree_result = cx.background_executor.block_test(add_worktree_task);
-    cx.background_executor.forbid_parking();
-    let (worktree, _) = worktree_result.context("Failed to add worktree")?;
-
-    cx.run_until_parked();
-
-    // Wait for the worktree scan to complete - this ensures git repository detection
-    // has finished before we try to display the diff view
-    let scan_complete_task =
-        cx.update(|cx| worktree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete()));
-    cx.background_executor.allow_parking();
-    cx.background_executor.block_test(scan_complete_task);
-    cx.background_executor.forbid_parking();
-
-    cx.run_until_parked();
-
-    // Wait for git repository barriers to complete - this ensures git status
-    // has been computed before we try to display the diff view
-    let project = workspace_window
-        .update(cx, |workspace, _window, _cx| workspace.project().clone())
-        .context("Failed to get project")?;
-
-    // Poll until repositories are detected and their barriers complete
-    for _ in 0..100 {
-        let barriers = cx.update(|cx| {
-            project.update(cx, |project, cx| {
-                let repos = project
-                    .repositories(cx)
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                repos
-                    .into_iter()
-                    .map(|repo| repo.update(cx, |repo, _| repo.barrier()))
-                    .collect::<Vec<_>>()
-            })
-        });
-
-        if !barriers.is_empty() {
-            cx.background_executor.allow_parking();
-            for barrier in barriers {
-                let _ = cx.background_executor.block_test(async { barrier.await });
-            }
-            cx.background_executor.forbid_parking();
-            eprintln!("Git repository barriers completed");
-            break;
-        }
-
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    cx.run_until_parked();
-
-    // Enable the diff-review feature flag
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["diff-review".to_string()]);
-    });
-
-    cx.run_until_parked();
-
-    // Open the ProjectDiff view
-    workspace_window
-        .update(cx, |workspace, window, cx| {
-            ProjectDiff::deploy_at(workspace, None, window, cx);
-        })
-        .ok();
-
-    cx.run_until_parked();
-
-    // Poll until the diff view has content - git status detection is async and
-    // depends on real I/O operations. We check if the Editor's buffer has content
-    // rather than using a fixed number of iterations.
-    let max_attempts = 200; // ~20 seconds of simulated time
-    for attempt in 0..max_attempts {
-        let has_content = workspace_window
-            .update(cx, |workspace, _window, cx| {
-                if let Some(item) = workspace.active_item(cx) {
-                    if let Some(editor_entity) = item.act_as_type(TypeId::of::<Editor>(), cx) {
-                        let editor_handle = editor_entity.downcast::<Editor>().unwrap();
-                        let editor = editor_handle.read(cx);
-                        let buffer = editor.buffer().read(cx);
-                        !buffer.is_empty()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
-
-        if has_content {
-            eprintln!("Diff content detected after {} iterations", attempt);
-            break;
-        }
-
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    // Refresh window
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    // Test 1: Diff with flag enabled
-    let test1_result = run_visual_test(
-        "diff_review_button_enabled",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Test 1b: Tooltip test
-    // Note: The diff review button is placed at the last display row (row 6), which is
-    // in the same area as the "Expand Excerpt" indicator. Due to overlapping hitboxes,
-    // hovering in this area triggers the expand excerpt tooltip instead of our button's
-    // "Add Review" tooltip. This is a known limitation documented in the plan.
-    //
-    // For now, we skip simulating the hover and just capture the current state.
-    // The button tooltip functionality is verified through manual testing.
-    // TODO: Fix the overlapping hitbox issue so the diff review button tooltip works.
-
-    // Capture the screenshot (same as enabled, no tooltip hover)
-    let test1b_result = run_visual_test(
-        "diff_review_button_tooltip",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Test 2: Diff view with feature flag disabled
-    // First, close the current ProjectDiff item so we can reopen with new flag state
-    let close_task = workspace_window
-        .update(cx, |workspace, window, cx| {
-            if let Some(item) = workspace.active_item(cx) {
-                let item_id = item.item_id();
-                let pane = workspace.active_pane().clone();
-                Some(pane.update(cx, |pane, cx| {
-                    pane.close_item_by_id(item_id, workspace::SaveIntent::Skip, window, cx)
-                }))
-            } else {
-                None
-            }
-        })
-        .ok()
-        .flatten();
-
-    if let Some(task) = close_task {
-        cx.background_executor.allow_parking();
-        let _ = cx.background_executor.block_test(task);
-        cx.background_executor.forbid_parking();
-    }
-
-    cx.run_until_parked();
-
-    // Disable all feature flags
-    cx.update(|cx| {
-        cx.update_flags(false, vec![]);
-    });
-
-    cx.run_until_parked();
-
-    // Refresh window to apply flag change
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    // Reopen ProjectDiff view with flag disabled
-    workspace_window
-        .update(cx, |workspace, window, cx| {
-            ProjectDiff::deploy_at(workspace, None, window, cx);
-        })
-        .ok();
-
-    cx.run_until_parked();
-
-    // Poll until the diff view has content (same approach as enabled test)
-    for attempt in 0..200 {
-        let has_content = workspace_window
-            .update(cx, |workspace, _window, cx| {
-                if let Some(item) = workspace.active_item(cx) {
-                    if let Some(editor_entity) = item.act_as_type(TypeId::of::<Editor>(), cx) {
-                        let editor_handle = editor_entity.downcast::<Editor>().unwrap();
-                        let editor = editor_handle.read(cx);
-                        let buffer = editor.buffer().read(cx);
-                        !buffer.is_empty()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
-
-        if has_content {
-            eprintln!(
-                "Disabled test: Diff content detected after {} iterations",
-                attempt
-            );
-            break;
-        }
-
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    let test2_result = run_visual_test(
-        "diff_review_button_disabled",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Test 3: Regular editor with flag enabled (should NOT show button)
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["diff-review".to_string()]);
-    });
-
-    // Create a new window with just a regular editor
-    let regular_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open regular editor window")?;
-
-    cx.run_until_parked();
-
-    // The new window shares the same project, so the worktree should already be available.
-    // Wait a bit for the window to initialize properly.
-    for _ in 0..10 {
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    // Debug: Check if worktree is available
-    let worktree_available = regular_window
-        .update(cx, |workspace, _window, cx| {
-            workspace.project().read(cx).worktrees(cx).next().is_some()
-        })
-        .unwrap_or(false);
-    eprintln!(
-        "Regular editor test: worktree available = {}",
-        worktree_available
-    );
-
-    // Open a regular file (not a diff view)
-    let open_file_task = regular_window
-        .update(cx, |workspace, window, cx| {
-            let worktree = workspace.project().read(cx).worktrees(cx).next();
-            if let Some(worktree) = worktree {
-                let worktree_id = worktree.read(cx).id();
-                let rel_path: std::sync::Arc<util::rel_path::RelPath> =
-                    util::rel_path::rel_path("src/thread-view.tsx").into();
-                let project_path: project::ProjectPath = (worktree_id, rel_path).into();
-                Some(workspace.open_path(project_path, None, true, window, cx))
-            } else {
-                None
-            }
-        })
-        .ok()
-        .flatten();
-
-    if let Some(task) = open_file_task {
-        eprintln!("Regular editor test: opening file...");
-        cx.background_executor.allow_parking();
-        let result = cx.background_executor.block_test(task);
-        cx.background_executor.forbid_parking();
-        eprintln!(
-            "Regular editor test: file open result = {:?}",
-            result.is_ok()
-        );
-    } else {
-        eprintln!("Regular editor test: no open_file_task!");
-    }
-
-    cx.run_until_parked();
-
-    // Give more time for the editor to fully load
-    for _ in 0..20 {
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    // Poll until the regular editor has content
-    for attempt in 0..50 {
-        let has_editor_content = regular_window
-            .update(cx, |workspace, _window, cx| {
-                if let Some(item) = workspace.active_item(cx) {
-                    if let Some(editor_entity) = item.act_as_type(TypeId::of::<Editor>(), cx) {
-                        let editor_handle = editor_entity.downcast::<Editor>().unwrap();
-                        let editor = editor_handle.read(cx);
-                        !editor.buffer().read(cx).is_empty()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
-
-        if has_editor_content {
-            eprintln!(
-                "Regular editor content detected after {} iterations",
-                attempt
-            );
-            break;
-        }
-
-        if attempt == 49 {
-            // Last attempt - log more info
-            let debug_info = regular_window
-                .update(cx, |workspace, _window, cx| {
-                    let has_active = workspace.active_item(cx).is_some();
-                    let pane_count = workspace.panes().len();
-                    format!("has_active_item={}, pane_count={}", has_active, pane_count)
-                })
-                .unwrap_or_else(|_| "window update failed".to_string());
-            eprintln!("Regular editor test: giving up. Debug: {}", debug_info);
-        }
-
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    cx.update_window(regular_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    let test3_result = run_visual_test(
-        "diff_review_button_regular_editor",
-        regular_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Remove the worktree from the project to stop background scanning tasks
-    // This prevents "root path could not be canonicalized" errors when we clean up
-    workspace_window
-        .update(cx, |workspace, _window, cx| {
-            let project = workspace.project().clone();
-            project.update(cx, |project, cx| {
-                // Get all worktree IDs and remove them
-                let worktree_ids: Vec<_> =
-                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
-                for id in worktree_ids {
-                    project.remove_worktree(id, cx);
-                }
-            });
-        })
-        .ok();
-
-    cx.run_until_parked();
-
-    // Close all windows
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.remove_window();
-    });
-    let _ = cx.update_window(regular_window.into(), |_, window, _cx| {
-        window.remove_window();
-    });
-
-    // Run until all cleanup tasks complete
-    cx.run_until_parked();
-
-    // Give background tasks time to finish, including scrollbar hide timers (1 second)
-    for _ in 0..15 {
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    // Note: We don't delete temp_path here because background worktree tasks may still
-    // be running. The directory will be cleaned up when the process exits.
-
-    // Return combined result
-    match (&test1_result, &test1b_result, &test2_result, &test3_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed, TestResult::Passed) => {
-            Ok(TestResult::Passed)
-        }
-        (TestResult::BaselineUpdated(p), _, _, _)
-        | (_, TestResult::BaselineUpdated(p), _, _)
-        | (_, _, TestResult::BaselineUpdated(p), _)
-        | (_, _, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
-    }
-}
-
 /// Runs visual tests for breakpoint hover states in the editor gutter.
 ///
 /// This test captures three states:
@@ -1529,10 +977,12 @@ fn run_breakpoint_hover_visual_tests(
     cx.run_until_parked();
 
     // Step 2: Simulate mouse move into gutter area
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.simulate_mouse_move(gutter_position, cx);
-    })?;
-    cx.run_until_parked();
+    cx.simulate_mouse_move(
+        workspace_window.into(),
+        gutter_position,
+        None,
+        Modifiers::default(),
+    );
 
     // Step 3: Advance clock past 200ms debounce
     cx.advance_clock(Duration::from_millis(300));
@@ -1545,10 +995,12 @@ fn run_breakpoint_hover_visual_tests(
     cx.run_until_parked();
 
     // Step 5: Another mouse move to keep hover state active
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.simulate_mouse_move(gutter_position, cx);
-    })?;
-    cx.run_until_parked();
+    cx.simulate_mouse_move(
+        workspace_window.into(),
+        gutter_position,
+        None,
+        Modifiers::default(),
+    );
 
     // Step 6: Final draw
     cx.update_window(workspace_window.into(), |_, window, cx| {
@@ -1569,10 +1021,12 @@ fn run_breakpoint_hover_visual_tests(
     // The button hitbox is approximately at (3.12, 66.5) with size (14, 16).
 
     // Move mouse directly over the button to trigger tooltip hover
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.simulate_mouse_move(button_position, cx);
-    })?;
-    cx.run_until_parked();
+    cx.simulate_mouse_move(
+        workspace_window.into(),
+        button_position,
+        None,
+        Modifiers::default(),
+    );
 
     // Draw to register the button's tooltip hover listener
     cx.update_window(workspace_window.into(), |_, window, cx| {
@@ -1581,10 +1035,12 @@ fn run_breakpoint_hover_visual_tests(
     cx.run_until_parked();
 
     // Move mouse over button again to trigger tooltip scheduling
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.simulate_mouse_move(button_position, cx);
-    })?;
-    cx.run_until_parked();
+    cx.simulate_mouse_move(
+        workspace_window.into(),
+        button_position,
+        None,
+        Modifiers::default(),
+    );
 
     // Advance clock past TOOLTIP_SHOW_DELAY (500ms)
     cx.advance_clock(TOOLTIP_SHOW_DELAY + Duration::from_millis(100));
