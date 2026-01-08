@@ -697,6 +697,7 @@ impl GitStore {
     ) -> Task<Result<Entity<BufferDiff>>> {
         cx.spawn(async move |this, cx| {
             let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+            let language_registry = buffer.update(cx, |buffer, _| buffer.language_registry());
             let content = match oid {
                 None => None,
                 Some(oid) => Some(
@@ -708,6 +709,11 @@ impl GitStore {
 
             buffer_diff
                 .update(cx, |buffer_diff, cx| {
+                    buffer_diff.language_changed(
+                        buffer_snapshot.language().cloned(),
+                        language_registry,
+                        cx,
+                    );
                     buffer_diff.set_base_text(
                         content.map(|s| s.as_str().into()),
                         buffer_snapshot.language().cloned(),
