@@ -77,6 +77,8 @@ use crate::{
     SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
+const TIMER_THRESHOLD: Duration = Duration::from_secs(30);
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
     Positive,
@@ -310,6 +312,8 @@ pub struct AcpThreadView {
     message_queue: Vec<QueuedMessage>,
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
+    turn_tokens: Option<u64>,
+    last_turn_tokens: Option<u64>,
     turn_started_at: Option<Instant>,
     last_turn_duration: Option<Duration>,
     _turn_timer_task: Option<Task<()>>,
@@ -485,6 +489,8 @@ impl AcpThreadView {
             message_queue: Vec::new(),
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
+            turn_tokens: None,
+            last_turn_tokens: None,
             turn_started_at: None,
             last_turn_duration: None,
             _turn_timer_task: None,
@@ -504,6 +510,8 @@ impl AcpThreadView {
         self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
         self.message_queue.clear();
+        self.turn_tokens = None;
+        self.last_turn_tokens = None;
         self.turn_started_at = None;
         self.last_turn_duration = None;
         self._turn_timer_task = None;
@@ -1307,9 +1315,11 @@ impl AcpThreadView {
         .detach();
     }
 
-    fn start_turn_timer(&mut self, cx: &mut Context<Self>) {
+    fn start_turn(&mut self, cx: &mut Context<Self>) {
         self.turn_started_at = Some(Instant::now());
         self.last_turn_duration = None;
+        self.last_turn_tokens = None;
+        self.turn_tokens = Some(0);
         self._turn_timer_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -1320,14 +1330,20 @@ impl AcpThreadView {
         }));
     }
 
-    fn stop_turn_timer(&mut self) {
-        if let Some(started_at) = self.turn_started_at.take() {
-            let elapsed = started_at.elapsed();
-            if elapsed >= Duration::from_secs(30) {
-                self.last_turn_duration = Some(elapsed);
+    fn stop_turn(&mut self) {
+        self.last_turn_duration = self.turn_started_at.take().map(|started| started.elapsed());
+        self.last_turn_tokens = self.turn_tokens.take();
+        self._turn_timer_task = None;
+    }
+
+    fn update_turn_tokens(&mut self, cx: &App) {
+        if let Some(thread) = self.thread() {
+            if let Some(usage) = thread.read(cx).token_usage() {
+                if let Some(ref mut tokens) = self.turn_tokens {
+                    *tokens += usage.output_tokens;
+                }
             }
         }
-        self._turn_timer_task = None;
     }
 
     fn send_impl(
@@ -1408,12 +1424,12 @@ impl AcpThreadView {
                 return Ok(());
             };
 
-            let _stop_timer = defer({
+            let _stop_turn = defer({
                 let this = this.clone();
                 let mut cx = cx.clone();
                 move || {
                     this.update(&mut cx, |this, cx| {
-                        this.stop_turn_timer();
+                        this.stop_turn();
                         cx.notify();
                     })
                     .ok();
@@ -1421,7 +1437,7 @@ impl AcpThreadView {
             });
             this.update_in(cx, |this, _window, cx| {
                 this.in_flight_prompt = Some(contents.clone());
-                this.start_turn_timer(cx);
+                this.start_turn(cx);
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
             })?;
@@ -1445,8 +1461,8 @@ impl AcpThreadView {
                 thread.send(contents, cx)
             })?;
             let res = send.await;
-            drop(_stop_timer);
             let turn_time_ms = turn_start_time.elapsed().as_millis();
+            drop(_stop_turn);
             let status = if res.is_ok() {
                 this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
                 "success"
@@ -1828,7 +1844,9 @@ impl AcpThreadView {
                 self.prompt_capabilities
                     .replace(thread.read(cx).prompt_capabilities());
             }
-            AcpThreadEvent::TokenUsageUpdated => {}
+            AcpThreadEvent::TokenUsageUpdated => {
+                self.update_turn_tokens(cx);
+            }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
 
@@ -5895,14 +5913,30 @@ impl AcpThreadView {
             .then(|| {
                 self.turn_started_at.and_then(|started_at| {
                     let elapsed = started_at.elapsed();
-                    if elapsed >= Duration::from_secs(30) {
-                        Some(duration_alt_display(elapsed))
-                    } else {
-                        None
-                    }
+                    (elapsed > TIMER_THRESHOLD).then(|| duration_alt_display(elapsed))
                 })
             })
             .flatten();
+
+        let is_waiting = confirmation
+            || self
+                .thread()
+                .is_some_and(|thread| thread.read(cx).has_in_progress_tool_calls());
+
+        let turn_tokens_label = elapsed_label
+            .is_some()
+            .then(|| {
+                self.turn_tokens
+                    .filter(|&tokens| tokens > 1)
+                    .map(|tokens| crate::text_thread_editor::humanize_token_count(tokens))
+            })
+            .flatten();
+
+        let arrow_icon = if is_waiting {
+            IconName::ArrowUp
+        } else {
+            IconName::ArrowDown
+        };
 
         h_flex()
             .id("generating-spinner")
@@ -5930,6 +5964,22 @@ impl AcpThreadView {
                     Label::new(elapsed)
                         .size(LabelSize::Small)
                         .color(Color::Muted),
+                )
+            })
+            .when_some(turn_tokens_label, |this, tokens| {
+                this.child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Icon::new(arrow_icon)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(format!("{} tokens", tokens))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 )
             })
             .into_any_element()
@@ -5987,6 +6037,21 @@ impl AcpThreadView {
             })
             .flatten();
 
+        let last_turn_tokens_label = show_stats
+            .then(|| {
+                self.last_turn_tokens
+                    .filter(|&tokens| tokens > 1)
+                    .map(|tokens| {
+                        Label::new(format!(
+                            "{} tokens",
+                            crate::text_thread_editor::humanize_token_count(tokens)
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                    })
+            })
+            .flatten();
+
         let mut container = h_flex()
             .w_full()
             .py_2()
@@ -5995,7 +6060,8 @@ impl AcpThreadView {
             .opacity(0.6)
             .hover(|s| s.opacity(1.))
             .justify_end()
-            .when_some(last_turn_label, |this, label| this.child(label));
+            .when_some(last_turn_label, |this, label| this.child(label))
+            .when_some(last_turn_tokens_label, |this, label| this.child(label));
 
         if AgentSettings::get_global(cx).enable_feedback
             && self
