@@ -18280,6 +18280,7 @@ dependencies = [
  "task",
  "text",
  "theme",
+ "title_bar",
  "tokio",
  "ui",
  "util",

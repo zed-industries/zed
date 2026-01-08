@@ -1036,7 +1036,6 @@ impl LocalLspStore {
                     async move {
                         this.update(&mut cx, |lsp_store, cx| {
                             lsp_store.pull_workspace_diagnostics(server_id);
-                            lsp_store.pull_document_diagnostics_for_server(server_id, cx);
                             lsp_store
                                 .downstream_client
                                 .as_ref()
@@ -1046,8 +1045,12 @@ impl LocalLspStore {
                                         server_id: server_id.to_proto(),
                                     })
                                 })
-                        })?
-                        .transpose()?;
+                                .transpose()?;
+                            anyhow::Ok(
+                                lsp_store.pull_document_diagnostics_for_server(server_id, cx),
+                            )
+                        })??
+                        .await;
                         Ok(())
                     }
                 }
@@ -12180,8 +12183,8 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
-    ) {
-        let buffers_to_pull: Vec<_> = self
+    ) -> Task<()> {
+        let buffers_to_pull = self
             .as_local()
             .into_iter()
             .flat_map(|local| {
@@ -12193,12 +12196,25 @@ impl LspStore {
                         .is_some_and(|servers| servers.contains(&server_id))
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        for buffer in buffers_to_pull {
-            self.pull_diagnostics_for_buffer(buffer, cx)
-                .detach_and_log_err(cx);
-        }
+        let pulls = join_all(buffers_to_pull.into_iter().map(|buffer| {
+            let buffer_path = buffer.read(cx).file().map(|f| f.full_path(cx));
+            let pull_task = self.pull_diagnostics_for_buffer(buffer, cx);
+            async move { (buffer_path, pull_task.await) }
+        }));
+        cx.background_spawn(async move {
+            for (pull_task_path, pull_task_result) in pulls.await {
+                if let Err(e) = pull_task_result {
+                    match pull_task_path {
+                        Some(path) => {
+                            log::error!("Failed to pull diagnostics for buffer {path:?}: {e:#}");
+                        }
+                        None => log::error!("Failed to pull diagnostics: {e:#}"),
+                    }
+                }
+            }
+        })
     }
 
     fn apply_workspace_diagnostic_report(
@@ -12641,7 +12657,8 @@ impl LspStore {
 
                         notify_server_capabilities_updated(&server, cx);
 
-                        self.pull_document_diagnostics_for_server(server_id, cx);
+                        self.pull_document_diagnostics_for_server(server_id, cx)
+                            .detach();
                     }
                 }
                 "textDocument/documentColor" => {
