@@ -56,7 +56,7 @@ impl TestApp {
 
     /// Create a new test application with a specific random seed.
     pub fn with_seed(seed: u64) -> Self {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(seed));
+        let dispatcher = TestDispatcher::new(seed);
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);

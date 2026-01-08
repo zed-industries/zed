@@ -359,10 +359,7 @@ impl BackgroundExecutor {
         let dispatcher = self.dispatcher.as_test().unwrap();
         let scheduler = dispatcher.scheduler();
 
-        let log_enabled = std::env::var("GPUI_RUN_UNTIL_PARKED_LOG")
-            .ok()
-            .as_deref()
-            == Some("1");
+        let log_enabled = std::env::var("GPUI_RUN_UNTIL_PARKED_LOG").ok().as_deref() == Some("1");
 
         if log_enabled {
             let (foreground_len, background_len) = scheduler.pending_task_counts();
@@ -481,6 +478,12 @@ impl BackgroundExecutor {
     #[doc(hidden)]
     pub fn dispatcher(&self) -> &Arc<dyn PlatformDispatcher> {
         &self.dispatcher
+    }
+
+    /// Returns a scheduler::BackgroundExecutor that can be used with deltadb and other
+    /// scheduler-based APIs.
+    pub fn scheduler_executor(&self) -> scheduler::BackgroundExecutor {
+        scheduler::BackgroundExecutor::new(self.scheduler.clone())
     }
 }
 
