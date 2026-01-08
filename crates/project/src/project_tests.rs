@@ -407,9 +407,11 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
             ".editorconfig": "root = true\n[*]\nindent_size = 5\n",
             "worktree_a": {
                 "file.rs": "fn a() {}",
+                ".editorconfig": "[*]\ninsert_final_newline = true\n",
             },
             "worktree_b": {
                 "file.rs": "fn b() {}",
+                ".editorconfig": "[*]\ninsert_final_newline = false\n",
             }
         }),
     )
