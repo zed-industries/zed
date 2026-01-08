@@ -1,5 +1,3 @@
-pub use copilot_chat;
-pub use copilot_chat::responses as copilot_responses;
 mod copilot_edit_prediction_delegate;
 pub mod request;
 mod sign_in;

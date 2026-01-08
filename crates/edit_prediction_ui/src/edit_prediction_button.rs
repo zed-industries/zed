@@ -931,7 +931,7 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let all_language_settings = all_language_settings(None, cx);
-        let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
+        let copilot_config = copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings
                 .edit_predictions
                 .copilot
