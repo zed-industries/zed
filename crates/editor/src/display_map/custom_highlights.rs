@@ -9,7 +9,9 @@ use std::{
     vec,
 };
 
-use crate::display_map::{HighlightKey, SemanticTokenHighlight, TextHighlights};
+use crate::display_map::{
+    HighlightKey, SemanticTokenHighlight, SemanticTokensHighlights, TextHighlights,
+};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -20,7 +22,7 @@ pub struct CustomHighlightsChunks<'a> {
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
-    semantic_token_highlights: Option<&'a [SemanticTokenHighlight]>,
+    semantic_token_highlights: Option<&'a SemanticTokensHighlights>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -36,7 +38,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<MultiBufferOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        semantic_token_highlights: Option<&'a [SemanticTokenHighlight]>,
+        semantic_token_highlights: Option<&'a SemanticTokensHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -74,7 +76,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<MultiBufferOffset>,
     text_highlights: Option<&TextHighlights>,
-    semantic_token_highlights: Option<&[SemanticTokenHighlight]>,
+    semantic_token_highlights: Option<&SemanticTokensHighlights>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -118,37 +120,42 @@ fn create_highlight_endpoints(
     if let Some(semantic_token_highlights) = semantic_token_highlights {
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
-        let start_ix = semantic_token_highlights
-            .binary_search_by(|probe| {
-                probe
-                    .range
-                    .end
-                    .cmp(&start, buffer)
-                    .then(cmp::Ordering::Less)
-            })
-            .unwrap_or_else(|i| i);
-        for token in &semantic_token_highlights[start_ix..] {
-            if token.range.start.cmp(&end, buffer).is_ge() {
-                break;
-            }
-
-            let start = token.range.start.to_offset(buffer);
-            let end = token.range.end.to_offset(buffer);
-            if start == end {
+        for buffer_id in buffer.buffer_ids_for_range(range.clone()) {
+            let Some(semantic_token_highlights) = semantic_token_highlights.get(&buffer_id) else {
                 continue;
-            }
-            struct SemanticTokenHighLights;
+            };
+            let start_ix = semantic_token_highlights
+                .binary_search_by(|probe| {
+                    probe
+                        .range
+                        .end
+                        .cmp(&start, buffer)
+                        .then(cmp::Ordering::Less)
+                })
+                .unwrap_or_else(|i| i);
+            for token in &semantic_token_highlights[start_ix..] {
+                if token.range.start.cmp(&end, buffer).is_ge() {
+                    break;
+                }
 
-            highlight_endpoints.push(HighlightEndpoint {
-                offset: start,
-                tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
-                style: Some(token.style),
-            });
-            highlight_endpoints.push(HighlightEndpoint {
-                offset: end,
-                tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
-                style: None,
-            });
+                let start = token.range.start.to_offset(buffer);
+                let end = token.range.end.to_offset(buffer);
+                if start == end {
+                    continue;
+                }
+                struct SemanticTokenHighLights;
+
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: start,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
+                    style: Some(token.style),
+                });
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: end,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
+                    style: None,
+                });
+            }
         }
     }
     highlight_endpoints.sort();

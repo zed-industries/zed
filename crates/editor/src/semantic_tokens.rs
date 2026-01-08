@@ -182,15 +182,14 @@ impl Editor {
                                 })
                             });
 
-                        display_map.invalidate_semantic_highlights(buffer_id);
+                        display_map
+                            .semantic_token_highlights.remove(&buffer_id);
 
-                        for highlight in token_highlights {
-                            let i = display_map
-                                .semantic_token_highlights.binary_search_by(|probe| probe.range.start.cmp(&&highlight.range.start, &multi_buffer_snapshot)).unwrap_or_else(|i| i);
-                            display_map
-                                .semantic_token_highlights
-                                .insert(i, highlight);
-                        }
+                        let mut tokens: std::sync::Arc<[_]> = token_highlights.collect();
+                        std::sync::Arc::get_mut(&mut tokens).unwrap().sort_by(|a, b| a.range.start.cmp(&b.range.start,&multi_buffer_snapshot));
+                        display_map
+                            .semantic_token_highlights
+                            .insert(buffer_id, tokens);
                     });
                 }
 

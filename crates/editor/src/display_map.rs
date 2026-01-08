@@ -143,6 +143,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type SemanticTokensHighlights = TreeMap<BufferId, Arc<[SemanticTokenHighlight]>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -168,7 +169,7 @@ pub struct DisplayMap {
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// The semantic tokens from the language server.
-    pub semantic_token_highlights: Vec<SemanticTokenHighlight>,
+    pub semantic_token_highlights: SemanticTokensHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
     pub(crate) fold_placeholder: FoldPlaceholder,
@@ -222,7 +223,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            semantic_token_highlights: Vec::new(),
+            semantic_token_highlights: Default::default(),
             clip_at_line_ends: false,
             masked: false,
         }
@@ -724,13 +725,7 @@ impl DisplayMap {
     }
 
     pub fn invalidate_semantic_highlights(&mut self, buffer_id: BufferId) {
-        self.semantic_token_highlights.retain(|highlight| {
-            let start_buffer = highlight.range.start.text_anchor.buffer_id;
-            let end_buffer = highlight.range.end.text_anchor.buffer_id;
-            start_buffer.is_some_and(|cached_buffer_id| cached_buffer_id != buffer_id)
-                && (start_buffer == end_buffer
-                    || end_buffer.is_some_and(|cached_buffer_id| cached_buffer_id != buffer_id))
-        });
+        self.semantic_token_highlights.remove(&buffer_id);
     }
 }
 
@@ -738,7 +733,7 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
-    pub semantic_token_highlights: Option<&'a [SemanticTokenHighlight]>,
+    pub semantic_token_highlights: Option<&'a SemanticTokensHighlights>,
     pub styles: HighlightStyles,
 }
 
@@ -873,7 +868,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
-    semantic_token_highlights: Vec<SemanticTokenHighlight>,
+    semantic_token_highlights: SemanticTokensHighlights,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,

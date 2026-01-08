@@ -69,7 +69,6 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId, WorkspaceHandle,
-    invalid_item_view::InvalidItemView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -18164,6 +18163,7 @@ fn extract_semantic_highlights(
             .read(cx)
             .semantic_token_highlights
             .iter()
+            .flat_map(|(_, v)| v.iter())
             .map(|highlights| highlights.range.to_offset(&multi_buffer_snapshot))
             .collect()
     })
