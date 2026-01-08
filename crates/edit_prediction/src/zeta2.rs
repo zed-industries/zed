@@ -81,6 +81,7 @@ pub fn request_prediction_with_zeta2(
                     content: open_ai::MessageContent::Plain(prompt),
                 }],
                 stream: false,
+                stream_options: None,
                 max_completion_tokens: None,
                 stop: Default::default(),
                 temperature: Default::default(),
