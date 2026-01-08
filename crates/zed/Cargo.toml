@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.219.0"
+version = "0.220.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -23,6 +23,7 @@ test-support = [
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
+    "recent_projects/test-support",
 ]
 visual-tests = [
     "gpui/test-support",
@@ -30,12 +31,21 @@ visual-tests = [
     "dep:image",
     "dep:semver",
     "dep:tempfile",
+    "dep:acp_thread",
+    "dep:action_log",
+    "dep:agent_servers",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
     "clock/test-support",
+    "acp_thread/test-support",
+    "agent_ui/test-support",
+    "db/test-support",
+    "agent/test-support",
+    "language_model/test-support",
+    "fs/test-support",
 ]
 
 [[bin]]
@@ -43,13 +53,15 @@ name = "zed"
 path = "src/main.rs"
 
 [[bin]]
-name = "visual_test_runner"
+name = "zed_visual_test_runner"
 path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 agent_ui_v2.workspace = true
@@ -81,6 +93,7 @@ debugger_tools.workspace = true
 debugger_ui.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
+encoding_selector.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true
@@ -105,6 +118,9 @@ image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
+acp_thread = { workspace = true, optional = true }
+action_log = { workspace = true, optional = true }
+agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 
@@ -173,11 +189,13 @@ tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
+telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+time_format.workspace = true
 title_bar.workspace = true
 ztracing.workspace = true
 tracing.workspace = true

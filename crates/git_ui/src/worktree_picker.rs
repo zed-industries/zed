@@ -260,7 +260,7 @@ impl WorktreeListDelegate {
 
             repo.update(cx, |repo, _| {
                 repo.create_worktree(branch.clone(), path.clone(), commit)
-            })?
+            })
             .await??;
             let new_worktree_path = path.join(branch);
 
@@ -444,7 +444,7 @@ async fn open_remote_worktree(
         return Ok(());
     };
 
-    let new_project = cx.update(|cx| {
+    let new_project: Entity<project::Project> = cx.update(|cx| {
         project::Project::remote(
             session,
             app_state.client.clone(),
@@ -455,7 +455,7 @@ async fn open_remote_worktree(
             true,
             cx,
         )
-    })?;
+    });
 
     let window_to_use = if replace_current_window {
         workspace_window
@@ -463,12 +463,12 @@ async fn open_remote_worktree(
         let workspace_position = cx
             .update(|cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })?
+            })
             .await
             .context("fetching workspace position from db")?;
 
         let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {
