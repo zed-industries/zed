@@ -141,7 +141,7 @@ impl language::ContextProvider for ExtensionContextProvider {
             path: file.path().as_std_path().to_string_lossy().to_string(),
         });
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |cx: &mut gpui::AsyncApp| {
             let mut templates = static_templates.unwrap_or_default();
             let worktree_delegate = if let Some(worktree_id) = worktree_id {
                 cx.update(|cx| proxy.worktree_delegate(worktree_id, cx))
