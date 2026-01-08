@@ -25,6 +25,7 @@
 //!   VISUAL_TEST_OUTPUT_DIR - Directory to save test output (default: target/visual_tests)
 
 use anyhow::{Context, Result};
+
 use gpui::{
     App, AppContext as _, Application, Bounds, Pixels, Size, Window, WindowBounds, WindowHandle,
     WindowOptions, point, px,
@@ -221,8 +222,10 @@ fn main() {
         Application::new()
             .with_assets(assets::Assets)
             .run(move |cx| {
-                // Initialize settings store first (required by theme and other subsystems)
-                let settings_store = SettingsStore::test(cx);
+                // Initialize settings store with production defaults, then override fonts
+                // for visual tests. We use production settings (not test settings) because
+                // test settings force Courier font which makes all UI elements monospace.
+                let settings_store = SettingsStore::new(cx, &settings::visual_test_settings());
                 cx.set_global(settings_store);
 
                 // Create AppState using the production-like initialization
@@ -778,7 +781,7 @@ async fn run_tool_permission_buttons_test(
             },
             cx,
         );
-    })?;
+    });
 
     let temp_dir = tempfile::tempdir()?;
     let project_path = temp_dir.path().join("project");
@@ -795,11 +798,11 @@ async fn run_tool_permission_buttons_test(
             false,
             cx,
         )
-    })?;
+    });
 
     let add_worktree_task = project.update(cx, |project, cx| {
         project.find_or_create_worktree(&project_path, true, cx)
-    })?;
+    });
     add_worktree_task.await?;
 
     let tool_call_id = acp::ToolCallId::new("terminal-1");
@@ -832,7 +835,7 @@ async fn run_tool_permission_buttons_test(
                 cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
-    })??;
+    })?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
@@ -867,16 +870,18 @@ async fn run_tool_permission_buttons_test(
         .await;
 
     let thread_view = panel
-        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = thread_view
-        .update(cx, |view, _cx| view.thread().cloned())?
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
-    let _send_task = thread.update(cx, |thread, cx| {
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
         thread.send_raw("Run cargo build --release", cx)
-    })?;
+    });
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(300))
@@ -920,7 +925,7 @@ async fn run_edit_file_permission_buttons_test(
             },
             cx,
         );
-    })?;
+    });
 
     let temp_dir = tempfile::tempdir()?;
     let project_path = temp_dir.path().join("project");
@@ -937,11 +942,11 @@ async fn run_edit_file_permission_buttons_test(
             false,
             cx,
         )
-    })?;
+    });
 
     let add_worktree_task = project.update(cx, |project, cx| {
         project.find_or_create_worktree(&project_path, true, cx)
-    })?;
+    });
     add_worktree_task.await?;
 
     let tool_call_id = acp::ToolCallId::new("edit-file-1");
@@ -974,7 +979,7 @@ async fn run_edit_file_permission_buttons_test(
                 cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
-    })??;
+    })?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
@@ -1009,16 +1014,18 @@ async fn run_edit_file_permission_buttons_test(
         .await;
 
     let thread_view = panel
-        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = thread_view
-        .update(cx, |view, _cx| view.thread().cloned())?
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
-    let _send_task = thread.update(cx, |thread, cx| {
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
         thread.send_raw("Edit the main.rs file", cx)
-    })?;
+    });
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(300))
@@ -1062,7 +1069,7 @@ async fn run_fetch_permission_buttons_test(
             },
             cx,
         );
-    })?;
+    });
 
     let temp_dir = tempfile::tempdir()?;
     let project_path = temp_dir.path().join("project");
@@ -1079,11 +1086,11 @@ async fn run_fetch_permission_buttons_test(
             false,
             cx,
         )
-    })?;
+    });
 
     let add_worktree_task = project.update(cx, |project, cx| {
         project.find_or_create_worktree(&project_path, true, cx)
-    })?;
+    });
     add_worktree_task.await?;
 
     let tool_call_id = acp::ToolCallId::new("fetch-1");
@@ -1116,7 +1123,7 @@ async fn run_fetch_permission_buttons_test(
                 cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
-    })??;
+    })?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
@@ -1151,14 +1158,18 @@ async fn run_fetch_permission_buttons_test(
         .await;
 
     let thread_view = panel
-        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = thread_view
-        .update(cx, |view, _cx| view.thread().cloned())?
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
-    let _send_task = thread.update(cx, |thread, cx| thread.send_raw("Fetch the gpui docs", cx))?;
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread.send_raw("Fetch the gpui docs", cx)
+    });
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(300))
@@ -1202,7 +1213,7 @@ async fn run_terminal_no_pattern_permission_buttons_test(
             },
             cx,
         );
-    })?;
+    });
 
     let temp_dir = tempfile::tempdir()?;
     let project_path = temp_dir.path().join("project");
@@ -1219,11 +1230,11 @@ async fn run_terminal_no_pattern_permission_buttons_test(
             false,
             cx,
         )
-    })?;
+    });
 
     let add_worktree_task = project.update(cx, |project, cx| {
         project.find_or_create_worktree(&project_path, true, cx)
-    })?;
+    });
     add_worktree_task.await?;
 
     let tool_call_id = acp::ToolCallId::new("terminal-no-pattern-1");
@@ -1257,7 +1268,7 @@ async fn run_terminal_no_pattern_permission_buttons_test(
                 cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
-    })??;
+    })?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
@@ -1292,16 +1303,18 @@ async fn run_terminal_no_pattern_permission_buttons_test(
         .await;
 
     let thread_view = panel
-        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = thread_view
-        .update(cx, |view, _cx| view.thread().cloned())?
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
-    let _send_task = thread.update(cx, |thread, cx| {
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
         thread.send_raw("Run the deploy script", cx)
-    })?;
+    });
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(300))

@@ -2810,7 +2810,7 @@ impl ToolCallEventStream {
                                 .get_or_insert_default()
                                 .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
                         });
-                    })?;
+                    });
                 }
                 return Ok(());
             }
@@ -2867,7 +2867,7 @@ impl ToolCallEventStream {
                                 .get_or_insert_default()
                                 .set_always_allow_tool_actions(true);
                         });
-                    })?;
+                    });
                 }
                 return Ok(());
             }
@@ -2882,7 +2882,7 @@ impl ToolCallEventStream {
                                 .get_or_insert_default()
                                 .set_tool_default_mode(&tool_name, ToolPermissionMode::Allow);
                         });
-                    })?;
+                    });
                 }
                 return Ok(());
             }
@@ -2900,7 +2900,7 @@ impl ToolCallEventStream {
                                     .get_or_insert_default()
                                     .add_tool_allow_pattern(&pattern_tool_name, pattern);
                             });
-                        })?;
+                        });
                     }
                 }
                 return Ok(());
