@@ -15,7 +15,7 @@ use open_ai::{
     responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
     stream_completion,
 };
-use settings::{Settings, SettingsStore, ThinkingMode};
+use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
@@ -567,6 +567,7 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use settings::ThinkingMode;
 
     #[test]
     fn test_model_thinking_mode_configuration() {

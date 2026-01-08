@@ -404,6 +404,13 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 }
 
+fn should_include_thinking(thinking_mode: ThinkingMode, is_last_assistant: bool) -> bool {
+    match thinking_mode {
+        ThinkingMode::Openai | ThinkingMode::Preserved => true,
+        ThinkingMode::Interleave => is_last_assistant,
+    }
+}
+
 pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
@@ -438,38 +445,14 @@ pub fn into_open_ai(
                     }
                 }
                 MessageContent::Thinking { text, .. } => {
-                    match thinking_mode {
-                        ThinkingMode::Openai => {
-                            // Treat thinking as regular text (current behavior)
-                            if !text.trim().is_empty() {
-                                add_message_content_part(
-                                    open_ai::MessagePart::Text { text },
-                                    message.role,
-                                    &mut messages,
-                                );
-                            }
-                        }
-                        ThinkingMode::Interleave => {
-                            // Only preserve thinking in the last assistant message
-                            if is_last_assistant && !text.trim().is_empty() {
-                                add_message_content_part(
-                                    open_ai::MessagePart::Text { text },
-                                    message.role,
-                                    &mut messages,
-                                );
-                            }
-                            // Otherwise, skip this thinking content
-                        }
-                        ThinkingMode::Preserved => {
-                            // Preserve all thinking content
-                            if !text.trim().is_empty() {
-                                add_message_content_part(
-                                    open_ai::MessagePart::Text { text },
-                                    message.role,
-                                    &mut messages,
-                                );
-                            }
-                        }
+                    if should_include_thinking(thinking_mode, is_last_assistant)
+                        && !text.trim().is_empty()
+                    {
+                        add_message_content_part(
+                            open_ai::MessagePart::Text { text },
+                            message.role,
+                            &mut messages,
+                        );
                     }
                 }
                 MessageContent::RedactedThinking(_) => {
@@ -614,22 +597,8 @@ pub fn into_open_ai_response(
                     push_response_text_part(&message.role, text, &mut content_parts);
                 }
                 MessageContent::Thinking { text, .. } => {
-                    match thinking_mode {
-                        ThinkingMode::Openai => {
-                            // Treat thinking as regular text (current behavior)
-                            push_response_text_part(&message.role, text, &mut content_parts);
-                        }
-                        ThinkingMode::Interleave => {
-                            // Only preserve thinking in the last assistant message
-                            if is_last_assistant {
-                                push_response_text_part(&message.role, text, &mut content_parts);
-                            }
-                            // Otherwise, skip this thinking content
-                        }
-                        ThinkingMode::Preserved => {
-                            // Preserve all thinking content
-                            push_response_text_part(&message.role, text, &mut content_parts);
-                        }
+                    if should_include_thinking(thinking_mode, is_last_assistant) {
+                        push_response_text_part(&message.role, text, &mut content_parts);
                     }
                 }
                 MessageContent::RedactedThinking(_) => {
@@ -2030,6 +1999,28 @@ mod tests {
         ));
     }
 
+    fn message_contains_text(message: &open_ai::RequestMessage, text_to_find: &str) -> bool {
+        let content = match message {
+            open_ai::RequestMessage::User { content } => Some(content),
+            open_ai::RequestMessage::Assistant { content, .. } => content.as_ref(),
+            open_ai::RequestMessage::System { content, .. } => Some(content),
+            open_ai::RequestMessage::Tool { .. } => None,
+        };
+
+        content
+            .map(|c| match c {
+                open_ai::MessageContent::Plain(text) => text.contains(text_to_find),
+                open_ai::MessageContent::Multipart(parts) => parts.iter().any(|p| {
+                    if let open_ai::MessagePart::Text { text } = p {
+                        text.contains(text_to_find)
+                    } else {
+                        false
+                    }
+                }),
+            })
+            .unwrap_or(false)
+    }
+
     fn create_test_request_with_thinking() -> LanguageModelRequest {
         LanguageModelRequest {
             thread_id: None,
@@ -2079,18 +2070,10 @@ mod tests {
 
         // Verify all thinking content is converted to text
         let assistant_message = openai_request.messages.last().unwrap();
-        assert!(matches!(
-            assistant_message,
-            open_ai::RequestMessage::Assistant { content, .. }
-            if content.as_ref().map(|c| {
-                match c {
-                    open_ai::MessageContent::Plain(text) => text.contains("I need to think about this"),
-                    open_ai::MessageContent::Multipart(parts) => {
-                        parts.iter().any(|p| matches!(p, open_ai::MessagePart::Text { text } if text.contains("I need to think about this")))
-                    }
-                }
-            }).unwrap_or(false)
-        ));
+        assert!(
+            message_contains_text(assistant_message, "I need to think about this"),
+            "Thinking content should be present in default mode"
+        );
     }
 
     #[test]
@@ -2127,35 +2110,15 @@ mod tests {
         );
 
         // Verify only last assistant message's thinking is preserved
-        let has_old_thinking = openai_request.messages.iter().any(|msg| {
-            if let open_ai::RequestMessage::Assistant { content, .. } = msg {
-                content.as_ref().map(|c| {
-                    match c {
-                        open_ai::MessageContent::Plain(text) => text.contains("I need to think"),
-                        open_ai::MessageContent::Multipart(parts) => {
-                            parts.iter().any(|p| matches!(p, open_ai::MessagePart::Text { text } if text.contains("I need to think")))
-                        }
-                    }
-                }).unwrap_or(false)
-            } else {
-                false
-            }
-        });
+        let has_old_thinking = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "I need to think about this"));
 
-        let has_new_thinking = openai_request.messages.iter().any(|msg| {
-            if let open_ai::RequestMessage::Assistant { content, .. } = msg {
-                content.as_ref().map(|c| {
-                    match c {
-                        open_ai::MessageContent::Plain(text) => text.contains("New thinking"),
-                        open_ai::MessageContent::Multipart(parts) => {
-                            parts.iter().any(|p| matches!(p, open_ai::MessagePart::Text { text } if text.contains("New thinking")))
-                        }
-                    }
-                }).unwrap_or(false)
-            } else {
-                false
-            }
-        });
+        let has_new_thinking = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "New thinking"));
 
         assert!(
             !has_old_thinking,
@@ -2200,26 +2163,19 @@ mod tests {
         );
 
         // Verify all thinking content is preserved
-        let thinking_count = openai_request
+        let old_thinking_present = openai_request
             .messages
             .iter()
-            .filter(|msg| {
-                if let open_ai::RequestMessage::Assistant { content, .. } = msg {
-                    content.as_ref().map(|c| {
-                        match c {
-                            open_ai::MessageContent::Plain(text) => text.contains("think"),
-                            open_ai::MessageContent::Multipart(parts) => {
-                                parts.iter().any(|p| matches!(p, open_ai::MessagePart::Text { text } if text.contains("think")))
-                            }
-                        }
-                    }).unwrap_or(false)
-                } else {
-                    false
-                }
-            })
-            .count();
+            .any(|msg| message_contains_text(msg, "I need to think about this"));
+        let new_thinking_present = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "New thinking"));
 
-        assert_eq!(thinking_count, 2, "All thinking should be preserved");
+        assert!(
+            old_thinking_present && new_thinking_present,
+            "All thinking should be preserved"
+        );
     }
 
     #[test]
@@ -2245,22 +2201,16 @@ mod tests {
             );
 
             // Verify redacted thinking is never included
-            let has_encrypted = openai_request.messages.iter().any(|msg| {
-                if let open_ai::RequestMessage::Assistant { content, .. } = msg {
-                    content.as_ref().map(|c| {
-                        match c {
-                            open_ai::MessageContent::Plain(text) => text.contains("encrypted"),
-                            open_ai::MessageContent::Multipart(parts) => {
-                                parts.iter().any(|p| matches!(p, open_ai::MessagePart::Text { text } if text.contains("encrypted")))
-                            }
-                        }
-                    }).unwrap_or(false)
-                } else {
-                    false
-                }
-            });
+            let has_encrypted = openai_request
+                .messages
+                .iter()
+                .any(|msg| message_contains_text(msg, "encrypted"));
 
-            assert!(!has_encrypted, "Redacted thinking should never be included");
+            assert!(
+                !has_encrypted,
+                "Redacted thinking should never be included in mode {:?}",
+                mode
+            );
         }
     }
 }
