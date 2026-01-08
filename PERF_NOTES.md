@@ -758,3 +758,132 @@ RUSTFLAGS="-C force-frame-pointers=yes" ZTRACING=1 cargo build --features tracy 
 ```
 
 Then capture a new trace (run_5.tracy) and compare `for_path` counts with previous runs.
+
+# Critical Discovery: Async Tracing Artifacts
+
+## The Problem
+
+Our earlier traces (run_1 through run_7) showed thousands of `for_path` calls, leading us to believe
+git blame was being called excessively. For example, run_7 showed:
+- `AUTHORS` blamed 2996 times
+- `DEPS` blamed 1799 times
+
+But `generation_id=1` only had `buffer_count=6`, so how could 6 buffers produce 5860 `for_path` calls?
+
+## Root Cause: Async Polling
+
+The `#[ztracing::instrument]` macro on an `async fn` records a span entry **every time the future
+is polled**, not just once when called.
+
+```rust
+#[ztracing::instrument(skip_all, fields(path = ..., generation_id = ...))]
+pub async fn for_path(...) -> Result<Self> {
+    let output = run_git_blame(...).await?;  // await point 1
+    let messages = get_messages(...).await?;  // await point 2
+    Ok(Self { entries, messages })
+}
+```
+
+A single `for_path` call taking 50+ seconds gets polled hundreds/thousands of times by the async
+executor. Each poll records a new span entry!
+
+## Evidence
+
+In run_7, for AUTHORS with generation_id=1:
+- **2959 span entries** recorded
+- **2956** completed in microseconds (just poll overhead)
+- **3** took >1ms (actual work completing)
+
+Only ~3 actual `for_path` calls, polled ~1000 times each!
+
+## The Fix
+
+Moved tracing to a sync function that only runs once per spawn:
+
+```rust
+// Old: traced async fn (records per poll)
+#[ztracing::instrument(...)]
+pub async fn for_path(...) { ... }
+
+// New: traced sync fn (records once per spawn)
+#[ztracing::instrument(skip_all, fields(path = %path.as_unix_str(), generation_id = ?generation_id))]
+fn spawn_git_blame(...) -> Result<smol::process::Child> {
+    util::command::new_smol_command(git_binary)
+        .current_dir(working_directory)
+        // ...
+        .spawn()
+}
+```
+
+# Tracy Analysis (run_8 & run_9) - With Correct Tracing
+
+## run_8.tracy (with debouncing + kill_on_drop, correct tracing)
+
+| Metric | Value |
+|--------|-------|
+| `spawn_git_blame` calls | **8** (real count!) |
+| `generate` calls | 5 |
+| generation_ids | 3 |
+
+## run_9.tracy (NO fixes, correct tracing - baseline)
+
+| Metric | Value |
+|--------|-------|
+| `spawn_git_blame` calls | **7** |
+| `generate` calls | 6 |
+| generation_ids | 3 |
+
+### Actual spawns per generation:
+
+| generation_id | spawns | blame_task duration |
+|---------------|--------|---------------------|
+| 0 | 1 | 26.3 seconds (completed) |
+| 1 | 2 | 16µs (cancelled) |
+| 2 | 4 | No task recorded |
+
+## Key Insight
+
+**Only 7-8 actual git blame spawns** - not thousands!
+
+The debouncing and kill_on_drop fixes had minimal effect because the actual spawn count was
+always low. We were misled by async polling artifacts in our earlier tracing.
+
+# The REAL Culprit: block_map.rs
+
+## Discovery
+
+After fixing the tracing, run_9 (without any fixes) still felt stuttery. Analyzing spans by
+duration revealed the true cause:
+
+```bash
+tracy-csvexport -u run_9.tracy | awk -F, '$5 > 10000000 {print $1","$5/1000000"ms"}' | sort -t, -k2 -rn | head -20
+```
+
+Results:
+```
+sync{edits=Patch([Edit { old: WrapRow(161428)..WrapRow(161429),...}  51652.5ms
+while edits{edit=Edit { old: WrapRow(133179)..WrapRow(133180),...}  51639.2ms
+sync{edits=Patch([Edit { old: WrapRow(133134)..WrapRow(133135),...}  51600.2ms
+...
+```
+
+## The Problem
+
+Operations in `crates/editor/src/display_map/block_map.rs` are taking **25-51 SECONDS** each!
+
+- `BlockMap::sync` processes edits for the MultiBuffer
+- The git diff view creates a MultiBuffer with **thousands of files**
+- This translates to **100,000+ rows**
+- Each sync operation on this massive buffer takes tens of seconds
+
+## Location
+
+`crates/editor/src/display_map/block_map.rs` - `sync` function and `while edits` loop (around line 572)
+
+## Conclusion
+
+**The stuttering is NOT caused by git blame operations.** It's caused by `BlockMap::sync` struggling
+to process edits on a MultiBuffer with hundreds of thousands of rows from the git diff view.
+
+This is a completely different performance problem requiring investigation of the block_map
+and display_map architecture.

@@ -551,7 +551,6 @@ impl GitBlame {
         self.task = cx.spawn(async move |this, cx| {
             let span = ztracing::info_span!("blame_task", buffer_count, generation_id);
             let _enter = span.enter();
-            let mut all_results = Vec::new();
             let mut all_errors = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
@@ -631,30 +630,32 @@ impl GitBlame {
                         }
                     })
                     .await;
-                all_results.extend(results);
-                all_errors.extend(errors)
+
+                // Update buffers incrementally as each chunk completes
+                this.update(cx, |this, cx| {
+                    for (id, snapshot, buffer_edits, entries, commit_details) in results {
+                        let Some(entries) = entries else {
+                            continue;
+                        };
+                        this.buffers.insert(
+                            id,
+                            GitBlameBuffer {
+                                buffer_edits,
+                                buffer_snapshot: snapshot,
+                                entries,
+                                commit_details,
+                            },
+                        );
+                    }
+                    cx.notify();
+                })?;
+
+                all_errors.extend(errors);
             }
 
-            this.update(cx, |this, cx| {
-                this.buffers.clear();
-                let span = ztracing::info_span!("blame_task_update_buffers");
-                let _enter = span.enter();
-                for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
-                    let Some(entries) = entries else {
-                        continue;
-                    };
-                    this.buffers.insert(
-                        id,
-                        GitBlameBuffer {
-                            buffer_edits,
-                            buffer_snapshot: snapshot,
-                            entries,
-                            commit_details,
-                        },
-                    );
-                }
-                cx.notify();
-                if !all_errors.is_empty() {
+            // Report any errors at the end
+            if !all_errors.is_empty() {
+                this.update(cx, |this, cx| {
                     this.project.update(cx, |_, cx| {
                         if this.user_triggered {
                             log::error!("failed to get git blame data: {all_errors:?}");
@@ -667,13 +668,13 @@ impl GitBlame {
                                 message: notification,
                             });
                         } else {
-                            // If we weren't triggered by a user, we just log errors in the background, instead of sending
-                            // notifications.
                             log::debug!("failed to get git blame data: {all_errors:?}");
                         }
                     })
-                }
-            })
+                })?;
+            }
+
+            anyhow::Ok(())
         });
     }
 
