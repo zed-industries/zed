@@ -28,7 +28,7 @@ use ui::{
     ToggleState, Tooltip, prelude::*,
 };
 use ui_input::InputField;
-use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
+use util::{ResultExt, debug_panic, paths, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{
@@ -1540,18 +1540,95 @@ impl PickerDelegate for DebugDelegate {
     }
 }
 
-pub(crate) fn resolve_path(path: &mut String) {
+pub(crate) fn resolve_path(path: &mut String, path_style: paths::PathStyle) {
     if path.starts_with('~') {
         let home = paths::home_dir().to_string_lossy().into_owned();
         let trimmed_path = path.trim().to_owned();
         *path = trimmed_path.replacen('~', &home, 1);
-    } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {
-        *path = format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &strip_path
-        );
+    } else if let Some(strip_path) = path.strip_prefix("./").or_else(|| path.strip_prefix(".\\")) {
+        let separator = path_style.primary_separator();
+        let normalized = if path_style == paths::PathStyle::Posix {
+            strip_path.replace('\\', "/")
+        } else {
+            strip_path.replace('/', "\\")
+        };
+        *path = format!("$ZED_WORKTREE_ROOT{}{}", separator, normalized);
     };
+}
+
+#[cfg(test)]
+mod resolve_path_tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_path_posix_style() {
+        // Test with Posix path style (Unix/WSL2 target)
+        let path_style = paths::PathStyle::Posix;
+
+        // Forward slash input
+        let mut path = "./src/program".to_string();
+        resolve_path(&mut path, path_style);
+        assert_eq!(path, "$ZED_WORKTREE_ROOT/src/program");
+
+        // Backslash input should be normalized to forward slashes
+        let mut path = ".\\src\\program".to_string();
+        resolve_path(&mut path, path_style);
+        assert_eq!(path, "$ZED_WORKTREE_ROOT/src/program");
+
+        // Mixed separators should be normalized
+        let mut path = ".\\packages/agent".to_string();
+        resolve_path(&mut path, path_style);
+        assert_eq!(path, "$ZED_WORKTREE_ROOT/packages/agent");
+    }
+
+    #[test]
+    fn test_resolve_path_windows_style() {
+        // Test with Windows path style (Windows target)
+        let path_style = paths::PathStyle::Windows;
+
+        // Backslash input
+        let mut path = ".\\src\\program".to_string();
+        resolve_path(&mut path, path_style);
+        assert_eq!(path, "$ZED_WORKTREE_ROOT\\src\\program");
+
+        // Forward slash input should be normalized to backslashes
+        let mut path = "./src/program".to_string();
+        resolve_path(&mut path, path_style);
+        assert_eq!(path, "$ZED_WORKTREE_ROOT\\src\\program");
+
+        // Mixed separators should be normalized
+        let mut path = "./packages\\agent".to_string();
+        resolve_path(&mut path, path_style);
+        assert_eq!(path, "$ZED_WORKTREE_ROOT\\packages\\agent");
+    }
+
+    #[test]
+    fn test_resolve_path_absolute_paths_unchanged() {
+        // Absolute paths should not be modified regardless of style
+        let mut path = "/absolute/path".to_string();
+        resolve_path(&mut path, paths::PathStyle::Posix);
+        assert_eq!(path, "/absolute/path");
+
+        let mut path = "C:\\absolute\\path".to_string();
+        resolve_path(&mut path, paths::PathStyle::Windows);
+        assert_eq!(path, "C:\\absolute\\path");
+    }
+
+    #[test]
+    fn test_resolve_path_home_expansion() {
+        // Home directory expansion replaces ~ with home dir but preserves rest of path as-is
+        // (path_style is not used for home expansion)
+        let home = paths::home_dir().to_string_lossy().into_owned();
+
+        let mut path = "~/src/program".to_string();
+        resolve_path(&mut path, paths::PathStyle::Posix);
+        assert_eq!(path, format!("{}/src/program", home));
+
+        // Note: separators after ~ are preserved as-is, not normalized
+        let mut path = "~\\src\\program".to_string();
+        resolve_path(&mut path, paths::PathStyle::Posix);
+        assert_eq!(path, format!("{}\\src\\program", home));
+    }
 }
 
 #[cfg(test)]

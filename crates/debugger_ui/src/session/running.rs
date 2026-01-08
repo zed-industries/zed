@@ -57,6 +57,7 @@ use ui::{
     VisualContext, prelude::*,
 };
 use util::ResultExt;
+use util::paths::PathStyle;
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
@@ -698,23 +699,24 @@ impl RunningState {
         key: Option<&str>,
         config: &mut serde_json::Value,
         context: &TaskContext,
+        path_style: PathStyle,
     ) {
         match config {
             serde_json::Value::Object(obj) => {
                 obj.iter_mut()
-                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context));
+                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context, path_style));
             }
             serde_json::Value::Array(array) => {
                 array
                     .iter_mut()
-                    .for_each(|value| Self::relativize_paths(None, value, context));
+                    .for_each(|value| Self::relativize_paths(None, value, context, path_style));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
                 // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
                 if s.starts_with("\"$ZED_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
-                resolve_path(s);
+                resolve_path(s, path_style);
 
                 if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
@@ -978,7 +980,8 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
-        let is_windows = project.read(cx).path_style(cx).is_windows();
+        let path_style = project.read(cx).path_style(cx);
+        let is_windows = path_style.is_windows();
         let remote_shell = project
             .read(cx)
             .remote_client()
@@ -993,7 +996,7 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
-            Self::relativize_paths(None, &mut config, &task_context);
+            Self::relativize_paths(None, &mut config, &task_context, path_style);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             if Self::contains_substring(&config, PROCESS_ID_PLACEHOLDER.as_str()) || label.as_ref().contains(PROCESS_ID_PLACEHOLDER.as_str()) {

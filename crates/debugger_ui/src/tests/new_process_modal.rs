@@ -48,16 +48,23 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 
     let home_dir = paths::home_dir();
 
+    let worktree_root = path!("/test/worktree/path");
+
     let test_cases: Vec<(&'static str, &'static str)> = vec![
         // Absolute path - should not be relativized
         (
             path!("/absolute/path/to/program"),
             path!("/absolute/path/to/program"),
         ),
-        // Relative path - should be prefixed with worktree root
+        // Relative path - should be prefixed with worktree root using the target's path style
         (
             format!(".{0}src{0}program", std::path::MAIN_SEPARATOR).leak(),
-            path!("/test/worktree/path/src/program"),
+            format!(
+                "{}{0}src{0}program",
+                worktree_root,
+                std::path::MAIN_SEPARATOR
+            )
+            .leak(),
         ),
         // Home directory path - should be expanded to full home directory path
         (
