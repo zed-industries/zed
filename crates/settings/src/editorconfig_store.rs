@@ -43,6 +43,7 @@ pub struct WorktreeEditorconfigs {
     /// Ordered from closest to filesystem root to closest to worktree root.
     pub external_config_paths: Vec<Arc<Path>>,
     pub internal_configs: BTreeMap<Arc<RelPath>, (String, Option<Editorconfig>)>,
+    pub external_configs_loaded: bool,
 }
 
 impl EditorconfigStore {
@@ -85,6 +86,31 @@ impl EditorconfigStore {
             .entry(worktree_id)
             .or_default()
             .external_config_paths = external_config_paths;
+    }
+
+    pub fn should_load_external_configs(&self, worktree_id: WorktreeId) -> bool {
+        let Some(worktree_configs) = self.worktree_configs.get(&worktree_id) else {
+            return false;
+        };
+        if worktree_configs.external_configs_loaded {
+            return false;
+        }
+        if worktree_configs.internal_configs.is_empty() {
+            return false;
+        }
+        let empty_path: Arc<RelPath> = RelPath::empty().into();
+        if let Some((_, Some(parsed))) = worktree_configs.internal_configs.get(&empty_path) {
+            if parsed.is_root {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn mark_external_configs_loaded(&mut self, worktree_id: WorktreeId) {
+        if let Some(configs) = self.worktree_configs.get_mut(&worktree_id) {
+            configs.external_configs_loaded = true;
+        }
     }
 
     pub fn set_local_internal_configs(

@@ -900,7 +900,6 @@ impl SettingsObserver {
                     }
                 })
                 .detach();
-                self.load_external_editorconfigs(worktree, cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -909,43 +908,6 @@ impl SettingsObserver {
             }
             _ => {}
         }
-    }
-
-    fn load_external_editorconfigs(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
-        let SettingsObserverMode::Local(fs) = &self.mode else {
-            return;
-        };
-
-        let worktree = worktree.read(cx);
-        let worktree_id = worktree.id();
-        let worktree_abs_path = worktree.abs_path();
-        let fs = fs.clone();
-
-        let cached_configs = cx
-            .global::<SettingsStore>()
-            .editorconfig_settings
-            .local_external_configs();
-
-        cx.spawn(async move |_, cx| {
-            let (external_paths, new_configs) =
-                EditorconfigStore::load_external_configs(&fs, worktree_abs_path, cached_configs)
-                    .await;
-
-            if external_paths.is_empty() {
-                return;
-            }
-
-            cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store
-                    .editorconfig_settings
-                    .set_local_external_configs(new_configs);
-                store
-                    .editorconfig_settings
-                    .set_external_paths_for_worktree(worktree_id, external_paths);
-            })
-            .ok();
-        })
-        .detach();
     }
 
     fn update_local_worktree_settings(
@@ -1113,6 +1075,7 @@ impl SettingsObserver {
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
+        let worktree_abs_path = worktree.read(cx).abs_path();
         let task_store = self.task_store.clone();
         let can_trust_worktree = OnceCell::new();
         for (directory, kind, file_content) in settings_contents {
@@ -1215,6 +1178,47 @@ impl SettingsObserver {
                         .log_err();
                 }
             }
+        }
+
+        let should_load_external = cx
+            .global::<SettingsStore>()
+            .editorconfig_settings
+            .should_load_external_configs(worktree_id);
+        if should_load_external {
+            let SettingsObserverMode::Local(fs) = &self.mode else {
+                return;
+            };
+            cx.update_global::<SettingsStore, _>(|store, _| {
+                store
+                    .editorconfig_settings
+                    .mark_external_configs_loaded(worktree_id);
+            });
+            let fs = fs.clone();
+            let cached_configs = cx
+                .global::<SettingsStore>()
+                .editorconfig_settings
+                .local_external_configs();
+            cx.spawn(async move |_, cx| {
+                let (external_paths, new_configs) = EditorconfigStore::load_external_configs(
+                    &fs,
+                    worktree_abs_path,
+                    cached_configs,
+                )
+                .await;
+                if external_paths.is_empty() {
+                    return;
+                }
+                cx.update_global::<SettingsStore, _>(|store, _cx| {
+                    store
+                        .editorconfig_settings
+                        .set_local_external_configs(new_configs);
+                    store
+                        .editorconfig_settings
+                        .set_external_paths_for_worktree(worktree_id, external_paths);
+                })
+                .ok();
+            })
+            .detach();
         }
     }
 
