@@ -54,6 +54,7 @@ use ui::{
     DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip,
     WithScrollbar, prelude::*, right_click_menu,
 };
+use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
 use zed_actions::agent::{Chat, ToggleModelSelector};
@@ -309,6 +310,8 @@ pub struct AcpThreadView {
     message_queue: Vec<QueuedMessage>,
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
+    turn_started_at: Option<Instant>,
+    _turn_timer_task: Option<Task<()>>,
 }
 
 struct QueuedMessage {
@@ -481,6 +484,8 @@ impl AcpThreadView {
             message_queue: Vec::new(),
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
+            turn_started_at: None,
+            _turn_timer_task: None,
         }
     }
 
@@ -497,6 +502,8 @@ impl AcpThreadView {
         self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
         self.message_queue.clear();
+        self.turn_started_at = None;
+        self._turn_timer_task = None;
         cx.notify();
     }
 
@@ -1297,6 +1304,23 @@ impl AcpThreadView {
         .detach();
     }
 
+    fn start_turn_timer(&mut self, cx: &mut Context<Self>) {
+        self.turn_started_at = Some(Instant::now());
+        self._turn_timer_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn stop_turn_timer(&mut self) {
+        self.turn_started_at = None;
+        self._turn_timer_task = None;
+    }
+
     fn send_impl(
         &mut self,
         message_editor: Entity<MessageEditor>,
@@ -1351,8 +1375,20 @@ impl AcpThreadView {
                 return Ok(());
             }
 
+            let _stop_timer = defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                move || {
+                    this.update(&mut cx, |this, cx| {
+                        this.stop_turn_timer();
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
             this.update_in(cx, |this, window, cx| {
                 this.in_flight_prompt = Some(contents.clone());
+                this.start_turn_timer(cx);
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
                 this.message_editor.update(cx, |message_editor, cx| {
@@ -1379,6 +1415,7 @@ impl AcpThreadView {
                 thread.send(contents, cx)
             })?;
             let res = send.await;
+            drop(_stop_timer);
             let turn_time_ms = turn_start_time.elapsed().as_millis();
             let status = if res.is_ok() {
                 this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
@@ -1525,6 +1562,7 @@ impl AcpThreadView {
                 }
 
                 this.in_flight_prompt = Some(content.clone());
+                this.start_turn_timer(cx);
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
             })?;
@@ -5900,26 +5938,38 @@ impl AcpThreadView {
     }
 
     fn render_generating(&self, confirmation: bool) -> impl IntoElement {
+        let elapsed_label = self.turn_started_at.map(|started_at| {
+            let elapsed = started_at.elapsed();
+            duration_alt_display(elapsed)
+        });
+
         h_flex()
             .id("generating-spinner")
             .py_2()
             .px(rems_from_px(22.))
+            .gap_2()
             .map(|this| {
                 if confirmation {
-                    this.gap_2()
-                        .child(
-                            h_flex()
-                                .w_2()
-                                .child(SpinnerLabel::sand().size(LabelSize::Small)),
-                        )
-                        .child(
-                            LoadingLabel::new("Waiting Confirmation")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
+                    this.child(
+                        h_flex()
+                            .w_2()
+                            .child(SpinnerLabel::sand().size(LabelSize::Small)),
+                    )
+                    .child(
+                        LoadingLabel::new("Waiting Confirmation")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
                 } else {
                     this.child(SpinnerLabel::new().size(LabelSize::Small))
                 }
+            })
+            .when_some(elapsed_label, |this, elapsed| {
+                this.child(
+                    Label::new(elapsed)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
             })
             .into_any_element()
     }
