@@ -624,6 +624,7 @@ async fn handle_error(
             Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
         "},
         example.spec.name,
+        error,
         err_path.display(),
         file_path.display(),
         failed_example_path.display(),
