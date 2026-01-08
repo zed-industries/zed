@@ -14,6 +14,7 @@ mod reorder_patch;
 mod retrieve_context;
 mod score;
 mod split_commit;
+mod split_dataset;
 mod synthesize;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
@@ -40,6 +41,7 @@ use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
+use crate::split_dataset::SplitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
 
 #[derive(Parser, Debug)]
@@ -124,6 +126,8 @@ enum Command {
     Clean,
     /// Generate an evaluation example by splitting a chronologically-ordered commit
     SplitCommit(SplitCommitArgs),
+    /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
+    Split(SplitArgs),
 }
 
 impl Display for Command {
@@ -178,6 +182,7 @@ impl Display for Command {
             }
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
+            Command::Split(_) => write!(f, "split"),
         }
     }
 }
@@ -416,6 +421,13 @@ fn main() {
             }
             return;
         }
+        Command::Split(split_args) => {
+            if let Err(error) = split_dataset::run_split(split_args, &args.inputs) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -509,7 +521,8 @@ fn main() {
                                     }
                                     Command::Clean
                                     | Command::Synthesize(_)
-                                    | Command::SplitCommit(_) => {
+                                    | Command::SplitCommit(_)
+                                    | Command::Split(_) => {
                                         unreachable!()
                                     }
                                 }
@@ -603,17 +616,12 @@ async fn handle_error(
         indoc::indoc! {"
             While processing \"{}\":
 
-            {:?}
+            \x1b[31m{:?}\x1b[0m
 
-            Written to: \x1b[36m{}\x1b[0m
-
-            Cursor File: \x1b[36m{}\x1b[0m
-
-            Explore this example data with:
-            fx \x1b[36m{}\x1b[0m
-
-            Re-run this example with:
-            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+            Example:        \x1b[36m{}\x1b[0m
+            Error file:     \x1b[36m{}\x1b[0m
+            Cursor file:    \x1b[36m{}\x1b[0m
+            Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
         "},
         example.spec.name,
         error,
