@@ -534,6 +534,29 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     log::info!("Initializing test");
     init_test(cx);
     cx.executor().allow_parking();
+    log::info!("[test_extension_store_with_test_extension] after init_test + allow_parking");
+
+    fn panic_timeout<T>(what: &str, seconds: u64) -> T {
+        panic!(
+            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
+        );
+    }
+
+    async fn await_or_timeout<T>(
+        what: &'static str,
+        seconds: u64,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        use futures::FutureExt as _;
+        use gpui::Timer;
+
+        let timeout = Timer::after(std::time::Duration::from_secs(seconds));
+
+        futures::select! {
+            output = future.fuse() => output,
+            _ = futures::FutureExt::fuse(timeout) => panic_timeout(what, seconds),
+        }
+    }
 
     let root_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -558,7 +581,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     log::info!("Setting up test");
 
-    let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
+    log::info!("[test_extension_store_with_test_extension] creating Project::test");
+    let project = await_or_timeout(
+        "awaiting Project::test",
+        5,
+        Project::test(fs.clone(), [project_dir.as_path()], cx),
+    )
+    .await;
+    log::info!("[test_extension_store_with_test_extension] created Project::test");
 
     let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
@@ -684,6 +714,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
             if let Event::StartedReloading = event {
+                log::info!(
+                    "[test_extension_store_with_test_extension] saw Event::StartedReloading; advancing clock by {:?}",
+                    RELOAD_DEBOUNCE_DURATION
+                );
                 executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
@@ -698,13 +732,22 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .detach();
     });
 
-    extension_store
-        .update(cx, |store, cx| {
+    log::info!(
+        "[test_extension_store_with_test_extension] install_dev_extension starting: {:?}",
+        test_extension_dir
+    );
+    await_or_timeout(
+        "awaiting install_dev_extension",
+        5,
+        extension_store.update(cx, |store, cx| {
             store.install_dev_extension(test_extension_dir.clone(), cx)
-        })
-        .await
-        .unwrap();
+        }),
+    )
+    .await
+    .unwrap();
+    log::info!("[test_extension_store_with_test_extension] install_dev_extension completed");
 
+    log::info!("[test_extension_store_with_test_extension] registering fake LSP server: gleam");
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
@@ -713,15 +756,36 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         },
         None,
     );
+    log::info!("[test_extension_store_with_test_extension] registered fake LSP server: gleam");
+    log::warn!("[test_extension_store_with_test_extension] after register_fake_lsp_server; running until parked");
+    cx.executor().run_until_parked();
+    log::warn!("[test_extension_store_with_test_extension] after run_until_parked (post fake server registration)");
 
-    let (buffer, _handle) = project
-        .update(cx, |project, cx| {
+    log::warn!("[test_extension_store_with_test_extension] about to open buffer with LSP");
+    log::info!("[test_extension_store_with_test_extension] opening buffer with LSP");
+    let (buffer, _handle) = await_or_timeout(
+        "awaiting open_local_buffer_with_lsp",
+        5,
+        project.update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(project_dir.join("test.gleam"), cx)
-        })
+        }),
+    )
+    .await
+    .unwrap();
+    log::info!("[test_extension_store_with_test_extension] opened buffer with LSP");
+    log::warn!("[test_extension_store_with_test_extension] opened buffer; running until parked before awaiting fake server");
+    cx.executor().run_until_parked();
+    log::warn!("[test_extension_store_with_test_extension] done run_until_parked; awaiting first fake LSP server spawn");
+
+    log::info!("[test_extension_store_with_test_extension] awaiting first fake LSP server spawn");
+    let fake_server = await_or_timeout("awaiting first fake server spawn", 10, fake_servers.next())
         .await
         .unwrap();
-
-    let fake_server = fake_servers.next().await.unwrap();
+    log::info!(
+        "[test_extension_store_with_test_extension] got first fake LSP server spawn (binary={:?}, args={:?})",
+        fake_server.binary.path,
+        fake_server.binary.arguments
+    );
     let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
     let expected_server_path = work_dir.join("gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
@@ -735,16 +799,30 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(
-        fs.load(&expected_server_path).await.unwrap(),
+        await_or_timeout(
+            "awaiting fs.load(expected_server_path)",
+            5,
+            fs.load(&expected_server_path)
+        )
+        .await
+        .unwrap(),
         expected_binary_contents
     );
     assert_eq!(language_server_version.lock().http_request_count, 2);
     assert_eq!(
         [
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
+            await_or_timeout("awaiting status_updates #1", 5, status_updates.next())
+                .await
+                .unwrap(),
+            await_or_timeout("awaiting status_updates #2", 5, status_updates.next())
+                .await
+                .unwrap(),
+            await_or_timeout("awaiting status_updates #3", 5, status_updates.next())
+                .await
+                .unwrap(),
+            await_or_timeout("awaiting status_updates #4", 5, status_updates.next())
+                .await
+                .unwrap(),
         ],
         [
             (
@@ -793,16 +871,19 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ])))
     });
 
-    let completion_labels = project
-        .update(cx, |project, cx| {
+    let completion_labels = await_or_timeout(
+        "awaiting completions",
+        5,
+        project.update(cx, |project, cx| {
             project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .flat_map(|response| response.completions)
-        .map(|c| c.label.text)
-        .collect::<Vec<_>>();
+        }),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .flat_map(|response| response.completions)
+    .map(|c| c.label.text)
+    .collect::<Vec<_>>();
     assert_eq!(
         completion_labels,
         [
@@ -826,40 +907,67 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // The extension has cached the binary path, and does not attempt
     // to reinstall it.
-    let fake_server = fake_servers.next().await.unwrap();
+    let fake_server =
+        await_or_timeout("awaiting second fake server spawn", 5, fake_servers.next())
+            .await
+            .unwrap();
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(
-        fs.load(&expected_server_path).await.unwrap(),
+        await_or_timeout(
+            "awaiting fs.load(expected_server_path) after restart",
+            5,
+            fs.load(&expected_server_path)
+        )
+        .await
+        .unwrap(),
         expected_binary_contents
     );
     assert_eq!(language_server_version.lock().http_request_count, 0);
 
     // Reload the extension, clearing its cache.
     // Start a new instance of the language server.
-    extension_store
-        .update(cx, |store, cx| {
+    await_or_timeout(
+        "awaiting extension_store.reload(test-extension)",
+        5,
+        extension_store.update(cx, |store, cx| {
             store.reload(Some("test-extension".into()), cx)
-        })
-        .await;
+        }),
+    )
+    .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
 
     // The extension re-fetches the latest version of the language server.
-    let fake_server = fake_servers.next().await.unwrap();
+    let fake_server = await_or_timeout("awaiting third fake server spawn", 5, fake_servers.next())
+        .await
+        .unwrap();
     let new_expected_server_path =
         extensions_dir.join(format!("work/{test_extension_id}/gleam-v2.0.0/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
     assert_eq!(fake_server.binary.path, new_expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(
-        fs.load(&new_expected_server_path).await.unwrap(),
+        await_or_timeout(
+            "awaiting fs.load(new_expected_server_path)",
+            5,
+            fs.load(&new_expected_server_path)
+        )
+        .await
+        .unwrap(),
         expected_binary_contents
     );
 
     // The old language server directory has been cleaned up.
-    assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
+    assert!(await_or_timeout(
+        "awaiting fs.metadata(expected_server_path)",
+        5,
+        fs.metadata(&expected_server_path)
+    )
+    .await
+    .unwrap()
+    .is_none());
 }
 
 fn init_test(cx: &mut TestAppContext) {
