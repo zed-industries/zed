@@ -355,6 +355,8 @@ pub enum RequestMessage {
         content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     User {
         content: MessageContent,
@@ -461,6 +463,8 @@ pub struct Choice {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }

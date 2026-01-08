@@ -444,7 +444,7 @@ pub enum ThinkingMode {
     #[default]
     Openai,
 
-    /// Interleave mode: only preserve thinking in the most recent assistant message
+    /// Interleave mode: only preserve thinking for the most recent turn (messages after the last user message)
     Interleave,
 
     /// Preserved mode: preserve all thinking content across the entire conversation history
