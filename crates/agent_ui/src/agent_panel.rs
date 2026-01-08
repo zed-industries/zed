@@ -1,4 +1,5 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
+use terminal_view::TerminalView;
 
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
@@ -19,8 +20,8 @@ use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, Follow, InlineAssistant, NewTextThread, NewThread,
-    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, OpenTerminal, ResetTrialEndUpsell,
+    ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     acp::AcpThreadView,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
@@ -125,6 +126,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_text_thread(window, cx));
                     }
                 })
+                .register_action(|workspace, _: &OpenTerminal, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.open_terminal(window, cx));
+                    }
+                })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
@@ -219,6 +226,9 @@ enum ActiveView {
         buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
     },
+    Terminal {
+        terminal_view: Entity<TerminalView>,
+    },
     History,
     Configuration,
 }
@@ -283,7 +293,9 @@ impl ActiveView {
             ActiveView::ExternalAgentThread { .. } | ActiveView::History => {
                 WhichFontSize::AgentFont
             }
-            ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
+            ActiveView::TextThread { .. } | ActiveView::Terminal { .. } => {
+                WhichFontSize::BufferFont
+            }
             ActiveView::Configuration => WhichFontSize::None,
         }
     }
@@ -750,7 +762,10 @@ impl AgentPanel {
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::TextThread { .. }
+            | ActiveView::Terminal { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
         }
     }
 
@@ -823,6 +838,64 @@ impl AgentPanel {
             cx,
         );
         text_thread_editor.focus_handle(cx).focus(window, cx);
+    }
+
+    fn open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let project = self.project.clone();
+        let workspace_weak = self.workspace.clone();
+
+        cx.spawn_in(window, async move |panel, cx| {
+            let working_directory = workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .worktrees(cx)
+                    .next()
+                    .and_then(|worktree| {
+                        let worktree = worktree.read(cx);
+                        worktree.root_entry()?.is_dir().then(|| worktree.abs_path().to_path_buf())
+                    })
+            }).ok().flatten();
+
+            let terminal = project
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell(working_directory, cx)
+                })?
+                .await?;
+
+            panel.update_in(cx, |panel, window, cx| {
+                let workspace_id = workspace_weak
+                    .upgrade()
+                    .and_then(|workspace| workspace.read(cx).database_id());
+
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace_weak.clone(),
+                        workspace_id,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+
+                panel.set_active_view(
+                    ActiveView::Terminal {
+                        terminal_view: terminal_view.clone(),
+                    },
+                    true,
+                    window,
+                    cx,
+                );
+
+                terminal_view.focus_handle(cx).focus(window, cx);
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn external_thread(
@@ -1023,6 +1096,9 @@ impl AgentPanel {
                         } => {
                             text_thread_editor.focus_handle(cx).focus(window, cx);
                         }
+                        ActiveView::Terminal { terminal_view } => {
+                            terminal_view.focus_handle(cx).focus(window, cx);
+                        }
                         ActiveView::History | ActiveView::Configuration => {}
                     }
                 }
@@ -1191,7 +1267,10 @@ impl AgentPanel {
                     })
                     .detach_and_log_err(cx);
             }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::TextThread { .. }
+            | ActiveView::Terminal { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => {}
         }
     }
 
@@ -1290,6 +1369,7 @@ impl AgentPanel {
                 }
             }),
             ActiveView::ExternalAgentThread { .. } => {}
+            ActiveView::Terminal { .. } => {}
             ActiveView::History | ActiveView::Configuration => {}
         }
 
@@ -1512,6 +1592,7 @@ impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => thread_view.focus_handle(cx),
+            ActiveView::Terminal { terminal_view } => terminal_view.focus_handle(cx),
             ActiveView::History => self.acp_history.focus_handle(cx),
             ActiveView::TextThread {
                 text_thread_editor, ..
@@ -1723,6 +1804,10 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
+            ActiveView::Terminal { .. } => Label::new("Terminal")
+                .color(Color::Muted)
+                .truncate()
+                .into_any_element(),
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
         };
@@ -2003,7 +2088,10 @@ impl AgentPanel {
             ActiveView::ExternalAgentThread { thread_view } => {
                 thread_view.read(cx).as_native_thread(cx)
             }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::TextThread { .. }
+            | ActiveView::Terminal { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
         };
 
         let new_thread_menu = PopoverMenu::new("new_thread_menu")
@@ -2274,6 +2362,28 @@ impl AgentPanel {
                             })
                             .separator()
                             .item(
+                                ContextMenuEntry::new("Open Terminal")
+                                    .action(OpenTerminal.boxed_clone())
+                                    .icon(IconName::Terminal)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.open_terminal(window, cx);
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
+                            .item(
                                 ContextMenuEntry::new("Add More Agents")
                                     .icon(IconName::Plus)
                                     .icon_color(Color::Muted)
@@ -2344,6 +2454,7 @@ impl AgentPanel {
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .pl(DynamicSpacing::Base04.rems(cx))
                     .child(match &self.active_view {
+                        ActiveView::Terminal { .. } => div().into_any_element(),
                         ActiveView::History | ActiveView::Configuration => {
                             self.render_toolbar_back_button(cx).into_any_element()
                         }
@@ -2385,6 +2496,7 @@ impl AgentPanel {
                 }
             }
             ActiveView::ExternalAgentThread { .. }
+            | ActiveView::Terminal { .. }
             | ActiveView::History
             | ActiveView::Configuration => return false,
         }
@@ -2688,7 +2800,7 @@ impl AgentPanel {
                     );
                 });
             }
-            ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::Terminal { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
     }
 
@@ -2730,6 +2842,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::ExternalAgentThread { .. } => key_context.add("acp_thread"),
             ActiveView::TextThread { .. } => key_context.add("text_thread"),
+            ActiveView::Terminal { .. } => key_context.add("terminal"),
             ActiveView::History | ActiveView::Configuration => {}
         }
         key_context
@@ -2782,6 +2895,7 @@ impl Render for AgentPanel {
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
                     .child(thread_view.clone())
                     .child(self.render_drag_target(cx)),
+                ActiveView::Terminal { terminal_view } => parent.child(terminal_view.clone()),
                 ActiveView::History => parent.child(self.acp_history.clone()),
                 ActiveView::TextThread {
                     text_thread_editor,

@@ -56,6 +56,8 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
+        /// Opens a terminal in the Agent Panel.
+        OpenTerminal,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
