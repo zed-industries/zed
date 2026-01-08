@@ -782,7 +782,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use futures::stream::StreamExt as _;
-        use smol::future::FutureExt as _;
+        
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
         let query = SearchQuery::from_proto(

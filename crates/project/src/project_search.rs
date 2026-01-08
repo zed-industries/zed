@@ -14,9 +14,8 @@ use collections::HashSet;
 use fs::Fs;
 use futures::{
     SinkExt, StreamExt,
-    future::FusedFuture,
     select, select_biased,
-    stream::{FusedStream, FuturesOrdered},
+    stream::FuturesOrdered,
 };
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
 use language::{Buffer, BufferSnapshot};
@@ -976,7 +975,7 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
                         }
                     }
                     items_batch = get_next_item.next() => {
-                        let elapsed = time_elapsed_since_start_of_search.elapsed().as_millis();
+                        let _elapsed = time_elapsed_since_start_of_search.elapsed().as_millis();
                         // log::error!("push batch_size: {} {elapsed}ms since start of search", current_batch.len());
                         if let Some(new_item) = items_batch {
                             let is_fresh_batch = current_batch.is_empty();
