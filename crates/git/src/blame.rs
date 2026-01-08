@@ -21,13 +21,14 @@ pub struct Blame {
 }
 
 impl Blame {
-    #[ztracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all, fields(path = %path.as_unix_str(), generation_id = ?generation_id))]
     pub async fn for_path(
         git_binary: &Path,
         working_directory: &Path,
         path: &RepoPath,
         content: &Rope,
         line_ending: LineEnding,
+        generation_id: Option<u64>,
     ) -> Result<Self> {
         let output =
             run_git_blame(git_binary, working_directory, path, content, line_ending).await?;

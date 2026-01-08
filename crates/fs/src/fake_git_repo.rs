@@ -466,6 +466,7 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         _content: Rope,
         _line_ending: LineEnding,
+        _generation_id: Option<u64>,
     ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state

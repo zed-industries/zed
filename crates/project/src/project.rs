@@ -4622,10 +4622,11 @@ impl Project {
         &self,
         buffer: &Entity<Buffer>,
         version: Option<clock::Global>,
+        generation_id: Option<u64>,
         cx: &mut App,
     ) -> Task<Result<Option<Blame>>> {
         self.git_store.update(cx, |git_store, cx| {
-            git_store.blame_buffer(buffer, version, cx)
+            git_store.blame_buffer(buffer, version, generation_id, cx)
         })
     }
 

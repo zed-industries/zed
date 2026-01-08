@@ -1019,6 +1019,7 @@ impl GitStore {
         &self,
         buffer: &Entity<Buffer>,
         version: Option<clock::Global>,
+        generation_id: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Blame>>> {
         let buffer = buffer.read(cx);
@@ -1043,7 +1044,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content, line_ending)
+                    .blame(repo_path.clone(), content, line_ending, generation_id)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -2760,7 +2761,7 @@ impl GitStore {
             .await?;
         let blame = this
             .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), cx)
+                this.blame_buffer(&buffer, Some(version), None, cx)
             })?
             .await?;
         Ok(serialize_blame_buffer_response(blame))

@@ -20,7 +20,15 @@ use project::{
     git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+
+static BLAME_GENERATION_ID: AtomicU64 = AtomicU64::new(0);
 use sum_tree::SumTree;
 use text::BufferId;
 use workspace::Workspace;
@@ -201,6 +209,8 @@ impl GitBlame {
             |git_blame, multi_buffer, event, cx| match event {
                 multi_buffer::Event::DirtyChanged => {
                     if !multi_buffer.read(cx).is_dirty(cx) {
+                        let span = ztracing::info_span!("blame_trigger_dirty_changed");
+                        let _enter = span.enter();
                         git_blame.generate(cx);
                     }
                 }
@@ -226,6 +236,8 @@ impl GitBlame {
                         .iter()
                         .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
                     {
+                        let span = ztracing::info_span!("blame_trigger_worktree_updated");
+                        let _enter = span.enter();
                         log::debug!("Updated buffers. Regenerating blame data...",);
                         git_blame.generate(cx);
                     }
@@ -236,10 +248,25 @@ impl GitBlame {
         let git_store = project.read(cx).git_store().clone();
         let git_store_subscription =
             cx.subscribe(&git_store, move |this, _, event, cx| match event {
-                GitStoreEvent::RepositoryUpdated(_, _, _)
-                | GitStoreEvent::RepositoryAdded
-                | GitStoreEvent::RepositoryRemoved(_) => {
-                    log::debug!("Status of git repositories updated. Regenerating blame data...",);
+                GitStoreEvent::RepositoryUpdated(_, repo_event, _) => {
+                    let span = ztracing::info_span!("blame_trigger_repo_updated");
+                    let _enter = span.enter();
+                    log::debug!(
+                        "Repository updated ({:?}). Regenerating blame data...",
+                        repo_event
+                    );
+                    this.generate(cx);
+                }
+                GitStoreEvent::RepositoryAdded => {
+                    let span = ztracing::info_span!("blame_trigger_repo_added");
+                    let _enter = span.enter();
+                    log::debug!("Repository added. Regenerating blame data...");
+                    this.generate(cx);
+                }
+                GitStoreEvent::RepositoryRemoved(_) => {
+                    let span = ztracing::info_span!("blame_trigger_repo_removed");
+                    let _enter = span.enter();
+                    log::debug!("Repository removed. Regenerating blame data...");
                     this.generate(cx);
                 }
                 _ => {}
@@ -260,7 +287,11 @@ impl GitBlame {
                 git_store_subscription,
             ],
         };
-        this.generate(cx);
+        {
+            let span = ztracing::info_span!("blame_trigger_init");
+            let _enter = span.enter();
+            this.generate(cx);
+        }
         this
     }
 
@@ -338,6 +369,8 @@ impl GitBlame {
         self.focused = true;
         if self.changed_while_blurred {
             self.changed_while_blurred = false;
+            let span = ztracing::info_span!("blame_trigger_focus");
+            let _enter = span.enter();
             self.generate(cx);
         }
     }
@@ -507,9 +540,12 @@ impl GitBlame {
             })
             .unwrap_or_default();
         let project = self.project.downgrade();
+        let buffer_count = buffers_to_blame.len();
+
+        let generation_id = BLAME_GENERATION_ID.fetch_add(1, Ordering::SeqCst);
 
         self.task = cx.spawn(async move |this, cx| {
-            let span = ztracing::info_span!("blame_task");
+            let span = ztracing::info_span!("blame_task", buffer_count, generation_id);
             let _enter = span.enter();
             let mut all_results = Vec::new();
             let mut all_errors = Vec::new();
@@ -532,8 +568,9 @@ impl GitBlame {
                                 .read(cx)
                                 .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
                                 .and_then(|(repo, _)| repo.read(cx).default_remote_url());
-                            let blame_buffer = project
-                                .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx));
+                            let blame_buffer = project.update(cx, |project, cx| {
+                                project.blame_buffer(&buffer, None, Some(generation_id), cx)
+                            });
                             Ok(async move {
                                 (id, snapshot, buffer_edits, blame_buffer.await, remote_url)
                             })

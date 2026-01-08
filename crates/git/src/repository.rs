@@ -499,6 +499,7 @@ pub trait GitRepository: Send + Sync {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+        generation_id: Option<u64>,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
     fn file_history_paginated(
@@ -1531,6 +1532,7 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+        generation_id: Option<u64>,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
@@ -1544,6 +1546,7 @@ impl GitRepository for RealGitRepository {
                     &path,
                     &content,
                     line_ending,
+                    generation_id,
                 )
                 .await
             })
