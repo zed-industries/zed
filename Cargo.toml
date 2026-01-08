@@ -592,7 +592,7 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-pulldown-cmark = { version = "0.12.0", default-features = false }
+pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
