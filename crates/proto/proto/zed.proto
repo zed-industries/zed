@@ -448,10 +448,13 @@ message Envelope {
 
         TrustWorktrees trust_worktrees = 404;
         RestrictWorktrees restrict_worktrees = 405;
-        
+
         ShareAgentThread share_agent_thread = 406;
         GetSharedAgentThread get_shared_agent_thread = 407;
-        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; // current max
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
+
+        RescanDirectory rescan_directory = 409;
+        RescanDirectoryResponse rescan_directory_response = 410; // current max
     }
 
     reserved 87 to 88;

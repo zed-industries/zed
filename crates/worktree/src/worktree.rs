@@ -129,6 +129,7 @@ pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
     path_prefixes_to_scan_tx: channel::Sender<PathPrefixScanRequest>,
+    rescan_requests_tx: channel::Sender<RescanRequest>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     _background_scanner_tasks: Vec<Task<()>>,
     update_observer: Option<UpdateObservationState>,
@@ -148,6 +149,11 @@ pub struct PathPrefixScanRequest {
 
 struct ScanRequest {
     relative_paths: Vec<Arc<RelPath>>,
+    done: SmallVec<[barrier::Sender; 1]>,
+}
+
+struct RescanRequest {
+    relative_path: Arc<RelPath>,
     done: SmallVec<[barrier::Sender; 1]>,
 }
 
@@ -466,6 +472,7 @@ impl Worktree {
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
+            let (rescan_requests_tx, rescan_requests_rx) = channel::unbounded();
             let mut worktree = LocalWorktree {
                 share_private_files,
                 next_entry_id,
@@ -474,6 +481,7 @@ impl Worktree {
                 update_observer: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
+                rescan_requests_tx,
                 _background_scanner_tasks: Vec::new(),
                 fs,
                 fs_case_sensitive,
@@ -481,7 +489,7 @@ impl Worktree {
                 settings,
                 scanning_enabled,
             };
-            worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+            worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, rescan_requests_rx, cx);
             Worktree::Local(worktree)
         }))
     }
@@ -919,6 +927,38 @@ impl Worktree {
         }
     }
 
+    /// Triggers a full rescan of a directory and all its contents from the file system.
+    pub fn rescan_directory(
+        &mut self,
+        path: Arc<RelPath>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<()>> {
+        match self {
+            Worktree::Local(this) => {
+                this.rescan_directory(path);
+                Task::ready(Ok(()))
+            }
+            Worktree::Remote(this) => {
+                let worktree_id = this.id();
+                let response = this.client.request(proto::RescanDirectory {
+                    project_id: this.project_id,
+                    worktree_id: worktree_id.to_proto(),
+                    path: path.as_ref().to_proto(),
+                });
+                cx.spawn(async move |this, cx| {
+                    let response = response.await?;
+                    this.update(cx, |this, _| {
+                        this.as_remote_mut()
+                            .unwrap()
+                            .wait_for_snapshot(response.worktree_scan_id as usize)
+                    })?
+                    .await?;
+                    Ok(())
+                })
+            }
+        }
+    }
+
     pub async fn handle_create_entry(
         this: Entity<Self>,
         request: proto::CreateProjectEntry,
@@ -1001,6 +1041,27 @@ impl Worktree {
         })
     }
 
+    /// Handles a remote request to rescan a directory.
+    /// Called on the host when a remote client requests a directory rescan.
+    pub async fn handle_rescan_directory(
+        this: Entity<Self>,
+        request: proto::RescanDirectory,
+        mut cx: AsyncApp,
+    ) -> Result<proto::RescanDirectoryResponse> {
+        let path_buf = RelPath::new(Path::new(&request.path), PathStyle::local())?.into_owned();
+        let path = Arc::from(path_buf.as_ref());
+        this.update(&mut cx, |this, _cx| {
+            if let Some(local) = this.as_local() {
+                local.rescan_directory(path);
+            }
+        });
+
+        let scan_id = this.read_with(&cx, |this, _| this.scan_id());
+        Ok(proto::RescanDirectoryResponse {
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
     pub fn is_single_file(&self) -> bool {
         self.root_dir().is_none()
     }
@@ -1052,10 +1113,12 @@ impl LocalWorktree {
     fn restart_background_scanners(&mut self, cx: &Context<Worktree>) {
         let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
         let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
+        let (rescan_requests_tx, rescan_requests_rx) = channel::unbounded();
         self.scan_requests_tx = scan_requests_tx;
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
+        self.rescan_requests_tx = rescan_requests_tx;
 
-        self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+        self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, rescan_requests_rx, cx);
         let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
         log::debug!(
             "refreshing entries for the following always included paths: {:?}",
@@ -1071,6 +1134,7 @@ impl LocalWorktree {
         &mut self,
         scan_requests_rx: channel::Receiver<ScanRequest>,
         path_prefixes_to_scan_rx: channel::Receiver<PathPrefixScanRequest>,
+        rescan_requests_rx: channel::Receiver<RescanRequest>,
         cx: &Context<Worktree>,
     ) {
         let snapshot = self.snapshot();
@@ -1101,6 +1165,7 @@ impl LocalWorktree {
                     executor: background,
                     scan_requests_rx,
                     path_prefixes_to_scan_rx,
+                    rescan_requests_rx,
                     next_entry_id,
                     state: async_lock::Mutex::new(BackgroundScannerState {
                         prev_snapshot: snapshot.snapshot.clone(),
@@ -1814,6 +1879,18 @@ impl LocalWorktree {
             })??;
             Ok(Some(new_entry))
         })
+    }
+
+    /// Triggers a full rescan of a directory and all its contents.
+    pub fn rescan_directory(&self, path: Arc<RelPath>) -> barrier::Receiver {
+        let (tx, rx) = barrier::channel();
+        self.rescan_requests_tx
+            .try_send(RescanRequest {
+                relative_path: path,
+                done: smallvec![tx],
+            })
+            .ok();
+        rx
     }
 
     fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
@@ -3730,6 +3807,7 @@ struct BackgroundScanner {
     executor: BackgroundExecutor,
     scan_requests_rx: channel::Receiver<ScanRequest>,
     path_prefixes_to_scan_rx: channel::Receiver<PathPrefixScanRequest>,
+    rescan_requests_rx: channel::Receiver<RescanRequest>,
     next_entry_id: Arc<AtomicUsize>,
     phase: BackgroundScannerPhase,
     watcher: Arc<dyn Watcher>,
@@ -3924,6 +4002,18 @@ impl BackgroundScanner {
                             self.process_events(vec![abs_path]).await;
                         }
                     }
+                    self.send_status_update(false, request.done).await;
+                }
+
+                rescan_request = self.rescan_requests_rx.recv().fuse() => {
+                    let Ok(request) = rescan_request else { break };
+
+                    let abs_path = {
+                        let state = self.state.lock().await;
+                        state.snapshot.absolutize(&request.relative_path)
+                    };
+
+                    self.process_events(vec![abs_path]).await;
                     self.send_status_update(false, request.done).await;
                 }
 
