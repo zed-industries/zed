@@ -12,11 +12,7 @@ use std::{
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
-use futures::{
-    SinkExt, StreamExt,
-    select, select_biased,
-    stream::FuturesOrdered,
-};
+use futures::{SinkExt, StreamExt, select, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
@@ -945,7 +941,6 @@ pub struct AdaptiveBatcher<T> {
 
 impl<T: 'static + Send> AdaptiveBatcher<T> {
     pub fn new(cx: &BackgroundExecutor) -> (Self, Receiver<Vec<T>>) {
-        use futures::future::FutureExt as _;
         let (items, rx) = unbounded();
         let (batch_tx, batch_rx) = unbounded();
         let (flush_batch_tx, flush_batch_rx) = unbounded();
@@ -956,17 +951,13 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
             let mut items_produced_so_far = 0_u64;
             let mut get_next_item = Box::pin(rx.fuse());
 
-            #[expect(unused, reason = "This task is flushing a batch, hence it's not read, but it's crucial that it's alive.")]
             let mut _schedule_flush_after_delay;
             let time_elapsed_since_start_of_search = std::time::Instant::now();
             let mut flush  = pin!(flush_batch_rx);
             loop {
                 select! {
                     should_break_afterwards = flush.next() => {
-                        log::error!("batch_size: {}", current_batch.len());
                         if !current_batch.is_empty() {
-                            let elapsed = time_elapsed_since_start_of_search.elapsed().as_millis();
-                            log::error!("Sending out a batch of size {} {elapsed}ms since start of search", current_batch.len());
                             _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
                             _schedule_flush_after_delay = None;
                         }
@@ -975,8 +966,6 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
                         }
                     }
                     items_batch = get_next_item.next() => {
-                        let _elapsed = time_elapsed_since_start_of_search.elapsed().as_millis();
-                        // log::error!("push batch_size: {} {elapsed}ms since start of search", current_batch.len());
                         if let Some(new_item) = items_batch {
                             let is_fresh_batch = current_batch.is_empty();
                             items_produced_so_far += 1;
@@ -992,8 +981,6 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
                                     _ = _flush.send(false).await;
                                 });
                                 _schedule_flush_after_delay = Some(new_timer);
-                                log::error!("sleeping for {:?}", desired_duration);
-
                             }
                         } else {
                             break;
@@ -1016,7 +1003,6 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
     }
 
     pub async fn flush(self) {
-        log::error!("{}", self.items.len());
         _ = self.flush_batch.send(true).await;
         self._batch_task.await;
         log::error!("Done awaiting");
