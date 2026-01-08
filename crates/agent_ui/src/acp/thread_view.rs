@@ -3499,9 +3499,11 @@ impl AcpThreadView {
                                 this.icon(IconName::Close).icon_color(Color::Error),
                                 Some(&RejectOnce as &dyn Action),
                             ),
-                            acp::PermissionOptionKind::RejectAlways | _ => {
-                                (this.icon(IconName::Close).icon_color(Color::Error), None)
-                            }
+                            acp::PermissionOptionKind::RejectAlways => (
+                                this.icon(IconName::XDouble).icon_color(Color::Error),
+                                None,
+                            ),
+                            _ => (this.icon(IconName::Close).icon_color(Color::Error), None)
                         };
 
                         let Some(action) = action else {
