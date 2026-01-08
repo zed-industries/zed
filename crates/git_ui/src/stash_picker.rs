@@ -246,7 +246,7 @@ impl StashListDelegate {
         };
 
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, cx| repo.stash_drop(Some(stash_index), cx))?
+            repo.update(cx, |repo, cx| repo.stash_drop(Some(stash_index), cx))
                 .await??;
             Ok(())
         })
@@ -281,7 +281,7 @@ impl StashListDelegate {
         };
 
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, cx| repo.stash_pop(Some(stash_index), cx))?
+            repo.update(cx, |repo, cx| repo.stash_pop(Some(stash_index), cx))
                 .await?;
             Ok(())
         })
@@ -297,7 +297,7 @@ impl StashListDelegate {
         };
 
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, cx| repo.stash_apply(Some(stash_index), cx))?
+            repo.update(cx, |repo, cx| repo.stash_apply(Some(stash_index), cx))
                 .await?;
             Ok(())
         })

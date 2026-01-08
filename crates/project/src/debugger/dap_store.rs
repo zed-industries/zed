@@ -323,7 +323,7 @@ impl DapStore {
                     if let Some(c) = binary.connection {
                         let host = Ipv4Addr::LOCALHOST;
                         let port;
-                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface())? {
+                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface()) {
                             port = c.port;
                             port_forwarding = None;
                         } else {
@@ -348,7 +348,7 @@ impl DapStore {
                             binary.cwd.map(|path| path.display().to_string()),
                             port_forwarding,
                         )
-                    })??;
+                    })?;
 
                     Ok(DebugAdapterBinary {
                         command: Some(command.program),
@@ -530,7 +530,7 @@ impl DapStore {
                 session
                     .update(cx, |session, cx| {
                         session.boot(binary, worktree, dap_store, cx)
-                    })?
+                    })
                     .await
             }
         })
@@ -583,7 +583,7 @@ impl DapStore {
             } else {
                 Task::ready(HashMap::default())
             }
-        })?
+        })
         .await;
 
         Ok(())
@@ -691,16 +691,14 @@ impl DapStore {
                         });
                     }
                     VariableLookupKind::Expression => {
-                        let Ok(eval_task) = session.read_with(cx, |session, _| {
+                        let eval_task = session.read_with(cx, |session, _| {
                             session.state.request_dap(EvaluateCommand {
                                 expression: inline_value_location.variable_name.clone(),
                                 frame_id: Some(stack_frame_id),
                                 source: None,
                                 context: Some(EvaluateArgumentsContext::Variables),
                             })
-                        }) else {
-                            continue;
-                        };
+                        });
 
                         if let Some(response) = eval_task.await.log_err() {
                             inlay_hints.push(InlayHint {
@@ -816,7 +814,7 @@ impl DapStore {
         let request = this
             .update(&mut cx, |this, cx| {
                 this.run_debug_locator(&locator, build_task, cx)
-            })?
+            })
             .await?;
 
         Ok(request.to_proto())
@@ -846,8 +844,7 @@ impl DapStore {
                                 })
                                 .ok();
                         }
-                    })
-                    .ok();
+                    });
                 }
             }
         })
@@ -858,7 +855,7 @@ impl DapStore {
                 this.worktree_store
                     .read(cx)
                     .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
-            })?
+            })
             .context("Failed to find worktree with a given ID")?;
         let binary = this
             .update(&mut cx, |this, cx| {
@@ -869,7 +866,7 @@ impl DapStore {
                     tx,
                     cx,
                 )
-            })?
+            })
             .await?;
         Ok(binary.to_proto())
     }
@@ -890,7 +887,8 @@ impl DapStore {
                     .unbounded_send(envelope.payload.message)
                     .ok();
             })
-        })
+        });
+        Ok(())
     }
 
     pub fn sync_adapter_options(

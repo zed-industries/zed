@@ -112,24 +112,24 @@ impl ActiveCall {
         envelope: TypedEnvelope<proto::IncomingCall>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let user_store = this.read_with(&cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
         let call = IncomingCall {
             room_id: envelope.payload.room_id,
             participants: user_store
                 .update(&mut cx, |user_store, cx| {
                     user_store.get_users(envelope.payload.participant_user_ids, cx)
-                })?
+                })
                 .await?,
             calling_user: user_store
                 .update(&mut cx, |user_store, cx| {
                     user_store.get_user(envelope.payload.calling_user_id, cx)
-                })?
+                })
                 .await?,
             initial_project: envelope.payload.initial_project,
         };
         this.update(&mut cx, |this, _| {
             *this.incoming_call.0.borrow_mut() = Some(call);
-        })?;
+        });
 
         Ok(proto::Ack {})
     }
@@ -147,7 +147,7 @@ impl ActiveCall {
             {
                 incoming_call.take();
             }
-        })?;
+        });
         Ok(())
     }
 
@@ -187,7 +187,7 @@ impl ActiveCall {
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
                     Some(
-                        room.update(cx, |room, cx| room.share_project(initial_project, cx))?
+                        room.update(cx, |room, cx| room.share_project(initial_project, cx))
                             .await?,
                     )
                 } else {
@@ -196,7 +196,7 @@ impl ActiveCall {
 
                 room.update(cx, move |room, cx| {
                     room.call(called_user_id, initial_project_id, cx)
-                })?
+                })
                 .await?;
 
                 anyhow::Ok(())
@@ -216,7 +216,7 @@ impl ActiveCall {
                                     user_store,
                                     cx,
                                 )
-                            })?
+                            })
                             .await?;
 
                         this.update(cx, |this, cx| this.set_room(Some(room.clone()), cx))?

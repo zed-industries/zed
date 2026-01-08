@@ -173,7 +173,7 @@ impl ChannelView {
                     };
                     buffer.set_language(Some(markdown), cx);
                 })
-            })?;
+            });
 
             cx.new_window_entity(|window, cx| {
                 let mut this = Self::new(

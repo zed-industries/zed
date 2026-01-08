@@ -79,10 +79,17 @@ impl AgentTool for CreateDirectoryTool {
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => Some(event_stream.authorize(
-                format!("Create directory {}", MarkdownInlineCode(&input.path)),
-                cx,
-            )),
+            ToolPermissionDecision::Confirm => {
+                let context = crate::ToolPermissionContext {
+                    tool_name: "create_directory".to_string(),
+                    input_value: input.path.clone(),
+                };
+                Some(event_stream.authorize_with_context(
+                    format!("Create directory {}", MarkdownInlineCode(&input.path)),
+                    context,
+                    cx,
+                ))
+            }
         };
 
         let project_path = match self.project.read(cx).find_project_path(&input.path, cx) {

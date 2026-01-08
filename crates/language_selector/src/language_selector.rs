@@ -205,7 +205,8 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 let buffer = buffer.upgrade().context("buffer was dropped")?;
                 project.update(cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
-                })
+                });
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
         }

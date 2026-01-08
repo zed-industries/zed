@@ -376,12 +376,10 @@ impl LmStudioLanguageModel {
         Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
-        let Ok(api_url) = cx.update(|cx| {
+        let api_url = cx.update(|cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
             settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
@@ -644,10 +642,7 @@ impl ConfigurationView {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     task.await.log_err();
                 }
                 this.update(cx, |this, cx| {

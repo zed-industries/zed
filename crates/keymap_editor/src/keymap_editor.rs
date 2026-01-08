@@ -2318,20 +2318,18 @@ impl KeybindingEditorModal {
                     .await;
 
                 let language = load_keybind_context_language(workspace, cx).await;
-                editor_entity
-                    .update(cx, |editor, cx| {
-                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(language), cx);
-                            });
-                        }
-                        editor.set_completion_provider(Some(std::rc::Rc::new(
-                            KeyContextCompletionProvider { contexts },
-                        )));
-                    })
-                    .context("Failed to load completions for keybinding context")
+                editor_entity.update(cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(Some(language), cx);
+                        });
+                    }
+                    editor.set_completion_provider(Some(std::rc::Rc::new(
+                        KeyContextCompletionProvider { contexts },
+                    )));
+                });
             })
-            .detach_and_log_err(cx);
+            .detach();
 
             input
         });

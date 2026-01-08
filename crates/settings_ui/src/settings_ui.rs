@@ -727,7 +727,7 @@ struct NavBarEntry {
 
 struct SettingsPage {
     title: &'static str,
-    items: Vec<SettingsPageItem>,
+    items: Box<[SettingsPageItem]>,
 }
 
 #[derive(PartialEq)]
@@ -3965,7 +3965,11 @@ pub mod test {
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
-        let mut pages: Vec<SettingsPage> = Vec::new();
+        struct PageBuilder {
+            title: &'static str,
+            items: Vec<SettingsPageItem>,
+        }
+        let mut page_builders: Vec<PageBuilder> = Vec::new();
         let mut expanded_pages = Vec::new();
         let mut selected_idx = None;
         let mut index = 0;
@@ -3985,23 +3989,23 @@ pub mod test {
             assert_eq!(kind.len(), 1);
             let kind = kind.chars().next().unwrap();
             if kind == 'v' {
-                let page_idx = pages.len();
+                let page_idx = page_builders.len();
                 expanded_pages.push(page_idx);
-                pages.push(SettingsPage {
+                page_builders.push(PageBuilder {
                     title,
                     items: vec![],
                 });
                 index += 1;
                 in_expanded_section = true;
             } else if kind == '>' {
-                pages.push(SettingsPage {
+                page_builders.push(PageBuilder {
                     title,
                     items: vec![],
                 });
                 index += 1;
                 in_expanded_section = false;
             } else if kind == '-' {
-                pages
+                page_builders
                     .last_mut()
                     .unwrap()
                     .items
@@ -4017,6 +4021,14 @@ pub mod test {
                 );
             }
         }
+
+        let pages: Vec<SettingsPage> = page_builders
+            .into_iter()
+            .map(|builder| SettingsPage {
+                title: builder.title,
+                items: builder.items.into_boxed_slice(),
+            })
+            .collect();
 
         let mut settings_window = SettingsWindow {
             title_bar: None,

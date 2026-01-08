@@ -293,6 +293,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
 fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(&mut String)) {
     prompt.push_str(delimiters.start);
     cb(prompt);
+    prompt.push('\n');
     prompt.push_str(delimiters.end);
 }
 

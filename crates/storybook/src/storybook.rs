@@ -154,8 +154,7 @@ pub fn init(cx: &mut App) {
 
 fn quit(_: &Quit, cx: &mut App) {
     cx.spawn(async move |cx| {
-        cx.update(|cx| cx.quit())?;
-        anyhow::Ok(())
+        cx.update(|cx| cx.quit());
     })
-    .detach_and_log_err(cx);
+    .detach();
 }

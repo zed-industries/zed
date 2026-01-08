@@ -248,12 +248,12 @@ impl LanguageServerPrompt {
                 this.request.take().map(|request| request.respond(ix))
             });
 
-            potential_future? // App Closed
+            potential_future
                 .context("Response already sent")?
                 .await
                 .context("Stream already closed")?;
 
-            this.update(cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(cx, |_, cx| cx.emit(DismissEvent));
 
             anyhow::Ok(())
         })

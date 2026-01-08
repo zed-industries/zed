@@ -3879,9 +3879,9 @@ impl ProjectPanel {
 
                 let task = worktree.update(cx, |worktree, cx| {
                     worktree.copy_external_entries(target_directory, paths, fs, cx)
-                })?;
+                });
 
-                let opened_entries = task
+                let opened_entries: Vec<_> = task
                     .await
                     .with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {

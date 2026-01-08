@@ -863,7 +863,7 @@ impl SettingsObserver {
                 )],
                 cx,
             );
-        })?;
+        });
         Ok(())
     }
 
@@ -878,7 +878,7 @@ impl SettingsObserver {
                 .result()
                 .context("setting new user settings")?;
             anyhow::Ok(())
-        })??;
+        })?;
         Ok(())
     }
 
@@ -1191,7 +1191,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
                             TaskSettingsLocation::Global(&file_path),
@@ -1199,20 +1199,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_tasks(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {
@@ -1246,7 +1242,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_debug_scenarios(
                             TaskSettingsLocation::Global(&file_path),
@@ -1254,20 +1250,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_debug_scenarios(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {

@@ -86,7 +86,15 @@ impl AgentTool for DeletePathTool {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                Some(event_stream.authorize(format!("Delete {}", MarkdownInlineCode(&path)), cx))
+                let context = crate::ToolPermissionContext {
+                    tool_name: "delete_path".to_string(),
+                    input_value: path.clone(),
+                };
+                Some(event_stream.authorize_with_context(
+                    format!("Delete {}", MarkdownInlineCode(&path)),
+                    context,
+                    cx,
+                ))
             }
         };
 
@@ -138,19 +146,19 @@ impl AgentTool for DeletePathTool {
 
             while let Some(path) = paths_rx.next().await {
                 if let Ok(buffer) = project
-                    .update(cx, |project, cx| project.open_buffer(path, cx))?
+                    .update(cx, |project, cx| project.open_buffer(path, cx))
                     .await
                 {
                     action_log.update(cx, |action_log, cx| {
                         action_log.will_delete_buffer(buffer.clone(), cx)
-                    })?;
+                    });
                 }
             }
 
             let deletion_task = project
                 .update(cx, |project, cx| {
                     project.delete_file(project_path, false, cx)
-                })?
+                })
                 .with_context(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;

@@ -1841,7 +1841,7 @@ impl EditPredictionStore {
                     worktree_id: file.worktree_id(cx),
                     path: file.path().clone(),
                 })
-            })?;
+            });
 
             let buffer_task = project.update(cx, |project, cx| {
                 let (path, _, _) = project
@@ -1862,7 +1862,7 @@ impl EditPredictionStore {
                     })?;
 
                 Some(project.open_buffer(path, cx))
-            })?;
+            });
 
             if let Some(buffer_task) = buffer_task {
                 let closest_buffer = buffer_task.await?;
@@ -1874,7 +1874,7 @@ impl EditPredictionStore {
                             .into_iter()
                             .min_by_key(|entry| entry.diagnostic.severity)
                             .map(|entry| entry.range.start)
-                    })?
+                    })
                     .map(|position| (closest_buffer, position));
             }
         }
@@ -1973,8 +1973,7 @@ impl EditPredictionStore {
                                 })
                             },
                         );
-                    })
-                    .ok();
+                    });
                 }
                 Err(err)
             }

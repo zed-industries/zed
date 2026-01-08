@@ -681,11 +681,11 @@ impl WasmHost {
             // Run wasi-dependent operations on tokio.
             // wasmtime_wasi internally uses tokio for I/O operations.
             let (extension_task, manifest, work_dir, tx, zed_api_version) =
-                gpui_tokio::Tokio::spawn(cx, load_extension(zed_api_version, component))?.await??;
+                gpui_tokio::Tokio::spawn(cx, load_extension(zed_api_version, component)).await??;
 
             // Run the extension message loop on tokio since extension
             // calls may invoke wasi functions that require a tokio runtime.
-            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task));
 
             Ok(WasmExtension {
                 manifest,

@@ -82,29 +82,26 @@ pub fn open_rules_library(
     let store = PromptStore::global(cx);
     cx.spawn(async move |cx| {
         // We query windows in spawn so that all windows have been returned to GPUI
-        let existing_window = cx
-            .update(|cx| {
-                let existing_window = cx
-                    .windows()
-                    .into_iter()
-                    .find_map(|window| window.downcast::<RulesLibrary>());
-                if let Some(existing_window) = existing_window {
-                    existing_window
-                        .update(cx, |rules_library, window, cx| {
-                            if let Some(prompt_to_select) = prompt_to_select {
-                                rules_library.load_rule(prompt_to_select, true, window, cx);
-                            }
-                            window.activate_window()
-                        })
-                        .ok();
+        let existing_window = cx.update(|cx| {
+            let existing_window = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<RulesLibrary>());
+            if let Some(existing_window) = existing_window {
+                existing_window
+                    .update(cx, |rules_library, window, cx| {
+                        if let Some(prompt_to_select) = prompt_to_select {
+                            rules_library.load_rule(prompt_to_select, true, window, cx);
+                        }
+                        window.activate_window()
+                    })
+                    .ok();
 
-                    Some(existing_window)
-                } else {
-                    None
-                }
-            })
-            .ok()
-            .flatten();
+                Some(existing_window)
+            } else {
+                None
+            }
+        });
 
         if let Some(existing_window) = existing_window {
             return Ok(existing_window);
@@ -151,7 +148,7 @@ pub fn open_rules_library(
                     })
                 },
             )
-        })?
+        })
     })
 }
 

@@ -153,19 +153,19 @@ async fn collect_snapshots(
                 .filter(|path| path.worktree_id == worktree_id)?;
             let relative_path: Arc<Path> = project_path.path.as_std_path().into();
             Some((project_path, relative_path))
-        })? {
+        }) {
             if let hash_map::Entry::Vacant(entry) = snapshots_by_path.entry(relative_path) {
                 let buffer = project
                     .update(cx, |project, cx| {
                         project.open_buffer(project_path.clone(), cx)
-                    })?
+                    })
                     .await?;
                 let diff = git_store
                     .update(cx, |git_store, cx| {
                         git_store.open_uncommitted_diff(buffer.clone(), cx)
-                    })?
+                    })
                     .await?;
-                let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx))?;
+                let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
                 entry.insert((stored_event.old_snapshot.clone(), diff_snapshot));
             }
         }

@@ -25,6 +25,7 @@
 //!   VISUAL_TEST_OUTPUT_DIR - Directory to save test output (default: target/visual_tests)
 
 use anyhow::{Context, Result};
+
 use gpui::{
     App, AppContext as _, Application, Bounds, Pixels, Size, Window, WindowBounds, WindowHandle,
     WindowOptions, point, px,
@@ -39,6 +40,7 @@ use std::sync::Arc;
 use workspace::{AppState, Workspace};
 
 use acp_thread::{AgentConnection, StubAgentConnection};
+use agent::ToolPermissionContext;
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::SharedString;
@@ -69,6 +71,14 @@ fn agent_panel_window_size() -> Size<Pixels> {
     }
 }
 
+/// Window size for tool permission button tests (shorter to reduce blank space)
+fn tool_permission_window_size() -> Size<Pixels> {
+    Size {
+        width: px(500.0),
+        height: px(400.0),
+    }
+}
+
 /// Helper struct for setting up test workspaces
 struct TestWorkspace {
     window: WindowHandle<Workspace>,
@@ -92,12 +102,13 @@ impl TestWorkspace {
                 false,
                 cx,
             )
-        })?;
+        });
 
-        let add_worktree_task = project.update(cx, |project, cx| {
-            project.find_or_create_worktree(project_path, true, cx)
-        })?;
-        add_worktree_task.await?;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(project_path, true, cx)
+            })
+            .await?;
 
         let bounds = Bounds {
             origin: point(px(0.0), px(0.0)),
@@ -118,7 +129,7 @@ impl TestWorkspace {
                     })
                 },
             )
-        })??;
+        })?;
 
         cx.background_executor()
             .timer(std::time::Duration::from_millis(100))
@@ -211,8 +222,10 @@ fn main() {
         Application::new()
             .with_assets(assets::Assets)
             .run(move |cx| {
-                // Initialize settings store first (required by theme and other subsystems)
-                let settings_store = SettingsStore::test(cx);
+                // Initialize settings store with production defaults, then override fonts
+                // for visual tests. We use production settings (not test settings) because
+                // test settings force Courier font which makes all UI elements monospace.
+                let settings_store = SettingsStore::new(cx, &settings::visual_test_settings());
                 cx.set_global(settings_store);
 
                 // Create AppState using the production-like initialization
@@ -257,7 +270,7 @@ fn main() {
                         Ok(ws) => ws,
                         Err(e) => {
                             log::error!("Failed to create workspace: {}", e);
-                            cx.update(|cx| cx.quit()).ok();
+                            cx.update(|cx| cx.quit());
                             std::process::exit(1);
                         }
                     };
@@ -265,19 +278,19 @@ fn main() {
                     // Set up project panel
                     if let Err(e) = setup_project_panel(&workspace, &mut cx).await {
                         log::error!("Failed to setup project panel: {}", e);
-                        cx.update(|cx| cx.quit()).ok();
+                        cx.update(|cx| cx.quit());
                         std::process::exit(1);
                     }
 
                     // Open main.rs in the editor
                     if let Err(e) = open_file(&workspace, "src/main.rs", &mut cx).await {
                         log::error!("Failed to open file: {}", e);
-                        cx.update(|cx| cx.quit()).ok();
+                        cx.update(|cx| cx.quit());
                         std::process::exit(1);
                     }
 
                     // Request a window refresh to ensure all pending effects are processed
-                    cx.refresh().ok();
+                    cx.refresh();
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(500))
                         .await;
@@ -306,11 +319,10 @@ fn main() {
                                 ws.close_panel::<ProjectPanel>(window, cx);
                             })
                             .ok();
-                    })
-                    .ok();
+                    });
 
                     // Refresh and wait for panel to close
-                    cx.refresh().ok();
+                    cx.refresh();
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
                         .await;
@@ -340,12 +352,60 @@ fn main() {
                         any_failed = true;
                     }
 
+                    // Run Test 4: Tool Permission Buttons - Terminal
+                    if run_tool_permission_buttons_test(
+                        app_state_for_tests.clone(),
+                        &mut cx,
+                        update_baseline,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        any_failed = true;
+                    }
+
+                    // Run Test 5: Tool Permission Buttons - Edit File
+                    if run_edit_file_permission_buttons_test(
+                        app_state_for_tests.clone(),
+                        &mut cx,
+                        update_baseline,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        any_failed = true;
+                    }
+
+                    // Run Test 6: Tool Permission Buttons - Fetch URL
+                    if run_fetch_permission_buttons_test(
+                        app_state_for_tests.clone(),
+                        &mut cx,
+                        update_baseline,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        any_failed = true;
+                    }
+
+                    // Run Test 7: Tool Permission Buttons - Terminal without pattern
+                    if run_terminal_no_pattern_permission_buttons_test(
+                        app_state_for_tests.clone(),
+                        &mut cx,
+                        update_baseline,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        any_failed = true;
+                    }
+
                     if any_failed {
-                        cx.update(|cx| cx.quit()).ok();
+                        cx.update(|cx| cx.quit());
                         std::process::exit(1);
                     }
 
-                    cx.update(|cx| cx.quit()).ok();
+                    cx.update(|cx| cx.quit());
                 })
                 .detach();
             });
@@ -371,7 +431,7 @@ async fn run_visual_test(
     update_baseline: bool,
 ) -> Result<TestResult> {
     // Capture the screenshot using direct texture capture (no ScreenCaptureKit needed)
-    let screenshot = cx.update(|cx| capture_screenshot(window, cx))??;
+    let screenshot = cx.update(|cx| capture_screenshot(window, cx))?;
 
     // Get paths
     let baseline_path = get_baseline_path(test_name);
@@ -702,6 +762,584 @@ impl AgentServer for StubAgentServer {
     }
 }
 
+/// Runs the tool permission buttons visual test for terminal commands.
+async fn run_tool_permission_buttons_test(
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use agent_settings::AgentSettings;
+    use settings::{NotifyWhenAgentWaiting, Settings};
+    use std::collections::HashMap;
+
+    // Disable notification popups
+    cx.update(|cx| {
+        AgentSettings::override_global(
+            AgentSettings {
+                notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                ..AgentSettings::get_global(cx).clone()
+            },
+            cx,
+        );
+    });
+
+    let temp_dir = tempfile::tempdir()?;
+    let project_path = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    });
+
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+    add_worktree_task.await?;
+
+    let tool_call_id = acp::ToolCallId::new("terminal-1");
+    let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
+        .kind(acp::ToolKind::Edit);
+
+    let permission_options =
+        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+
+    let connection = StubAgentConnection::new()
+        .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: tool_permission_window_size(),
+    };
+
+    let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+            },
+        )
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let panel_task = workspace_window.update(cx, |_workspace, window, cx| {
+        let weak_workspace = cx.weak_entity();
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
+        let async_window_cx = window.to_async(cx);
+        agent_ui::AgentPanel::load(weak_workspace, prompt_builder, async_window_cx)
+    })?;
+
+    let panel = panel_task.await?;
+
+    workspace_window.update(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<agent_ui::AgentPanel>(window, cx);
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    workspace_window.update(cx, |_workspace, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent, window, cx);
+        });
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let thread_view = panel
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
+    let thread = thread_view
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
+        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
+
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread.send_raw("Run cargo build --release", cx)
+    });
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    run_visual_test(
+        "tool_permission_buttons_terminal",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await
+}
+
+/// Runs the edit_file tool permission buttons visual test.
+async fn run_edit_file_permission_buttons_test(
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use agent_settings::AgentSettings;
+    use settings::{NotifyWhenAgentWaiting, Settings};
+    use std::collections::HashMap;
+
+    cx.update(|cx| {
+        AgentSettings::override_global(
+            AgentSettings {
+                notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                ..AgentSettings::get_global(cx).clone()
+            },
+            cx,
+        );
+    });
+
+    let temp_dir = tempfile::tempdir()?;
+    let project_path = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    });
+
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+    add_worktree_task.await?;
+
+    let tool_call_id = acp::ToolCallId::new("edit-file-1");
+    let tool_call =
+        acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`").kind(acp::ToolKind::Edit);
+
+    let permission_options =
+        ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+
+    let connection = StubAgentConnection::new()
+        .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: tool_permission_window_size(),
+    };
+
+    let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+            },
+        )
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let panel_task = workspace_window.update(cx, |_workspace, window, cx| {
+        let weak_workspace = cx.weak_entity();
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
+        let async_window_cx = window.to_async(cx);
+        agent_ui::AgentPanel::load(weak_workspace, prompt_builder, async_window_cx)
+    })?;
+
+    let panel = panel_task.await?;
+
+    workspace_window.update(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<agent_ui::AgentPanel>(window, cx);
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    workspace_window.update(cx, |_workspace, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent, window, cx);
+        });
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let thread_view = panel
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
+    let thread = thread_view
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
+        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
+
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread.send_raw("Edit the main.rs file", cx)
+    });
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    run_visual_test(
+        "tool_permission_buttons_edit_file",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await
+}
+
+/// Runs the fetch tool permission buttons visual test.
+async fn run_fetch_permission_buttons_test(
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use agent_settings::AgentSettings;
+    use settings::{NotifyWhenAgentWaiting, Settings};
+    use std::collections::HashMap;
+
+    cx.update(|cx| {
+        AgentSettings::override_global(
+            AgentSettings {
+                notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                ..AgentSettings::get_global(cx).clone()
+            },
+            cx,
+        );
+    });
+
+    let temp_dir = tempfile::tempdir()?;
+    let project_path = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    });
+
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+    add_worktree_task.await?;
+
+    let tool_call_id = acp::ToolCallId::new("fetch-1");
+    let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
+        .kind(acp::ToolKind::Fetch);
+
+    let permission_options =
+        ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+
+    let connection = StubAgentConnection::new()
+        .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: tool_permission_window_size(),
+    };
+
+    let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+            },
+        )
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let panel_task = workspace_window.update(cx, |_workspace, window, cx| {
+        let weak_workspace = cx.weak_entity();
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
+        let async_window_cx = window.to_async(cx);
+        agent_ui::AgentPanel::load(weak_workspace, prompt_builder, async_window_cx)
+    })?;
+
+    let panel = panel_task.await?;
+
+    workspace_window.update(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<agent_ui::AgentPanel>(window, cx);
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    workspace_window.update(cx, |_workspace, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent, window, cx);
+        });
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let thread_view = panel
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
+    let thread = thread_view
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
+        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
+
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread.send_raw("Fetch the gpui docs", cx)
+    });
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    run_visual_test(
+        "tool_permission_buttons_fetch",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await
+}
+
+/// Runs the terminal tool permission buttons test when no pattern can be extracted.
+async fn run_terminal_no_pattern_permission_buttons_test(
+    app_state: Arc<AppState>,
+    cx: &mut gpui::AsyncApp,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use agent_settings::AgentSettings;
+    use settings::{NotifyWhenAgentWaiting, Settings};
+    use std::collections::HashMap;
+
+    cx.update(|cx| {
+        AgentSettings::override_global(
+            AgentSettings {
+                notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                ..AgentSettings::get_global(cx).clone()
+            },
+            cx,
+        );
+    });
+
+    let temp_dir = tempfile::tempdir()?;
+    let project_path = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    });
+
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+    add_worktree_task.await?;
+
+    let tool_call_id = acp::ToolCallId::new("terminal-no-pattern-1");
+    let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
+        .kind(acp::ToolKind::Edit);
+
+    // Only 3 options - no pattern button for ./deploy.sh (starts with "./")
+    let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+        .build_permission_options();
+
+    let connection = StubAgentConnection::new()
+        .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: tool_permission_window_size(),
+    };
+
+    let workspace_window: WindowHandle<Workspace> = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+            },
+        )
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let panel_task = workspace_window.update(cx, |_workspace, window, cx| {
+        let weak_workspace = cx.weak_entity();
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
+        let async_window_cx = window.to_async(cx);
+        agent_ui::AgentPanel::load(weak_workspace, prompt_builder, async_window_cx)
+    })?;
+
+    let panel = panel_task.await?;
+
+    workspace_window.update(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<agent_ui::AgentPanel>(window, cx);
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    workspace_window.update(cx, |_workspace, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent, window, cx);
+        });
+    })?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    let thread_view = panel
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
+    let thread = thread_view
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
+        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
+
+    let _send_task = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread.send_raw("Run the deploy script", cx)
+    });
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(300))
+        .await;
+
+    cx.update_window(
+        workspace_window.into(),
+        |_view, window: &mut Window, _cx| {
+            window.refresh();
+        },
+    )?;
+
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
+
+    run_visual_test(
+        "tool_permission_buttons_terminal_no_pattern",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )
+    .await
+}
+
 /// Runs the agent panel visual test with full UI chrome.
 /// This test actually runs the real ReadFileTool to capture image output.
 async fn run_agent_thread_view_test(
@@ -731,27 +1369,28 @@ async fn run_agent_thread_view_test(
             false,
             cx,
         )
-    })?;
+    });
 
     // Add the test directory as a worktree
-    let add_worktree_task = project.update(cx, |project, cx| {
-        project.find_or_create_worktree(&project_path, true, cx)
-    })?;
-    let (worktree, _) = add_worktree_task.await?;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(&project_path, true, cx)
+        })
+        .await?;
 
     // Wait for worktree to scan and find the image file
-    let worktree_name = worktree.read_with(cx, |wt, _| wt.root_name_str().to_string())?;
+    let worktree_name = worktree.read_with(cx, |wt, _| wt.root_name_str().to_string());
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
         .await;
 
     // Create the necessary entities for the ReadFileTool
-    let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()))?;
-    let context_server_registry = cx
-        .new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx))?;
+    let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+    let context_server_registry =
+        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
     let fake_model = Arc::new(language_model::fake_provider::FakeLanguageModel::default());
-    let project_context = cx.new(|_| prompt_store::ProjectContext::default())?;
+    let project_context = cx.new(|_| prompt_store::ProjectContext::default());
 
     // Create the agent Thread
     let thread = cx.new(|cx| {
@@ -763,7 +1402,7 @@ async fn run_agent_thread_view_test(
             Some(fake_model),
             cx,
         )
-    })?;
+    });
 
     // Create the ReadFileTool
     let tool = Arc::new(agent::ReadFileTool::new(
@@ -782,10 +1421,9 @@ async fn run_agent_thread_view_test(
         start_line: None,
         end_line: None,
     };
-    let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx))?;
-
     // The tool runs async - wait for it
-    run_task.await?;
+    cx.update(|cx| tool.clone().run(input, event_stream, cx))
+        .await?;
 
     // Collect the events from the tool execution
     let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
@@ -845,7 +1483,7 @@ async fn run_agent_thread_view_test(
                 cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
-    })??;
+    })?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
@@ -873,7 +1511,7 @@ async fn run_agent_thread_view_test(
 
     // Inject the stub server and open the stub thread
     workspace_window.update(cx, |_workspace, window, cx| {
-        panel.update(cx, |panel, cx| {
+        panel.update(cx, |panel: &mut AgentPanel, cx| {
             panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
         });
     })?;
@@ -884,16 +1522,20 @@ async fn run_agent_thread_view_test(
 
     // Get the thread view and send a message
     let thread_view = panel
-        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = thread_view
-        .update(cx, |view, _cx| view.thread().cloned())?
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the image response
     thread
-        .update(cx, |thread, cx| thread.send_raw("Show me the Zed logo", cx))?
+        .update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+            thread.send_raw("Show me the Zed logo", cx)
+        })
         .await?;
 
     cx.background_executor()
@@ -902,7 +1544,7 @@ async fn run_agent_thread_view_test(
 
     // Get the tool call ID for expanding later
     let tool_call_id = thread
-        .update(cx, |thread, _cx| {
+        .update(cx, |thread: &mut acp_thread::AcpThread, _cx| {
             thread.entries().iter().find_map(|entry| {
                 if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
                     Some(tool_call.id.clone())
@@ -910,7 +1552,7 @@ async fn run_agent_thread_view_test(
                     None
                 }
             })
-        })?
+        })
         .ok_or_else(|| anyhow::anyhow!("Expected a ToolCall entry in thread for visual test"))?;
 
     // Refresh window for collapsed state
@@ -935,9 +1577,9 @@ async fn run_agent_thread_view_test(
     .await?;
 
     // Now expand the tool call so its content (the image) is visible
-    thread_view.update(cx, |view, cx| {
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpThreadView, cx| {
         view.expand_tool_call(tool_call_id, cx);
-    })?;
+    });
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))

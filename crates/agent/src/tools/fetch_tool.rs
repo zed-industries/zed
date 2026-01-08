@@ -155,7 +155,13 @@ impl AgentTool for FetchTool {
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => Some(event_stream.authorize(input.url.clone(), cx)),
+            ToolPermissionDecision::Confirm => {
+                let context = crate::ToolPermissionContext {
+                    tool_name: "fetch".to_string(),
+                    input_value: input.url.clone(),
+                };
+                Some(event_stream.authorize_with_context(input.url.clone(), context, cx))
+            }
         };
 
         let text = cx.background_spawn({

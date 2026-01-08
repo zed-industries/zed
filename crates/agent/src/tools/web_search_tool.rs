@@ -80,7 +80,11 @@ impl AgentTool for WebSearchTool {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                Some(event_stream.authorize("Searching the Web", cx))
+                let context = crate::ToolPermissionContext {
+                    tool_name: "web_search".to_string(),
+                    input_value: input.query.clone(),
+                };
+                Some(event_stream.authorize_with_context("Searching the Web", context, cx))
             }
         };
 

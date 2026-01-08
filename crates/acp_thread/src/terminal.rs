@@ -205,7 +205,7 @@ pub async fn create_terminal_entity(
                 project.environment().update(cx, |env, cx| {
                     env.directory_environment(dir.clone().into(), cx)
                 })
-            })?
+            })
             .await
             .unwrap_or_default()
     } else {
@@ -225,11 +225,9 @@ pub async fn create_terminal_entity(
                 .remote_client()
                 .and_then(|r| r.read(cx).default_system_shell())
                 .map(Shell::Program)
-        })?
+        })
         .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
-    let is_windows = project
-        .read_with(cx, |project, cx| project.path_style(cx).is_windows())
-        .unwrap_or(cfg!(windows));
+    let is_windows = project.read_with(cx, |project, cx| project.path_style(cx).is_windows());
     let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
         .redirect_stdin_to_dev_null()
         .build(Some(command.clone()), &args);
@@ -246,6 +244,6 @@ pub async fn create_terminal_entity(
                 },
                 cx,
             )
-        })?
+        })
         .await
 }

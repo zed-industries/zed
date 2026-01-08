@@ -128,7 +128,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 }
 
 fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
-    cx.update(|cx| fail_to_open_window(e, cx)).log_err();
+    cx.update(|cx| fail_to_open_window(e, cx));
 }
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
@@ -797,8 +797,7 @@ fn main() {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
                         handle_open_request(request, app_state.clone(), cx);
                     }
-                })
-                .ok();
+                });
             }
         })
         .detach();
@@ -873,7 +872,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     history_store
                         .update(&mut cx.clone(), |store, cx| {
                             store.save_thread(session_id.clone(), db_thread, cx)
-                        })?
+                        })
                         .await?;
 
                     let thread_metadata = agent::DbThreadMetadata {
@@ -1125,7 +1124,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             None,
                             cx,
                         )
-                    })?
+                    })
                     .await?;
                 }
 
@@ -1223,9 +1222,8 @@ async fn installation_id() -> Result<IdType> {
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        let use_system_window_tabs = cx
-            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
-            .unwrap_or(false);
+        let use_system_window_tabs =
+            cx.update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs);
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
@@ -1241,7 +1239,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                                 workspace::OpenOptions::default(),
                                 cx,
                             )
-                        })?;
+                        });
                         open_task.await.map(|_| ())
                     });
 
@@ -1259,7 +1257,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         cx.update(|cx| {
                             RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
-                        })?;
+                        });
                     }
                     let task = cx.spawn(async move |cx| {
                         recent_projects::open_remote_project(
@@ -1300,24 +1298,20 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             };
 
             // Try to find an active workspace to show the toast
-            let toast_shown = cx
-                .update(|cx| {
-                    if let Some(window) = cx.active_window()
-                        && let Some(workspace) = window.downcast::<Workspace>()
-                    {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                        return true;
-                    }
-                    false
-                })
-                .unwrap_or(false);
+            let toast_shown = cx.update(|cx| {
+                if let Some(window) = cx.active_window()
+                    && let Some(workspace) = window.downcast::<Workspace>()
+                {
+                    workspace
+                        .update(cx, |workspace, _, cx| {
+                            workspace
+                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                        })
+                        .ok();
+                    return true;
+                }
+                false
+            });
 
             // If we couldn't show a toast (no windows opened successfully),
             // we've already logged the errors above, so the user can check logs
@@ -1328,7 +1322,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             }
         }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_onboarding_view(app_state, cx))?.await?;
+        cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
         cx.update(|cx| {
             workspace::open_new(
@@ -1345,7 +1339,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     }
                 },
             )
-        })?
+        })
         .await?;
     }
 
@@ -1356,21 +1350,17 @@ pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
-    let mut restore_behavior = cx
-        .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
-        .ok()?;
+    let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();
-    let (last_session_id, last_session_window_stack) = cx
-        .update(|cx| {
-            let session = session_handle.read(cx);
+    let (last_session_id, last_session_window_stack) = cx.update(|cx| {
+        let session = session_handle.read(cx);
 
-            (
-                session.last_session_id().map(|id| id.to_string()),
-                session.last_session_window_stack(),
-            )
-        })
-        .ok()?;
+        (
+            session.last_session_id().map(|id| id.to_string()),
+            session.last_session_window_stack(),
+        )
+    });
 
     if last_session_id.is_none()
         && matches!(
@@ -1582,27 +1572,26 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
         let fs = fs.clone();
         async move |cx| {
-            if let Some(theme_registry) = cx.update(|cx| ThemeRegistry::global(cx)).log_err() {
-                let themes_dir = paths::themes_dir().as_ref();
-                match fs
-                    .metadata(themes_dir)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|m| m.is_dir)
-                {
-                    Some(is_dir) => {
-                        anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
-                    }
-                    None => {
-                        fs.create_dir(themes_dir).await.with_context(|| {
-                            format!("Failed to create themes dir at path {themes_dir:?}")
-                        })?;
-                    }
+            let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
+            let themes_dir = paths::themes_dir().as_ref();
+            match fs
+                .metadata(themes_dir)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.is_dir)
+            {
+                Some(is_dir) => {
+                    anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
                 }
-                theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(GlobalTheme::reload_theme)?;
+                None => {
+                    fs.create_dir(themes_dir).await.with_context(|| {
+                        format!("Failed to create themes dir at path {themes_dir:?}")
+                    })?;
+                }
             }
+            theme_registry.load_user_themes(themes_dir, fs).await?;
+            cx.update(GlobalTheme::reload_theme);
             anyhow::Ok(())
         }
     })
@@ -1619,15 +1608,16 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
 
         while let Some(paths) = events.next().await {
             for event in paths {
-                if fs.metadata(&event.path).await.ok().flatten().is_some()
-                    && let Some(theme_registry) =
-                        cx.update(|cx| ThemeRegistry::global(cx)).log_err()
-                    && let Some(()) = theme_registry
+                if fs.metadata(&event.path).await.ok().flatten().is_some() {
+                    let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
+                    if theme_registry
                         .load_user_theme(&event.path, fs.clone())
                         .await
                         .log_err()
-                {
-                    cx.update(GlobalTheme::reload_theme).log_err();
+                        .is_some()
+                    {
+                        cx.update(GlobalTheme::reload_theme);
+                    }
                 }
             }
         }

@@ -134,7 +134,7 @@ impl PrettierStore {
                     {
                         Ok(ControlFlow::Break(())) => None,
                         Ok(ControlFlow::Continue(None)) => {
-                            let default_instance = lsp_store
+                            let default_task = lsp_store
                                 .update(cx, |lsp_store, cx| {
                                     lsp_store
                                         .prettiers_per_worktree
@@ -147,8 +147,9 @@ impl PrettierStore {
                                         cx,
                                     )
                                 })
-                                .ok()?;
-                            Some((None, default_instance?.log_err().await?))
+                                .ok()??;
+                            let default_instance = default_task.await.ok()?;
+                            Some((None, default_instance))
                         }
                         Ok(ControlFlow::Continue(Some(prettier_dir))) => {
                             lsp_store
@@ -162,21 +163,22 @@ impl PrettierStore {
                                 .ok()?;
                             if let Some(prettier_task) = lsp_store
                                 .update(cx, |lsp_store, cx| {
-                                    lsp_store.prettier_instances.get_mut(&prettier_dir).map(
-                                        |existing_instance| {
+                                    lsp_store
+                                        .prettier_instances
+                                        .get_mut(&prettier_dir)
+                                        .and_then(|existing_instance| {
                                             existing_instance.prettier_task(
                                                 &node,
                                                 Some(&prettier_dir),
                                                 Some(worktree_id),
                                                 cx,
                                             )
-                                        },
-                                    )
+                                        })
                                 })
                                 .ok()?
                             {
                                 log::debug!("Found already started prettier in {prettier_dir:?}");
-                                return Some((Some(prettier_dir), prettier_task?.await.log_err()?));
+                                return Some((Some(prettier_dir), prettier_task.await.log_err()?));
                             }
 
                             log::info!("Found prettier in {prettier_dir:?}, starting.");
@@ -735,12 +737,9 @@ pub(super) async fn format_with_prettier(
 
     match prettier_task.await {
         Ok(prettier) => {
-            let buffer_path = buffer
-                .update(cx, |buffer, cx| {
-                    File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-                })
-                .ok()
-                .flatten();
+            let buffer_path = buffer.update(cx, |buffer, cx| {
+                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+            });
 
             let format_result = prettier
                 .format(buffer, buffer_path, ignore_dir, cx)

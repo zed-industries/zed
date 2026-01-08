@@ -1225,35 +1225,27 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = if let Ok(task) = project.update(cx, |this, cx| {
-                this.resolve_abs_file_path(query.path_query(), cx)
-            }) {
-                task.await.is_some()
-            } else {
-                false
-            };
+            let abs_file_exists = project
+                .update(cx, |this, cx| {
+                    this.resolve_abs_file_path(query.path_query(), cx)
+                })
+                .await
+                .is_some();
 
             if abs_file_exists {
-                let update_result = project
-                    .update(cx, |project, cx| {
-                        if let Some((worktree, relative_path)) =
-                            project.find_worktree(query_path, cx)
-                        {
-                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                                score: 1.0,
-                                positions: Vec::new(),
-                                worktree_id: worktree.read(cx).id().to_usize(),
-                                path: relative_path,
-                                path_prefix: RelPath::empty().into(),
-                                is_dir: false, // File finder doesn't support directories
-                                distance_to_relative_ancestor: usize::MAX,
-                            }));
-                        }
-                    })
-                    .log_err();
-                if update_result.is_none() {
-                    return abs_file_exists;
-                }
+                project.update(cx, |project, cx| {
+                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                        path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                            score: 1.0,
+                            positions: Vec::new(),
+                            worktree_id: worktree.read(cx).id().to_usize(),
+                            path: relative_path,
+                            path_prefix: RelPath::empty().into(),
+                            is_dir: false, // File finder doesn't support directories
+                            distance_to_relative_ancestor: usize::MAX,
+                        }));
+                    }
+                });
             }
 
             picker

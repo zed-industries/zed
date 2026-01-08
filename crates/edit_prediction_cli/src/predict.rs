@@ -78,9 +78,9 @@ pub async fn run_prediction(
             .await;
     }
 
-    let ep_store = cx.update(|cx| {
-        EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-    })??;
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx))
+        .context("EditPredictionStore not initialized")?;
 
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
@@ -93,7 +93,7 @@ pub async fn run_prediction(
             }
         };
         store.set_edit_prediction_model(model);
-    })?;
+    });
     step_progress.set_substatus("configuring model");
     let state = example.state.as_ref().context("state must be set")?;
     let run_dir = RUN_DIR.join(&example.spec.name);
@@ -101,8 +101,7 @@ pub async fn run_prediction(
     let updated_example = Arc::new(Mutex::new(example.clone()));
     let current_run_ix = Arc::new(AtomicUsize::new(0));
 
-    let mut debug_rx =
-        ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx))?;
+    let mut debug_rx = ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx));
     let debug_task = cx.background_spawn({
         let updated_example = updated_example.clone();
         let current_run_ix = current_run_ix.clone();
@@ -185,7 +184,7 @@ pub async fn run_prediction(
                     cloud_llm_client::PredictEditsRequestTrigger::Cli,
                     cx,
                 )
-            })?
+            })
             .await?;
 
         let actual_patch = prediction
@@ -219,7 +218,7 @@ pub async fn run_prediction(
 
     ep_store.update(&mut cx, |store, _| {
         store.remove_project(&state.project);
-    })?;
+    });
     debug_task.await?;
 
     *example = Arc::into_inner(updated_example)

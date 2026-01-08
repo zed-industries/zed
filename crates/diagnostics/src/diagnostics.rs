@@ -360,7 +360,7 @@ impl ProjectDiagnosticsEditor {
                 };
 
                 if let Some(buffer) = project_handle
-                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
                     .await
                     .log_err()
                 {
@@ -1088,9 +1088,8 @@ async fn heuristic_syntactic_expand(
             return Some(node_row_range);
         } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
             // Expand to the nearest dedent or blank line for statements and declarations.
-            let tab_size = cx
-                .update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get())
-                .ok()?;
+            let tab_size =
+                cx.update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get());
             let indent_level = snapshot
                 .line_indent_for_row(node_range.start.row)
                 .len(tab_size);

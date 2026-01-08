@@ -24,27 +24,20 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
             }
 
             if let Some(incoming_call) = incoming_call {
-                let unique_screens = cx.update(|cx| cx.displays()).unwrap();
+                let unique_screens = cx.update(|cx| cx.displays());
                 let window_size = gpui::Size {
                     width: px(400.),
                     height: px(72.),
                 };
 
                 for screen in unique_screens {
-                    if let Some(options) = cx
-                        .update(|cx| notification_window_options(screen, window_size, cx))
-                        .log_err()
-                    {
-                        let window = cx
-                            .open_window(options, |_, cx| {
-                                cx.new(|_| {
-                                    IncomingCallNotification::new(
-                                        incoming_call.clone(),
-                                        app_state.clone(),
-                                    )
-                                })
-                            })
-                            .unwrap();
+                    let options =
+                        cx.update(|cx| notification_window_options(screen, window_size, cx));
+                    if let Ok(window) = cx.open_window(options, |_, cx| {
+                        cx.new(|_| {
+                            IncomingCallNotification::new(incoming_call.clone(), app_state.clone())
+                        })
+                    }) {
                         notification_windows.push(window);
                     }
                 }
@@ -88,8 +81,7 @@ impl IncomingCallNotificationState {
                             )
                             .detach_and_log_err(cx);
                         }
-                    })
-                    .log_err();
+                    });
                 }
                 anyhow::Ok(())
             })

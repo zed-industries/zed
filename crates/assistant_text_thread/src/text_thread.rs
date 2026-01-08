@@ -1263,7 +1263,7 @@ impl TextThread {
                 }
 
                 let token_count = cx
-                    .update(|cx| model.model.count_tokens(request, cx))?
+                    .update(|cx| model.model.count_tokens(request, cx))
                     .await?;
                 this.update(cx, |this, cx| {
                     this.token_count = Some(token_count);

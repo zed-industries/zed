@@ -43,7 +43,7 @@ pub fn load_agent_thread(
     cx.spawn(async move |cx| {
         let (agent, _) = connection.await?;
         let agent = agent.downcast::<crate::NativeAgentConnection>().unwrap();
-        cx.update(|cx| agent.load_thread(session_id, cx))?.await
+        cx.update(|cx| agent.load_thread(session_id, cx)).await
     })
 }
 

@@ -124,7 +124,7 @@ impl TextThreadStore {
                 this.register_context_server_handlers(cx);
                 this.reload(cx).detach_and_log_err(cx);
                 this
-            })?;
+            });
 
             Ok(this)
         })
@@ -166,7 +166,8 @@ impl TextThreadStore {
                 })
                 .collect();
             cx.notify();
-        })
+        });
+        Ok(())
     }
 
     async fn handle_open_context(
@@ -196,7 +197,7 @@ impl TextThreadStore {
                     .read(cx)
                     .serialize_ops(&TextThreadVersion::default(), cx),
             )
-        })??;
+        })?;
         let operations = operations.await;
         Ok(proto::OpenContextResponse {
             context: Some(proto::Context { operations }),
@@ -224,7 +225,7 @@ impl TextThreadStore {
                     .read(cx)
                     .serialize_ops(&TextThreadVersion::default(), cx),
             ))
-        })??;
+        })?;
         let operations = operations.await;
         Ok(proto::CreateContextResponse {
             context_id: context_id.to_proto(),
@@ -245,7 +246,7 @@ impl TextThreadStore {
                 text_thread.update(cx, |text_thread, cx| text_thread.apply_ops([operation], cx));
             }
             Ok(())
-        })?
+        })
     }
 
     async fn handle_synchronize_contexts(
@@ -290,7 +291,7 @@ impl TextThreadStore {
             anyhow::Ok(proto::SynchronizeContextsResponse {
                 contexts: local_versions,
             })
-        })?
+        })
     }
 
     fn handle_project_shared(&mut self, cx: &mut Context<Self>) {
@@ -416,7 +417,7 @@ impl TextThreadStore {
                     Some(project),
                     cx,
                 )
-            })?;
+            });
             let operations = cx
                 .background_spawn(async move {
                     context_proto
@@ -426,7 +427,7 @@ impl TextThreadStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx))?;
+            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx));
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_id(&context_id, cx) {
                     existing_context
@@ -473,7 +474,7 @@ impl TextThreadStore {
                     Some(project),
                     cx,
                 )
-            })?;
+            });
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_path(&path, cx) {
                     existing_context
@@ -580,7 +581,7 @@ impl TextThreadStore {
                     Some(project),
                     cx,
                 )
-            })?;
+            });
             let operations = cx
                 .background_spawn(async move {
                     context_proto
@@ -590,7 +591,7 @@ impl TextThreadStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx))?;
+            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx));
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_id(&text_thread_id, cx)
                 {
