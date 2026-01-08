@@ -1,4 +1,4 @@
-use std::{ops::Range, rc::Rc, sync::Arc};
+use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
@@ -320,7 +320,19 @@ impl TableInteractionState {
         }
     }
 
-    // This method is clone heavy after de-const-generification due to lifetime issues. TODO: remove needless clones
+    /// Renders invisible resize handles overlaid on top of table content.
+    ///
+    /// - Spacer: invisible element that matches the width of table column content
+    /// - Divider: contains the actual resize handle that users can drag to resize columns
+    ///
+    /// Structure: [spacer] [divider] [spacer] [divider] [spacer]
+    ///
+    /// Business logic:
+    /// 1. Creates spacers matching each column width
+    /// 2. Intersperses (inserts) resize handles between spacers (interactive only for resizable columns)
+    /// 3. Each handle supports hover highlighting, double-click to reset, and drag to resize
+    /// 4. Returns an absolute-positioned overlay that sits on top of table content
+    // TODO: improve glossary: spacers and dividers are too confusing
     fn render_resize_handles(
         &self,
         column_widths: &TableRow<Length>,
@@ -336,14 +348,14 @@ impl TableInteractionState {
             .map(|width| base_cell_style(Some(*width)).into_any_element());
 
         let mut column_ix = 0;
-        let resizable_columns_owned = Arc::new(resizable_columns.clone());
-        let initial_sizes_owned = Arc::new(initial_sizes.clone());
-        let resizable_columns_slice = resizable_columns.as_slice();
-        let mut resizable_columns_iter = resizable_columns_slice.iter();
+        let resizable_columns_shared = Rc::new(resizable_columns.clone());
+        let initial_sizes_shared = Rc::new(initial_sizes.clone());
+        let mut resizable_columns_iter = resizable_columns.as_slice().iter();
 
+        // Insert dividers between spacers (column content)
         let dividers = intersperse_with(spacers, || {
-            let resizable_columns = Arc::clone(&resizable_columns_owned);
-            let initial_sizes = Arc::clone(&initial_sizes_owned);
+            let resizable_columns = Rc::clone(&resizable_columns_shared);
+            let initial_sizes = Rc::clone(&initial_sizes_shared);
             window.with_id(column_ix, |window| {
                 let mut resize_divider = div()
                     // This is required because this is evaluated at a different time than the use_state call above
@@ -377,8 +389,6 @@ impl TableInteractionState {
                         .when_some(columns.clone(), |this, columns| {
                             this.on_click(move |event, window, cx| {
                                 if event.click_count() >= 2 {
-                                    let resizable_columns = resizable_columns.clone();
-                                    let initial_sizes = initial_sizes.clone();
                                     columns.update(cx, |columns, _| {
                                         columns.on_double_click(
                                             column_ix,
