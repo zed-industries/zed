@@ -18,7 +18,7 @@ use project::{
 use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use std::{path::PathBuf, sync::Arc};
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 
