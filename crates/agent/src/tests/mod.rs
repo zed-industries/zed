@@ -136,6 +136,37 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     }
 }
 
+/// Environment that creates multiple independent terminal handles for testing concurrent terminals.
+struct MultiTerminalEnvironment {
+    handles: std::cell::RefCell<Vec<Rc<FakeTerminalHandle>>>,
+}
+
+impl MultiTerminalEnvironment {
+    fn new() -> Self {
+        Self {
+            handles: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    fn handles(&self) -> Vec<Rc<FakeTerminalHandle>> {
+        self.handles.borrow().clone()
+    }
+}
+
+impl crate::ThreadEnvironment for MultiTerminalEnvironment {
+    fn create_terminal(
+        &self,
+        _command: String,
+        _cwd: Option<std::path::PathBuf>,
+        _output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        self.handles.borrow_mut().push(handle.clone());
+        Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
+    }
+}
+
 fn always_allow_tools(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -1666,9 +1697,96 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     ));
     fake_model.end_last_completion_stream();
 
-    // Wait for the terminal tool to start running by polling events
-    let mut terminal_started = false;
-    for _ in 0..100 {
+    // Wait for the terminal tool to start running
+    wait_for_terminal_tool_started(&mut events, cx).await;
+
+    // Cancel the thread while the terminal is running and await completion
+    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+
+    // Collect remaining events, driving the executor to let cancellation complete
+    let remaining_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify the terminal was killed
+    assert!(
+        handle.was_killed(),
+        "expected terminal handle to be killed on cancellation"
+    );
+
+    // Verify we got a cancellation stop event
+    assert_eq!(
+        stop_events(remaining_events),
+        vec![acp::StopReason::Cancelled],
+    );
+
+    // Verify the tool result contains the terminal output, not just "Tool canceled by user"
+    thread.update(cx, |thread, _cx| {
+        let message = thread.last_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+
+        let tool_use = agent_message
+            .content
+            .iter()
+            .find_map(|content| match content {
+                AgentMessageContent::ToolUse(tool_use) => Some(tool_use),
+                _ => None,
+            })
+            .expect("expected tool use in agent message");
+
+        let tool_result = agent_message
+            .tool_results
+            .get(&tool_use.id)
+            .expect("expected tool result");
+
+        let result_text = match &tool_result.content {
+            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
+            _ => panic!("expected text content in tool result"),
+        };
+
+        assert!(
+            result_text.contains("partial output"),
+            "expected tool result to contain terminal output, got: {result_text}"
+        );
+        assert!(
+            result_text.contains("user stopped"),
+            "expected tool result to indicate user stopped, got: {result_text}"
+        );
+    });
+
+    // Verify we can send a new message after cancellation (recovery)
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Testing: reply with 'Hello' then stop."],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hello");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let events = events.collect::<Vec<_>>().await;
+    thread.update(cx, |thread, _cx| {
+        let message = thread.last_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+        assert_eq!(
+            agent_message.content,
+            vec![AgentMessageContent::Text("Hello".to_string())]
+        );
+    });
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+/// Waits for a terminal tool to start by watching for a ToolCallUpdate with terminal content.
+async fn wait_for_terminal_tool_started(
+    events: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    cx: &mut TestAppContext,
+) {
+    let deadline = cx.executor().num_cpus() * 100; // Scale with available parallelism
+    for _ in 0..deadline {
         cx.run_until_parked();
 
         while let Some(Some(event)) = events.next().now_or_never() {
@@ -1681,48 +1799,182 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
                         .iter()
                         .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
                 }) {
-                    terminal_started = true;
-                    break;
+                    return;
                 }
             }
         }
-        if terminal_started {
-            break;
-        }
+
         cx.background_executor
             .timer(Duration::from_millis(10))
             .await;
     }
-    assert!(terminal_started, "terminal tool should have started");
+    panic!("terminal tool did not start within the expected time");
+}
 
-    // Cancel the thread while the terminal is running.
-    // Detach the cancel task and collect events while it runs.
-    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+/// Collects events until a Stop event is received, driving the executor to completion.
+async fn collect_events_until_stop(
+    events: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    cx: &mut TestAppContext,
+) -> Vec<Result<ThreadEvent>> {
+    let mut collected = Vec::new();
+    let deadline = cx.executor().num_cpus() * 200;
 
-    // Drive the executor and collect events until we see the Stop event
-    let mut remaining_events = Vec::new();
-    for _ in 0..200 {
-        // Advance the clock to let timers fire (for the fake terminal's wait_for_exit)
+    for _ in 0..deadline {
         cx.executor().advance_clock(Duration::from_millis(10));
         cx.run_until_parked();
 
-        // Collect any available events
         while let Some(Some(event)) = events.next().now_or_never() {
             let is_stop = matches!(&event, Ok(ThreadEvent::Stop(_)));
-            remaining_events.push(event);
+            collected.push(event);
             if is_stop {
-                break;
+                return collected;
             }
         }
-
-        // Check if we got the stop event
-        if remaining_events
-            .iter()
-            .any(|e| matches!(e, Ok(ThreadEvent::Stop(_))))
-        {
-            break;
-        }
     }
+    panic!(
+        "did not receive Stop event within the expected time; collected {} events",
+        collected.len()
+    );
+}
+
+#[gpui::test]
+async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    let fake_model = model.as_fake();
+
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let environment = Rc::new(FakeThreadEnvironment {
+        handle: handle.clone(),
+    });
+
+    let message_id = UserMessageId::new();
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(crate::TerminalTool::new(
+                thread.project().clone(),
+                environment,
+            ));
+            thread.send(message_id.clone(), ["run a command"], cx)
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Simulate the model calling the terminal tool
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "terminal_tool_1".into(),
+            name: "terminal".into(),
+            raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
+            input: json!({"command": "sleep 1000", "cd": "."}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Wait for the terminal tool to start running
+    wait_for_terminal_tool_started(&mut events, cx).await;
+
+    // Truncate the thread while the terminal is running
+    thread
+        .update(cx, |thread, cx| thread.truncate(message_id, cx))
+        .unwrap();
+
+    // Drive the executor to let cancellation complete
+    let _ = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify the terminal was killed
+    assert!(
+        handle.was_killed(),
+        "expected terminal handle to be killed on truncate"
+    );
+
+    // Verify the thread is empty after truncation
+    thread.update(cx, |thread, _cx| {
+        assert_eq!(
+            thread.to_markdown(),
+            "",
+            "expected thread to be empty after truncating the only message"
+        );
+    });
+
+    // Verify we can send a new message after truncation (recovery)
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Testing: reply with 'Hello' then stop."],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hello");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let events = events.collect::<Vec<_>>().await;
+    thread.update(cx, |thread, _cx| {
+        let message = thread.last_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+        assert_eq!(
+            agent_message.content,
+            vec![AgentMessageContent::Text("Hello".to_string())]
+        );
+    });
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_terminal_tool_cancellation_with_timeout_configured(cx: &mut TestAppContext) {
+    // Tests that user cancellation works correctly even when a timeout is configured.
+    // The cancellation should take precedence and the output should indicate user stopped,
+    // not timeout.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    let fake_model = model.as_fake();
+
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let environment = Rc::new(FakeThreadEnvironment {
+        handle: handle.clone(),
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(crate::TerminalTool::new(
+                thread.project().clone(),
+                environment,
+            ));
+            thread.send(UserMessageId::new(), ["run a command with timeout"], cx)
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Simulate the model calling the terminal tool WITH a timeout
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "terminal_tool_1".into(),
+            name: "terminal".into(),
+            raw_input: r#"{"command": "sleep 1000", "cd": ".", "timeout_ms": 60000}"#.into(),
+            input: json!({"command": "sleep 1000", "cd": ".", "timeout_ms": 60000}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Wait for the terminal tool to start running
+    wait_for_terminal_tool_started(&mut events, cx).await;
+
+    // Cancel before the timeout fires
+    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+
+    // Collect remaining events
+    let remaining_events = collect_events_until_stop(&mut events, cx).await;
 
     // Verify the terminal was killed
     assert!(
@@ -1730,35 +1982,26 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
         "expected terminal handle to be killed on cancellation"
     );
 
-    // Verify we got a cancellation stop event
-    let last_event = remaining_events.last();
-    assert!(
-        matches!(
-            last_event,
-            Some(Ok(ThreadEvent::Stop(acp::StopReason::Cancelled)))
-        ),
-        "expected cancellation stop event, got: {last_event:?}"
+    // Verify we got a cancellation stop event (not timeout)
+    assert_eq!(
+        stop_events(remaining_events),
+        vec![acp::StopReason::Cancelled],
     );
 
-    // Verify the tool result contains the terminal output, not just "Tool canceled by user"
+    // Verify the tool result indicates user stopped (not timeout)
     thread.update(cx, |thread, _cx| {
         let message = thread.last_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
 
-        // Find the tool use in the content
         let tool_use = agent_message
             .content
             .iter()
-            .find_map(|content| {
-                if let AgentMessageContent::ToolUse(tool_use) = content {
-                    Some(tool_use)
-                } else {
-                    None
-                }
+            .find_map(|content| match content {
+                AgentMessageContent::ToolUse(tool_use) => Some(tool_use),
+                _ => None,
             })
             .expect("expected tool use in agent message");
 
-        // Get the tool result
         let tool_result = agent_message
             .tool_results
             .get(&tool_use.id)
@@ -1769,18 +2012,125 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
             _ => panic!("expected text content in tool result"),
         };
 
-        // The result should contain the terminal output ("partial output" from FakeTerminalHandle)
-        assert!(
-            result_text.contains("partial output"),
-            "expected tool result to contain terminal output, got: {result_text}"
-        );
-
-        // The result should indicate the user stopped the command
+        // Should indicate user stopped, NOT timeout
         assert!(
             result_text.contains("user stopped"),
             "expected tool result to indicate user stopped, got: {result_text}"
         );
+        assert!(
+            !result_text.contains("timed out"),
+            "tool result should not mention timeout when user cancelled, got: {result_text}"
+        );
     });
+}
+
+#[gpui::test]
+async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext) {
+    // Tests that cancellation properly kills all running terminal tools when multiple are active.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    let fake_model = model.as_fake();
+
+    let environment = Rc::new(MultiTerminalEnvironment::new());
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(crate::TerminalTool::new(
+                thread.project().clone(),
+                environment.clone(),
+            ));
+            thread.send(UserMessageId::new(), ["run multiple commands"], cx)
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Simulate the model calling two terminal tools
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "terminal_tool_1".into(),
+            name: "terminal".into(),
+            raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
+            input: json!({"command": "sleep 1000", "cd": "."}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "terminal_tool_2".into(),
+            name: "terminal".into(),
+            raw_input: r#"{"command": "sleep 2000", "cd": "."}"#.into(),
+            input: json!({"command": "sleep 2000", "cd": "."}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Wait for both terminal tools to start by counting terminal content updates
+    let mut terminals_started = 0;
+    let deadline = cx.executor().num_cpus() * 100;
+    for _ in 0..deadline {
+        cx.run_until_parked();
+
+        while let Some(Some(event)) = events.next().now_or_never() {
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+                update,
+            ))) = &event
+            {
+                if update.fields.content.as_ref().is_some_and(|content| {
+                    content
+                        .iter()
+                        .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                }) {
+                    terminals_started += 1;
+                    if terminals_started >= 2 {
+                        break;
+                    }
+                }
+            }
+        }
+        if terminals_started >= 2 {
+            break;
+        }
+
+        cx.background_executor
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    assert!(
+        terminals_started >= 2,
+        "expected 2 terminal tools to start, got {terminals_started}"
+    );
+
+    // Cancel the thread while both terminals are running
+    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+
+    // Collect remaining events
+    let remaining_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify both terminal handles were killed
+    let handles = environment.handles();
+    assert_eq!(
+        handles.len(),
+        2,
+        "expected 2 terminal handles to be created"
+    );
+    assert!(
+        handles[0].was_killed(),
+        "expected first terminal handle to be killed on cancellation"
+    );
+    assert!(
+        handles[1].was_killed(),
+        "expected second terminal handle to be killed on cancellation"
+    );
+
+    // Verify we got a cancellation stop event
+    assert_eq!(
+        stop_events(remaining_events),
+        vec![acp::StopReason::Cancelled],
+    );
 }
 
 #[gpui::test]
