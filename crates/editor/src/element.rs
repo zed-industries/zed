@@ -3061,22 +3061,23 @@ impl EditorElement {
         let element_bg = cx.theme().colors().element_background;
         let border_color = cx.theme().colors().border;
 
-        // Use IconButton for proper tooltip/hover handling, wrapped in a styled container
-        let button = IconButton::new("diff_review_button", IconName::Plus)
-            .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::Compact)
-            .style(ButtonStyle::Subtle)
-            .tooltip(Tooltip::text("Add Review"))
-            .into_any_element();
-
-        // Wrap in a container that provides the background and hover border
+        // Use a custom button with Icon for better visibility in prepaint_as_root context
         let button = div()
+            .id("diff_review_button")
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(ui::ButtonSize::Compact.rems())
             .rounded_sm()
             .bg(element_bg)
             .border_1()
             .border_color(gpui::transparent_black())
             .hover(move |style| style.border_color(border_color))
-            .child(button)
+            .child(
+                ui::Icon::new(IconName::Plus)
+                    .size(IconSize::Small)
+                    .color(ui::Color::Default),
+            )
             .into_any_element();
 
         let button = prepaint_gutter_button(

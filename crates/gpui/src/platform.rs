@@ -20,6 +20,9 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -81,6 +84,8 @@ pub(crate) use linux::*;
 pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub(crate) use visual_test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 

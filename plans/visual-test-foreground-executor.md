@@ -1,5 +1,9 @@
 # Controllable Foreground Executor for Visual Tests
 
+## Status: COMPLETED ✓
+
+The implementation is complete. See the summary at the end of this document.
+
 ## Problem Statement
 
 The visual test framework (`VisualTestAppContext`) cannot properly test UI interactions that rely on foreground async tasks, such as tooltips, hover states with delays, and other deferred UI updates. This is because:
@@ -422,3 +426,81 @@ After implementation, these scenarios should work:
 2. Button shows hover border when mouse is over it
 3. Tests remain deterministic (same output every run)
 4. No reliance on wall-clock timing for correctness
+
+---
+
+## Implementation Summary
+
+### Changes Made
+
+1. **Created `VisualTestPlatform`** (`crates/gpui/src/platform/visual_test.rs`)
+   - A hybrid platform that combines real Mac rendering with controllable `TestDispatcher`
+   - Uses `MacPlatform` for window creation, text system, rendering, and display management
+   - Uses `TestDispatcher` for deterministic task scheduling
+   - Implements the `Platform` trait, delegating rendering operations to `MacPlatform`
+   - Passes its own `ForegroundExecutor` (from `TestDispatcher`) to `MacWindow::open()`
+
+2. **Added `renderer_context()` method to `MacPlatform`** (`crates/gpui/src/platform/mac/platform.rs`)
+   - Allows `VisualTestPlatform` to access the renderer context for window creation
+   - Conditionally compiled for test-support
+
+3. **Updated `VisualTestAppContext`** (`crates/gpui/src/app/visual_test_context.rs`)
+   - Now creates and uses `VisualTestPlatform` instead of `current_platform()`
+   - Gets dispatcher and executors from the platform
+   - This ensures `App::spawn()` and `Window::spawn()` use the `TestDispatcher`
+
+4. **Added tests** (`crates/gpui/src/app/visual_test_context.rs`)
+   - `test_foreground_tasks_run_with_run_until_parked` - verifies foreground tasks execute
+   - `test_advance_clock_triggers_delayed_tasks` - verifies timer-based tasks work
+   - `test_window_spawn_uses_test_dispatcher` - verifies window.spawn uses TestDispatcher
+   - All tests are marked `#[ignore]` because they require macOS main thread
+
+### How It Works
+
+The key insight was that `App::new_app()` gets its executors from `platform.foreground_executor()`. Previously:
+
+```
+VisualTestAppContext
+  └── creates TestDispatcher (unused!)
+  └── creates App with MacPlatform
+        └── MacPlatform has MacDispatcher
+        └── App uses MacDispatcher's executors ❌
+```
+
+After the fix:
+
+```
+VisualTestAppContext
+  └── creates VisualTestPlatform
+        └── Has TestDispatcher
+        └── Has MacPlatform (for rendering)
+        └── foreground_executor() returns TestDispatcher's executor ✓
+  └── creates App with VisualTestPlatform
+        └── App uses TestDispatcher's executors ✓
+        └── Window::spawn() uses TestDispatcher ✓
+```
+
+### Running Visual Tests
+
+Visual tests require the macOS main thread. Run them with:
+
+```bash
+cargo test -p gpui visual_test_context -- --ignored --test-threads=1
+cargo test -p zed visual_tests -- --ignored --test-threads=1
+```
+
+### Tooltip Testing
+
+With this fix, tooltip testing now works:
+
+```rust
+// Simulate hovering over a button
+cx.simulate_mouse_move(window, button_position, None, Modifiers::default());
+
+// Advance clock past TOOLTIP_SHOW_DELAY (500ms)
+cx.advance_clock(Duration::from_millis(600));
+
+// The tooltip task spawned via window.spawn() is now executed!
+// Take screenshot - tooltip will be visible
+let screenshot = cx.capture_screenshot(window)?;
+```

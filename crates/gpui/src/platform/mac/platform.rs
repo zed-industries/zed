@@ -440,6 +440,11 @@ impl MacPlatform {
             version.patchVersion,
         )
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn renderer_context(&self) -> renderer::Context {
+        self.0.lock().renderer_context.clone()
+    }
 }
 
 impl Platform for MacPlatform {
