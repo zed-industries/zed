@@ -2989,10 +2989,19 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
+        eprintln!(
+            "[DEBUG] layout_breakpoints called with {} breakpoints, range {:?}",
+            breakpoints.len(),
+            range
+        );
         self.editor.update(cx, |editor, cx| {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp, state))| {
+                    eprintln!(
+                        "[DEBUG] Processing breakpoint at display_row {:?}",
+                        display_row
+                    );
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
                         .is_some_and(|row_info| {
@@ -3006,6 +3015,10 @@ impl EditorElement {
                     }
 
                     if range.start > display_row || range.end < display_row {
+                        eprintln!(
+                            "[DEBUG] Breakpoint at row {:?} filtered out: not in range {:?}",
+                            display_row, range
+                        );
                         return None;
                     }
 
@@ -3015,6 +3028,10 @@ impl EditorElement {
                         return None;
                     }
 
+                    eprintln!(
+                        "[DEBUG] Creating breakpoint button at display_row {:?}",
+                        display_row
+                    );
                     let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
@@ -3058,20 +3075,13 @@ impl EditorElement {
         let max_point = snapshot.display_snapshot.max_point();
         let last_row = max_point.row();
 
-        let button = div()
-            .id("diff_review_button")
-            .flex()
-            .items_center()
-            .justify_center()
-            .w(px(20.0))
-            .h(px(20.0))
-            .rounded(px(4.0))
-            .bg(cx.theme().colors().element_background)
-            .text_color(cx.theme().colors().text)
-            .text_size(px(14.0))
-            .font_weight(gpui::FontWeight::BOLD)
-            .child("+")
-            .tooltip(|window, cx| ui::Tooltip::text("Add Review")(window, cx))
+        let button = IconButton::new("diff_review_button", ui::IconName::Plus)
+            .icon_size(ui::IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(ui::Color::Default)
+            .style(ui::ButtonStyle::Filled)
+            .layer(ui::ElevationIndex::Surface)
+            .tooltip(Tooltip::text("Add Review"))
             .into_any_element();
 
         let button = prepaint_gutter_button(
@@ -3175,11 +3185,18 @@ impl EditorElement {
                         return None;
                     }
 
+                    let removed_breakpoint = breakpoints.remove(&display_row);
+                    if removed_breakpoint.is_some() {
+                        eprintln!(
+                            "[DEBUG] layout_run_indicators: REMOVING breakpoint at row {:?} for run indicator",
+                            display_row
+                        );
+                    }
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
-                        breakpoints.remove(&display_row),
+                        removed_breakpoint,
                         cx,
                     );
 
@@ -6523,7 +6540,16 @@ impl EditorElement {
                 }
             });
 
+            eprintln!(
+                "[DEBUG] paint_gutter_indicators: painting {} breakpoints, gutter_hitbox.bounds=({:.2}, {:.2}, {:.2}, {:.2})",
+                layout.breakpoints.len(),
+                layout.gutter_hitbox.bounds.origin.x,
+                layout.gutter_hitbox.bounds.origin.y,
+                layout.gutter_hitbox.bounds.size.width,
+                layout.gutter_hitbox.bounds.size.height
+            );
             for breakpoint in layout.breakpoints.iter_mut() {
+                eprintln!("[DEBUG] painting breakpoint element");
                 breakpoint.paint(window, cx);
             }
 
@@ -8310,12 +8336,18 @@ fn prepaint_gutter_button(
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
     y += (line_height - indicator_size.height) / 2.;
 
-    button.prepaint_as_root(
-        gutter_hitbox.origin + point(x, y),
-        available_space,
-        window,
-        cx,
+    let final_origin = gutter_hitbox.origin + point(x, y);
+    eprintln!(
+        "[DEBUG] prepaint_gutter_button: row={:?}, origin=({:.2}, {:.2}), size=({:.2}, {:.2}), gutter_hitbox.origin=({:.2}, {:.2})",
+        row,
+        final_origin.x,
+        final_origin.y,
+        indicator_size.width,
+        indicator_size.height,
+        gutter_hitbox.origin.x,
+        gutter_hitbox.origin.y
     );
+    button.prepaint_as_root(final_origin, available_space, window, cx);
     button
 }
 
@@ -9753,16 +9785,28 @@ impl Element for EditorElement {
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
                     self.editor.update(cx, |editor, _| {
+                        let indicator = &editor.gutter_breakpoint_indicator.0;
+                        eprintln!(
+                            "[DEBUG] Checking phantom breakpoint: indicator={:?}",
+                            indicator.as_ref().map(|i| (i.display_row, i.is_active))
+                        );
                         if let Some(phantom_breakpoint) = &mut editor
                             .gutter_breakpoint_indicator
                             .0
                             .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
                         {
+                            eprintln!(
+                                "[DEBUG] Phantom breakpoint is active at row {:?}",
+                                phantom_breakpoint.display_row
+                            );
                             // Is there a non-phantom breakpoint on this line?
                             phantom_breakpoint.collides_with_existing_breakpoint = true;
                             breakpoint_rows
                                 .entry(phantom_breakpoint.display_row)
                                 .or_insert_with(|| {
+                                    eprintln!(
+                                        "[DEBUG] Inserting phantom breakpoint into breakpoint_rows"
+                                    );
                                     let position = snapshot.display_point_to_anchor(
                                         DisplayPoint::new(phantom_breakpoint.display_row, 0),
                                         Bias::Right,
@@ -10337,6 +10381,16 @@ impl Element for EditorElement {
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
+                    eprintln!(
+                        "[DEBUG] Before layout_breakpoints: show_breakpoints={}, gutter_settings.breakpoints={}, gutter_settings.runnables={}, breakpoint_rows.len()={}",
+                        show_breakpoints,
+                        gutter_settings.breakpoints,
+                        gutter_settings.runnables,
+                        breakpoint_rows.len()
+                    );
+                    for (row, _) in &breakpoint_rows {
+                        eprintln!("[DEBUG] breakpoint_rows contains row {:?}", row);
+                    }
                     let breakpoints = if show_breakpoints {
                         self.layout_breakpoints(
                             line_height,
@@ -10354,6 +10408,10 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
+                    eprintln!(
+                        "[DEBUG] After layout_breakpoints: breakpoints.len()={}",
+                        breakpoints.len()
+                    );
 
                     let diff_review_button = self.layout_diff_review_button(
                         line_height,

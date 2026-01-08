@@ -117,6 +117,15 @@ impl Element for Svg {
             window,
             cx,
             |style, window, cx| {
+                eprintln!(
+                    "[DEBUG] SVG paint: path={:?}, has_color={}, bounds=({:.2}, {:.2}, {:.2}, {:.2})",
+                    self.path,
+                    style.text.color.is_some(),
+                    bounds.origin.x,
+                    bounds.origin.y,
+                    bounds.size.width,
+                    bounds.size.height
+                );
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     let transformation = self
                         .transformation
@@ -126,6 +135,14 @@ impl Element for Svg {
                         })
                         .unwrap_or_default();
 
+                    eprintln!(
+                        "[DEBUG] SVG painting embedded: path={}, color=(h={:.2}, s={:.2}, l={:.2}, a={:.2})",
+                        path,
+                        color.h,
+                        color.s,
+                        color.l,
+                        color.a
+                    );
                     window
                         .paint_svg(bounds, path.clone(), None, transformation, color, cx)
                         .log_err();
