@@ -489,8 +489,10 @@ impl LanguageServerState {
                             let metadata_label = metadata_label.clone();
                             move |_, _| {
                                 h_flex()
+                                    .id("metadata-container")
                                     .ml_neg_1()
                                     .gap_1()
+                                    .max_w_56()
                                     .child(
                                         Icon::new(IconName::Circle)
                                             .color(status_color)
@@ -511,8 +513,10 @@ impl LanguageServerState {
                                             .child(
                                                 Label::new(metadata)
                                                     .size(LabelSize::Small)
-                                                    .color(Color::Muted),
+                                                    .color(Color::Muted)
+                                                    .truncate(),
                                             )
+                                            .tooltip(Tooltip::text(metadata.clone()))
                                     })
                                     .into_any_element()
                             }
