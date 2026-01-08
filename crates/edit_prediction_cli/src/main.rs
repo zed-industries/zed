@@ -602,7 +602,7 @@ async fn handle_error(
     let msg = format!(
         indoc::indoc! {"
             While processing \"{}\".
-                Error file: \x1b[36m{}\x1b[0m.
+                Error file: \x1b[36m{}\x1b[0m
                 Cursor File: \x1b[36m{}\x1b[0m
                 Explore this example data with: fx \x1b[36m{}\x1b[0m
                 Re-run this example with: cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
