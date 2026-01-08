@@ -47,7 +47,7 @@ cx.executor().run_until_parked();  // <-- ADD THIS LINE
 - [ ] `extension_host extension_store_test::test_extension_store_with_test_extension`
 - [ ] `project_panel project_panel_tests::test_drag_marked_entries_in_folded_directories`
 - [ ] `terminal tests::test_terminal_no_exit_on_spawn_failure`
-- [ ] `workspace tests::test_moving_items_can_clone_panes`
+- [x] `workspace tests::test_moving_items_can_clone_panes`
 
 ## Interrupted Tests (3)
 These may also need the same fix or have other timing issues:
