@@ -443,8 +443,11 @@ fn main() {
                 let mut examples =
                     load_examples(app_state.client.http_client(), &args, output.as_ref()).await?;
 
-                if let Command::Predict(args) = &command {
-                    predict::sync_batches(&args.provider).await?;
+                match &command {
+                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                        predict::sync_batches(&args.provider).await?;
+                    }
+                    _ => (),
                 }
 
                 let failfast_on_single_example = examples.len() == 1;
@@ -561,7 +564,13 @@ fn main() {
                 Progress::global().finalize();
 
                 match &command {
-                    Command::Predict(args) => predict::sync_batches(&args.provider).await?,
+                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                        predict::sync_batches(&args.provider).await?;
+                    }
+                    _ => (),
+                }
+
+                match &command {
                     Command::Eval(_) => score::print_report(&examples),
                     _ => (),
                 };
