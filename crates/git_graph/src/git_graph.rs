@@ -3,10 +3,9 @@ mod graph_rendering;
 
 use anyhow::Context as _;
 use gpui::{
-    AbsoluteLength, AnyElement, App, Context, Corner, DefiniteLength, ElementId, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, px,
+    AnyElement, App, Context, Corner, DefiniteLength, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, px,
 };
 use graph_rendering::accent_colors_count;
 use project::{
@@ -210,10 +209,10 @@ impl GitGraph {
                     ];
                 };
 
-                let subject: SharedString = commit.data.subject.clone().into();
-                let author_name: SharedString = commit.data.author_name.clone().into();
-                let short_sha: SharedString = commit.data.sha.display_short().into();
-                let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
+                let subject = commit.data.subject.clone();
+                let author_name = commit.data.author_name.clone();
+                let short_sha = commit.data.sha.display_short();
+                let formatted_time = commit.data.commit_timestamp.clone();
 
                 vec![
                     div()
@@ -276,6 +275,11 @@ impl Render for GitGraph {
         let author_width = px(120.0);
         let commit_width = px(80.0);
 
+        let description_width_fraction = 0.71;
+        let date_width_fraction = 0.12;
+        let author_width_fraction = 0.10;
+        let commit_width_fraction = 0.06;
+
         let error_banner = self.error.as_ref().map(|error| {
             h_flex()
                 .id("error-banner")
@@ -330,35 +334,42 @@ impl Render for GitGraph {
                 .child(
                     h_flex()
                         .w_full()
-                        .px_2()
-                        .py_1()
-                        .gap_4()
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .flex_shrink_0()
                         .child(
                             div()
                                 .w(graph_width)
+                                .px_1()
+                                .py_0p5()
                                 .child(Label::new("Graph").color(Color::Muted)),
                         )
                         .child(
                             div()
                                 .flex_1()
+                                .px_1()
+                                .py_0p5()
                                 .child(Label::new("Description").color(Color::Muted)),
                         )
                         .child(
                             div()
                                 .w(date_width)
+                                .px_1()
+                                .py_0p5()
                                 .child(Label::new("Date").color(Color::Muted)),
                         )
                         .child(
                             div()
                                 .w(author_width)
+                                .px_1()
+                                .py_0p5()
                                 .child(Label::new("Author").color(Color::Muted)),
                         )
                         .child(
                             div()
                                 .w(commit_width)
+                                .px_1()
+                                .py_0p5()
                                 .child(Label::new("Commit").color(Color::Muted)),
                         ),
                 )
@@ -379,18 +390,13 @@ impl Render for GitGraph {
                             div().flex_1().size_full().child(
                                 Table::new(4)
                                     .interactable(&self.table_interaction_state)
+                                    .hide_row_borders()
                                     .column_widths(
                                         [
-                                            DefiniteLength::Fraction(0.5),
-                                            DefiniteLength::Absolute(AbsoluteLength::Pixels(
-                                                date_width,
-                                            )),
-                                            DefiniteLength::Absolute(AbsoluteLength::Pixels(
-                                                author_width,
-                                            )),
-                                            DefiniteLength::Absolute(AbsoluteLength::Pixels(
-                                                commit_width,
-                                            )),
+                                            DefiniteLength::Fraction(description_width_fraction),
+                                            DefiniteLength::Fraction(date_width_fraction),
+                                            DefiniteLength::Fraction(author_width_fraction),
+                                            DefiniteLength::Fraction(commit_width_fraction),
                                         ]
                                         .to_vec(),
                                     )
