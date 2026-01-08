@@ -303,72 +303,8 @@ impl BackgroundExecutor {
     /// make progress), we advance the clock to the next timer when no runnable tasks remain.
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        let dispatcher = self.dispatcher.as_test().unwrap();
-        let scheduler = dispatcher.scheduler();
-
-        let log_enabled = std::env::var("GPUI_RUN_UNTIL_PARKED_LOG")
-            .ok()
-            .as_deref()
-            == Some("1");
-
-        if log_enabled {
-            let (foreground_len, background_len) = scheduler.pending_task_counts();
-            let has_pending = scheduler.has_pending_tasks();
-            log::warn!(
-                "[gpui::executor] run_until_parked: begin pending foreground={} background={} has_pending_tasks={}",
-                foreground_len,
-                background_len,
-                has_pending
-            );
-        }
-
-        let mut ticks = 0usize;
-        let mut advanced_timers = 0usize;
-
-        loop {
-            let mut did_work = false;
-            while scheduler.tick() {
-                did_work = true;
-                ticks += 1;
-
-                if log_enabled && ticks.is_multiple_of(100) {
-                    let (foreground_len, background_len) = scheduler.pending_task_counts();
-                    let has_pending = scheduler.has_pending_tasks();
-                    log::warn!(
-                        "[gpui::executor] run_until_parked: progressed ticks={} pending foreground={} background={} has_pending_tasks={}",
-                        ticks,
-                        foreground_len,
-                        background_len,
-                        has_pending
-                    );
-                }
-            }
-
-            if did_work {
-                continue;
-            }
-
-            // No runnable tasks; if a timer is pending, advance time so it can become runnable.
-            if dispatcher.advance_clock_to_next_timer() {
-                advanced_timers += 1;
-                continue;
-            }
-
-            break;
-        }
-
-        if log_enabled {
-            let (foreground_len, background_len) = scheduler.pending_task_counts();
-            let has_pending = scheduler.has_pending_tasks();
-            log::warn!(
-                "[gpui::executor] run_until_parked: end ticks={} advanced_timers={} pending foreground={} background={} has_pending_tasks={}",
-                ticks,
-                advanced_timers,
-                foreground_len,
-                background_len,
-                has_pending
-            );
-        }
+        let scheduler = self.dispatcher.as_test().unwrap().scheduler();
+        scheduler.run();
     }
 
     /// In tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
