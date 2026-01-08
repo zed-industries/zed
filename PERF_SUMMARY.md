@@ -53,9 +53,9 @@ The debouncing and kill_on_drop fixes we implemented had minimal effect because 
 After fixing tracing, analysis of long-running spans revealed the true cause:
 
 ```
-sync{edits=Patch([Edit { old: WrapRow(161428)..WrapRow(161429),...}  51652ms
-while edits{edit=Edit { old: WrapRow(133179)..WrapRow(133180),...}  51639ms
-sync{edits=Patch([Edit { old: WrapRow(133134)..WrapRow(133135),...}  51600ms
+sync{edits=Patch([Edit { old: WrapRow(161428)..WrapRow(161429),...}  51652.5ms
+while edits{edit=Edit { old: WrapRow(133179)..WrapRow(133180),...}  51639.2ms
+sync{edits=Patch([Edit { old: WrapRow(133134)..WrapRow(133135),...}  51600.2ms
 ```
 
 Operations in `crates/editor/src/display_map/block_map.rs` are taking **25-51 SECONDS** each.
@@ -71,7 +71,27 @@ Operations in `crates/editor/src/display_map/block_map.rs` are taking **25-51 SE
 
 `crates/editor/src/display_map/block_map.rs` - `sync` function, `while edits` loop (around line 572)
 
-## Conclusion
+## Chunk Size Experiments (run_11 & run_12)
+
+Tested whether larger chunk sizes (buffers processed per iteration) would reduce sync triggers.
+
+### Results
+
+| Metric | run_9 (chunk=4) | run_11 (chunk=64) | run_12 (chunk=16) |
+|--------|-----------------|-------------------|-------------------|
+| `spawn_git_blame` calls | 7 | 195 | 68 |
+| Max `sync` duration | 51.6s | 144.9s | 124.8s |
+
+### Conclusion
+
+**Increasing chunk size BACKFIRED:**
+- 28x more git spawns with chunk=64 vs chunk=4
+- Worse sync times (145s max vs 51s baseline)
+- UI freezing during batch spawns
+
+Reverted to chunk=4. Tuning chunk size is NOT the solution.
+
+## Root Cause Summary
 
 **The stuttering is caused by git blame completion triggering expensive `BlockMap::sync` operations.**
 
@@ -108,6 +128,9 @@ tracy-csvexport -u -f "spawn_git_blame" trace.tracy | grep "spawn_git_blame{" | 
 
 # Get spawn_git_blame details
 tracy-csvexport -u -f "spawn_git_blame" trace.tracy | grep "spawn_git_blame{"
+
+# Count spawns by generation
+tracy-csvexport -u -f "spawn_git_blame" trace.tracy | grep "spawn_git_blame{" | awk -F'generation_id=' '{print $2}' | cut -d'}' -f1 | sort | uniq -c
 ```
 
 ## Next Steps

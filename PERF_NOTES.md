@@ -887,3 +887,104 @@ to process edits on a MultiBuffer with hundreds of thousands of rows from the gi
 
 This is a completely different performance problem requiring investigation of the block_map
 and display_map architecture.
+
+# Chunk Size Experiments (run_11 & run_12)
+
+## Hypothesis
+
+Increasing chunk size (number of buffers processed per iteration in `generate()`) might reduce
+the number of `cx.notify()` calls and thus reduce BlockMap::sync triggers.
+
+## Changes Made
+
+Modified `crates/editor/src/git/blame.rs` line 556:
+- run_11: `buffers_to_blame.chunks(64)` (up from 4)
+- run_12: `buffers_to_blame.chunks(16)` (middle ground)
+
+## Results
+
+### run_11.tracy (chunk=64)
+
+```bash
+tracy-csvexport -u -f "spawn_git_blame" run_11.tracy | grep "spawn_git_blame{" | wc -l
+# Result: 195
+
+tracy-csvexport -u -f "blame_task{" run_11.tracy | grep "blame_task{"
+# blame_task{buffer_count=1 generation_id=0} - 26.1s
+# blame_task{buffer_count=2 generation_id=1} - 17μs (cancelled)
+
+tracy-csvexport -u -f "sync" run_11.tracy | awk -F, '$5 > 10000000 {print $1","$5/1000000"ms"}' | sort -t, -k2 -rn | head -5
+# sync{edits=Patch([Edit { old: WrapRow(552)..  144971ms  <-- NEW worst case!
+# sync{edits=Patch([Edit { old: WrapRow(1227).. 80574.8ms
+# sync{edits=Patch([Edit { old: WrapRow(1227).. 80065ms
+# sync{edits=Patch([Edit { old: WrapRow(161428).. 50005.1ms
+# sync{edits=Patch([Edit { old: WrapRow(133179).. 49992ms
+```
+
+**Observation:** UI would freeze briefly when spawning batches - not enough for beachball but noticeable.
+
+### run_12.tracy (chunk=16)
+
+```bash
+tracy-csvexport -u -f "spawn_git_blame" run_12.tracy | grep "spawn_git_blame{" | wc -l
+# Result: 68
+
+tracy-csvexport -u -f "blame_task_for_buffers" run_12.tracy | grep "blame_task_for_buffers" | wc -l
+# Result: 5
+
+tracy-csvexport -u -f "sync" run_12.tracy | awk -F, '$5 > 10000000 {print $1","$5/1000000"ms"}' | sort -t, -k2 -rn | head -5
+# sync{edits=Patch([Edit { old: WrapRow(1363).. 124823ms
+# sync{edits=Patch([Edit { old: WrapRow(1363).. 124131ms
+# sync{edits=Patch([Edit { old: WrapRow(1363).. 124006ms
+# sync{edits=Patch([Edit { old: WrapRow(1363).. 123254ms
+# sync{edits=Patch([Edit { old: WrapRow(1187).. 121813ms
+```
+
+### Comparison Table
+
+| Metric | run_9 (chunk=4) | run_11 (chunk=64) | run_12 (chunk=16) |
+|--------|-----------------|-------------------|-------------------|
+| `spawn_git_blame` calls | 7 | 195 | 68 |
+| `blame_task_for_buffers` chunks | 2 | 4 | 5 |
+| Max `sync` duration | 51.6s | 144.9s | 124.8s |
+| Typical `sync` durations | ~51s | ~50s + 80s spikes | ~52s + 110-124s spikes |
+
+### Spawns by Generation ID
+
+```bash
+# run_9 (chunk=4):
+#   1 Some(0)
+#   2 Some(1)
+#   4 Some(2)
+# Total: 7
+
+# run_12 (chunk=16):
+#   2 Some(0)
+#   2 Some(1)
+#  64 Some(2)
+# Total: 68
+```
+
+## Analysis
+
+**Increasing chunk size BACKFIRED:**
+
+1. **More git spawns, not fewer**: 195 spawns (chunk=64) vs 7 spawns (chunk=4) - 28x increase!
+
+2. **Worse sync times**: Max sync time increased from 51s to 145s with larger chunks.
+
+3. **The cause**: Larger chunks affect how many buffers are ready for blame in subsequent
+   `generate()` calls. Generation_id=2 processed 64 buffers with chunk=16 vs only 4 with chunk=4.
+
+4. **UI freezing**: With chunk=64, spawning many git processes simultaneously caused brief UI hangs
+   during the synchronous setup phase in `cx.update()`.
+
+## Conclusion
+
+Tuning chunk size is NOT the solution. The relationship between chunk size and total spawns is
+non-linear and counterproductive. Larger chunks lead to more total work, not less.
+
+**Reverted to chunk=4 (baseline).**
+
+The real problem remains `BlockMap::sync` performance on large MultiBuffers, which needs to be
+addressed at the display_map level, not the blame level.
