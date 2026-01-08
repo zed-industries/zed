@@ -657,43 +657,32 @@ impl PickerDelegate for WorktreeListDelegate {
             None
         };
 
-        let branch_name = if entry.is_new {
-            h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new(format!("Create worktree \"{}\"…", entry.worktree.branch()))
-                        .single_line()
-                        .truncate(),
-                )
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::GitBranch)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(HighlightedLabel::new(
-                    entry.worktree.branch().to_owned(),
-                    entry.positions.clone(),
-                ))
-                .truncate()
-                .into_any_element()
-        };
-
-        let sublabel = if entry.is_new {
-            format!(
-                "based off {}",
-                self.base_branch(cx).unwrap_or("the current branch")
+        let (branch_name, sublabel) = if entry.is_new {
+            (
+                Label::new(format!("Create Worktree: \"{}\"…", entry.worktree.branch()))
+                    .truncate()
+                    .into_any_element(),
+                format!(
+                    "based off {}",
+                    self.base_branch(cx).unwrap_or("the current branch")
+                ),
             )
         } else {
-            format!("at {}", path)
+            let branch = entry.worktree.branch();
+            let branch_first_line = branch.lines().next().unwrap_or(branch);
+            let positions: Vec<_> = entry
+                .positions
+                .iter()
+                .copied()
+                .filter(|&pos| pos < branch_first_line.len())
+                .collect();
+
+            (
+                HighlightedLabel::new(branch_first_line.to_owned(), positions)
+                    .truncate()
+                    .into_any_element(),
+                path,
+            )
         };
 
         Some(
@@ -704,30 +693,28 @@ impl PickerDelegate for WorktreeListDelegate {
                 .child(
                     v_flex()
                         .w_full()
-                        .overflow_hidden()
                         .child(
                             h_flex()
-                                .gap_6()
+                                .gap_2()
                                 .justify_between()
                                 .overflow_x_hidden()
                                 .child(branch_name)
-                                .when(!entry.is_new, |el| {
-                                    el.child(
+                                .when(!entry.is_new, |this| {
+                                    this.child(
                                         Label::new(sha)
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
+                                            .buffer_font(cx)
                                             .into_element(),
                                     )
                                 }),
                         )
                         .child(
-                            div().max_w_96().child(
-                                Label::new(sublabel)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate()
-                                    .into_any_element(),
-                            ),
+                            Label::new(sublabel)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate()
+                                .into_any_element(),
                         ),
                 )
                 .end_slot::<IconButton>(icon),
@@ -750,7 +737,7 @@ impl PickerDelegate for WorktreeListDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open-in-new-window", "Open in new window")
+                    Button::new("open-in-new-window", "Open in New Window")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
