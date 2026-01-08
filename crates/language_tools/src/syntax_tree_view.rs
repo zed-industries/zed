@@ -7,7 +7,7 @@ use gpui::{
     MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::{Buffer, BufferSnapshot, OwnedSyntaxLayer, Point};
+use language::{Buffer, BufferSnapshot, OffsetUtf16, OwnedSyntaxLayer, PointUtf16};
 use project::lsp_store::BufferSemanticTokens;
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
@@ -411,10 +411,12 @@ impl SyntaxTreeView {
             if let Some((legends, sema, buffer)) = semantic_tokens {
                 for (server, semantic_token) in sema.all_tokens().filter(|(_, semantic_token)| {
                     let node_range = cursor.node().byte_range();
-                    // TODO kb is this correct? `fn point_offset_to_offsets` seems to do something similar but differently
-                    let token_start = buffer
-                        .point_to_offset(Point::new(semantic_token.line, semantic_token.start));
-                    let token_end = token_start + semantic_token.length as usize;
+                    let start_point = PointUtf16::new(semantic_token.line, semantic_token.start);
+                    let token_start = buffer.point_utf16_to_offset(start_point);
+                    let start_offset_utf16 = buffer.offset_to_offset_utf16(token_start);
+                    let end_offset_utf16 =
+                        start_offset_utf16 + OffsetUtf16(semantic_token.length as usize);
+                    let token_end = buffer.offset_utf16_to_offset(end_offset_utf16);
                     token_start >= node_range.start && token_end < node_range.end
                 }) {
                     let Some(legend) = legends.get(&server) else {

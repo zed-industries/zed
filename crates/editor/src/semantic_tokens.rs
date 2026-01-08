@@ -199,15 +199,15 @@ impl Editor {
     }
 }
 
-// TODO kb this looks odd
 fn point_offset_to_offsets(
     point: text::PointUtf16,
     length: text::OffsetUtf16,
     buffer: &text::Buffer,
 ) -> (usize, usize) {
-    let start = buffer.as_rope().point_utf16_to_offset(point);
-    let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
+    let start_offset = buffer.as_rope().point_utf16_to_offset_utf16(point);
     let end_offset = start_offset + length;
+
+    let start = buffer.as_rope().offset_utf16_to_offset(start_offset);
     let end = buffer.as_rope().offset_utf16_to_offset(end_offset);
 
     (start, end)
