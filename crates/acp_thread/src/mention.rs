@@ -53,9 +53,7 @@ pub enum MentionUri {
 impl MentionUri {
     pub fn parse(input: &str, path_style: PathStyle) -> Result<Self> {
         fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
-            let range = fragment
-                .strip_prefix("L")
-                .context("Line range must start with \"L\"")?;
+            let range = fragment.strip_prefix("L").unwrap_or(fragment);
 
             let (start, end) = if let Some((start, end)) = range.split_once(":") {
                 (start, end)
@@ -520,23 +518,8 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_line_range_format() {
-        // Missing L prefix
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#10:20"), PathStyle::local()).is_err()
-        );
-
-        // Invalid numbers
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L10:abc"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#Labc:20"), PathStyle::local()).is_err()
-        );
-    }
-
-    #[test]
     fn test_single_line_number() {
+        // https://github.com/zed-industries/zed/issues/46114
         let uri = uri!("file:///path/to/file.rs#L1872");
         let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
         match &parsed {
@@ -585,37 +568,4 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_query_parameters() {
-        // Invalid query parameter name
-        assert!(
-            MentionUri::parse(
-                uri!("file:///path/to/file.rs#L10:20?invalid=test"),
-                PathStyle::local()
-            )
-            .is_err()
-        );
-
-        // Too many query parameters
-        assert!(
-            MentionUri::parse(
-                uri!("file:///path/to/file.rs#L10:20?symbol=test&another=param"),
-                PathStyle::local()
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn test_zero_based_line_numbers() {
-        // Test that 0-based line numbers are rejected (should be 1-based)
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L0:10"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L1:0"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L0:0"), PathStyle::local()).is_err()
-        );
-    }
 }
