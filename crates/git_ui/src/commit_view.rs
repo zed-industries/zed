@@ -1,8 +1,10 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
+use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
+use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
     parse_git_remote_url,
@@ -72,6 +74,24 @@ struct GitBlob {
     is_deleted: bool,
     is_binary: bool,
     display_name: String,
+}
+
+struct CommitDiffAddon {
+    file_statuses: HashMap<language::BufferId, FileStatus>,
+}
+
+impl Addon for CommitDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn override_status_for_buffer_id(
+        &self,
+        buffer_id: language::BufferId,
+        _cx: &App,
+    ) -> Option<FileStatus> {
+        self.file_statuses.get(&buffer_id).copied()
+    }
 }
 
 const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
@@ -229,8 +249,10 @@ impl CommitView {
 
         cx.spawn(async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
+            let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
             for file in commit_diff.files {
+                let is_created = file.old_text.is_none();
                 let is_deleted = file.new_text.is_none();
                 let raw_new_text = file.new_text.unwrap_or_default();
                 let raw_old_text = file.old_text;
@@ -273,6 +295,21 @@ impl CommitView {
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
                 let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
+
+                let status_code = if is_created {
+                    StatusCode::Added
+                } else if is_deleted {
+                    StatusCode::Deleted
+                } else {
+                    StatusCode::Modified
+                };
+                file_statuses.insert(
+                    buffer_id,
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: status_code,
+                        worktree_status: StatusCode::Unmodified,
+                    }),
+                );
 
                 if is_binary {
                     binary_buffer_ids.insert(buffer_id);
@@ -318,15 +355,18 @@ impl CommitView {
                 })?;
             }
 
-            if !binary_buffer_ids.is_empty() {
-                this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
+                this.editor.update(cx, |editor, _cx| {
+                    editor.register_addon(CommitDiffAddon { file_statuses });
+                });
+                if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
                         for buffer_id in binary_buffer_ids {
                             editor.fold_buffer(buffer_id, cx);
                         }
                     });
-                })?;
-            }
+                }
+            })?;
 
             anyhow::Ok(())
         })
@@ -996,10 +1036,22 @@ impl Item for CommitView {
     where
         Self: Sized,
     {
+        let file_statuses = self
+            .editor
+            .read(cx)
+            .addon::<CommitDiffAddon>()
+            .map(|addon| addon.file_statuses.clone())
+            .unwrap_or_default();
         Task::ready(Some(cx.new(|cx| {
-            let editor = cx.new(|cx| {
-                self.editor
-                    .update(cx, |editor, cx| editor.clone(window, cx))
+            let editor = cx.new({
+                let file_statuses = file_statuses.clone();
+                |cx| {
+                    let mut editor = self
+                        .editor
+                        .update(cx, |editor, cx| editor.clone(window, cx));
+                    editor.register_addon(CommitDiffAddon { file_statuses });
+                    editor
+                }
             });
             let multibuffer = editor.read(cx).buffer().clone();
             Self {
