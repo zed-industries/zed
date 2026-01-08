@@ -399,10 +399,20 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 }
 
-fn should_include_thinking(thinking_mode: ThinkingMode, is_last_assistant: bool) -> bool {
+fn should_include_thinking(
+    thinking_mode: ThinkingMode,
+    msg_idx: usize,
+    last_user_idx: Option<usize>,
+) -> bool {
     match thinking_mode {
         ThinkingMode::Openai | ThinkingMode::Preserved => true,
-        ThinkingMode::Interleave => is_last_assistant,
+        ThinkingMode::Interleave => {
+            if let Some(last_user) = last_user_idx {
+                msg_idx > last_user
+            } else {
+                true
+            }
+        }
     }
 }
 
@@ -418,16 +428,15 @@ pub fn into_open_ai(
     let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
+    let mut current_reasoning: Option<String> = None;
 
-    // Find the index of the most recent assistant message
-    let last_assistant_message_idx = request
+    // Find the index of the most recent user message
+    let last_user_message_idx = request
         .messages
         .iter()
-        .rposition(|msg| msg.role == Role::Assistant);
+        .rposition(|msg| msg.role == Role::User);
 
     for (msg_idx, message) in request.messages.into_iter().enumerate() {
-        let is_last_assistant = last_assistant_message_idx == Some(msg_idx);
-
         for content in message.content {
             match content {
                 MessageContent::Text(text) => {
@@ -436,18 +445,15 @@ pub fn into_open_ai(
                             open_ai::MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            &mut current_reasoning,
                         );
                     }
                 }
                 MessageContent::Thinking { text, .. } => {
-                    if should_include_thinking(thinking_mode, is_last_assistant)
+                    if should_include_thinking(thinking_mode, msg_idx, last_user_message_idx)
                         && !text.trim().is_empty()
                     {
-                        add_message_content_part(
-                            open_ai::MessagePart::Text { text },
-                            message.role,
-                            &mut messages,
-                        );
+                        current_reasoning.get_or_insert_default().push_str(&text);
                     }
                 }
                 MessageContent::RedactedThinking(_) => {
@@ -463,6 +469,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        &mut current_reasoning,
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -485,6 +492,7 @@ pub fn into_open_ai(
                         messages.push(open_ai::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_content: current_reasoning.take(),
                         });
                     }
                 }
@@ -563,11 +571,11 @@ pub fn into_open_ai_response(
 ) -> ResponseRequest {
     let stream = !model_id.starts_with("o1-");
 
-    // Find the index of the most recent assistant message
-    let last_assistant_message_idx = request
+    // Find the index of the most recent user message
+    let last_user_message_idx = request
         .messages
         .iter()
-        .rposition(|msg| msg.role == Role::Assistant);
+        .rposition(|msg| msg.role == Role::User);
 
     let LanguageModelRequest {
         thread_id,
@@ -584,7 +592,6 @@ pub fn into_open_ai_response(
 
     let mut input_items = Vec::new();
     for (msg_idx, message) in messages.into_iter().enumerate() {
-        let is_last_assistant = last_assistant_message_idx == Some(msg_idx);
         let mut content_parts: Vec<Value> = Vec::new();
 
         for content in message.content {
@@ -593,7 +600,7 @@ pub fn into_open_ai_response(
                     push_response_text_part(&message.role, text, &mut content_parts);
                 }
                 MessageContent::Thinking { text, .. } => {
-                    if should_include_thinking(thinking_mode, is_last_assistant) {
+                    if should_include_thinking(thinking_mode, msg_idx, last_user_message_idx) {
                         push_response_text_part(&message.role, text, &mut content_parts);
                     }
                 }
@@ -794,6 +801,7 @@ fn add_message_content_part(
     new_part: open_ai::MessagePart,
     role: Role,
     messages: &mut Vec<open_ai::RequestMessage>,
+    current_reasoning: &mut Option<String>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_ai::RequestMessage::User { content }))
@@ -815,6 +823,7 @@ fn add_message_content_part(
                 Role::Assistant => open_ai::RequestMessage::Assistant {
                     content: Some(open_ai::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
+                    reasoning_content: current_reasoning.take(),
                 },
                 Role::System => open_ai::RequestMessage::System {
                     content: open_ai::MessageContent::from(vec![new_part]),
@@ -869,6 +878,13 @@ impl OpenAiEventMapper {
         if let Some(delta) = choice.delta.as_ref() {
             if let Some(content) = delta.content.clone() {
                 events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
+
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                    text: reasoning_content,
+                    signature: None,
+                }));
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
@@ -1464,6 +1480,64 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
+    }
+
+    fn map_completion_events(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        block_on(async {
+            OpenAiEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .collect()
+        })
+    }
+
+    #[test]
+    fn stream_completion_maps_thinking() {
+        use open_ai::{ChoiceDelta, ResponseMessageDelta, ResponseStreamEvent, Role};
+
+        let events = vec![
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: Some(Role::Assistant),
+                        content: None,
+                        reasoning_content: Some("Thinking...".to_string()),
+                        tool_calls: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("Result".to_string()),
+                        reasoning_content: None,
+                        tool_calls: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+        ];
+
+        let mapped = map_completion_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Thinking { ref text, .. } if text == "Thinking..."
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Text(ref text) if text == "Result"
+        ));
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
