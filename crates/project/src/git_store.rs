@@ -2389,6 +2389,7 @@ impl GitStore {
                     path: file.path.to_proto(),
                     old_text: file.old_text,
                     new_text: file.new_text,
+                    is_binary: file.is_binary,
                 })
                 .collect(),
         })
@@ -4126,6 +4127,7 @@ impl Repository {
                                     path: RepoPath::from_proto(&file.path)?,
                                     old_text: file.old_text,
                                     new_text: file.new_text,
+                                    is_binary: file.is_binary,
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
