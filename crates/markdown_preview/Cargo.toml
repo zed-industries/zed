@@ -26,6 +26,7 @@ language.workspace = true
 linkify.workspace = true
 log.workspace = true
 markup5ever_rcdom.workspace = true
+outline.workspace = true
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
 settings.workspace = true
@@ -34,6 +35,7 @@ ui.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

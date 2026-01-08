@@ -9744,6 +9744,7 @@ dependencies = [
  "linkify",
  "log",
  "markup5ever_rcdom",
+ "outline",
  "pretty_assertions",
  "pulldown-cmark 0.13.0",
  "settings",
@@ -9752,6 +9753,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
