@@ -1,4 +1,3 @@
-use editor::actions::Tab;
 use regex::Regex;
 use std::fmt::Debug;
 use std::ops::Range;
@@ -8,13 +7,13 @@ use std::sync::{Arc, LazyLock};
 use ::dev_container::{DevContainerTemplate, get_template_text, get_templates};
 use editor::{Editor, MultiBufferOffset};
 use gpui::{
-    Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, FocusOutEvent, Focusable,
-    RenderOnce, WeakEntity,
+    Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
+    WeakEntity,
 };
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
-use smallvec::{SmallVec, smallvec_inline};
+use smallvec::SmallVec;
 use smol::fs;
 use snippet::{Snippet, TabStop};
 use ui::{
@@ -577,7 +576,7 @@ impl StatefulModal for DevContainerModal {
                 if self.state == DevContainerState::QueryingTemplates {
                     Some(DevContainerState::TemplateQueryReturned(Ok(items
                         .into_iter()
-                        .filter(|item| item.id == "alpine".to_string()) // TODO just for simplicity, we'll keep it to one element
+                        .filter(|item| item.id == "docker-in-docker".to_string()) // TODO just for simplicity, we'll keep it to one element
                         .map(|item| TemplateEntry {
                             template: item,
                             entry: NavigableEntry::focusable(cx),
@@ -640,7 +639,6 @@ impl StatefulModal for DevContainerModal {
                             //     ]
                             // };
 
-                            // TODO implement
                             let snippet = build_snippet_from_template(template, template_text);
 
                             if let Ok(item) = open_task.await {
@@ -731,24 +729,71 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     }
 }
 
+// Note that it looks like we will have to support Dockerfile and all other files in the .devcontainer directory
+// Ok, we can re-use a bunch of this logic, but unfortunately we'll need to move towards that form-based UI because of the potential for multiple files in the .devcontainer directory.
+// Next step will be to actually grab those files from the server and add them to the project. Then we can look at template expansion for each of them with this code.
 fn build_snippet_from_template(template: DevContainerTemplate, template_text: String) -> Snippet {
-    static TEMPLATE_OPTION_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\$\{templateOption:[^}]\}").expect("Failed to create REGEX"));
+    static TEMPLATE_OPTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\$\{templateOption:([^\}]+)\}").expect("Failed to create REGEX")
+    });
 
     let mut tabstops = TEMPLATE_OPTION_REGEX
-        .find_iter(&template_text)
-        .map(|m| {
+        .captures_iter(&template_text)
+        .filter(|c| c.get(1).is_some())
+        .map(|c| {
+            let full_match = c.get_match();
+            let option_name_match = c.get(1).expect("Filter");
+            let options = template.options.clone().and_then(|options| {
+                // let thing = option_name_match.as_str();
+                // dbg!(&thing);
+                // dbg!(&c.get(1));
+                let Some(value) = options.get(option_name_match.as_str()) else {
+                    return None;
+                };
+
+                let mut options = vec![value.default.clone()];
+
+                if value.option_type == "boolean" {
+                    if value.default == "false" {
+                        options = vec![String::from("false"), String::from("true")];
+                    } else {
+                        options = vec![String::from("true"), String::from("false")];
+                    }
+                } else if value.enum_values.is_some() {
+                    options.append(
+                        &mut value
+                            .enum_values
+                            .clone()
+                            .expect("")
+                            .into_iter()
+                            .filter(|p| p != &value.default)
+                            .collect(),
+                    );
+                } else if value.proposals.is_some() {
+                    options.append(
+                        &mut value
+                            .proposals
+                            .clone()
+                            .expect("")
+                            .into_iter()
+                            .filter(|p| p != &value.default)
+                            .collect(),
+                    );
+                }
+
+                Some(options)
+            });
             let mut vec: SmallVec<[Range<isize>; 2]> = SmallVec::new();
-            vec.push(m.start() as isize..m.end() as isize);
+            vec.push(full_match.start() as isize..full_match.end() as isize);
             TabStop {
                 ranges: vec,
-                choices: None,
+                choices: options.clone(),
             }
         })
         .collect::<Vec<TabStop>>();
 
     let mut final_range: SmallVec<[Range<isize>; 2]> = SmallVec::new();
-    final_range.push(template_text.len() as isize - 1..template_text.len() as isize - 1);
+    final_range.push(template_text.len() as isize..template_text.len() as isize);
     tabstops.push(TabStop {
         ranges: final_range,
         choices: None,
@@ -763,7 +808,11 @@ fn build_snippet_from_template(template: DevContainerTemplate, template_text: St
 #[cfg(test)]
 mod test {
 
-    use crate::dev_container::DevContainerUp;
+    use std::collections::HashMap;
+
+    use dev_container::{DevContainerTemplate, TemplateOptions};
+
+    use crate::dev_container::{DevContainerUp, build_snippet_from_template};
 
     #[test]
     fn should_parse_from_devcontainer_json() {
@@ -776,5 +825,344 @@ mod test {
         );
         assert_eq!(up._remote_user, "vscode");
         assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
+    }
+
+    /// Build snippet tests
+    #[test]
+    fn should_parse_template_text_and_add_string_tabstops() {
+        let string_template_text =
+            "mcr.microsoft.com/devcontainers/base:alpine-${templateOption:imageVariant}"
+                .to_string();
+
+        let boolean_template_text =
+            "Some value which has a boolean, and its value is: ${templateOption:boolValue}"
+                .to_string();
+
+        let template_with_string_proposals = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            options: Some(HashMap::from([(
+                "imageVariant".to_string(),
+                TemplateOptions {
+                    option_type: "string".to_string(),
+                    description: "description".to_string(),
+                    proposals: Some(vec!["proposal1".to_string(), "proposal2".to_string()]),
+                    enum_values: None,
+                    default: "proposal1".to_string(),
+                },
+            )])),
+        };
+
+        let snippet = build_snippet_from_template(
+            template_with_string_proposals,
+            string_template_text.clone(),
+        );
+
+        assert_eq!(snippet.text, string_template_text);
+        assert_eq!(snippet.tabstops.len(), 2);
+        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
+        assert_eq!(
+            snippet.tabstops[1].ranges[0],
+            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec!["proposal1".to_string(), "proposal2".to_string()])
+        );
+
+        let template_with_string_enums = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            options: Some(HashMap::from([(
+                "imageVariant".to_string(),
+                TemplateOptions {
+                    option_type: "string".to_string(),
+                    description: "desc".to_string(),
+                    default: "option1".to_string(),
+                    proposals: None,
+                    enum_values: Some(vec!["option1".to_string(), "option2".to_string()]),
+                },
+            )])),
+        };
+
+        let snippet =
+            build_snippet_from_template(template_with_string_enums, string_template_text.clone());
+
+        assert_eq!(snippet.text, string_template_text);
+        assert_eq!(snippet.tabstops.len(), 2);
+        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
+        assert_eq!(
+            snippet.tabstops[1].ranges[0],
+            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec!["option1".to_string(), "option2".to_string()])
+        );
+
+        let template_with_boolean = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "Test Template".to_string(),
+            options: Some(HashMap::from([(
+                "boolValue".to_string(),
+                TemplateOptions {
+                    option_type: "boolean".to_string(),
+                    description: "desc".to_string(),
+                    default: "true".to_string(),
+                    proposals: None,
+                    enum_values: None,
+                },
+            )])),
+        };
+
+        let snippet =
+            build_snippet_from_template(template_with_boolean, boolean_template_text.clone());
+
+        assert_eq!(snippet.text, boolean_template_text);
+        assert_eq!(snippet.tabstops.len(), 2);
+        assert_eq!(snippet.tabstops[0].ranges[0], 50..77);
+        assert_eq!(
+            snippet.tabstops[1].ranges[0],
+            (boolean_template_text.len() - 1) as isize..(boolean_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec!["true".to_string(), "false".to_string()])
+        );
+
+        let template_with_boolean_default_false = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "Test Template".to_string(),
+            options: Some(HashMap::from([(
+                "boolValue".to_string(),
+                TemplateOptions {
+                    option_type: "boolean".to_string(),
+                    description: "desc".to_string(),
+                    default: "false".to_string(),
+                    proposals: None,
+                    enum_values: None,
+                },
+            )])),
+        };
+
+        let snippet = build_snippet_from_template(
+            template_with_boolean_default_false,
+            boolean_template_text.clone(),
+        );
+
+        assert_eq!(snippet.text, boolean_template_text);
+        assert_eq!(snippet.tabstops.len(), 2);
+        assert_eq!(snippet.tabstops[0].ranges[0], 50..77);
+        assert_eq!(
+            snippet.tabstops[1].ranges[0],
+            (boolean_template_text.len() - 1) as isize..(boolean_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec!["false".to_string(), "true".to_string()])
+        );
+
+        let template_with_string_proposals_out_of_order = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            options: Some(HashMap::from([(
+                "imageVariant".to_string(),
+                TemplateOptions {
+                    option_type: "string".to_string(),
+                    description: "description".to_string(),
+                    proposals: Some(vec![
+                        "proposal1".to_string(),
+                        "proposal2".to_string(),
+                        "proposal3".to_string(),
+                    ]),
+                    enum_values: None,
+                    default: "proposal2".to_string(),
+                },
+            )])),
+        };
+
+        let snippet = build_snippet_from_template(
+            template_with_string_proposals_out_of_order,
+            string_template_text.clone(),
+        );
+
+        assert_eq!(snippet.text, string_template_text);
+        assert_eq!(snippet.tabstops.len(), 2);
+        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
+        assert_eq!(
+            snippet.tabstops[1].ranges[0],
+            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec![
+                "proposal2".to_string(),
+                "proposal1".to_string(),
+                "proposal3".to_string()
+            ])
+        );
+
+        let template_with_string_enums_out_of_order = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            options: Some(HashMap::from([(
+                "imageVariant".to_string(),
+                TemplateOptions {
+                    option_type: "string".to_string(),
+                    description: "description".to_string(),
+                    enum_values: Some(vec![
+                        "enum1".to_string(),
+                        "enum2".to_string(),
+                        "enum3".to_string(),
+                    ]),
+                    proposals: None,
+                    default: "enum2".to_string(),
+                },
+            )])),
+        };
+
+        let snippet = build_snippet_from_template(
+            template_with_string_enums_out_of_order,
+            string_template_text.clone(),
+        );
+
+        assert_eq!(snippet.text, string_template_text);
+        assert_eq!(snippet.tabstops.len(), 2);
+        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
+        assert_eq!(
+            snippet.tabstops[1].ranges[0],
+            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec![
+                "enum2".to_string(),
+                "enum1".to_string(),
+                "enum3".to_string()
+            ])
+        );
+
+        let multi_value_template_text = "
+            // For format details, see https://aka.ms/devcontainer.json. For config options, see the
+            // README at: https://github.com/devcontainers/templates/tree/main/src/docker-in-docker
+            {
+	\"name\": \"Docker in Docker\",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	\"image\": \"mcr.microsoft.com/devcontainers/base:bullseye\",
+
+	\"features\": {
+		\"ghcr.io/devcontainers/features/docker-in-docker:2\": {
+			\"version\": \"${templateOption:dockerVersion}\",
+			\"enableNonRootDocker\": \"${templateOption:enableNonRootDocker}\",
+			\"moby\": \"${templateOption:moby}\",
+			\"installZsh\": \"${templateOption:installZsh}\",
+			\"upgradePackages\": \"${templateOption:upgradePackages}\"
+		}
+	}
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// \"forwardPorts\": [],
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// \"postCreateCommand\": \"docker --version\",
+
+	// Configure tool-specific properties.
+	// \"customizations\": {},
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// \"remoteUser\": \"root\"
+            }
+            ";
+
+        let multi_value_template = DevContainerTemplate {
+            id: "test".to_string(),
+            name: "Test Template".to_string(),
+            options: Some(HashMap::from([
+                ("installZsh".to_string(), TemplateOptions {
+                    option_type: "boolean".to_string(),
+                    description: "Install ZSH!?".to_string(),
+                    default: "true".to_string(),
+                    proposals: None,
+                    enum_values: None,
+                }),
+                ("upgradePackages".to_string(), TemplateOptions {
+                    option_type: "boolean".to_string(),
+                    description: "Upgrade OS packages?".to_string(),
+                    default: "false".to_string(),
+                    proposals: None,
+                    enum_values: None,
+                }),
+                ("dockerVersion".to_string(), TemplateOptions {
+                    option_type: "string".to_string(),
+                    description: "elect or enter a Docker/Moby CLI version. (Availability can vary by OS version.)".to_string(),
+                    default: "latest".to_string(),
+                    proposals: Some(vec!["latest".to_string(), "none".to_string(), "20.10".to_string()]),
+                    enum_values: None,
+                }),
+                ("moby".to_string(), TemplateOptions {
+                    option_type: "boolean".to_string(),
+                    description: "Install OSS Moby build instead of Docker CE".to_string(),
+                    proposals: None,
+                    enum_values: None,
+                    default: "true".to_string(),
+                }),
+                ("enableNonRootDocker".to_string(), TemplateOptions {
+                    option_type: "boolean".to_string(),
+                    description: "Enable non-root user to access Docker in container?".to_string(),
+                    proposals: None,
+                    enum_values: None,
+                    default: "true".to_string(),
+                })
+            ]))
+        };
+
+        let snippet = build_snippet_from_template(
+            multi_value_template,
+            multi_value_template_text.to_string(),
+        );
+
+        assert_eq!(snippet.text, multi_value_template_text);
+        assert_eq!(snippet.tabstops.len(), 6);
+        assert_eq!(snippet.tabstops[0].ranges[0], 491..522);
+        assert_eq!(snippet.tabstops[1].ranges[0], 552..589);
+        assert_eq!(snippet.tabstops[2].ranges[0], 604..626);
+        assert_eq!(snippet.tabstops[3].ranges[0], 647..675);
+        assert_eq!(snippet.tabstops[4].ranges[0], 701..734);
+        assert_eq!(
+            snippet.tabstops[5].ranges[0],
+            (multi_value_template_text.len() - 1) as isize
+                ..(multi_value_template_text.len() - 1) as isize
+        );
+
+        assert_eq!(
+            snippet.tabstops[0].choices,
+            Some(vec![
+                "latest".to_string(),
+                "none".to_string(),
+                "20.10".to_string()
+            ])
+        );
+        assert_eq!(
+            snippet.tabstops[1].choices,
+            Some(vec!["true".to_string(), "false".to_string()])
+        );
+        assert_eq!(
+            snippet.tabstops[2].choices,
+            Some(vec!["true".to_string(), "false".to_string()])
+        );
+        assert_eq!(
+            snippet.tabstops[3].choices,
+            Some(vec!["true".to_string(), "false".to_string()])
+        );
+        assert_eq!(
+            snippet.tabstops[4].choices,
+            Some(vec!["false".to_string(), "true".to_string()])
+        );
     }
 }

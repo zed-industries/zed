@@ -63,28 +63,34 @@ pub struct DevContainerTemplatesResponse {
 pub async fn get_template_text(_template: &DevContainerTemplate) -> Result<String, String> {
     Ok("
         // For format details, see https://aka.ms/devcontainer.json. For config options, see the
-        // README at: https://github.com/devcontainers/templates/tree/main/src/alpine
+        // README at: https://github.com/devcontainers/templates/tree/main/src/docker-in-docker
         {
-                \"name\": \"Alpine\",
-                // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-                \"image\": \"mcr.microsoft.com/devcontainers/base:alpine-${templateOption:imageVariant}\"
+	\"name\": \"Docker in Docker\",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	\"image\": \"mcr.microsoft.com/devcontainers/base:bullseye\",
 
-                // Features to add to the dev container. More info: https://containers.dev/features.
-                // \"features\": {},
+	\"features\": {
+		\"ghcr.io/devcontainers/features/docker-in-docker:2\": {
+			\"version\": \"${templateOption:dockerVersion}\",
+			\"enableNonRootDocker\": \"${templateOption:enableNonRootDocker}\",
+			\"moby\": \"${templateOption:moby}\"
+		}
+	}
 
-                // Use 'forwardPorts' to make a list of ports inside the container available locally.
-                // \"forwardPorts\": [],
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// \"forwardPorts\": [],
 
-                // Use 'postCreateCommand' to run commands after the container is created.
-                // \"postCreateCommand\": \"uname -a\",
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// \"postCreateCommand\": \"docker --version\",
 
-                // Configure tool-specific properties.
-                // \"customizations\": {},
+	// Configure tool-specific properties.
+	// \"customizations\": {},
 
-                // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-                // \"remoteUser\": \"root\"
-        }
-".trim().to_string())
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// \"remoteUser\": \"root\"
+"
+    .trim()
+    .to_string())
 }
 
 pub async fn get_templates(
