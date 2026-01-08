@@ -170,7 +170,7 @@ fn main() -> Result<(), anyhow::Error> {
                         .into_iter()
                         .map(|worktree| this.find_or_create_worktree(worktree, true, cx))
                         .collect::<Vec<_>>()
-                })?;
+                });
 
                 let worktrees = futures::future::join_all(worktrees)
                     .await
@@ -185,7 +185,7 @@ fn main() -> Result<(), anyhow::Error> {
                             } else {
                                 None
                             }
-                        })?;
+                        });
                     if let Some(scan_complete) = scan_complete {
                         scan_complete.await;
                     } else {
@@ -198,9 +198,7 @@ fn main() -> Result<(), anyhow::Error> {
                 println!("Starting a project search");
                 let timer = std::time::Instant::now();
                 let mut first_match = None;
-                let matches = project
-                    .update(cx, |this, cx| this.search(query, cx))
-                    .unwrap();
+                let matches = project.update(cx, |this, cx| this.search(query, cx));
                 let mut matched_files = 0;
                 let mut matched_chunks = 0;
                 while let Ok(match_result) = matches.rx.recv().await {
@@ -221,7 +219,7 @@ fn main() -> Result<(), anyhow::Error> {
                     "Finished project search after {elapsed:?}. Matched {matched_files} files and {matched_chunks} excerpts"
                 );
                 drop(project);
-                cx.update(|cx| cx.quit())?;
+                cx.update(|cx| cx.quit());
 
                 anyhow::Ok(())
             })

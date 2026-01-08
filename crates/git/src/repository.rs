@@ -248,12 +248,20 @@ pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
+    pub is_binary: bool,
 }
 
 impl CommitDetails {
     pub fn short_sha(&self) -> SharedString {
         self.sha[..SHORT_SHA_LENGTH].to_string().into()
     }
+}
+
+/// Detects if content is binary by checking for NUL bytes in the first 8000 bytes.
+/// This matches git's binary detection heuristic.
+pub fn is_binary_content(content: &[u8]) -> bool {
+    let check_len = content.len().min(8000);
+    content[..check_len].contains(&0)
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -744,8 +752,6 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
                     .context("could not find git binary path")
                     .log_err()
             })
-            .ok()
-            .flatten()
         } else {
             None
         };
@@ -905,13 +911,19 @@ impl GitRepository for RealGitRepository {
                 let len = info_line.trim_end().parse().with_context(|| {
                     format!("invalid object size output from cat-file {info_line}")
                 })?;
-                let mut text = vec![0; len];
-                stdout.read_exact(&mut text).await?;
+                let mut text_bytes = vec![0; len];
+                stdout.read_exact(&mut text_bytes).await?;
                 stdout.read_exact(&mut newline).await?;
-                let text = String::from_utf8_lossy(&text).to_string();
 
                 let mut old_text = None;
                 let mut new_text = None;
+                let mut is_binary = is_binary_content(&text_bytes);
+                let text = if is_binary {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&text_bytes).to_string()
+                };
+
                 match status_code {
                     StatusCode::Modified => {
                         info_line.clear();
@@ -919,11 +931,17 @@ impl GitRepository for RealGitRepository {
                         let len = info_line.trim_end().parse().with_context(|| {
                             format!("invalid object size output from cat-file {}", info_line)
                         })?;
-                        let mut parent_text = vec![0; len];
-                        stdout.read_exact(&mut parent_text).await?;
+                        let mut parent_bytes = vec![0; len];
+                        stdout.read_exact(&mut parent_bytes).await?;
                         stdout.read_exact(&mut newline).await?;
-                        old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
-                        new_text = Some(text);
+                        is_binary = is_binary || is_binary_content(&parent_bytes);
+                        if is_binary {
+                            old_text = Some(String::new());
+                            new_text = Some(String::new());
+                        } else {
+                            old_text = Some(String::from_utf8_lossy(&parent_bytes).to_string());
+                            new_text = Some(text);
+                        }
                     }
                     StatusCode::Added => new_text = Some(text),
                     StatusCode::Deleted => old_text = Some(text),
@@ -934,6 +952,7 @@ impl GitRepository for RealGitRepository {
                     path: RepoPath(Arc::from(rel_path)),
                     old_text,
                     new_text,
+                    is_binary,
                 })
             }
 

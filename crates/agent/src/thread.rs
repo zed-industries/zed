@@ -2413,7 +2413,7 @@ where
         cx.spawn(async move |cx| {
             let input = serde_json::from_value(input)?;
             let output = cx
-                .update(|cx| self.0.clone().run(input, event_stream, cx))?
+                .update(|cx| self.0.clone().run(input, event_stream, cx))
                 .await?;
             let raw_output = serde_json::to_value(&output)?;
             Ok(AgentToolOutput {
@@ -2650,7 +2650,7 @@ impl ToolCallEventStream {
                                 .get_or_insert_default()
                                 .set_always_allow_tool_actions(true);
                         });
-                    })?;
+                    });
                 }
 
                 Ok(())

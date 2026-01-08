@@ -1591,16 +1591,16 @@ impl Project {
                 response.payload.project_id,
                 path_style,
             )
-        })?;
+        });
         let buffer_store = cx.new(|cx| {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
-        })?;
+        });
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
-        })?;
+        });
 
         let environment =
-            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
         let breakpoint_store = cx.new(|_| {
             BreakpointStore::remote(
                 remote_id,
@@ -1608,7 +1608,7 @@ impl Project {
                 buffer_store.clone(),
                 worktree_store.clone(),
             )
-        })?;
+        });
         let dap_store = cx.new(|cx| {
             DapStore::new_collab(
                 remote_id,
@@ -1618,7 +1618,7 @@ impl Project {
                 fs.clone(),
                 cx,
             )
-        })?;
+        });
 
         let lsp_store = cx.new(|cx| {
             LspStore::new_remote(
@@ -1629,7 +1629,7 @@ impl Project {
                 remote_id,
                 cx,
             )
-        })?;
+        });
 
         let task_store = cx.new(|cx| {
             if run_tasks {
@@ -1644,7 +1644,7 @@ impl Project {
             } else {
                 TaskStore::Noop
             }
-        })?;
+        });
 
         let settings_observer = cx.new(|cx| {
             SettingsObserver::new_remote(
@@ -1654,7 +1654,7 @@ impl Project {
                 None,
                 cx,
             )
-        })?;
+        });
 
         let git_store = cx.new(|cx| {
             GitStore::remote(
@@ -1665,9 +1665,9 @@ impl Project {
                 remote_id,
                 cx,
             )
-        })?;
+        });
 
-        let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
+        let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx));
         let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let project = cx.new(|cx| {
@@ -1754,19 +1754,17 @@ impl Project {
                 project.add_worktree(&worktree, cx);
             }
             project
-        })?;
+        });
 
         let weak_project = project.downgrade();
-        lsp_store
-            .update(&mut cx, |lsp_store, cx| {
-                lsp_store.set_language_server_statuses_from_proto(
-                    weak_project,
-                    response.payload.language_servers,
-                    response.payload.language_server_capabilities,
-                    cx,
-                );
-            })
-            .ok();
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.set_language_server_statuses_from_proto(
+                weak_project,
+                response.payload.language_servers,
+                response.payload.language_server_capabilities,
+                cx,
+            );
+        });
 
         let subscriptions = subscriptions
             .into_iter()
@@ -1803,14 +1801,14 @@ impl Project {
             .map(|peer| peer.user_id)
             .collect();
         user_store
-            .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
+            .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))
             .await?;
 
         project.update(&mut cx, |this, cx| {
             this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
             this.client_subscriptions.extend(subscriptions);
             anyhow::Ok(())
-        })??;
+        })?;
 
         Ok(project)
     }
@@ -1864,34 +1862,28 @@ impl Project {
         let languages = LanguageRegistry::test(cx.background_executor().clone());
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let client = cx
-            .update(|cx| client::Client::new(clock, http_client.clone(), cx))
-            .unwrap();
-        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx)).unwrap();
-        let project = cx
-            .update(|cx| {
-                Project::local(
-                    client,
-                    node_runtime::NodeRuntime::unavailable(),
-                    user_store,
-                    Arc::new(languages),
-                    fs,
-                    None,
-                    false,
-                    cx,
-                )
-            })
-            .unwrap();
+        let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                node_runtime::NodeRuntime::unavailable(),
+                user_store,
+                Arc::new(languages),
+                fs,
+                None,
+                false,
+                cx,
+            )
+        });
         for path in root_paths {
-            let (tree, _) = project
+            let (tree, _): (Entity<Worktree>, _) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(path, true, cx)
                 })
-                .unwrap()
                 .await
                 .unwrap();
             tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-                .unwrap()
                 .await;
         }
         project
@@ -2318,7 +2310,7 @@ impl Project {
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(async move |project, cx| {
             let (old_abs_path, new_abs_path) = {
-                let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
+                let root_path = worktree.read_with(cx, |this, _| this.abs_path());
                 let new_abs_path = if is_root_entry {
                     root_path
                         .parent()
@@ -2342,7 +2334,7 @@ impl Project {
             let entry = worktree_store
                 .update(cx, |worktree_store, cx| {
                     worktree_store.rename_entry(entry_id, new_path.clone(), cx)
-                })?
+                })
                 .await?;
 
             project
@@ -2759,7 +2751,7 @@ impl Project {
             let buffer = task.await?;
             let project_entry_id = buffer.read_with(cx, |buffer, _cx| {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id())
-            })?;
+            });
 
             Ok((project_entry_id, buffer))
         })
@@ -2959,7 +2951,7 @@ impl Project {
 
             // Check if metadata already exists (e.g., for remote images)
             let needs_metadata =
-                cx.read_entity(&image_item, |item, _| item.image_metadata.is_none())?;
+                cx.read_entity(&image_item, |item, _| item.image_metadata.is_none());
 
             if needs_metadata {
                 let project = weak_project.upgrade().context("Project dropped")?;
@@ -2968,7 +2960,7 @@ impl Project {
                 image_item.update(cx, |image_item, cx| {
                     image_item.image_metadata = Some(metadata);
                     cx.emit(ImageItemEvent::MetadataUpdated);
-                })?;
+                });
             }
 
             Ok(image_item)
@@ -4376,20 +4368,18 @@ impl Project {
         path: &RelPath,
         cx: &mut AsyncApp,
     ) -> Option<ResolvedPath> {
-        worktree
-            .read_with(cx, |worktree, _| {
-                worktree.entry_for_path(path).map(|entry| {
-                    let project_path = ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: entry.path.clone(),
-                    };
-                    ResolvedPath::ProjectPath {
-                        project_path,
-                        is_dir: entry.is_dir(),
-                    }
-                })
+        worktree.read_with(cx, |worktree, _| {
+            worktree.entry_for_path(path).map(|entry| {
+                let project_path = ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: entry.path.clone(),
+                };
+                ResolvedPath::ProjectPath {
+                    project_path,
+                    is_dir: entry.is_dir(),
+                }
             })
-            .ok()?
+        })
     }
 
     pub fn list_directory(
@@ -4657,7 +4647,7 @@ impl Project {
                 this.disconnected_from_host(cx);
             }
             Ok(())
-        })?
+        })
     }
 
     async fn handle_add_collaborator(
@@ -4680,7 +4670,7 @@ impl Project {
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
-        })?;
+        });
 
         Ok(())
     }
@@ -4724,7 +4714,7 @@ impl Project {
                 new_peer_id,
             });
             Ok(())
-        })?
+        })
     }
 
     async fn handle_remove_collaborator(
@@ -4751,7 +4741,7 @@ impl Project {
 
             cx.emit(Event::CollaboratorLeft(peer_id));
             Ok(())
-        })?
+        })
     }
 
     async fn handle_update_project(
@@ -4773,7 +4763,7 @@ impl Project {
                 this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
             }
             Ok(())
-        })?
+        })
     }
 
     async fn handle_toast(
@@ -4787,7 +4777,7 @@ impl Project {
                 message: envelope.payload.message,
             });
             Ok(())
-        })?
+        })
     }
 
     async fn handle_language_server_prompt_request(
@@ -4815,7 +4805,7 @@ impl Project {
             }));
 
             anyhow::Ok(())
-        })??;
+        })?;
 
         // We drop `this` to avoid holding a reference in this future for too
         // long.
@@ -4847,7 +4837,7 @@ impl Project {
                 notification_id: envelope.payload.notification_id.into(),
             });
             Ok(())
-        })?
+        })
     }
 
     // Collab sends UpdateWorktree protos as messages
@@ -4865,7 +4855,7 @@ impl Project {
                 });
             }
             Ok(())
-        })?
+        })
     }
 
     async fn handle_update_buffer_from_remote_server(
@@ -4881,7 +4871,7 @@ impl Project {
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
-        })?;
+        });
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
@@ -4890,12 +4880,12 @@ impl Project {
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+        if this.read_with(&cx, |project, _| project.is_via_collab()) {
             return Ok(proto::Ack {});
         }
 
         let trusted_worktrees = cx
-            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             trusted_worktrees.trust(
@@ -4908,7 +4898,7 @@ impl Project {
                     .collect(),
                 cx,
             );
-        })?;
+        });
         Ok(proto::Ack {})
     }
 
@@ -4917,12 +4907,12 @@ impl Project {
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+        if this.read_with(&cx, |project, _| project.is_via_collab()) {
             return Ok(proto::Ack {});
         }
 
         let trusted_worktrees = cx
-            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             let worktree_store = this.read(cx).worktree_store().downgrade();
@@ -4934,7 +4924,7 @@ impl Project {
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
-        })?;
+        });
         Ok(proto::Ack {})
     }
 
@@ -4944,7 +4934,7 @@ impl Project {
         envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone())?;
+        let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone());
         BufferStore::handle_find_search_candidates_chunk(buffer_store, envelope, cx).await
     }
 
@@ -4954,7 +4944,7 @@ impl Project {
         envelope: TypedEnvelope<proto::FindSearchCandidatesCancelled>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone())?;
+        let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone());
         BufferStore::handle_find_search_candidates_cancel(buffer_store, envelope, cx).await
     }
 
@@ -4971,7 +4961,7 @@ impl Project {
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
-        })?;
+        });
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
@@ -5020,7 +5010,7 @@ impl Project {
                     cx,
                 )
             })
-        })?
+        })
     }
 
     async fn handle_toggle_lsp_logs(
@@ -5042,7 +5032,7 @@ impl Project {
                 enabled: envelope.payload.enabled,
                 toggled_log_kind,
             })
-        })?;
+        });
         Ok(())
     }
 
@@ -5056,7 +5046,7 @@ impl Project {
             this.buffer_store.update(cx, |this, cx| {
                 this.handle_synchronize_buffers(envelope, cx, client)
             })
-        })??;
+        })?;
 
         Ok(response)
     }
@@ -5070,22 +5060,22 @@ impl Project {
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
         let project_id = message.project_id;
-        let path_style = this.read_with(&cx, |this, cx| this.path_style(cx))?;
+        let path_style = this.read_with(&cx, |this, cx| this.path_style(cx));
         let query =
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
 
         let handle = message.handle;
-        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store().clone())?;
-        let client = this.read_with(&cx, |this, _| this.client())?;
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store().clone());
+        let client = this.read_with(&cx, |this, _| this.client());
         let task = cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
                 this.search_impl(query, cx).matching_buffers(cx)
-            })?;
+            });
             let mut batcher = project_search::AdaptiveBatcher::new();
             while let Ok(buffer) = results.rx.recv().await {
                 let buffer_id = this.update(cx, |this, cx| {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
-                })?;
+                });
                 if let Some(buffer_ids) = batcher.push(buffer_id) {
                     let _ = client
                         .request(proto::FindSearchCandidatesChunk {
@@ -5125,7 +5115,7 @@ impl Project {
         });
         buffer_store.update(&mut cx, |this, _| {
             this.register_ongoing_project_search((peer_id, handle), task);
-        })?;
+        });
 
         Ok(proto::Ack {})
     }
@@ -5138,7 +5128,7 @@ impl Project {
         let peer_id = envelope.original_sender_id()?;
         let buffer_id = BufferId::new(envelope.payload.id)?;
         let buffer = this
-            .update(&mut cx, |this, cx| this.open_buffer_by_id(buffer_id, cx))?
+            .update(&mut cx, |this, cx| this.open_buffer_by_id(buffer_id, cx))
             .await?;
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
@@ -5154,7 +5144,7 @@ impl Project {
         let open_buffer = this
             .update(&mut cx, |this, cx| {
                 this.open_buffer(ProjectPath { worktree_id, path }, cx)
-            })?
+            })
             .await?;
         Project::respond_to_open_buffer_request(this, open_buffer, peer_id, &mut cx)
     }
@@ -5165,7 +5155,7 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let buffer = this
-            .update(&mut cx, |this, cx| this.create_buffer(true, cx))?
+            .update(&mut cx, |this, cx| this.create_buffer(true, cx))
             .await?;
         let peer_id = envelope.original_sender_id()?;
 
@@ -5188,7 +5178,7 @@ impl Project {
             Ok(proto::OpenBufferResponse {
                 buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
             })
-        })?
+        })
     }
 
     fn create_buffer_for_peer(
@@ -5214,9 +5204,7 @@ impl Project {
             this.image_store.update(cx, |image_store, cx| {
                 image_store.handle_create_image_for_peer(envelope, cx)
             })
-        })?
-        .log_err();
-        Ok(())
+        })
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -5545,7 +5533,7 @@ impl Project {
         };
         cx.spawn(async move |cx| {
             let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))
                 .await
                 .context("Failed to load settings file")?;
 
@@ -5553,7 +5541,7 @@ impl Project {
 
             let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
                 store.new_text_for_update(file.text, move |settings| update(settings, cx))
-            })?;
+            });
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
@@ -5565,7 +5553,7 @@ impl Project {
                         has_bom,
                         cx,
                     )
-                })?
+                })
                 .await
                 .context("Failed to write settings file")?;
 
