@@ -196,7 +196,7 @@ impl Render for ProfileSelector {
                         ))
                         .child(
                             container()
-                                .pb_1()
+                                .pt_1()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(Label::new("Cycle Through Profiles"))
