@@ -755,7 +755,7 @@ impl LanguageModel for CloudLanguageModel {
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;
         let mode = request.mode;
-        let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
+        let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let thinking_allowed = request.thinking_allowed;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {

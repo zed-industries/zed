@@ -111,7 +111,7 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
@@ -133,13 +133,13 @@ impl AcpConnection {
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
-        let (release_channel, version) = cx.update(|cx| {
+        let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
             (
                 release_channel::ReleaseChannel::try_global(cx)
                     .map(|release_channel| release_channel.display_name()),
                 release_channel::AppVersion::global(cx).to_string(),
             )
-        })?;
+        });
 
         let client = ClientDelegate {
             sessions: sessions.clone(),
@@ -191,7 +191,7 @@ impl AcpConnection {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
                 registry.set_active_connection(server_name.clone(), &connection, cx)
             });
-        })?;
+        });
 
         let response = connection
             .initialize(
@@ -343,7 +343,7 @@ impl AgentConnection for AcpConnection {
                     }
                 })?;
 
-            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>())?;
+            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
 
             // Config options take precedence over legacy modes/models
             let (modes, models, config_options) = if use_config_options && let Some(opts) = response.config_options {
@@ -532,8 +532,8 @@ impl AgentConnection for AcpConnection {
             }
 
             let session_id = response.session_id;
-            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
-            let thread = cx.new(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
                     self.server_name.clone(),
                     self.clone(),
@@ -544,7 +544,7 @@ impl AgentConnection for AcpConnection {
                     watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
                     cx,
                 )
-            })?;
+            });
 
 
             let session = AcpSession {
@@ -1104,8 +1104,7 @@ impl acp::Client for ClientDelegate {
                 cx,
             )
         })?;
-        let terminal_id =
-            terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone())?;
+        let terminal_id = terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone());
         Ok(acp::CreateTerminalResponse::new(terminal_id))
     }
 

@@ -177,8 +177,7 @@ pub(crate) fn request_prediction_with_zeta1(
                                 })
                             },
                         );
-                    })
-                    .ok();
+                    });
                 }
 
                 return Err(err);

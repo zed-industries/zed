@@ -47,7 +47,7 @@ impl AgentServer for Gemini {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
 
             if let Some(api_key) = cx
-                .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)?
+                .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)
                 .await
                 .ok()
             {

@@ -800,7 +800,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                     assert!(
                         buffer
                             .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
-                            .expect("App should not be dropped")
                             .observed_all(&requested_version)
                     );
                     anyhow::Ok(())

@@ -67,7 +67,7 @@ impl AppSession {
         let _serialization_task = cx.spawn(async move |_, cx| {
             let mut current_window_stack = Vec::new();
             loop {
-                if let Some(windows) = cx.update(|cx| window_stack(cx)).ok().flatten()
+                if let Some(windows) = cx.update(|cx| window_stack(cx))
                     && windows != current_window_stack
                 {
                     store_window_stack(&windows).await;

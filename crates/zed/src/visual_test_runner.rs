@@ -92,12 +92,13 @@ impl TestWorkspace {
                 false,
                 cx,
             )
-        })?;
+        });
 
-        let add_worktree_task = project.update(cx, |project, cx| {
-            project.find_or_create_worktree(project_path, true, cx)
-        })?;
-        add_worktree_task.await?;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(project_path, true, cx)
+            })
+            .await?;
 
         let bounds = Bounds {
             origin: point(px(0.0), px(0.0)),
@@ -118,7 +119,7 @@ impl TestWorkspace {
                     })
                 },
             )
-        })??;
+        })?;
 
         cx.background_executor()
             .timer(std::time::Duration::from_millis(100))
@@ -257,7 +258,7 @@ fn main() {
                         Ok(ws) => ws,
                         Err(e) => {
                             log::error!("Failed to create workspace: {}", e);
-                            cx.update(|cx| cx.quit()).ok();
+                            cx.update(|cx| cx.quit());
                             std::process::exit(1);
                         }
                     };
@@ -265,19 +266,19 @@ fn main() {
                     // Set up project panel
                     if let Err(e) = setup_project_panel(&workspace, &mut cx).await {
                         log::error!("Failed to setup project panel: {}", e);
-                        cx.update(|cx| cx.quit()).ok();
+                        cx.update(|cx| cx.quit());
                         std::process::exit(1);
                     }
 
                     // Open main.rs in the editor
                     if let Err(e) = open_file(&workspace, "src/main.rs", &mut cx).await {
                         log::error!("Failed to open file: {}", e);
-                        cx.update(|cx| cx.quit()).ok();
+                        cx.update(|cx| cx.quit());
                         std::process::exit(1);
                     }
 
                     // Request a window refresh to ensure all pending effects are processed
-                    cx.refresh().ok();
+                    cx.refresh();
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(500))
                         .await;
@@ -306,11 +307,10 @@ fn main() {
                                 ws.close_panel::<ProjectPanel>(window, cx);
                             })
                             .ok();
-                    })
-                    .ok();
+                    });
 
                     // Refresh and wait for panel to close
-                    cx.refresh().ok();
+                    cx.refresh();
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
                         .await;
@@ -341,11 +341,11 @@ fn main() {
                     }
 
                     if any_failed {
-                        cx.update(|cx| cx.quit()).ok();
+                        cx.update(|cx| cx.quit());
                         std::process::exit(1);
                     }
 
-                    cx.update(|cx| cx.quit()).ok();
+                    cx.update(|cx| cx.quit());
                 })
                 .detach();
             });
@@ -371,7 +371,7 @@ async fn run_visual_test(
     update_baseline: bool,
 ) -> Result<TestResult> {
     // Capture the screenshot using direct texture capture (no ScreenCaptureKit needed)
-    let screenshot = cx.update(|cx| capture_screenshot(window, cx))??;
+    let screenshot = cx.update(|cx| capture_screenshot(window, cx))?;
 
     // Get paths
     let baseline_path = get_baseline_path(test_name);
@@ -731,27 +731,28 @@ async fn run_agent_thread_view_test(
             false,
             cx,
         )
-    })?;
+    });
 
     // Add the test directory as a worktree
-    let add_worktree_task = project.update(cx, |project, cx| {
-        project.find_or_create_worktree(&project_path, true, cx)
-    })?;
-    let (worktree, _) = add_worktree_task.await?;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(&project_path, true, cx)
+        })
+        .await?;
 
     // Wait for worktree to scan and find the image file
-    let worktree_name = worktree.read_with(cx, |wt, _| wt.root_name_str().to_string())?;
+    let worktree_name = worktree.read_with(cx, |wt, _| wt.root_name_str().to_string());
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
         .await;
 
     // Create the necessary entities for the ReadFileTool
-    let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()))?;
-    let context_server_registry = cx
-        .new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx))?;
+    let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+    let context_server_registry =
+        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
     let fake_model = Arc::new(language_model::fake_provider::FakeLanguageModel::default());
-    let project_context = cx.new(|_| prompt_store::ProjectContext::default())?;
+    let project_context = cx.new(|_| prompt_store::ProjectContext::default());
 
     // Create the agent Thread
     let thread = cx.new(|cx| {
@@ -763,7 +764,7 @@ async fn run_agent_thread_view_test(
             Some(fake_model),
             cx,
         )
-    })?;
+    });
 
     // Create the ReadFileTool
     let tool = Arc::new(agent::ReadFileTool::new(
@@ -782,10 +783,9 @@ async fn run_agent_thread_view_test(
         start_line: None,
         end_line: None,
     };
-    let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx))?;
-
     // The tool runs async - wait for it
-    run_task.await?;
+    cx.update(|cx| tool.clone().run(input, event_stream, cx))
+        .await?;
 
     // Collect the events from the tool execution
     let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
@@ -845,7 +845,7 @@ async fn run_agent_thread_view_test(
                 cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx))
             },
         )
-    })??;
+    })?;
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
@@ -873,7 +873,7 @@ async fn run_agent_thread_view_test(
 
     // Inject the stub server and open the stub thread
     workspace_window.update(cx, |_workspace, window, cx| {
-        panel.update(cx, |panel, cx| {
+        panel.update(cx, |panel: &mut AgentPanel, cx| {
             panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
         });
     })?;
@@ -884,16 +884,20 @@ async fn run_agent_thread_view_test(
 
     // Get the thread view and send a message
     let thread_view = panel
-        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())?
+        .read_with(cx, |panel, _| panel.active_thread_view_for_tests().cloned())
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = thread_view
-        .update(cx, |view, _cx| view.thread().cloned())?
+        .update(cx, |view: &mut agent_ui::acp::AcpThreadView, _cx| {
+            view.thread().cloned()
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the image response
     thread
-        .update(cx, |thread, cx| thread.send_raw("Show me the Zed logo", cx))?
+        .update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+            thread.send_raw("Show me the Zed logo", cx)
+        })
         .await?;
 
     cx.background_executor()
@@ -902,7 +906,7 @@ async fn run_agent_thread_view_test(
 
     // Get the tool call ID for expanding later
     let tool_call_id = thread
-        .update(cx, |thread, _cx| {
+        .update(cx, |thread: &mut acp_thread::AcpThread, _cx| {
             thread.entries().iter().find_map(|entry| {
                 if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
                     Some(tool_call.id.clone())
@@ -910,7 +914,7 @@ async fn run_agent_thread_view_test(
                     None
                 }
             })
-        })?
+        })
         .ok_or_else(|| anyhow::anyhow!("Expected a ToolCall entry in thread for visual test"))?;
 
     // Refresh window for collapsed state
@@ -935,9 +939,9 @@ async fn run_agent_thread_view_test(
     .await?;
 
     // Now expand the tool call so its content (the image) is visible
-    thread_view.update(cx, |view, cx| {
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpThreadView, cx| {
         view.expand_tool_call(tool_call_id, cx);
-    })?;
+    });
 
     cx.background_executor()
         .timer(std::time::Duration::from_millis(100))
