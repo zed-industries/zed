@@ -270,7 +270,15 @@ impl LanguageServerState {
                 .get(&server_info.id)
                 .and_then(|version| version.clone());
 
-            let metadata_label = match (&server_version, &message) {
+            let truncated_message = message.as_ref().and_then(|message| {
+                message
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(SharedString::new)
+                    .next()
+            });
+
+            let metadata_label = match (&server_version, &truncated_message) {
                 (None, None) => None,
                 (Some(version), None) => Some(SharedString::from(format!("v{}", version.as_ref()))),
                 (None, Some(message)) => Some(message.clone()),
@@ -492,7 +500,7 @@ impl LanguageServerState {
                                     .id("metadata-container")
                                     .ml_neg_1()
                                     .gap_1()
-                                    .max_w_56()
+                                    .max_w(rems(164.))
                                     .child(
                                         Icon::new(IconName::Circle)
                                             .color(status_color)
@@ -516,7 +524,6 @@ impl LanguageServerState {
                                                     .color(Color::Muted)
                                                     .truncate(),
                                             )
-                                            .tooltip(Tooltip::text(metadata.clone()))
                                     })
                                     .into_any_element()
                             }
