@@ -2,11 +2,12 @@ use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds,
     ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
-    Result, Size, Task, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, current_platform,
+    Result, Size, Task, TestDispatcher, TextSystem, Window, WindowBounds, WindowHandle,
+    WindowOptions, app::GpuiMode, current_platform,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
+use rand::SeedableRng;
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 /// A test context that uses real macOS rendering instead of mocked rendering.
@@ -25,21 +26,38 @@ pub struct VisualTestAppContext {
     pub background_executor: BackgroundExecutor,
     /// The foreground executor for running tasks on the main thread
     pub foreground_executor: ForegroundExecutor,
+    /// The test dispatcher for deterministic task scheduling
+    dispatcher: TestDispatcher,
     platform: Rc<dyn Platform>,
     text_system: Arc<TextSystem>,
 }
 
 impl VisualTestAppContext {
-    /// Creates a new `VisualTestAppContext` with real macOS platform rendering.
+    /// Creates a new `VisualTestAppContext` with real macOS platform rendering
+    /// but deterministic task scheduling via TestDispatcher.
     ///
-    /// This initializes the real macOS platform (not the test platform), which means:
-    /// - Windows are actually rendered by Metal/the compositor
-    /// - Screenshots can be captured via ScreenCaptureKit
-    /// - All platform APIs work as they do in production
+    /// This provides:
+    /// - Real Metal/compositor rendering for accurate screenshots
+    /// - Deterministic task scheduling via TestDispatcher
+    /// - Controllable time via `advance_clock`
     pub fn new() -> Self {
+        // Use a seeded RNG for deterministic behavior
+        let seed = std::env::var("SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let rng = rand::rngs::StdRng::seed_from_u64(seed);
+
+        // Create a test dispatcher for deterministic task scheduling
+        let dispatcher = TestDispatcher::new(rng);
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+
+        // Create executors from the test dispatcher
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        // Use the real platform for rendering but our test executors for tasks
         let platform = current_platform(false);
-        let background_executor = platform.background_executor();
-        let foreground_executor = platform.foreground_executor();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
         let asset_source = Arc::new(());
@@ -52,6 +70,7 @@ impl VisualTestAppContext {
             app,
             background_executor,
             foreground_executor,
+            dispatcher,
             platform,
             text_system,
         }
@@ -118,9 +137,17 @@ impl VisualTestAppContext {
         self.foreground_executor.clone()
     }
 
-    /// Runs pending background tasks until there's nothing left to do.
+    /// Runs all pending foreground and background tasks until there's nothing left to do.
+    /// This is essential for processing async operations like tooltip timers.
     pub fn run_until_parked(&self) {
-        self.background_executor.run_until_parked();
+        self.dispatcher.run_until_parked();
+    }
+
+    /// Advances the simulated clock by the given duration and processes any tasks
+    /// that become ready. This is essential for testing time-based behaviors like
+    /// tooltip delays.
+    pub fn advance_clock(&self, duration: Duration) {
+        self.dispatcher.advance_clock(duration);
     }
 
     /// Updates the app state.
