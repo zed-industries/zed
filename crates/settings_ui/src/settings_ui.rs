@@ -1818,6 +1818,7 @@ impl SettingsWindow {
             );
 
             let fuzzy_matches = fuzzy_search_task.await;
+            let bm25_matches = bm25_task.await;
 
             _ = this
                 .update(cx, |this, cx| {
@@ -1842,37 +1843,18 @@ impl SettingsWindow {
                     //     let score = fuzzy_match.score;
                     //     eprint!("# {header} :: QUERY = {query} :: SCORE = {score}\n{title}\n{description}\n\n");
                     // }
-                    update_matches_inner(
-                        this,
-                        search_index.as_ref(),
-                        fuzzy_matches
-                            .into_iter()
-                            // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
-                            // flexible enough to catch misspellings and <4 letter queries
-                            // More flexible is good for us here because fuzzy matches will only be used for things that don't
-                            // match using bm25
-                            .take_while(|fuzzy_match| fuzzy_match.score >= 0.3)
-                            .map(|fuzzy_match| fuzzy_match.candidate_id),
-                        cx,
-                    );
-                })
-                .ok();
+                    let fuzzy_indices = fuzzy_matches
+                        .into_iter()
+                        // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
+                        // flexible enough to catch misspellings and <4 letter queries
+                        .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
+                        .map(|fuzzy_match| fuzzy_match.candidate_id);
+                    let bm25_indices = bm25_matches
+                        .into_iter()
+                        .map(|bm25_match| bm25_match.document.id);
+                    let merged_indices = bm25_indices.chain(fuzzy_indices);
 
-            let bm25_matches = bm25_task.await;
-
-            _ = this
-                .update(cx, |this, cx| {
-                    if bm25_matches.is_empty() {
-                        return;
-                    }
-                    update_matches_inner(
-                        this,
-                        search_index.as_ref(),
-                        bm25_matches
-                            .into_iter()
-                            .map(|bm25_match| bm25_match.document.id),
-                        cx,
-                    );
+                    update_matches_inner(this, search_index.as_ref(), merged_indices, cx);
                 })
                 .ok();
 
