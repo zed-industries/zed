@@ -64,6 +64,13 @@ const MATCH_THRESHOLD: f64 = 0.99;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 
 fn main() {
+    // Set ZED_STATELESS early to prevent file system access to real config directories
+    // This must be done before any code accesses zed_env_vars::ZED_STATELESS
+    // SAFETY: We're at the start of main(), before any threads are spawned
+    unsafe {
+        std::env::set_var("ZED_STATELESS", "1");
+    }
+
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -80,9 +87,11 @@ fn main() {
     // Create a temporary directory for test files
     // Canonicalize the path to resolve symlinks (on macOS, /var -> /private/var)
     // which prevents "path does not exist" errors during worktree scanning
+    // Use keep() to prevent auto-cleanup - background worktree tasks may still be running
+    // when tests complete, so we let the OS clean up temp directories on process exit
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
-    let canonical_temp = temp_dir
-        .path()
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path
         .canonicalize()
         .expect("Failed to canonicalize temp directory");
     let project_path = canonical_temp.join("project");
@@ -93,8 +102,8 @@ fn main() {
 
     let test_result = std::panic::catch_unwind(|| run_visual_tests(project_path, update_baseline));
 
-    // Keep temp_dir alive until we're done
-    drop(temp_dir);
+    // Note: We don't delete temp_path here because background worktree tasks may still
+    // be running. The directory will be cleaned up when the process exits or by the OS.
 
     match test_result {
         Ok(Ok(())) => {}
@@ -114,8 +123,15 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     let mut cx = VisualTestAppContext::new();
 
     // Initialize settings store first (required by theme and other subsystems)
+    // and disable telemetry to prevent HTTP errors from FakeHttpClient
     cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
+        let mut settings_store = SettingsStore::test(cx);
+        settings_store.update_user_settings(cx, |settings| {
+            settings.telemetry = Some(settings::TelemetrySettingsContent {
+                diagnostics: Some(false),
+                metrics: Some(false),
+            });
+        });
         cx.set_global(settings_store);
     });
 
@@ -387,6 +403,37 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             eprintln!("✗ diff_review_button: FAILED - {}", e);
             failed += 1;
         }
+    }
+
+    // Clean up the main workspace's worktree to stop background scanning tasks
+    // This prevents "root path could not be canonicalized" errors when main() drops temp_dir
+    workspace_window
+        .update(&mut cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                let worktree_ids: Vec<_> =
+                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in worktree_ids {
+                    project.remove_worktree(id, cx);
+                }
+            });
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    // Close the main window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Run until all cleanup tasks complete
+    cx.run_until_parked();
+
+    // Give background tasks time to finish, including scrollbar hide timers (1 second)
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
     }
 
     // Print summary
@@ -1069,9 +1116,43 @@ import { AiPaneTabContext } from 'context';
         update_baseline,
     )?;
 
-    // Clean up the temp directory now that all tests are done
-    // We use keep() above to prevent auto-cleanup during the test
-    let _ = std::fs::remove_dir_all(&temp_path);
+    // Remove the worktree from the project to stop background scanning tasks
+    // This prevents "root path could not be canonicalized" errors when we clean up
+    workspace_window
+        .update(cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                // Get all worktree IDs and remove them
+                let worktree_ids: Vec<_> =
+                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in worktree_ids {
+                    project.remove_worktree(id, cx);
+                }
+            });
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    // Close all windows
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    let _ = cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Run until all cleanup tasks complete
+    cx.run_until_parked();
+
+    // Give background tasks time to finish, including scrollbar hide timers (1 second)
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Note: We don't delete temp_path here because background worktree tasks may still
+    // be running. The directory will be cleaned up when the process exits.
 
     // Return combined result
     match (&test1_result, &test1b_result, &test2_result, &test3_result) {
@@ -1130,8 +1211,10 @@ fn run_agent_thread_view_test(
 
     // Create a temporary directory with the test image
     // Canonicalize to resolve symlinks (on macOS, /var -> /private/var)
+    // Use keep() to prevent auto-cleanup - we'll clean up manually after stopping background tasks
     let temp_dir = tempfile::tempdir()?;
-    let canonical_temp = temp_dir.path().canonicalize()?;
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path.canonicalize()?;
     let project_path = canonical_temp.join("project");
     std::fs::create_dir_all(&project_path)?;
     let image_path = project_path.join("test-image.png");
@@ -1386,6 +1469,43 @@ fn run_agent_thread_view_test(
         cx,
         update_baseline,
     )?;
+
+    // Remove the worktree from the project to stop background scanning tasks
+    // This prevents "root path could not be canonicalized" errors when we clean up
+    workspace_window
+        .update(cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                let worktree_ids: Vec<_> =
+                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in worktree_ids {
+                    project.remove_worktree(id, cx);
+                }
+            });
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    // Close the window
+    // Note: This may cause benign "editor::scroll window not found" errors from scrollbar
+    // auto-hide timers that were scheduled before the window was closed. These errors
+    // don't affect test results.
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Run until all cleanup tasks complete
+    cx.run_until_parked();
+
+    // Give background tasks time to finish, including scrollbar hide timers (1 second)
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Note: We don't delete temp_path here because background worktree tasks may still
+    // be running. The directory will be cleaned up when the process exits.
 
     match (&collapsed_result, &expanded_result) {
         (TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
