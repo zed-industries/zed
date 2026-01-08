@@ -258,7 +258,6 @@ impl ProjectDiff {
                 .primary_editor()
                 .update(cx, |editor, cx| {
                     editor.disable_diagnostics(cx);
-                    editor.set_show_diff_review_button(true, cx);
 
                     match branch_diff.read(cx).diff_base() {
                         DiffBase::Head => {

@@ -1081,7 +1081,6 @@ pub struct Editor {
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
-    show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
@@ -2247,7 +2246,6 @@ impl Editor {
             show_code_actions: None,
             show_runnables: None,
             show_breakpoints: None,
-            show_diff_review_button: false,
             show_wrap_guides: None,
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
@@ -20704,15 +20702,6 @@ impl Editor {
     pub fn set_show_breakpoints(&mut self, show_breakpoints: bool, cx: &mut Context<Self>) {
         self.show_breakpoints = Some(show_breakpoints);
         cx.notify();
-    }
-
-    pub fn set_show_diff_review_button(&mut self, show: bool, cx: &mut Context<Self>) {
-        self.show_diff_review_button = show;
-        cx.notify();
-    }
-
-    pub fn show_diff_review_button(&self) -> bool {
-        self.show_diff_review_button
     }
 
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
