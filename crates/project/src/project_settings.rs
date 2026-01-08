@@ -1238,8 +1238,7 @@ impl SettingsObserver {
                 store
                     .editorconfig_settings
                     .set_external_paths_for_worktree(worktree_id, external_paths);
-            })
-            .ok();
+            });
         })
         .detach();
     }
