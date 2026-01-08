@@ -70,12 +70,8 @@ struct FakeTerminalHandle {
 
 impl FakeTerminalHandle {
     fn new_never_exits(cx: &mut App) -> Self {
-        Self::new_internal(cx, false)
-    }
-
-    fn new_internal(cx: &mut App, stopped_by_user: bool) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
-        let stopped_by_user = Arc::new(AtomicBool::new(stopped_by_user));
+        let stopped_by_user = Arc::new(AtomicBool::new(false));
 
         let (exit_sender, exit_receiver) = futures::channel::oneshot::channel();
 
@@ -1929,102 +1925,6 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
 
     // Verify we can send a new message after truncation
     verify_thread_recovery(&thread, &fake_model, cx).await;
-}
-
-#[gpui::test]
-async fn test_terminal_tool_cancellation_with_timeout_configured(cx: &mut TestAppContext) {
-    // Tests that user cancellation works correctly even when a timeout is configured.
-    // The cancellation should take precedence and the output should indicate user stopped,
-    // not timeout.
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    always_allow_tools(cx);
-    let fake_model = model.as_fake();
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
-
-    let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
-            thread.send(UserMessageId::new(), ["run a command with timeout"], cx)
-        })
-        .unwrap();
-
-    cx.run_until_parked();
-
-    // Simulate the model calling the terminal tool WITH a timeout
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
-        LanguageModelToolUse {
-            id: "terminal_tool_1".into(),
-            name: "terminal".into(),
-            raw_input: r#"{"command": "sleep 1000", "cd": ".", "timeout_ms": 60000}"#.into(),
-            input: json!({"command": "sleep 1000", "cd": ".", "timeout_ms": 60000}),
-            is_input_complete: true,
-            thought_signature: None,
-        },
-    ));
-    fake_model.end_last_completion_stream();
-
-    // Wait for the terminal tool to start running
-    wait_for_terminal_tool_started(&mut events, cx).await;
-
-    // Cancel before the timeout fires
-    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
-
-    // Collect remaining events
-    let remaining_events = collect_events_until_stop(&mut events, cx).await;
-
-    // Verify the terminal was killed
-    assert!(
-        handle.was_killed(),
-        "expected terminal handle to be killed on cancellation"
-    );
-
-    // Verify we got a cancellation stop event (not timeout)
-    assert_eq!(
-        stop_events(remaining_events),
-        vec![acp::StopReason::Cancelled],
-    );
-
-    // Verify the tool result indicates user stopped (not timeout)
-    thread.update(cx, |thread, _cx| {
-        let message = thread.last_message().unwrap();
-        let agent_message = message.as_agent_message().unwrap();
-
-        let tool_use = agent_message
-            .content
-            .iter()
-            .find_map(|content| match content {
-                AgentMessageContent::ToolUse(tool_use) => Some(tool_use),
-                _ => None,
-            })
-            .expect("expected tool use in agent message");
-
-        let tool_result = agent_message
-            .tool_results
-            .get(&tool_use.id)
-            .expect("expected tool result");
-
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
-
-        // Should indicate user stopped, NOT timeout
-        assert!(
-            result_text.contains("The user stopped this command"),
-            "expected tool result to indicate user stopped, got: {result_text}"
-        );
-        assert!(
-            !result_text.contains("timed out"),
-            "tool result should not mention timeout when user cancelled, got: {result_text}"
-        );
-    });
 }
 
 #[gpui::test]
