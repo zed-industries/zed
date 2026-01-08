@@ -368,7 +368,6 @@ async fn build_buffer_diff(
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
-    let text_snapshot = cx.update(|cx| buffer.read(cx).text_snapshot());
     let buffer = cx.update(|cx| buffer.read(cx).snapshot());
 
     let secondary_diff = cx.new(|cx| BufferDiff::new(&buffer, cx));

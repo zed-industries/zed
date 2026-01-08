@@ -5,6 +5,7 @@ use imara_diff::{
     intern::{InternedInput, Interner, Token},
     sources::lines_with_terminator,
 };
+use settings::DiffStrategy;
 use std::{fmt::Write, iter, ops::Range, sync::Arc};
 
 const MAX_WORD_DIFF_LEN: usize = 512;
@@ -201,6 +202,7 @@ pub fn word_diff_ranges(
 
 pub struct DiffOptions {
     pub language_scope: Option<LanguageScope>,
+    pub diff_strategy: DiffStrategy,
     pub max_word_diff_len: usize,
     pub max_word_diff_line_count: usize,
 }
@@ -208,6 +210,7 @@ pub struct DiffOptions {
 impl Default for DiffOptions {
     fn default() -> Self {
         Self {
+            diff_strategy: Default::default(),
             language_scope: Default::default(),
             max_word_diff_len: MAX_WORD_DIFF_LEN,
             max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,

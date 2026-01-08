@@ -4684,7 +4684,7 @@ fn collect_word_diffs(
 
     snapshot
         .diff_hunks()
-        .flat_map(|hunk| hunk.word_diffs)
+        .flat_map(|hunk| hunk.diffs)
         .map(|range| text[range.start.0..range.end.0].to_string())
         .collect()
 }

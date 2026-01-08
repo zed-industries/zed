@@ -36,7 +36,7 @@ pub enum SyntaxChange {
 /// Result of a syntax diff operation.
 ///
 /// Ranges are absolute byte positions in the original source text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SyntaxDiff {
     /// Absolute byte ranges in the LHS that are novel (removed/changed).
     pub lhs_ranges: Vec<Range<usize>>,

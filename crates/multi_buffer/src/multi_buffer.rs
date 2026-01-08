@@ -140,10 +140,7 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<BufferOffset>,
     /// The status of this hunk (added/modified/deleted and secondary status).
     pub status: DiffHunkStatus,
-    /// The word diffs for this hunk.
-    pub word_diffs: Vec<Range<MultiBufferOffset>>,
-    /// The syntax diffs for this hunk.
-    pub syntax_diffs: Vec<Range<MultiBufferOffset>>,
+    pub diffs: Vec<Range<MultiBufferOffset>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -3985,41 +3982,9 @@ impl MultiBufferSnapshot {
                 range.end.row + 1
             };
 
-            let word_diffs =
-                (!hunk.base_word_diffs.is_empty() || !hunk.buffer_word_diffs.is_empty())
-                    .then(|| {
-                        let mut word_diffs = Vec::new();
-
-                        if self.show_deleted_hunks || is_inverted {
-                            let hunk_start_offset = if is_inverted {
-                                Anchor::in_buffer(
-                                    excerpt.id,
-                                    excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
-                                )
-                                .to_offset(self)
-                            } else {
-                                Anchor::in_buffer(excerpt.id, hunk.buffer_range.start)
-                                    .to_offset(self)
-                            };
-
-                            word_diffs.extend(hunk.base_word_diffs.iter().map(|diff| {
-                                hunk_start_offset + diff.start..hunk_start_offset + diff.end
-                            }));
-                        }
-
-                        if !is_inverted {
-                            word_diffs.extend(hunk.buffer_word_diffs.into_iter().map(|diff| {
-                                Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)
-                            }));
-                        }
-                        word_diffs
-                    })
-                    .unwrap_or_default();
-
-            let syntax_diffs = hunk
-                .syntax_diff
-                .map(|syntax_diff| {
-                    let mut syntax_diffs = Vec::new();
+            let diffs = (!hunk.base_diffs.is_empty() || !hunk.buffer_diffs.is_empty())
+                .then(|| {
+                    let mut diffs = Vec::new();
 
                     if self.show_deleted_hunks || is_inverted {
                         let hunk_start_offset = if is_inverted {
@@ -4032,20 +3997,20 @@ impl MultiBufferSnapshot {
                             Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self)
                         };
 
-                        syntax_diffs.extend(syntax_diff.lhs_ranges.iter().map(|range| {
-                            hunk_start_offset + range.start..hunk_start_offset + range.end
+                        diffs.extend(hunk.base_diffs.iter().map(|diff| {
+                            hunk_start_offset + diff.start..hunk_start_offset + diff.end
                         }));
                     }
 
                     if !is_inverted {
-                        let hunk_start_offset =
-                            Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self);
-                        syntax_diffs.extend(syntax_diff.rhs_ranges.into_iter().map(|range| {
-                            hunk_start_offset + range.start..hunk_start_offset + range.end
-                        }));
+                        diffs.extend(
+                            hunk.buffer_diffs.into_iter().map(|diff| {
+                                Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)
+                            }),
+                        );
                     }
 
-                    syntax_diffs
+                    diffs
                 })
                 .unwrap_or_default();
 
@@ -4068,8 +4033,7 @@ impl MultiBufferSnapshot {
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range,
-                word_diffs,
-                syntax_diffs,
+                diffs,
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
                 status: DiffHunkStatus {

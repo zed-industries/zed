@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use syntax_diff::{SyntaxDiff, SyntaxTree};
+use syntax_diff::SyntaxTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
@@ -97,10 +97,9 @@ pub struct DiffHunk {
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
     /// Anchors representing the word diff locations in the active buffer
-    pub buffer_word_diffs: Vec<Range<Anchor>>,
+    pub buffer_diffs: Vec<Range<Anchor>>,
     /// Offsets relative to the start of the deleted diff that represent word diff locations
-    pub base_word_diffs: Vec<Range<usize>>,
-    pub syntax_diff: Option<SyntaxDiff>,
+    pub base_diffs: Vec<Range<usize>>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -108,9 +107,8 @@ pub struct DiffHunk {
 struct InternalDiffHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
-    base_word_diffs: Vec<Range<usize>>,
-    buffer_word_diffs: Vec<Range<Anchor>>,
-    syntax_diff: Option<SyntaxDiff>,
+    base_diffs: Vec<Range<usize>>,
+    buffer_diffs: Vec<Range<Anchor>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -669,9 +667,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 let (start_point, (start_anchor, start_base, hunk)) = summaries.next()?;
                 let (mut end_point, (mut end_anchor, end_base, _)) = summaries.next()?;
 
-                let base_word_diffs = hunk.base_word_diffs.clone();
-                let buffer_word_diffs = hunk.buffer_word_diffs.clone();
-                let syntax_diff = hunk.syntax_diff.clone();
+                let base_diffs = hunk.base_diffs.clone();
+                let buffer_diffs = hunk.buffer_diffs.clone();
 
                 if !start_anchor.is_valid(buffer) {
                     continue;
@@ -741,10 +738,9 @@ impl BufferDiffInner<language::BufferSnapshot> {
                     range: start_point..end_point,
                     diff_base_byte_range: start_base..end_base,
                     buffer_range: start_anchor..end_anchor,
-                    base_word_diffs,
-                    buffer_word_diffs,
+                    base_diffs,
+                    buffer_diffs,
                     secondary_status,
-                    syntax_diff,
                 });
             }
         })
@@ -769,9 +765,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 buffer_range: hunk.buffer_range.clone(),
                 // The secondary status is not used by callers of this method.
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
-                base_word_diffs: hunk.base_word_diffs.clone(),
-                buffer_word_diffs: hunk.buffer_word_diffs.clone(),
-                syntax_diff: hunk.syntax_diff.clone(),
+                base_diffs: hunk.base_diffs.clone(),
+                buffer_diffs: hunk.buffer_diffs.clone(),
             })
         })
     }
@@ -794,11 +789,13 @@ fn build_diff_options(
         }
     }
 
-    match language_settings(language, file, cx).diff_strategy {
+    let diff_strategy = language_settings(language, file, cx).diff_strategy;
+    match diff_strategy {
         DiffStrategy::Line => None,
         DiffStrategy::Word | DiffStrategy::Syntax => Some(DiffOptions {
             language_scope,
             max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+            diff_strategy,
             ..Default::default()
         }),
     }
@@ -834,9 +831,8 @@ fn compute_hunks(
                 InternalDiffHunk {
                     buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
                     diff_base_byte_range: 0..diff_base.len() - 1,
-                    base_word_diffs: Vec::default(),
-                    buffer_word_diffs: Vec::default(),
-                    syntax_diff: None,
+                    base_diffs: Vec::default(),
+                    buffer_diffs: Vec::default(),
                 },
                 &buffer,
             );
@@ -863,9 +859,8 @@ fn compute_hunks(
             InternalDiffHunk {
                 buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 diff_base_byte_range: 0..0,
-                base_word_diffs: Vec::default(),
-                buffer_word_diffs: Vec::default(),
-                syntax_diff: None,
+                base_diffs: Vec::default(),
+                buffer_diffs: Vec::default(),
             },
             &buffer,
         );
@@ -1041,59 +1036,75 @@ fn process_patch_hunk(
 
     let base_line_count = line_item_count.saturating_sub(buffer_row_range.len());
 
-    let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
+    let (base_diffs, buffer_diffs) = if let Some(diff_options) = diff_options
         && !buffer_row_range.is_empty()
-        && base_line_count == buffer_row_range.len()
-        && diff_options.max_word_diff_line_count >= base_line_count
     {
-        let base_text: String = diff_base
-            .chunks_in_range(diff_base_byte_range.clone())
-            .collect();
+        let buffer_byte_range =
+            buffer_range.start.to_offset(buffer)..buffer_range.end.to_offset(buffer);
 
-        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
+        let (base_diffs, buffer_diffs_relative) = match diff_options.diff_strategy {
+            DiffStrategy::Word
+                if base_line_count == buffer_row_range.len()
+                    && diff_options.max_word_diff_line_count >= base_line_count =>
+            {
+                let base_text: String = diff_base
+                    .chunks_in_range(diff_base_byte_range.clone())
+                    .collect();
 
-        let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
-            &base_text,
-            &buffer_text,
-            DiffOptions {
-                language_scope: diff_options.language_scope.clone(),
-                ..*diff_options
-            },
-        );
+                let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
-        let buffer_start_offset = buffer_range.start.to_offset(buffer);
-        let buffer_word_diffs = buffer_word_diffs_relative
+                word_diff_ranges(
+                    &base_text,
+                    &buffer_text,
+                    DiffOptions {
+                        language_scope: diff_options.language_scope.clone(),
+                        ..*diff_options
+                    },
+                )
+            }
+            DiffStrategy::Syntax => {
+                let base_syntax_tree =
+                    build_syntax_tree(base_snapshot, diff_base_byte_range.clone());
+                let buffer_syntax_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
+
+                let syntax_diff = match (base_syntax_tree, buffer_syntax_tree) {
+                    (Some(base), Some(buffer)) => {
+                        syntax_diff::diff_trees(&base, &buffer).ok().map(|diff| {
+                            let lhs_hunk_len =
+                                diff_base_byte_range.end - diff_base_byte_range.start;
+                            let rhs_hunk_len = buffer_byte_range.end - buffer_byte_range.start;
+                            diff.relative_to(diff_base_byte_range.start, buffer_byte_range.start)
+                                .bound_to(0..lhs_hunk_len, 0..rhs_hunk_len)
+                        })
+                    }
+                    _ => None,
+                }
+                .unwrap_or_default();
+
+                (syntax_diff.lhs_ranges, syntax_diff.rhs_ranges)
+            }
+            _ => (Vec::default(), Vec::default()),
+        };
+
+        let buffer_diffs = buffer_diffs_relative
             .into_iter()
             .map(|range| {
-                let start = buffer.anchor_after(buffer_start_offset + range.start);
-                let end = buffer.anchor_after(buffer_start_offset + range.end);
+                let start = buffer.anchor_after(buffer_byte_range.start + range.start);
+                let end = buffer.anchor_after(buffer_byte_range.start + range.end);
                 start..end
             })
             .collect();
 
-        (base_word_diffs, buffer_word_diffs)
+        (base_diffs, buffer_diffs)
     } else {
         (Vec::default(), Vec::default())
-    };
-
-    let buffer_byte_range =
-        buffer_range.start.to_offset(&buffer.text)..buffer_range.end.to_offset(&buffer.text);
-    let buffer_syntax_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
-    let base_syntax_tree = build_syntax_tree(base_snapshot, diff_base_byte_range.clone());
-
-    let syntax_diff = match (base_syntax_tree, buffer_syntax_tree) {
-        (Some(base), Some(buffer)) => syntax_diff::diff_trees(&base, &buffer)
-            .ok()
-            .map(|diff| diff.relative_to(diff_base_byte_range.start, buffer_byte_range.start)),
-        _ => None,
     };
 
     InternalDiffHunk {
         buffer_range,
         diff_base_byte_range,
-        base_word_diffs,
-        buffer_word_diffs,
-        syntax_diff,
+        base_diffs,
+        buffer_diffs,
     }
 }
 
