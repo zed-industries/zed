@@ -1630,7 +1630,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 - `button`: Whether to show the LSP status button in the status bar
 - `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds.
-  A value of `0` will result in no timeout being applied (causing all LSP reponses to wait indefinitely until completed).
+  A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed).
 
 ## LSP Highlight Debounce
 
