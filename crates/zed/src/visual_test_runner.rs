@@ -39,6 +39,7 @@ use std::sync::Arc;
 use workspace::{AppState, Workspace};
 
 use acp_thread::{AgentConnection, StubAgentConnection};
+use agent::ToolPermissionContext;
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::SharedString;
@@ -805,29 +806,8 @@ async fn run_tool_permission_buttons_test(
     let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
         .kind(acp::ToolKind::Edit);
 
-    // Note: "Always Allow" is NOT shown when granular options are available
-    let permission_options = vec![
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_terminal"),
-            "Always allow terminal",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_pattern:terminal:^cargo\\s"),
-            "Always allow `cargo` commands",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("allow"),
-            "Allow Once",
-            acp::PermissionOptionKind::AllowOnce,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("deny"),
-            "Deny",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-    ];
+    let permission_options =
+        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
 
     let connection = StubAgentConnection::new()
         .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
@@ -968,29 +948,8 @@ async fn run_edit_file_permission_buttons_test(
     let tool_call =
         acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`").kind(acp::ToolKind::Edit);
 
-    // Note: "Always Allow" is NOT shown when granular options are available
-    let permission_options = vec![
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_edit_file"),
-            "Always allow edit file",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_pattern:edit_file:^src/"),
-            "Always allow in `src/`",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("allow"),
-            "Allow Once",
-            acp::PermissionOptionKind::AllowOnce,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("deny"),
-            "Deny",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-    ];
+    let permission_options =
+        ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
 
     let connection = StubAgentConnection::new()
         .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
@@ -1131,29 +1090,8 @@ async fn run_fetch_permission_buttons_test(
     let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
         .kind(acp::ToolKind::Fetch);
 
-    // Note: "Always Allow" is NOT shown when granular options are available
-    let permission_options = vec![
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_fetch"),
-            "Always allow fetch",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_pattern:fetch:^https?://docs\\.rs"),
-            "Always allow fetching from `docs.rs`",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("allow"),
-            "Allow Once",
-            acp::PermissionOptionKind::AllowOnce,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("deny"),
-            "Deny",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-    ];
+    let permission_options =
+        ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
 
     let connection = StubAgentConnection::new()
         .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));
@@ -1292,25 +1230,9 @@ async fn run_terminal_no_pattern_permission_buttons_test(
     let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
         .kind(acp::ToolKind::Edit);
 
-    // Only 3 options - no pattern button for ./deploy.sh, and no "Always Allow"
-    // since we have the tool-specific "Always allow terminal" button
-    let permission_options = vec![
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("always_allow_terminal"),
-            "Always allow terminal",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("allow"),
-            "Allow Once",
-            acp::PermissionOptionKind::AllowOnce,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("deny"),
-            "Deny",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-    ];
+    // Only 3 options - no pattern button for ./deploy.sh (starts with "./")
+    let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+        .build_permission_options();
 
     let connection = StubAgentConnection::new()
         .with_permission_requests(HashMap::from_iter([(tool_call_id, permission_options)]));

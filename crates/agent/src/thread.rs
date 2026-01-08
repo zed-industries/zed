@@ -577,6 +577,77 @@ pub struct ToolPermissionContext {
     pub input_value: String,
 }
 
+impl ToolPermissionContext {
+    pub fn new(tool_name: impl Into<String>, input_value: impl Into<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            input_value: input_value.into(),
+        }
+    }
+
+    /// Builds the permission options for this tool context.
+    ///
+    /// This is the canonical source for permission option generation.
+    /// Tests should use this function rather than manually constructing options.
+    pub fn build_permission_options(&self) -> Vec<acp::PermissionOption> {
+        use crate::pattern_extraction::*;
+
+        let tool_name = &self.tool_name;
+        let input_value = &self.input_value;
+
+        let (pattern, pattern_display) = match tool_name.as_str() {
+            "terminal" => (
+                extract_terminal_pattern(input_value),
+                extract_terminal_pattern_display(input_value),
+            ),
+            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+                extract_path_pattern(input_value),
+                extract_path_pattern_display(input_value),
+            ),
+            "fetch" => (
+                extract_url_pattern(input_value),
+                extract_url_pattern_display(input_value),
+            ),
+            _ => (None, None),
+        };
+
+        let mut options = vec![acp::PermissionOption::new(
+            acp::PermissionOptionId::new(format!("always_allow_{}", tool_name)),
+            format!("Always allow {}", tool_name.replace('_', " ")),
+            acp::PermissionOptionKind::AllowAlways,
+        )];
+
+        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+            let button_text = match tool_name.as_str() {
+                "terminal" => format!("Always allow `{}` commands", display),
+                "fetch" => format!("Always allow fetching from `{}`", display),
+                _ => format!("Always allow in `{}`", display),
+            };
+            options.push(acp::PermissionOption::new(
+                acp::PermissionOptionId::new(format!(
+                    "always_allow_pattern:{}:{}",
+                    tool_name, pattern
+                )),
+                button_text,
+                acp::PermissionOptionKind::AllowAlways,
+            ));
+        }
+
+        options.push(acp::PermissionOption::new(
+            acp::PermissionOptionId::new("allow"),
+            "Allow once",
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+        options.push(acp::PermissionOption::new(
+            acp::PermissionOptionId::new("deny"),
+            "Deny",
+            acp::PermissionOptionKind::RejectOnce,
+        ));
+
+        options
+    }
+}
+
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
@@ -2633,7 +2704,7 @@ impl ToolCallEventStream {
                         ),
                         acp::PermissionOption::new(
                             acp::PermissionOptionId::new("allow"),
-                            "Allow Once",
+                            "Allow once",
                             acp::PermissionOptionKind::AllowOnce,
                         ),
                         acp::PermissionOption::new(
@@ -2711,7 +2782,7 @@ impl ToolCallEventStream {
                         ),
                         acp::PermissionOption::new(
                             acp::PermissionOptionId::new("allow"),
-                            "Allow Once",
+                            "Allow once",
                             acp::PermissionOptionKind::AllowOnce,
                         ),
                         acp::PermissionOption::new(
@@ -2758,7 +2829,6 @@ impl ToolCallEventStream {
         context: ToolPermissionContext,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        use crate::pattern_extraction::*;
         use settings::ToolPermissionMode;
 
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
@@ -2766,58 +2836,7 @@ impl ToolCallEventStream {
         }
 
         let tool_name = context.tool_name.clone();
-        let input_value = context.input_value.clone();
-
-        let (pattern, pattern_display) = match tool_name.as_str() {
-            "terminal" => (
-                extract_terminal_pattern(&input_value),
-                extract_terminal_pattern_display(&input_value),
-            ),
-            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
-                extract_path_pattern(&input_value),
-                extract_path_pattern_display(&input_value),
-            ),
-            "fetch" => (
-                extract_url_pattern(&input_value),
-                extract_url_pattern_display(&input_value),
-            ),
-            _ => (None, None),
-        };
-
-        // Build the options list. We only show "Always Allow" (global) as a fallback
-        // when we don't have tool-specific granular options.
-        let mut options = vec![acp::PermissionOption::new(
-            acp::PermissionOptionId::new(format!("always_allow_{}", tool_name)),
-            format!("Always allow {}", tool_name.replace('_', " ")),
-            acp::PermissionOptionKind::AllowAlways,
-        )];
-
-        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-            let button_text = match tool_name.as_str() {
-                "terminal" => format!("Always allow `{}` commands", display),
-                "fetch" => format!("Always allow fetching from `{}`", display),
-                _ => format!("Always allow in `{}`", display),
-            };
-            options.push(acp::PermissionOption::new(
-                acp::PermissionOptionId::new(format!(
-                    "always_allow_pattern:{}:{}",
-                    tool_name, pattern
-                )),
-                button_text,
-                acp::PermissionOptionKind::AllowAlways,
-            ));
-        }
-
-        options.push(acp::PermissionOption::new(
-            acp::PermissionOptionId::new("allow"),
-            "Allow Once",
-            acp::PermissionOptionKind::AllowOnce,
-        ));
-        options.push(acp::PermissionOption::new(
-            acp::PermissionOptionId::new("deny"),
-            "Deny",
-            acp::PermissionOptionKind::RejectOnce,
-        ));
+        let options = context.build_permission_options();
 
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
