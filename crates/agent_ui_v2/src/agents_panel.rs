@@ -287,7 +287,7 @@ impl AgentsPanel {
                     self.running_thread_views.insert(
                         thread_id.clone(),
                         RunningThreadView {
-                            view: thread.clone(),
+                            view: thread,
                             thread_id: thread_id.clone(),
                         },
                     );
@@ -403,12 +403,11 @@ impl AgentsPanel {
         });
 
         if let Some(thread_view) = agent_thread_pane.read(cx).thread_view() {
-            if !self.thread_view_subscriptions.contains_key(&entry_id) {
+            self.thread_view_subscriptions.entry(entry_id).or_insert_with(|| {
                 let thread_view_subscription =
                     cx.subscribe(&thread_view, Self::handle_thread_view_event);
-                self.thread_view_subscriptions
-                    .insert(entry_id, thread_view_subscription);
-            }
+                thread_view_subscription
+            });
         }
 
         let state_subscription = cx.subscribe(&agent_thread_pane, Self::handle_utility_pane_event);
@@ -624,14 +623,14 @@ mod tests {
 
         // Attempt to add duplicate - should not increase count
         if !thread_view_subscriptions.contains_key(&thread_id) {
-            thread_view_subscriptions.insert(thread_id.clone(), ());
+            thread_view_subscriptions.insert(thread_id, ());
         }
         assert_eq!(thread_view_subscriptions.len(), 1);
 
         // Different thread should be added
         let thread_id_2 = HistoryEntryId::AcpThread(acp::SessionId::new("thread-2".to_string()));
         if !thread_view_subscriptions.contains_key(&thread_id_2) {
-            thread_view_subscriptions.insert(thread_id_2.clone(), ());
+            thread_view_subscriptions.insert(thread_id_2, ());
         }
         assert_eq!(thread_view_subscriptions.len(), 2);
     }
