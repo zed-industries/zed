@@ -3,8 +3,9 @@ mod event_coalescer;
 use crate::TelemetrySettings;
 use anyhow::Result;
 use clock::SystemClock;
+use fs::Fs;
 use futures::channel::mpsc;
-use futures::{Future, FutureExt, StreamExt};
+use futures::{Future, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
@@ -19,7 +20,15 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::TryFutureExt;
+
+/// Result of subscribing to telemetry events.
+pub struct TelemetrySubscription {
+    /// Historical events from the log file plus any queued events not yet flushed.
+    pub historical_events: Vec<EventWrapper>,
+    /// Channel for receiving live events as they occur.
+    pub live_events: mpsc::UnboundedReceiver<EventWrapper>,
+}
+use util::ResultExt as _;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -41,6 +50,7 @@ struct TelemetryState {
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
+
     log_file: Option<File>,
     is_staff: Option<bool>,
     first_event_date_time: Option<Instant>,
@@ -51,6 +61,8 @@ struct TelemetryState {
     os_name: String,
     app_version: String,
     os_version: Option<String>,
+
+    subscribers: Vec<mpsc::UnboundedSender<EventWrapper>>,
 }
 
 #[cfg(debug_assertions)]
@@ -199,8 +211,8 @@ impl Telemetry {
             os_version: None,
             os_name: os_name(),
             app_version: release_channel::AppVersion::global(cx).to_string(),
+            subscribers: Vec::new(),
         }));
-        Self::log_file_path();
 
         cx.background_spawn({
             let state = state.clone();
@@ -271,6 +283,76 @@ impl Telemetry {
 
     pub fn log_file_path() -> PathBuf {
         paths::logs_dir().join("telemetry.log")
+    }
+
+    /// Subscribe to telemetry events with full history.
+    ///
+    /// Returns a [`TelemetrySubscription`] containing historical events from the log file,
+    /// queued events not yet flushed, and a channel for receiving live events.
+    ///
+    /// The state lock is held during setup to ensure no events are lost between
+    /// reading the queue and subscribing to live events.
+    pub async fn subscribe_with_history(
+        self: &Arc<Self>,
+        fs: Arc<dyn Fs>,
+    ) -> TelemetrySubscription {
+        let historical = self.read_log_file(fs).await;
+
+        let mut state = self.state.lock();
+
+        let queued: Vec<EventWrapper> = state.events_queue.clone();
+
+        let (tx, rx) = mpsc::unbounded();
+        state.subscribers.push(tx);
+
+        drop(state);
+
+        let mut historical_events = historical;
+        historical_events.extend(queued);
+
+        TelemetrySubscription {
+            historical_events,
+            live_events: rx,
+        }
+    }
+
+    async fn read_log_file(self: &Arc<Self>, fs: Arc<dyn Fs>) -> Vec<EventWrapper> {
+        const MAX_LOG_READ: usize = 5 * 1024 * 1024;
+
+        let path = Self::log_file_path();
+
+        let content = match fs.load_bytes(&path).await {
+            Ok(bytes) => bytes,
+            Err(_) => return Vec::new(),
+        };
+
+        let start_offset = if content.len() > MAX_LOG_READ {
+            let skip = content.len() - MAX_LOG_READ;
+            content[skip..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|pos| skip + pos + 1)
+                .unwrap_or(skip)
+        } else {
+            0
+        };
+
+        let content_str = match std::str::from_utf8(&content[start_offset..]) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut events = Vec::new();
+        for line in content_str.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<EventWrapper>(line) {
+                events.push(event);
+            }
+        }
+
+        events
     }
 
     pub fn has_checksum_seed(&self) -> bool {
@@ -473,11 +555,17 @@ impl Telemetry {
         };
 
         let signed_in = state.metrics_id.is_some();
-        state.events_queue.push(EventWrapper {
+        let event_wrapper = EventWrapper {
             signed_in,
             milliseconds_since_first_event,
             event,
-        });
+        };
+
+        state
+            .subscribers
+            .retain(|tx| tx.unbounded_send(event_wrapper.clone()).is_ok());
+
+        state.events_queue.push(event_wrapper);
 
         if state.installation_id.is_some() && state.events_queue.len() >= state.max_queue_size {
             drop(state);
@@ -524,59 +612,60 @@ impl Telemetry {
             .body(json_bytes.into())?)
     }
 
-    pub fn flush_events(self: &Arc<Self>) -> Task<()> {
-        let mut state = self.state.lock();
-        state.first_event_date_time = None;
-        let events = mem::take(&mut state.events_queue);
-        state.flush_events_task.take();
-        drop(state);
-        if events.is_empty() {
-            return Task::ready(());
+    pub async fn flush_events_inner(self: &Arc<Self>) -> Result<()> {
+        let (json_bytes, request_body) = {
+            let mut state = self.state.lock();
+            state.first_event_date_time = None;
+            let events = mem::take(&mut state.events_queue);
+            state.flush_events_task.take();
+            if events.is_empty() {
+                return Ok(());
+            }
+
+            let mut json_bytes = Vec::new();
+
+            if let Some(file) = &mut state.log_file {
+                for event in &events {
+                    json_bytes.clear();
+                    serde_json::to_writer(&mut json_bytes, event)?;
+                    file.write_all(&json_bytes)?;
+                    file.write_all(b"\n")?;
+                }
+            }
+
+            (
+                json_bytes,
+                EventRequestBody {
+                    system_id: state.system_id.as_deref().map(Into::into),
+                    installation_id: state.installation_id.as_deref().map(Into::into),
+                    session_id: state.session_id.clone(),
+                    metrics_id: state.metrics_id.as_deref().map(Into::into),
+                    is_staff: state.is_staff,
+                    app_version: state.app_version.clone(),
+                    os_name: state.os_name.clone(),
+                    os_version: state.os_version.clone(),
+                    architecture: state.architecture.to_string(),
+
+                    release_channel: state.release_channel.map(Into::into),
+                    events,
+                },
+            )
+        };
+
+        let request = self.build_request(json_bytes, &request_body)?;
+        let response = self.http_client.send(request).await?;
+        if response.status() != 200 {
+            log::error!("Failed to send events: HTTP {:?}", response.status());
         }
 
+        anyhow::Ok(())
+    }
+
+    pub fn flush_events(self: &Arc<Self>) -> Task<()> {
         let this = self.clone();
-        self.executor.spawn(
-            async move {
-                let mut json_bytes = Vec::new();
-
-                if let Some(file) = &mut this.state.lock().log_file {
-                    for event in &events {
-                        json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, event)?;
-                        file.write_all(&json_bytes)?;
-                        file.write_all(b"\n")?;
-                    }
-                }
-
-                let request_body = {
-                    let state = this.state.lock();
-
-                    EventRequestBody {
-                        system_id: state.system_id.as_deref().map(Into::into),
-                        installation_id: state.installation_id.as_deref().map(Into::into),
-                        session_id: state.session_id.clone(),
-                        metrics_id: state.metrics_id.as_deref().map(Into::into),
-                        is_staff: state.is_staff,
-                        app_version: state.app_version.clone(),
-                        os_name: state.os_name.clone(),
-                        os_version: state.os_version.clone(),
-                        architecture: state.architecture.to_string(),
-
-                        release_channel: state.release_channel.map(Into::into),
-                        events,
-                    }
-                };
-
-                let request = this.build_request(json_bytes, &request_body)?;
-                let response = this.http_client.send(request).await?;
-                if response.status() != 200 {
-                    log::error!("Failed to send events: HTTP {:?}", response.status());
-                }
-                anyhow::Ok(())
-            }
-            .log_err()
-            .map(|_| ()),
-        )
+        self.executor.spawn(async move {
+            this.flush_events_inner().await.log_err();
+        })
     }
 }
 
@@ -602,6 +691,7 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
 mod tests {
     use super::*;
     use clock::FakeSystemClock;
+
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
@@ -610,7 +700,10 @@ mod tests {
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
-    fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
+    async fn test_telemetry_flush_on_max_queue_size(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_200_response();
@@ -618,7 +711,7 @@ mod tests {
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
-        cx.update(|cx| {
+        let (telemetry, first_date_time, event) = cx.update(|cx| {
             let telemetry = Telemetry::new(clock.clone(), http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
@@ -637,6 +730,10 @@ mod tests {
                 event_properties,
             };
 
+            (telemetry, first_date_time, event)
+        });
+
+        cx.update(|_cx| {
             telemetry.report_event(Event::Flexible(event.clone()));
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
@@ -669,6 +766,12 @@ mod tests {
 
             // Adding a 4th event should cause a flush
             telemetry.report_event(Event::Flexible(event));
+        });
+
+        // Run the spawned flush task to completion
+        executor.run_until_parked();
+
+        cx.update(|_cx| {
             assert!(is_empty_state(&telemetry));
         });
     }

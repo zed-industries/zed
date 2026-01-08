@@ -20808,6 +20808,7 @@ dependencies = [
  "task",
  "tasks_ui",
  "telemetry",
+ "telemetry_events",
  "tempfile",
  "terminal_view",
  "theme",
