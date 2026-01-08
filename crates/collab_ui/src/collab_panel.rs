@@ -1609,21 +1609,22 @@ impl CollabPanel {
                     }
                 }
                 ListEntry::Channel { channel, .. } => {
-                    let is_active = maybe!({
-                        let call_channel = ActiveCall::global(cx)
-                            .read(cx)
-                            .room()?
-                            .read(cx)
-                            .channel_id()?;
+                    self.open_channel_notes(channel.id, window, cx)
+                    // let is_active = maybe!({
+                    //     let call_channel = ActiveCall::global(cx)
+                    //         .read(cx)
+                    //         .room()?
+                    //         .read(cx)
+                    //         .channel_id()?;
 
-                        Some(call_channel == channel.id)
-                    })
-                    .unwrap_or(false);
-                    if is_active {
-                        self.open_channel_notes(channel.id, window, cx)
-                    } else {
-                        self.join_channel(channel.id, window, cx)
-                    }
+                    //     Some(call_channel == channel.id)
+                    // })
+                    // .unwrap_or(false);
+                    // if is_active {
+                    //     self.open_channel_notes(channel.id, window, cx)
+                    // } else {
+                    //     self.join_channel(channel.id, window, cx)
+                    // }
                 }
                 ListEntry::ContactPlaceholder => self.toggle_contact_finder(window, cx),
                 ListEntry::CallParticipant { user, peer_id, .. } => {
@@ -2882,11 +2883,7 @@ impl CollabPanel {
                         this.toggle_channel_collapsed(channel_id, window, cx)
                     }))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if is_active {
-                            this.open_channel_notes(channel_id, window, cx)
-                        } else {
-                            this.join_channel(channel_id, window, cx)
-                        }
+                        this.open_channel_notes(channel_id, window, cx)
                     }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {
@@ -2938,26 +2935,27 @@ impl CollabPanel {
                 h_flex().absolute().right(rems(0.)).h_full().child(
                     h_flex()
                         .h_full()
-                        .bg(cx.theme().colors().background)
-                        .rounded_l_sm()
+                        .when(!is_active, |this| {
+                            this.bg(cx.theme().colors().background).rounded_sm()
+                        })
                         .gap_1()
                         .px_1()
                         .child(
-                            IconButton::new("channel_notes", IconName::Reader)
+                            IconButton::new("join_voice", IconName::AudioOn)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
-                                .icon_color(if has_notes_notification {
-                                    Color::Default
+                                .icon_color(if is_active {
+                                    Color::Success
                                 } else {
                                     Color::Muted
                                 })
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_channel_notes(channel_id, window, cx)
+                                    this.join_channel(channel_id, window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Open channel notes")),
+                                .tooltip(Tooltip::text("Join channel")),
                         )
-                        .visible_on_hover(""),
+                        .when(!is_active, |this| this.visible_on_hover("")),
                 ),
             )
             .tooltip({
