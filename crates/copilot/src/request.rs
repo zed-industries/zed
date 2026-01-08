@@ -15,37 +15,22 @@ impl lsp::request::Request for CheckStatus {
     const METHOD: &'static str = "checkStatus";
 }
 
-pub enum SignInInitiate {}
+pub enum SignIn {}
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SignInInitiateParams {}
+pub struct SignInParams {}
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "status")]
-pub enum SignInInitiateResult {
-    AlreadySignedIn { user: String },
-    PromptUserDeviceFlow(PromptUserDeviceFlow),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptUserDeviceFlow {
     pub user_code: String,
-    pub verification_uri: String,
+    pub command: lsp::Command,
 }
 
-impl lsp::request::Request for SignInInitiate {
-    type Params = SignInInitiateParams;
-    type Result = SignInInitiateResult;
-    const METHOD: &'static str = "signInInitiate";
-}
-
-pub enum SignInConfirm {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SignInConfirmParams {
-    pub user_code: String,
+impl lsp::request::Request for SignIn {
+    type Params = SignInParams;
+    type Result = PromptUserDeviceFlow;
+    const METHOD: &'static str = "signIn";
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,12 +52,6 @@ pub enum SignInStatus {
     NotSignedIn,
 }
 
-impl lsp::request::Request for SignInConfirm {
-    type Params = SignInConfirmParams;
-    type Result = SignInStatus;
-    const METHOD: &'static str = "signInConfirm";
-}
-
 pub enum SignOut {}
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,17 +68,26 @@ impl lsp::request::Request for SignOut {
     const METHOD: &'static str = "signOut";
 }
 
-pub enum StatusNotification {}
+pub enum DidChangeStatus {}
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct StatusNotificationParams {
-    pub message: String,
-    pub status: String, // One of Normal/InProgress
+pub struct DidChangeStatusParams {
+    #[serde(default)]
+    pub message: Option<String>,
+    pub kind: StatusKind,
 }
 
-impl lsp::notification::Notification for StatusNotification {
-    type Params = StatusNotificationParams;
-    const METHOD: &'static str = "statusNotification";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatusKind {
+    Normal,
+    Error,
+    Warning,
+    Inactive,
+}
+
+impl lsp::notification::Notification for DidChangeStatus {
+    type Params = DidChangeStatusParams;
+    const METHOD: &'static str = "didChangeStatus";
 }
 
 pub enum SetEditorInfo {}

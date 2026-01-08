@@ -24,7 +24,7 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServer
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
-use request::StatusNotification;
+use request::DidChangeStatus;
 use semver::Version;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
@@ -520,7 +520,51 @@ impl Copilot {
             )?;
 
             server
-                .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
+                .on_notification::<DidChangeStatus, _>({
+                    let this = this.clone();
+                    move |params, cx| {
+                        if params.kind == request::StatusKind::Normal {
+                            let this = this.clone();
+                            cx.spawn(async move |cx| {
+                                let lsp = this
+                                    .read_with(cx, |copilot, _| {
+                                        if let CopilotServer::Running(server) = &copilot.server {
+                                            Some(server.lsp.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .ok()
+                                    .flatten();
+                                let Some(lsp) = lsp else { return };
+                                let status = lsp
+                                    .request::<request::CheckStatus>(request::CheckStatusParams {
+                                        local_checks_only: false,
+                                    })
+                                    .await
+                                    .into_response()
+                                    .ok();
+                                if let Some(status) = status {
+                                    this.update(cx, |copilot, cx| {
+                                        copilot.update_sign_in_status(status, cx);
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .detach();
+                        }
+                    }
+                })
+                .detach();
+
+            server
+                .on_request::<lsp::request::ShowDocument, _, _>(move |params, cx| {
+                    if params.external.unwrap_or(false) {
+                        let url = params.uri.to_string();
+                        cx.update(|cx| cx.open_url(&url));
+                    }
+                    async move { Ok(lsp::ShowDocumentResult { success: true }) }
+                })
                 .detach();
 
             let configuration = lsp::DidChangeConfigurationParams {
@@ -543,6 +587,12 @@ impl Copilot {
                 .update(|cx| {
                     let mut params = server.default_initialize_params(false, cx);
                     params.initialization_options = Some(editor_info_json);
+                    params
+                        .capabilities
+                        .window
+                        .get_or_insert_with(Default::default)
+                        .show_document =
+                        Some(lsp::ShowDocumentClientCapabilities { support: true });
                     server.initialize(params, configuration.into(), cx)
                 })
                 .await?;
@@ -613,55 +663,37 @@ impl Copilot {
                 }
                 SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
+
                     let task = cx
                         .spawn(async move |this, cx| {
                             let sign_in = async {
-                                let sign_in = lsp
-                                    .request::<request::SignInInitiate>(
-                                        request::SignInInitiateParams {},
-                                    )
+                                let flow = lsp
+                                    .request::<request::SignIn>(request::SignInParams {})
                                     .await
                                     .into_response()
                                     .context("copilot sign-in")?;
-                                match sign_in {
-                                    request::SignInInitiateResult::AlreadySignedIn { user } => {
-                                        Ok(request::SignInStatus::Ok { user: Some(user) })
+
+                                this.update(cx, |this, cx| {
+                                    if let CopilotServer::Running(RunningCopilotServer {
+                                        sign_in_status: status,
+                                        ..
+                                    }) = &mut this.server
+                                        && let SignInStatus::SigningIn {
+                                            prompt: prompt_flow,
+                                            ..
+                                        } = status
+                                    {
+                                        *prompt_flow = Some(flow.clone());
+                                        cx.notify();
                                     }
-                                    request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
-                                        this.update(cx, |this, cx| {
-                                            if let CopilotServer::Running(RunningCopilotServer {
-                                                sign_in_status: status,
-                                                ..
-                                            }) = &mut this.server
-                                                && let SignInStatus::SigningIn {
-                                                    prompt: prompt_flow,
-                                                    ..
-                                                } = status
-                                            {
-                                                *prompt_flow = Some(flow.clone());
-                                                cx.notify();
-                                            }
-                                        })?;
-                                        let response = lsp
-                                            .request::<request::SignInConfirm>(
-                                                request::SignInConfirmParams {
-                                                    user_code: flow.user_code,
-                                                },
-                                            )
-                                            .await
-                                            .into_response()
-                                            .context("copilot: sign in confirm")?;
-                                        Ok(response)
-                                    }
-                                }
+                                })?;
+
+                                anyhow::Ok(())
                             };
 
                             let sign_in = sign_in.await;
                             this.update(cx, |this, cx| match sign_in {
-                                Ok(status) => {
-                                    this.update_sign_in_status(status, cx);
-                                    Ok(())
-                                }
+                                Ok(()) => Ok(()),
                                 Err(error) => {
                                     this.update_sign_in_status(
                                         request::SignInStatus::NotSignedIn,
@@ -1318,15 +1350,30 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
-        lsp.set_request_handler::<request::SignInInitiate, _, _>(|_, _| async {
-            Ok(request::SignInInitiateResult::AlreadySignedIn {
-                user: "user-1".into(),
+        lsp.set_request_handler::<request::SignIn, _, _>(|_, _| async {
+            Ok(request::PromptUserDeviceFlow {
+                user_code: "test-code".into(),
+                command: lsp::Command {
+                    title: "Sign in".into(),
+                    command: "github.copilot.finishDeviceFlow".into(),
+                    arguments: None,
+                },
             })
         });
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))
             .await
             .unwrap();
+
+        // Simulate auth completion by directly updating sign-in status
+        copilot.update(cx, |copilot, cx| {
+            copilot.update_sign_in_status(
+                request::SignInStatus::Ok {
+                    user: Some("user-1".into()),
+                },
+                cx,
+            );
+        });
 
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
