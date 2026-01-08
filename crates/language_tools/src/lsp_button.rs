@@ -492,7 +492,7 @@ impl LanguageServerState {
                                     .id("metadata-container")
                                     .ml_neg_1()
                                     .gap_1()
-                                    .max_w_32()
+                                    .max_w_52()
                                     .child(
                                         Icon::new(IconName::Circle)
                                             .color(status_color)
