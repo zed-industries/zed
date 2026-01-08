@@ -32,18 +32,41 @@ You will be provided with:
 # Output Format
 
 - Briefly explain the user's current intent based on the edit history and their current cursor location.
-- Rewrite the entire editable region, applying the edits that you predict the user will make next.
+- Output the entire editable region, applying the edits that you predict the user will make next.
 - If you're unsure some portion of the next edit, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
 - Wrap the edited code in a codeblock with exactly five backticks.
 
-## Output Example
+## Example
+
+### Input
 
 `````
-    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
-    if let Some(socket) = &args.askpass {{
-        askpass::main(socket);
-        return Ok(<|user_cursor|>);
-    }}
+struct Product {
+    name: String,
+    price: u32,
+}
+
+fn calculate_total(products: &[Product]) -> u32 {
+<|editable_region_start|>
+    let mut total = 0;
+    for product in products {
+        total += <|user_cursor|>;
+    }
+    total
+<|editable_region_end|>
+}
+`````
+
+### Output
+
+The user is computing a sum based on a list of products. The only numeric field on `Product` is `price`, so they must intend to sum the prices.
+
+`````
+    let mut total = 0;
+    for product in products {
+        total += product.price;
+    }
+    total
 `````
 
 # 1. User Edits History
