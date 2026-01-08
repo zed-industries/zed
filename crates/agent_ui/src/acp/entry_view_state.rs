@@ -4,7 +4,7 @@ use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::HistoryStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
-use editor::{Editor, EditorMode, MinimapVisibility};
+use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
@@ -22,7 +22,7 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
@@ -34,7 +34,7 @@ pub struct EntryViewState {
 impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
+        project: WeakEntity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -328,7 +328,7 @@ impl Entry {
 
 fn create_terminal(
     workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     terminal: Entity<acp_thread::Terminal>,
     window: &mut Window,
     cx: &mut App,
@@ -336,9 +336,9 @@ fn create_terminal(
     cx.new(|cx| {
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
-            workspace.clone(),
+            workspace,
             None,
-            project.downgrade(),
+            project,
             window,
             cx,
         );
@@ -357,7 +357,7 @@ fn create_editor_diff(
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
-                sized_by_content: true,
+                sizing_behavior: SizingBehavior::SizeByContent,
             },
             diff.read(cx).multibuffer().clone(),
             None,
@@ -401,19 +401,18 @@ mod tests {
     use acp_thread::{AgentConnection, StubAgentConnection};
     use agent::HistoryStore;
     use agent_client_protocol as acp;
-    use agent_settings::AgentSettings;
     use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-    use editor::{EditorSettings, RowInfo};
+    use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
 
     use crate::acp::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use util::path;
     use workspace::Workspace;
 
@@ -433,24 +432,11 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let tool_call = acp::ToolCall {
-            id: acp::ToolCallId("tool".into()),
-            title: "Tool call".into(),
-            kind: acp::ToolKind::Other,
-            status: acp::ToolCallStatus::InProgress,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/hello.txt".into(),
-                    old_text: Some("hi world".into()),
-                    new_text: "hello world".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call = acp::ToolCall::new("tool", "Tool call")
+            .status(acp::ToolCallStatus::InProgress)
+            .content(vec![acp::ToolCallContent::Diff(
+                acp::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+            )]);
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
@@ -472,7 +458,7 @@ mod tests {
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
-                project.clone(),
+                project.downgrade(),
                 history_store,
                 None,
                 Default::default(),
@@ -539,13 +525,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
-            EditorSettings::register(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }
 }

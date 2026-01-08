@@ -4,11 +4,13 @@ pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
+pub mod process;
 pub mod redact;
 pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell;
+pub mod shell_builder;
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
@@ -48,6 +50,12 @@ macro_rules! debug_panic {
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
     };
+}
+
+#[inline]
+pub const fn is_utf8_char_boundary(u8: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (u8 as i8) >= -0x40
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
@@ -295,12 +303,12 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 /// Returns a shell escaped path for the current zed executable
-pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     zed_path
-        .try_shell_safe()
+        .try_shell_safe(shell_kind)
         .context("Failed to shell-escape Zed executable path.")
 }
 
@@ -357,6 +365,13 @@ pub async fn load_login_shell_environment() -> Result<()> {
         .await
         .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
     {
+        // Skip SHLVL to prevent it from polluting Zed's process environment.
+        // The login shell used for env capture increments SHLVL, and if we propagate it,
+        // terminals spawned by Zed will inherit it and increment again, causing SHLVL
+        // to start at 2 instead of 1 (and increase by 2 on each reload).
+        if name == "SHLVL" {
+            continue;
+        }
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -383,6 +398,8 @@ pub fn set_pre_exec_to_start_new_session(
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
             libc::setsid();
+            #[cfg(target_os = "macos")]
+            crate::command::reset_exception_ports();
             Ok(())
         });
     };
@@ -610,17 +627,21 @@ where
     let file = caller.file().replace('\\', "/");
     // In this codebase all crates reside in a `crates` directory,
     // so discard the prefix up to that segment to find the crate name
-    let target = file
-        .split_once("crates/")
-        .and_then(|(_, s)| s.split_once("/src/"));
+    let file = file.split_once("crates/");
+    let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
 
     let module_path = target.map(|(krate, module)| {
-        krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+        if module.starts_with(krate) {
+            module.trim_end_matches(".rs").replace('/', "::")
+        } else {
+            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+        }
     });
+    let file = file.map(|(_, file)| format!("crates/{file}"));
     log::logger().log(
         &log::Record::builder()
-            .target(target.map_or("", |(krate, _)| krate))
-            .module_path(module_path.as_deref())
+            .target(module_path.as_deref().unwrap_or(""))
+            .module_path(file.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))

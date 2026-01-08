@@ -35,7 +35,6 @@ multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", rev = "764dd270c642f77f10f3e19d05cc178a6cbe69f3", features = ["use_tokio"], optional = true }
 picker.workspace = true
 project.workspace = true
-project_panel.workspace = true
 regex.workspace = true
 schemars.workspace = true
 search.workspace = true
@@ -56,17 +55,22 @@ zed_actions.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
-command_palette.workspace = true
+command_palette = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-git_ui.workspace = true
+git_ui = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
+markdown_preview.workspace = true
 parking_lot.workspace = true
 project_panel.workspace = true
+outline_panel.workspace = true
 release_channel.workspace = true
+semver.workspace = true
+settings_ui.workspace = true
 settings.workspace = true
 perf.workspace = true
 util = { workspace = true, features = ["test-support"] }

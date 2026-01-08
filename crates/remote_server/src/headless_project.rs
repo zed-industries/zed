@@ -1,4 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
+use client::ProjectId;
+use collections::HashSet;
+use language::File;
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
@@ -15,10 +18,12 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
-    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
+    image_store::ImageId,
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
 use rpc::{
@@ -26,13 +31,17 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::{Settings as _, initial_server_settings_content};
+use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
+    num::NonZeroU64,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
-use sysinfo::System;
+use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -44,6 +53,7 @@ pub struct HeadlessProject {
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
     pub dap_store: Entity<DapStore>,
+    pub breakpoint_store: Entity<BreakpointStore>,
     pub agent_server_store: Entity<AgentServerStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
@@ -68,9 +78,6 @@ pub struct HeadlessAppState {
 impl HeadlessProject {
     pub fn init(cx: &mut App) {
         settings::init(cx);
-        language::init(cx);
-        project::Project::init_settings(cx);
-        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 
@@ -83,6 +90,7 @@ impl HeadlessProject {
             languages,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
+        init_worktree_trust: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
@@ -94,7 +102,18 @@ impl HeadlessProject {
             store
         });
 
-        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
+        if init_worktree_trust {
+            project::trusted_worktrees::track_worktree_trust(
+                worktree_store.clone(),
+                None::<RemoteHostLocation>,
+                Some((session.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
+                None,
+                cx,
+            );
+        }
+
+        let environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -113,8 +132,13 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let breakpoint_store =
-            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+        let breakpoint_store = cx.new(|_| {
+            let mut breakpoint_store =
+                BreakpointStore::local(worktree_store.clone(), buffer_store.clone());
+            breakpoint_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
+
+            breakpoint_store
+        });
 
         let dap_store = cx.new(|cx| {
             let mut dap_store = DapStore::new_local(
@@ -240,6 +264,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &task_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &dap_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &breakpoint_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &git_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &agent_server_store);
@@ -259,6 +284,9 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_server_settings);
         session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
+        session.add_entity_request_handler(Self::handle_open_image_by_path);
+        session.add_entity_request_handler(Self::handle_trust_worktrees);
+        session.add_entity_request_handler(Self::handle_restrict_worktrees);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -280,7 +308,7 @@ impl HeadlessProject {
         ToolchainStore::init(&session);
         DapStore::init(&session, cx);
         // todo(debugger): Re init breakpoint store when we set it up for collab
-        // BreakpointStore::init(&client);
+        BreakpointStore::init(&session);
         GitStore::init(&session);
         AgentServerStore::init_headless(&session);
 
@@ -294,6 +322,7 @@ impl HeadlessProject {
             lsp_store,
             task_store,
             dap_store,
+            breakpoint_store,
             agent_server_store,
             languages,
             extensions,
@@ -414,7 +443,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
-        let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let path = PathBuf::from(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
@@ -433,7 +462,11 @@ impl HeadlessProject {
                             .with_tag("path", path.to_string_lossy().as_ref())
                     )
                 })?;
-                parent.join(path.file_name().unwrap())
+                if let Some(file_name) = path.file_name() {
+                    parent.join(file_name)
+                } else {
+                    parent
+                }
             }
         };
 
@@ -444,9 +477,10 @@ impl HeadlessProject {
                     message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
+                    true,
                     &mut cx,
                 )
-            })?
+            })
             .await?;
 
         let response = this.read_with(&cx, |_, cx| {
@@ -455,7 +489,7 @@ impl HeadlessProject {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_string_lossy().into_owned(),
             }
-        })?;
+        });
 
         // We spawn this asynchronously, so that we can send the response back
         // *before* `worktree_store.add()` can send out UpdateProject requests
@@ -474,8 +508,7 @@ impl HeadlessProject {
                 this.worktree_store.update(cx, |worktree_store, cx| {
                     worktree_store.add(&worktree, cx);
                 });
-            })
-            .log_err();
+            });
         })
         .detach();
 
@@ -492,7 +525,7 @@ impl HeadlessProject {
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.remove_worktree(worktree_id, cx);
             });
-        })?;
+        });
         Ok(proto::Ack {})
     }
 
@@ -508,20 +541,131 @@ impl HeadlessProject {
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
             });
-            anyhow::Ok((buffer_store, buffer))
-        })??;
+            (buffer_store, buffer)
+        });
 
         let buffer = buffer.await?;
-        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
+        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id());
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
                 .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
-        })?;
+        });
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub async fn handle_open_image_by_path(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::OpenImageByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenImageResponse> {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
+        let project_id = message.payload.project_id;
+        use proto::create_image_for_peer::Variant;
+
+        let (worktree_store, session) = this.read_with(&cx, |this, _| {
+            (this.worktree_store.clone(), this.session.clone())
+        });
+
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))
+            .context("worktree not found")?;
+
+        let load_task = worktree.update(&mut cx, |worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        });
+
+        let loaded_file = load_task.await?;
+        let content = loaded_file.content;
+        let file = loaded_file.file;
+
+        let proto_file = worktree.read_with(&cx, |_worktree, cx| file.to_proto(cx));
+        let image_id =
+            ImageId::from(NonZeroU64::new(NEXT_ID.fetch_add(1, Ordering::Relaxed)).unwrap());
+
+        let format = image::guess_format(&content)
+            .map(|f| format!("{:?}", f).to_lowercase())
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        let state = proto::ImageState {
+            id: image_id.to_proto(),
+            file: Some(proto_file),
+            content_size: content.len() as u64,
+            format,
+        };
+
+        session.send(proto::CreateImageForPeer {
+            project_id,
+            peer_id: Some(REMOTE_SERVER_PEER_ID),
+            variant: Some(Variant::State(state)),
+        })?;
+
+        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+        for chunk in content.chunks(CHUNK_SIZE) {
+            session.send(proto::CreateImageForPeer {
+                project_id,
+                peer_id: Some(REMOTE_SERVER_PEER_ID),
+                variant: Some(Variant::Chunk(proto::ImageChunk {
+                    image_id: image_id.to_proto(),
+                    data: chunk.to_vec(),
+                })),
+            })?;
+        }
+
+        Ok(proto::OpenImageResponse {
+            image_id: image_id.to_proto(),
+        })
+    }
+
+    pub async fn handle_trust_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrustWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))
+            .context("missing trusted worktrees")?;
+        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.clone());
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            trusted_worktrees.trust(
+                &worktree_store,
+                envelope
+                    .payload
+                    .trusted_paths
+                    .into_iter()
+                    .filter_map(PathTrust::from_proto)
+                    .collect(),
+                cx,
+            );
+        });
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_restrict_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestrictWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))
+            .context("missing trusted worktrees")?;
+        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.downgrade());
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let restricted_paths = envelope
+                .payload
+                .worktree_ids
+                .into_iter()
+                .map(WorktreeId::from_proto)
+                .map(PathTrust::Worktree)
+                .collect::<HashSet<_>>();
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
+        });
+        Ok(proto::Ack {})
     }
 
     pub async fn handle_open_new_buffer(
@@ -534,16 +678,16 @@ impl HeadlessProject {
             let buffer = this
                 .buffer_store
                 .update(cx, |buffer_store, cx| buffer_store.create_buffer(true, cx));
-            anyhow::Ok((buffer_store, buffer))
-        })??;
+            (buffer_store, buffer)
+        });
 
         let buffer = buffer.await?;
-        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
+        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id());
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
                 .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
-        })?;
+        });
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
@@ -553,26 +697,28 @@ impl HeadlessProject {
     async fn handle_toggle_lsp_logs(
         _: Entity<Self>,
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
-        let lsp_logs = cx
-            .update(|cx| {
-                cx.try_global::<GlobalLogStore>()
-                    .map(|lsp_logs| lsp_logs.0.clone())
-            })?
-            .context("lsp logs store is missing")?;
-
-        lsp_logs.update(&mut cx, |lsp_logs, _| {
-            // RPC logs are very noisy and we need to toggle it on the headless server too.
-            // The rest of the logs for the ssh project are very important to have toggled always,
-            // to e.g. send language server error logs to the client before anything is toggled.
-            if envelope.payload.enabled {
-                lsp_logs.enable_rpc_trace_for_language_server(server_id);
-            } else {
-                lsp_logs.disable_rpc_trace_for_language_server(server_id);
-            }
+        cx.update(|cx| {
+            let log_store = cx
+                .try_global::<GlobalLogStore>()
+                .map(|global_log_store| global_log_store.0.clone())
+                .context("lsp logs store is missing")?;
+            let toggled_log_kind =
+                match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                    .context("invalid log type")?
+                {
+                    proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                    proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                    proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+                };
+            log_store.update(cx, |log_store, _| {
+                log_store.toggle_lsp_logs(server_id, envelope.payload.enabled, toggled_log_kind);
+            });
+            anyhow::Ok(())
         })?;
+
         Ok(())
     }
 
@@ -587,7 +733,7 @@ impl HeadlessProject {
                 this.worktree_store.update(cx, |worktree_store, cx| {
                     worktree_store.find_or_create_worktree(settings_path, false, cx)
                 })
-            })?
+            })
             .await?;
 
         let (buffer, buffer_store) = this.update(&mut cx, |this, cx| {
@@ -602,7 +748,7 @@ impl HeadlessProject {
             });
 
             (buffer, this.buffer_store.clone())
-        })?;
+        });
 
         let buffer = buffer.await?;
 
@@ -622,7 +768,7 @@ impl HeadlessProject {
             });
 
             buffer_id
-        })?;
+        });
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
@@ -640,24 +786,30 @@ impl HeadlessProject {
             PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
-            })
-        })?;
+            project::Search::local(
+                this.fs.clone(),
+                this.buffer_store.clone(),
+                this.worktree_store.clone(),
+                message.limit as _,
+                cx,
+            )
+            .into_handle(query, cx)
+            .matching_buffers(cx)
+        });
 
         let mut response = proto::FindSearchCandidatesResponse {
             buffer_ids: Vec::new(),
         };
 
-        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone());
 
-        while let Ok(buffer) = results.recv().await {
-            let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id())?;
+        while let Ok(buffer) = results.rx.recv().await {
+            let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id());
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {
                     buffer_store.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                })?
+                })
                 .await?;
         }
 
@@ -669,7 +821,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
         let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
         let check_info = envelope
             .payload
@@ -701,7 +853,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
         let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let metadata = fs.metadata(&expanded).await?;
@@ -747,9 +899,16 @@ impl HeadlessProject {
         _cx: AsyncApp,
     ) -> Result<proto::GetProcessesResponse> {
         let mut processes = Vec::new();
-        let system = System::new_all();
+        let refresh_kind = RefreshKind::nothing().with_processes(
+            ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cmd(UpdateKind::Always),
+        );
 
-        for (_pid, process) in system.processes() {
+        for process in System::new_with_specifics(refresh_kind)
+            .processes()
+            .values()
+        {
             let name = process.name().to_string_lossy().into_owned();
             let command = process
                 .cmd()
@@ -774,14 +933,14 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::GetDirectoryEnvironment>,
         mut cx: AsyncApp,
     ) -> Result<proto::DirectoryEnvironment> {
-        let shell = task::Shell::from_proto(envelope.payload.shell.context("missing shell")?)?;
+        let shell = task::shell_from_proto(envelope.payload.shell.context("missing shell")?)?;
         let directory = PathBuf::from(envelope.payload.directory);
         let environment = this
             .update(&mut cx, |this, cx| {
                 this.environment.update(cx, |environment, cx| {
-                    environment.get_local_directory_environment(&shell, directory.into(), cx)
+                    environment.local_directory_environment(&shell, directory.into(), cx)
                 })
-            })?
+            })
             .await
             .context("failed to get directory environment")?
             .into_iter()

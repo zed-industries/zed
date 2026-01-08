@@ -1,15 +1,17 @@
 use acp_thread::AgentSessionModes;
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
+use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
+use settings::Settings as _;
 use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    Button, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
-use crate::{CycleModeSelector, ToggleProfileSelector};
+use crate::{CycleModeSelector, ToggleProfileSelector, ui::HoldForDefault};
 
 pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
@@ -54,6 +56,10 @@ impl ModeSelector {
         self.set_mode(all_modes[next_index].id.clone(), cx);
     }
 
+    pub fn mode(&self) -> acp::SessionModeId {
+        self.connection.current_mode()
+    }
+
     pub fn set_mode(&mut self, mode: acp::SessionModeId, cx: &mut Context<Self>) {
         let task = self.connection.set_mode(mode, cx);
         self.setting_mode = true;
@@ -84,6 +90,14 @@ impl ModeSelector {
             let current_mode = self.connection.current_mode();
             let default_mode = self.agent_server.default_mode(cx);
 
+            let settings = AgentSettings::get_global(cx);
+            let side = match settings.dock {
+                settings::DockPosition::Left => DocumentationSide::Right,
+                settings::DockPosition::Bottom | settings::DockPosition::Right => {
+                    DocumentationSide::Left
+                }
+            };
+
             for mode in all_modes {
                 let is_selected = &mode.id == &current_mode;
                 let is_default = Some(&mode.id) == default_mode.as_ref();
@@ -91,39 +105,14 @@ impl ModeSelector {
                     .toggleable(IconPosition::End, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
-                    entry.documentation_aside(DocumentationSide::Left, DocumentationEdge::Bottom, {
+                    entry.documentation_aside(side, {
                         let description = description.clone();
 
-                        move |cx| {
+                        move |_| {
                             v_flex()
                                 .gap_1()
                                 .child(Label::new(description.clone()))
-                                .child(
-                                    h_flex()
-                                        .pt_1()
-                                        .border_t_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .gap_0p5()
-                                        .text_sm()
-                                        .text_color(Color::Muted.color(cx))
-                                        .child("Hold")
-                                        .child(h_flex().flex_shrink_0().children(
-                                            ui::render_modifiers(
-                                                &gpui::Modifiers::secondary_key(),
-                                                PlatformStyle::platform(),
-                                                None,
-                                                Some(ui::TextSize::Default.rems(cx).into()),
-                                                true,
-                                            ),
-                                        ))
-                                        .child(div().map(|this| {
-                                            if is_default {
-                                                this.child("to also unset as default")
-                                            } else {
-                                                this.child("to also set as default")
-                                            }
-                                        })),
-                                )
+                                .child(HoldForDefault::new(is_default))
                                 .into_any_element()
                         }
                     })
@@ -172,7 +161,7 @@ impl Render for ModeSelector {
             .map(|mode| mode.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let this = cx.entity();
+        let this = cx.weak_entity();
 
         let icon = if self.menu_handle.is_deployed() {
             IconName::ChevronUp
@@ -199,6 +188,17 @@ impl Render for ModeSelector {
                             .gap_1()
                             .child(
                                 h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Label::new("Toggle Mode Menu"))
+                                    .child(KeyBinding::for_action_in(
+                                        &ToggleProfileSelector,
+                                        &focus_handle,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                h_flex()
                                     .pb_1()
                                     .gap_2()
                                     .justify_between()
@@ -207,17 +207,6 @@ impl Render for ModeSelector {
                                     .child(Label::new("Cycle Through Modes"))
                                     .child(KeyBinding::for_action_in(
                                         &CycleModeSelector,
-                                        &focus_handle,
-                                        cx,
-                                    )),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .justify_between()
-                                    .child(Label::new("Toggle Mode Menu"))
-                                    .child(KeyBinding::for_action_in(
-                                        &ToggleProfileSelector,
                                         &focus_handle,
                                         cx,
                                     )),
@@ -233,7 +222,8 @@ impl Render for ModeSelector {
                 y: px(-2.0),
             })
             .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+                this.update(cx, |this, cx| this.build_context_menu(window, cx))
+                    .ok()
             })
     }
 }

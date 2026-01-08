@@ -2,12 +2,13 @@ use crate::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
     FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size,
-    point, px, size, swap_rgba_pa_to_bgra,
+    TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
 };
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
 use collections::HashMap;
 use core_foundation::{
+    array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
@@ -21,8 +22,10 @@ use core_graphics::{
 };
 use core_text::{
     font::CTFont,
+    font_collection::CTFontCollectionRef,
     font_descriptor::{
-        kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
+        CTFontDescriptor, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
+        kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -97,7 +100,26 @@ impl PlatformTextSystem for MacTextSystem {
     fn all_font_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         let collection = core_text::font_collection::create_for_all_families();
-        let Some(descriptors) = collection.get_descriptors() else {
+        // NOTE: We intentionally avoid using `collection.get_descriptors()` here because
+        // it has a memory leak bug in core-text v21.0.0. The upstream code uses
+        // `wrap_under_get_rule` but `CTFontCollectionCreateMatchingFontDescriptors`
+        // follows the Create Rule (caller owns the result), so it should use
+        // `wrap_under_create_rule`. We call the function directly with correct memory management.
+        unsafe extern "C" {
+            fn CTFontCollectionCreateMatchingFontDescriptors(
+                collection: CTFontCollectionRef,
+            ) -> CFArrayRef;
+        }
+        let descriptors: Option<CFArray<CTFontDescriptor>> = unsafe {
+            let array_ref =
+                CTFontCollectionCreateMatchingFontDescriptors(collection.as_concrete_TypeRef());
+            if array_ref.is_null() {
+                None
+            } else {
+                Some(CFArray::wrap_under_create_rule(array_ref))
+            }
+        };
+        let Some(descriptors) = descriptors else {
             return names;
         };
         for descriptor in descriptors.into_iter() {
@@ -181,6 +203,14 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, font_runs)
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
     }
 }
 
@@ -434,18 +464,19 @@ impl MacTextSystemState {
         let mut max_descent = 0.0f32;
 
         {
-            let mut ix_converter = StringIndexConverter::new(&text);
+            let mut text = text;
+            let mut break_ligature = true;
             for run in font_runs {
-                let text = &text[ix_converter.utf8_ix..][..run.len];
+                let text_run;
+                (text_run, text) = text.split_at(run.len);
 
                 let utf16_start = string.char_len(); // insert at end of string
-                ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
-
                 // note: replace_str may silently ignore codepoints it dislikes (e.g., BOM at start of string)
-                string.replace_str(&CFString::new(text), CFRange::init(utf16_start, 0));
+                string.replace_str(&CFString::new(text_run), CFRange::init(utf16_start, 0));
                 let utf16_end = string.char_len();
 
-                let cf_range = CFRange::init(utf16_start, utf16_end - utf16_start);
+                let length = utf16_end - utf16_start;
+                let cf_range = CFRange::init(utf16_start, length);
                 let font = &self.fonts[run.font_id.0];
 
                 let font_metrics = font.metrics();
@@ -453,6 +484,11 @@ impl MacTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
+                let font_size = if break_ligature {
+                    px(font_size.0.next_up())
+                } else {
+                    font_size
+                };
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -460,6 +496,7 @@ impl MacTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
+                break_ligature = !break_ligature;
             }
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
@@ -535,17 +572,6 @@ impl<'a> StringIndexConverter<'a> {
             utf8_ix: 0,
             utf16_ix: 0,
         }
-    }
-
-    fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
-        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
-            if self.utf8_ix + ix >= utf8_target {
-                self.utf8_ix += ix;
-                return;
-            }
-            self.utf16_ix += c.len_utf16();
-        }
-        self.utf8_ix = self.text.len();
     }
 
     fn advance_to_utf16_ix(&mut self, utf16_target: usize) {

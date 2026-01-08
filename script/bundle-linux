@@ -92,34 +92,29 @@ else
         echo "Uploading zed debug symbols to sentry..."
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
-        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "${target_dir}/${target_triple}"/release/zed \
-            "${target_dir}/${remote_server_triple}"/release/remote_server
+        for attempt in 1 2 3; do
+            echo "Attempting sentry upload (attempt $attempt/3)..."
+            if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+                "${target_dir}/${target_triple}"/release/zed \
+                "${target_dir}/${remote_server_triple}"/release/remote_server; then
+                echo "Sentry upload successful on attempt $attempt"
+                break
+            else
+                echo "Sentry upload failed on attempt $attempt"
+                if [ $attempt -eq 3 ]; then
+                    echo "All sentry upload attempts failed"
+                fi
+            fi
+        done
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi
 fi
 
 # Strip debug symbols and save them for upload to DigitalOcean
-objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"
-objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote_server" "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
 objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
 objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
 objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
-
-gzip -f "${target_dir}/${target_triple}/release/zed.dbg"
-gzip -f "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
-
-if [[ -n "${DIGITALOCEAN_SPACES_SECRET_KEY:-}" && -n "${DIGITALOCEAN_SPACES_ACCESS_KEY:-}" ]]; then
-    upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        "${target_dir}/${target_triple}/release/zed.dbg.gz" \
-        "$channel/zed-$version-${target_triple}.dbg.gz"
-    upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        "${target_dir}/${remote_server_triple}/release/remote_server.dbg.gz" \
-        "$channel/remote_server-$version-${remote_server_triple}.dbg.gz"
-fi
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
@@ -186,12 +181,7 @@ cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
 arch=$(uname -m)
-target="linux-${arch}"
-if  [[ "$channel" == "dev" ]]; then
-  archive="zed-${commit}-${target}.tar.gz"
-else
-  archive="zed-${target}.tar.gz"
-fi
+archive="zed-linux-${arch}.tar.gz"
 
 rm -rf "${archive}"
 remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"

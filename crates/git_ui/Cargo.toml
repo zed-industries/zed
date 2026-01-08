@@ -13,8 +13,7 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-default = []
-test-support = ["multi_buffer/test-support"]
+test-support = ["multi_buffer/test-support", "recent_projects/test-support"]
 
 [dependencies]
 agent_settings.workspace = true
@@ -22,7 +21,6 @@ anyhow.workspace = true
 askpass.workspace = true
 buffer_diff.workspace = true
 call.workspace = true
-chrono.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -45,10 +43,14 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
+prompt_store.workspace = true
+recent_projects.workspace = true
+remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smol.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true
@@ -60,18 +62,25 @@ watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeroize.workspace = true
-
+ztracing.workspace = true
+tracing.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+recent_projects = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

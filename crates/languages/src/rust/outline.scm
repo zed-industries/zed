@@ -20,7 +20,7 @@
     trait: (_)? @name
     "for"? @context
     type: (_) @name
-    body: (_ "{" @open (_)* "}" @close)) @item
+    body: (_ . "{" @open "}" @close .)) @item
 
 (trait_item
     (visibility_modifier)? @context
@@ -31,7 +31,8 @@
     (visibility_modifier)? @context
     (function_modifiers)? @context
     "fn" @context
-    name: (_) @name) @item
+    name: (_) @name
+    body: (_ . "{" @open "}" @close .)) @item
 
 (function_signature_item
     (visibility_modifier)? @context

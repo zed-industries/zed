@@ -15,6 +15,12 @@ pub struct ProcessIdGetter {
     fallback_pid: u32,
 }
 
+impl ProcessIdGetter {
+    pub fn fallback_pid(&self) -> Pid {
+        Pid::from_u32(self.fallback_pid)
+    }
+}
+
 #[cfg(unix)]
 impl ProcessIdGetter {
     fn new(pty: &Pty) -> ProcessIdGetter {
@@ -30,10 +36,6 @@ impl ProcessIdGetter {
             return Some(Pid::from_u32(self.fallback_pid));
         }
         Some(Pid::from_u32(pid as u32))
-    }
-
-    pub fn fallback_pid(&self) -> u32 {
-        self.fallback_pid
     }
 }
 
@@ -65,10 +67,6 @@ impl ProcessIdGetter {
             return Some(Pid::from_u32(self.fallback_pid));
         }
         Some(Pid::from_u32(pid))
-    }
-
-    pub fn fallback_pid(&self) -> u32 {
-        self.fallback_pid
     }
 }
 
@@ -122,8 +120,26 @@ impl PtyProcessInfo {
         }
     }
 
+    fn get_child(&self) -> Option<&Process> {
+        let pid = self.pid_getter.fallback_pid();
+        self.system.process(pid)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn kill_current_process(&mut self) -> bool {
+        let Some(pid) = self.pid_getter.pid() else {
+            return false;
+        };
+        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGKILL) == 0 }
+    }
+
+    #[cfg(not(unix))]
     pub(crate) fn kill_current_process(&mut self) -> bool {
         self.refresh().is_some_and(|process| process.kill())
+    }
+
+    pub(crate) fn kill_child_process(&mut self) -> bool {
+        self.get_child().is_some_and(|process| process.kill())
     }
 
     fn load(&mut self) -> Option<ProcessInfo> {

@@ -37,6 +37,7 @@ dap_adapters = { workspace = true, optional = true }
 db.workspace = true
 debugger_tools.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -60,7 +61,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
-shlex.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
@@ -71,6 +71,7 @@ theme.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
 workspace.workspace = true
@@ -82,6 +83,7 @@ dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 unindent.workspace = true

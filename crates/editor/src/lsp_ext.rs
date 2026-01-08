@@ -37,7 +37,7 @@ where
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .filter_map(|selection| Some((selection.head(), selection.head().buffer_id?)))
+        .filter_map(|selection| Some((selection.head(), selection.head().text_anchor.buffer_id?)))
         .unique_by(|(_, buffer_id)| *buffer_id)
         .find_map(|(trigger_anchor, buffer_id)| {
             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
@@ -60,25 +60,22 @@ async fn lsp_task_context(
     buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Option<TaskContext> {
-    let worktree_store = project
-        .read_with(cx, |project, _| project.worktree_store())
-        .ok()?;
+    let (worktree_store, environment) = project.read_with(cx, |project, _| {
+        (project.worktree_store(), project.environment().clone())
+    });
 
-    let worktree_abs_path = cx
-        .update(|cx| {
-            let worktree_id = buffer.read(cx).file().map(|f| f.worktree_id(cx));
+    let worktree_abs_path = cx.update(|cx| {
+        let worktree_id = buffer.read(cx).file().map(|f| f.worktree_id(cx));
 
-            worktree_id
-                .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
-                .and_then(|worktree| worktree.read(cx).root_dir())
+        worktree_id
+            .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
+            .and_then(|worktree| worktree.read(cx).root_dir())
+    });
+
+    let project_env = environment
+        .update(cx, |environment, cx| {
+            environment.buffer_environment(buffer, &worktree_store, cx)
         })
-        .ok()?;
-
-    let project_env = project
-        .update(cx, |project, cx| {
-            project.buffer_environment(buffer, &worktree_store, cx)
-        })
-        .ok()?
         .await;
 
     Some(TaskContext {
@@ -124,19 +121,18 @@ pub fn lsp_tasks(
                     let source_kind = match buffer.update(cx, |buffer, _| {
                         buffer.language().map(|language| language.name())
                     }) {
-                        Ok(Some(language_name)) => TaskSourceKind::Lsp {
+                        Some(language_name) => TaskSourceKind::Lsp {
                             server: server_id,
                             language_name: SharedString::from(language_name),
                         },
-                        Ok(None) => continue,
-                        Err(_) => return Vec::new(),
+                        None => continue,
                     };
                     let id_base = source_kind.to_id_base();
                     let lsp_buffer_context = lsp_task_context(&project, &buffer, cx)
                         .await
                         .unwrap_or_default();
 
-                    if let Ok(runnables_task) = project.update(cx, |project, cx| {
+                    let runnables_task = project.update(cx, |project, cx| {
                         let buffer_id = buffer.read(cx).remote_id();
                         project.request_lsp(
                             buffer,
@@ -147,8 +143,8 @@ pub fn lsp_tasks(
                             },
                             cx,
                         )
-                    }) && let Some(new_runnables) = runnables_task.await.log_err()
-                    {
+                    });
+                    if let Some(new_runnables) = runnables_task.await.log_err() {
                         new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
                             |(location, runnable)| {
                                 let resolved_task =

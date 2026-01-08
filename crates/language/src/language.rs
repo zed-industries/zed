@@ -28,17 +28,22 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
 use futures::Future;
+use futures::future::LocalBoxFuture;
+use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity, SharedString};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
-use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use lsp::{
+    CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
+};
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
+use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -51,7 +56,6 @@ use std::{
     mem,
     ops::{DerefMut, Range},
     path::{Path, PathBuf},
-    pin::Pin,
     str,
     sync::{
         Arc, LazyLock,
@@ -63,6 +67,7 @@ use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
+    unified_diff_with_offsets, word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -87,13 +92,6 @@ pub use syntax_map::{
 };
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
-
-/// Initializes the `language` crate.
-///
-/// This should be called before making use of items from the create.
-pub fn init(cx: &mut App) {
-    language_settings::init(cx);
-}
 
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
@@ -139,6 +137,46 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
             },
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "'".to_string(),
+                        end: "'".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                ],
+                disabled_scopes_by_bracket_ix: Default::default(),
+            },
             ..Default::default()
         },
         None,
@@ -159,7 +197,14 @@ pub struct Location {
 }
 
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
-
+type DownloadableLanguageServerBinary = LocalBoxFuture<'static, Result<LanguageServerBinary>>;
+pub type LanguageServerBinaryLocations = LocalBoxFuture<
+    'static,
+    (
+        Result<LanguageServerBinary>,
+        Option<DownloadableLanguageServerBinary>,
+    ),
+>;
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -169,7 +214,7 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    cached_binary: ServerBinaryCache,
+    cached_binary: Arc<ServerBinaryCache>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -216,18 +261,15 @@ impl CachedLspAdapter {
         toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
-    ) -> Result<LanguageServerBinary> {
-        let mut cached_binary = self.cached_binary.lock().await;
-        self.adapter
-            .clone()
-            .get_language_server_command(
-                delegate,
-                toolchains,
-                binary_options,
-                &mut cached_binary,
-                cx,
-            )
-            .await
+    ) -> LanguageServerBinaryLocations {
+        let cached_binary = self.cached_binary.clone().lock_owned().await;
+        self.adapter.clone().get_language_server_command(
+            delegate,
+            toolchains,
+            binary_options,
+            cached_binary,
+            cx.clone(),
+        )
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -288,6 +330,25 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+
+    pub async fn initialization_options_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .initialization_options_schema(
+                delegate,
+                self.cached_binary.clone().lock_owned().await,
+                cx,
+            )
+            .await
+    }
+
+    pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
+        self.adapter.process_prompt_response(context, cx)
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -298,6 +359,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -305,11 +367,22 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn npm_package_installed_version(
         &self,
         package_name: &str,
-    ) -> Result<Option<(PathBuf, String)>>;
+    ) -> Result<Option<(PathBuf, Version)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
+}
+
+/// Context provided to LSP adapters when a user responds to a ShowMessageRequest prompt.
+/// This allows adapters to intercept preference selections (like "Always" or "Never")
+/// and potentially persist them to Zed's settings.
+#[derive(Debug, Clone)]
+pub struct PromptResponseContext {
+    /// The original message shown to the user
+    pub message: String,
+    /// The action (button) the user selected
+    pub selected_action: lsp::MessageActionItem,
 }
 
 #[async_trait(?Send)]
@@ -403,10 +476,21 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         Ok(None)
     }
 
+    /// Returns the JSON schema of the initialization_options for the language server.
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -467,6 +551,11 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn is_extension(&self) -> bool {
         false
     }
+
+    /// Called when a user responds to a ShowMessageRequest from this language server.
+    /// This allows adapters to intercept preference selections (like "Always" or "Never")
+    /// for settings that should be persisted to Zed's settings file.
+    fn process_prompt_response(&self, _context: &PromptResponseContext, _cx: &mut AsyncApp) {}
 }
 
 pub trait LspInstaller {
@@ -492,7 +581,7 @@ pub trait LspInstaller {
         _version: &Self::BinaryVersion,
         _container_dir: &PathBuf,
         _delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> {
         async { None }
     }
 
@@ -501,7 +590,7 @@ pub trait LspInstaller {
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Result<LanguageServerBinary>>;
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>>;
 
     fn cached_server_binary(
         &self,
@@ -519,19 +608,21 @@ pub trait DynLspInstaller {
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary>;
-    fn get_language_server_command<'a>(
+
+    fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
-        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
-        cx: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>>;
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: AsyncApp,
+    ) -> LanguageServerBinaryLocations;
 }
 
 #[async_trait(?Send)]
 impl<LI, BinaryVersion> DynLspInstaller for LI
 where
+    BinaryVersion: Send + Sync,
     LI: LspInstaller<BinaryVersion = BinaryVersion> + LspAdapter,
 {
     async fn try_fetch_server_binary(
@@ -550,8 +641,13 @@ where
             .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
             .await?;
 
-        if let Some(binary) = self
-            .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+        if let Some(binary) = cx
+            .background_executor()
+            .await_on_background(self.check_if_version_installed(
+                &latest_version,
+                &container_dir,
+                delegate.as_ref(),
+            ))
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
@@ -560,23 +656,29 @@ where
         } else {
             log::debug!("downloading language server {:?}", name.0);
             delegate.update_status(name.clone(), BinaryStatus::Downloading);
-            let binary = self
-                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+            let binary = cx
+                .background_executor()
+                .await_on_background(self.fetch_server_binary(
+                    latest_version,
+                    container_dir,
+                    delegate.as_ref(),
+                ))
                 .await;
 
             delegate.update_status(name.clone(), BinaryStatus::None);
             binary
         }
     }
-    fn get_language_server_command<'a>(
+    fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
-        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
-        cx: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        mut cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        mut cx: AsyncApp,
+    ) -> LanguageServerBinaryLocations {
         async move {
+            let cached_binary_deref = cached_binary.deref_mut();
             // First we check whether the adapter can give us a user-installed binary.
             // If so, we do *not* want to cache that, because each worktree might give us a different
             // binary:
@@ -590,7 +692,7 @@ where
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self
-                    .check_if_user_installed(delegate.as_ref(), toolchain, cx)
+                    .check_if_user_installed(delegate.as_ref(), toolchain, &mut cx)
                     .await
             {
                 log::info!(
@@ -599,62 +701,77 @@ where
                     binary.path,
                     binary.arguments
                 );
-                return Ok(binary);
+                return (Ok(binary), None);
             }
 
-            anyhow::ensure!(
-                binary_options.allow_binary_download,
-                "downloading language servers disabled"
-            );
-
-            if let Some((pre_release, cached_binary)) = cached_binary
+            if let Some((pre_release, cached_binary)) = cached_binary_deref
                 && *pre_release == binary_options.pre_release
             {
-                return Ok(cached_binary.clone());
+                return (Ok(cached_binary.clone()), None);
+            }
+
+            if !binary_options.allow_binary_download {
+                return (
+                    Err(anyhow::anyhow!("downloading language servers disabled")),
+                    None,
+                );
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
             else {
-                anyhow::bail!("no language server download dir defined")
+                return (
+                    Err(anyhow::anyhow!("no language server download dir defined")),
+                    None,
+                );
             };
 
-            let mut binary = self
-                .try_fetch_server_binary(
-                    &delegate,
-                    container_dir.to_path_buf(),
-                    binary_options.pre_release,
-                    cx,
-                )
-                .await;
+            let last_downloaded_binary = self
+                .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                .await
+                .context(
+                    "did not find existing language server binary, falling back to downloading",
+                );
+            let download_binary = async move {
+                let mut binary = self
+                    .try_fetch_server_binary(
+                        &delegate,
+                        container_dir.to_path_buf(),
+                        binary_options.pre_release,
+                        &mut cx,
+                    )
+                    .await;
 
-            if let Err(error) = binary.as_ref() {
-                if let Some(prev_downloaded_binary) = self
-                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
-                    .await
-                {
-                    log::info!(
-                        "failed to fetch newest version of language server {:?}. \
-                        error: {:?}, falling back to using {:?}",
-                        self.name(),
-                        error,
-                        prev_downloaded_binary.path
-                    );
-                    binary = Ok(prev_downloaded_binary);
-                } else {
-                    delegate.update_status(
-                        self.name(),
-                        BinaryStatus::Failed {
-                            error: format!("{error:?}"),
-                        },
-                    );
+                if let Err(error) = binary.as_ref() {
+                    if let Some(prev_downloaded_binary) = self
+                        .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                        .await
+                    {
+                        log::info!(
+                            "failed to fetch newest version of language server {:?}. \
+                            error: {:?}, falling back to using {:?}",
+                            self.name(),
+                            error,
+                            prev_downloaded_binary.path
+                        );
+                        binary = Ok(prev_downloaded_binary);
+                    } else {
+                        delegate.update_status(
+                            self.name(),
+                            BinaryStatus::Failed {
+                                error: format!("{error:?}"),
+                            },
+                        );
+                    }
                 }
-            }
 
-            if let Ok(binary) = &binary {
-                *cached_binary = Some((binary_options.pre_release, binary.clone()));
-            }
+                if let Ok(binary) = &binary {
+                    *cached_binary = Some((binary_options.pre_release, binary.clone()));
+                }
 
-            binary
+                binary
+            }
+            .boxed_local();
+            (last_downloaded_binary, Some(download_binary))
         }
         .boxed_local()
     }
@@ -680,7 +797,7 @@ pub struct CodeLabelBuilder {
     filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -736,6 +853,15 @@ pub struct LanguageConfig {
     /// Delimiters and configuration for recognizing and formatting documentation comments.
     #[serde(default, alias = "documentation")]
     pub documentation_comment: Option<BlockCommentConfig>,
+    /// List markers that are inserted unchanged on newline (e.g., `- `, `* `, `+ `).
+    #[serde(default)]
+    pub unordered_list: Vec<Arc<str>>,
+    /// Configuration for ordered lists with auto-incrementing numbers on newline (e.g., `1. ` becomes `2. `).
+    #[serde(default)]
+    pub ordered_list: Vec<OrderedListConfig>,
+    /// Configuration for task lists where multiple markers map to a single continuation prefix (e.g., `- [x] ` continues as `- [ ] `).
+    #[serde(default)]
+    pub task_list: Option<TaskListConfig>,
     /// A list of additional regex patterns that should be treated as prefixes
     /// for creating boundaries during rewrapping, ensuring content from one
     /// prefixed section doesn't merge with another (e.g., markdown list items).
@@ -807,6 +933,24 @@ pub struct DecreaseIndentConfig {
     pub valid_after: Vec<String>,
 }
 
+/// Configuration for continuing ordered lists with auto-incrementing numbers.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct OrderedListConfig {
+    /// A regex pattern with a capture group for the number portion (e.g., `(\\d+)\\. `).
+    pub pattern: String,
+    /// A format string where `{1}` is replaced with the incremented number (e.g., `{1}. `).
+    pub format: String,
+}
+
+/// Configuration for continuing task lists on newline.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct TaskListConfig {
+    /// The list markers to match (e.g., `- [ ] `, `- [x] `).
+    pub prefixes: Vec<Arc<str>>,
+    /// The marker to insert when continuing the list on a new line (e.g., `- [ ] `).
+    pub continuation: Arc<str>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
 pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
@@ -823,7 +967,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -963,7 +1107,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: LanguageName::new(""),
+            name: LanguageName::new_static(""),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -977,6 +1121,9 @@ impl Default for LanguageConfig {
             line_comments: Default::default(),
             block_comment: Default::default(),
             documentation_comment: Default::default(),
+            unordered_list: Default::default(),
+            ordered_list: Default::default(),
+            task_list: Default::default(),
             rewrap_prefixes: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -1179,7 +1326,6 @@ pub struct Grammar {
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
-    pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
@@ -1266,16 +1412,6 @@ pub struct TextObjectConfig {
     pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
 }
 
-#[derive(Debug)]
-pub struct EmbeddingConfig {
-    pub query: Query,
-    pub item_capture_ix: u32,
-    pub name_capture_ix: Option<u32>,
-    pub context_capture_ix: Option<u32>,
-    pub collapse_capture_ix: Option<u32>,
-    pub keep_capture_ix: Option<u32>,
-}
-
 struct InjectionConfig {
     query: Query,
     content_capture_ix: u32,
@@ -1329,6 +1465,7 @@ struct BracketsConfig {
 #[derive(Clone, Debug, Default)]
 struct BracketsPatternConfig {
     newline_only: bool,
+    rainbow_exclude: bool,
 }
 
 pub struct DebugVariablesConfig {
@@ -1371,7 +1508,6 @@ impl Language {
                     brackets_config: None,
                     outline_config: None,
                     text_object_config: None,
-                    embedding_config: None,
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
@@ -1425,11 +1561,6 @@ impl Language {
             self = self
                 .with_outline_query(query.as_ref())
                 .context("Error loading outline query")?;
-        }
-        if let Some(query) = queries.embedding {
-            self = self
-                .with_embedding_query(query.as_ref())
-                .context("Error loading embedding query")?;
         }
         if let Some(query) = queries.injections {
             self = self
@@ -1579,38 +1710,6 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
-        let mut item_capture_ix = 0;
-        let mut name_capture_ix = None;
-        let mut context_capture_ix = None;
-        let mut collapse_capture_ix = None;
-        let mut keep_capture_ix = None;
-        if populate_capture_indices(
-            &query,
-            &self.config.name,
-            "embedding",
-            &[],
-            &mut [
-                Capture::Required("item", &mut item_capture_ix),
-                Capture::Optional("name", &mut name_capture_ix),
-                Capture::Optional("context", &mut context_capture_ix),
-                Capture::Optional("keep", &mut keep_capture_ix),
-                Capture::Optional("collapse", &mut collapse_capture_ix),
-            ],
-        ) {
-            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
-                query,
-                item_capture_ix,
-                name_capture_ix,
-                context_capture_ix,
-                collapse_capture_ix,
-                keep_capture_ix,
-            });
-        }
-        Ok(self)
-    }
-
     pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
         let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
@@ -1691,8 +1790,12 @@ impl Language {
                 .map(|ix| {
                     let mut config = BracketsPatternConfig::default();
                     for setting in query.property_settings(ix) {
-                        if setting.key.as_ref() == "newline.only" {
+                        let setting_key = setting.key.as_ref();
+                        if setting_key == "newline.only" {
                             config.newline_only = true
+                        }
+                        if setting_key == "rainbow.exclude" {
+                            config.rainbow_exclude = true
                         }
                     }
                     config
@@ -2057,6 +2160,21 @@ impl LanguageScope {
         self.language.config.documentation_comment.as_ref()
     }
 
+    /// Returns list markers that are inserted unchanged on newline (e.g., `- `, `* `, `+ `).
+    pub fn unordered_list(&self) -> &[Arc<str>] {
+        &self.language.config.unordered_list
+    }
+
+    /// Returns configuration for ordered lists with auto-incrementing numbers (e.g., `1. ` becomes `2. `).
+    pub fn ordered_list(&self) -> &[OrderedListConfig] {
+        &self.language.config.ordered_list
+    }
+
+    /// Returns configuration for task list continuation, if any (e.g., `- [x] ` continues as `- [ ] `).
+    pub fn task_list(&self) -> Option<&TaskListConfig> {
+        self.language.config.task_list.as_ref()
+    }
+
     /// Returns additional regex patterns that act as prefix markers for creating
     /// boundaries during rewrapping.
     ///
@@ -2324,17 +2442,19 @@ impl CodeLabel {
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
-        Self::filtered(text, filter_text, Vec::new())
+        Self::filtered(text.clone(), text.len(), filter_text, Vec::new())
     }
 
     pub fn filtered(
         text: String,
+        label_len: usize,
         filter_text: Option<&str>,
         runs: Vec<(Range<usize>, HighlightId)>,
     ) -> Self {
+        assert!(label_len <= text.len());
         let filter_range = filter_text
             .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..text.len());
+            .unwrap_or(0..label_len);
         Self::new(text, filter_range, runs)
     }
 
@@ -2348,7 +2468,10 @@ impl CodeLabel {
             "invalid filter range"
         );
         runs.iter().for_each(|(range, _)| {
-            assert!(text.get(range.clone()).is_some(), "invalid run range");
+            assert!(
+                text.get(range.clone()).is_some(),
+                "invalid run range with inputs. Requested range {range:?} in text '{text}'",
+            );
         });
         Self {
             runs,
@@ -2618,44 +2741,77 @@ pub fn rust_lang() -> Arc<Language> {
         Some(tree_sitter_rust::LANGUAGE.into()),
     )
     .with_queries(LanguageQueries {
-        indents: Some(Cow::from(
-            r#"
-[
-    ((where_clause) _ @end)
-    (field_expression)
-    (call_expression)
-    (assignment_expression)
-    (let_declaration)
-    (let_chain)
-    (await_expression)
-] @indent
-
-(_ "[" "]" @end) @indent
-(_ "<" ">" @end) @indent
-(_ "{" "}" @end) @indent
-(_ "(" ")" @end) @indent"#,
-        )),
-        brackets: Some(Cow::from(
-            r#"
-("(" @open ")" @close)
-("[" @open "]" @close)
-("{" @open "}" @close)
-("<" @open ">" @close)
-("\"" @open "\"" @close)
-(closure_parameters "|" @open "|" @close)"#,
-        )),
-        text_objects: Some(Cow::from(
-            r#"
-(function_item
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}" )) @function.around
-        "#,
-        )),
-        ..LanguageQueries::default()
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/rust/outline.scm"
+        ))),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/rust/indents.scm"
+        ))),
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/rust/brackets.scm"
+        ))),
+        text_objects: Some(Cow::from(include_str!(
+            "../../languages/src/rust/textobjects.scm"
+        ))),
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/rust/highlights.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/rust/injections.scm"
+        ))),
+        overrides: Some(Cow::from(include_str!(
+            "../../languages/src/rust/overrides.scm"
+        ))),
+        redactions: None,
+        runnables: Some(Cow::from(include_str!(
+            "../../languages/src/rust/runnables.scm"
+        ))),
+        debugger: Some(Cow::from(include_str!(
+            "../../languages/src/rust/debugger.scm"
+        ))),
+        imports: Some(Cow::from(include_str!(
+            "../../languages/src/rust/imports.scm"
+        ))),
     })
     .expect("Could not parse queries");
+    Arc::new(language)
+}
+
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub fn markdown_lang() -> Arc<Language> {
+    use std::borrow::Cow;
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_md::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/brackets.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/injections.scm"
+        ))),
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/highlights.scm"
+        ))),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/indents.scm"
+        ))),
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/outline.scm"
+        ))),
+        ..LanguageQueries::default()
+    })
+    .expect("Could not parse markdown queries");
     Arc::new(language)
 }
 
@@ -2694,9 +2850,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2707,9 +2863,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2720,9 +2876,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 

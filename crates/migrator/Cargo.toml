@@ -22,7 +22,7 @@ tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 serde_json_lenient.workspace = true
 serde_json.workspace = true
-settings.workspace = true
+settings_json.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

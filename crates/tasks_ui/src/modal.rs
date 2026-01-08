@@ -5,8 +5,8 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
-    Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, rems,
+    Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity,
+    Window, rems,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -448,11 +448,12 @@ impl PickerDelegate for TasksModalDelegate {
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
 
-        let mut tooltip_label_text = if display_label != &template.label {
-            resolved_task.resolved_label.clone()
-        } else {
-            String::new()
-        };
+        let mut tooltip_label_text =
+            if display_label != &template.label || source_kind == &TaskSourceKind::UserInput {
+                resolved_task.resolved_label.clone()
+            } else {
+                String::new()
+            };
 
         if resolved_task.resolved.command_label != resolved_task.resolved_label {
             if !tooltip_label_text.trim().is_empty() {
@@ -525,7 +526,7 @@ impl PickerDelegate for TasksModalDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+            ListItem::new(format!("tasks-modal-{ix}"))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .end_slot::<AnyElement>(

@@ -31,7 +31,6 @@ use rpc::{
     RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
 };
-use semantic_version::SemanticVersion;
 use serde_json::json;
 use session::{AppSession, Session};
 use settings::SettingsStore;
@@ -173,8 +172,7 @@ impl TestServer {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
-            client::init_settings(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
 
         let clock = Arc::new(FakeSystemClock::new());
@@ -296,7 +294,7 @@ impl TestServer {
                             server_conn,
                             client_name,
                             Principal::User(user),
-                            ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            ZedVersion(semver::Version::new(1, 0, 0)),
                             Some("test".to_string()),
                             None,
                             None,
@@ -345,7 +343,6 @@ impl TestServer {
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
             client::init(&client, cx);
-            language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
             call::init(client.clone(), user_store.clone(), cx);
@@ -359,7 +356,6 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_text_thread::init(client.clone(), cx);
-            agent_settings::init(cx);
         });
 
         client
@@ -749,7 +745,24 @@ impl TestClient {
         root_path: impl AsRef<Path>,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
-        let project = self.build_empty_local_project(cx);
+        let project = self.build_empty_local_project(false, cx);
+        let (worktree, _) = project
+            .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
+            .await
+            .unwrap();
+        worktree
+            .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+        (project, worktree.read_with(cx, |tree, _| tree.id()))
+    }
+
+    pub async fn build_local_project_with_trust(
+        &self,
+        root_path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, WorktreeId) {
+        let project = self.build_empty_local_project(true, cx);
         let (worktree, _) = project
             .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
             .await
@@ -765,6 +778,7 @@ impl TestClient {
         &self,
         root_path: impl AsRef<Path>,
         ssh: Entity<RemoteClient>,
+        init_worktree_trust: bool,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
         let project = cx.update(|cx| {
@@ -775,6 +789,7 @@ impl TestClient {
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                init_worktree_trust,
                 cx,
             )
         });
@@ -834,7 +849,11 @@ impl TestClient {
         self.active_workspace(cx)
     }
 
-    pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> Entity<Project> {
+    pub fn build_empty_local_project(
+        &self,
+        init_worktree_trust: bool,
+        cx: &mut TestAppContext,
+    ) -> Entity<Project> {
         cx.update(|cx| {
             Project::local(
                 self.client().clone(),
@@ -843,6 +862,7 @@ impl TestClient {
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
                 None,
+                init_worktree_trust,
                 cx,
             )
         })

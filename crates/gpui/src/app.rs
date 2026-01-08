@@ -1,6 +1,6 @@
 use std::{
     any::{TypeId, type_name},
-    cell::{BorrowMutError, Ref, RefCell, RefMut},
+    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -30,6 +30,8 @@ use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{ResultExt, debug_panic};
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
@@ -38,10 +40,11 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -51,6 +54,8 @@ mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
@@ -133,8 +138,10 @@ impl Application {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
+        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(false),
+            current_platform(false, Arc::downgrade(&liveness)),
+            liveness,
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -144,8 +151,10 @@ impl Application {
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
     pub fn headless() -> Self {
+        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(true),
+            current_platform(true, Arc::downgrade(&liveness)),
+            liveness,
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -166,6 +175,13 @@ impl Application {
         let mut context_lock = self.0.borrow_mut();
         context_lock.http_client = http_client;
         drop(context_lock);
+        self
+    }
+
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn with_quit_mode(self, mode: QuitMode) -> Self {
+        self.0.borrow_mut().quit_mode = mode;
         self
     }
 
@@ -238,6 +254,18 @@ type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
+/// Defines when the application should automatically quit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuitMode {
+    /// Use [`QuitMode::Explicit`] on macOS and [`QuitMode::LastWindowClosed`] on other platforms.
+    #[default]
+    Default,
+    /// Quit automatically when the last window is closed.
+    LastWindowClosed,
+    /// Quit only when requested via [`App::quit`].
+    Explicit,
+}
+
 #[doc(hidden)]
 #[derive(Clone, PartialEq, Eq)]
 pub struct SystemWindowTab {
@@ -296,6 +324,7 @@ impl SystemWindowTabController {
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
         let current_group = current_group?;
+        // TODO: `.keys()` returns arbitrary order, what does "next" mean?
         let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let next_idx = (idx + 1) % group_ids.len();
@@ -320,6 +349,7 @@ impl SystemWindowTabController {
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
         let current_group = current_group?;
+        // TODO: `.keys()` returns arbitrary order, what does "previous" mean?
         let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let prev_idx = if idx == 0 {
@@ -341,12 +371,9 @@ impl SystemWindowTabController {
 
     /// Get all tabs in the same window.
     pub fn tabs(&self, id: WindowId) -> Option<&Vec<SystemWindowTab>> {
-        let tab_group = self
-            .tab_groups
-            .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
-
-        self.tab_groups.get(&tab_group)
+        self.tab_groups
+            .values()
+            .find(|tabs| tabs.iter().any(|tab| tab.id == id))
     }
 
     /// Initialize the visibility of the system window tab controller.
@@ -421,7 +448,7 @@ impl SystemWindowTabController {
     /// Insert a tab into a tab group.
     pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let Some(tab) = tabs.clone().into_iter().find(|tab| tab.id == id) else {
+        let Some(tab) = tabs.iter().find(|tab| tab.id == id).cloned() else {
             return;
         };
 
@@ -484,16 +511,14 @@ impl SystemWindowTabController {
             return;
         };
 
+        let initial_tabs_len = initial_tabs.len();
         let mut all_tabs = initial_tabs.clone();
-        for tabs in controller.tab_groups.values() {
-            all_tabs.extend(
-                tabs.iter()
-                    .filter(|tab| !initial_tabs.contains(tab))
-                    .cloned(),
-            );
+
+        for (_, mut tabs) in controller.tab_groups.drain() {
+            tabs.retain(|tab| !all_tabs[..initial_tabs_len].contains(tab));
+            all_tabs.extend(tabs);
         }
 
-        controller.tab_groups.clear();
         controller.tab_groups.insert(0, all_tabs);
     }
 
@@ -532,12 +557,40 @@ impl SystemWindowTabController {
     }
 }
 
+pub(crate) enum GpuiMode {
+    #[cfg(any(test, feature = "test-support"))]
+    Test {
+        skip_drawing: bool,
+    },
+    Production,
+}
+
+impl GpuiMode {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test() -> Self {
+        GpuiMode::Test {
+            skip_drawing: false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn skip_drawing(&self) -> bool {
+        match self {
+            #[cfg(any(test, feature = "test-support"))]
+            GpuiMode::Test { skip_drawing } => *skip_drawing,
+            GpuiMode::Production => false,
+        }
+    }
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
+    pub(crate) _liveness: Arc<()>,
     pub(crate) platform: Rc<dyn Platform>,
+    pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -588,6 +641,8 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+    quit_mode: QuitMode,
     quitting: bool,
 }
 
@@ -595,13 +650,14 @@ impl App {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
+        liveness: Arc<()>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
-        let executor = platform.background_executor();
+        let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         assert!(
-            executor.is_main_thread(),
+            background_executor.is_main_thread(),
             "must construct App on main thread"
         );
 
@@ -613,13 +669,16 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
+                _liveness: liveness,
                 platform: platform.clone(),
                 text_system,
+                text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
+                mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                background_executor: executor,
+                background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
@@ -659,6 +718,7 @@ impl App {
                 inspector_renderer: None,
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
+                quit_mode: QuitMode::default(),
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1030,11 +1090,19 @@ impl App {
         self.platform.window_appearance()
     }
 
-    /// Writes data to the primary selection buffer.
-    /// Only available on Linux.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn write_to_primary(&self, item: ClipboardItem) {
-        self.platform.write_to_primary(item)
+    /// Reads data from the platform clipboard.
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_clipboard()
+    }
+
+    /// Sets the text rendering mode for the application.
+    pub fn set_text_rendering_mode(&mut self, mode: TextRenderingMode) {
+        self.text_rendering_mode.set(mode);
+    }
+
+    /// Returns the current text rendering mode for the application.
+    pub fn text_rendering_mode(&self) -> TextRenderingMode {
+        self.text_rendering_mode.get()
     }
 
     /// Writes data to the platform clipboard.
@@ -1049,9 +1117,31 @@ impl App {
         self.platform.read_from_primary()
     }
 
-    /// Reads data from the platform clipboard.
-    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform.read_from_clipboard()
+    /// Writes data to the primary selection buffer.
+    /// Only available on Linux.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn write_to_primary(&self, item: ClipboardItem) {
+        self.platform.write_to_primary(item)
+    }
+
+    /// Reads data from macOS's "Find" pasteboard.
+    ///
+    /// Used to share the current search string between apps.
+    ///
+    /// https://developer.apple.com/documentation/appkit/nspasteboard/name-swift.struct/find
+    #[cfg(target_os = "macos")]
+    pub fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_find_pasteboard()
+    }
+
+    /// Writes data to macOS's "Find" pasteboard.
+    ///
+    /// Used to share the current search string between apps.
+    ///
+    /// https://developer.apple.com/documentation/appkit/nspasteboard/name-swift.struct/find
+    #[cfg(target_os = "macos")]
+    pub fn write_to_find_pasteboard(&self, item: ClipboardItem) {
+        self.platform.write_to_find_pasteboard(item)
     }
 
     /// Writes credentials to the platform keychain.
@@ -1170,6 +1260,12 @@ impl App {
     /// Sets the HTTP client for the application.
     pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
+    }
+
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn set_quit_mode(&mut self, mode: QuitMode) {
+        self.quit_mode = mode;
     }
 
     /// Returns the SVG renderer used by the application.
@@ -1379,6 +1475,16 @@ impl App {
                     callback(cx);
                     true
                 });
+
+                let quit_on_empty = match cx.quit_mode {
+                    QuitMode::Explicit => false,
+                    QuitMode::LastWindowClosed => true,
+                    QuitMode::Default => cfg!(not(target_os = "macos")),
+                };
+
+                if quit_on_empty && cx.windows.is_empty() {
+                    cx.quit();
+                }
             } else {
                 cx.windows.get_mut(id)?.replace(window);
             }
@@ -1427,6 +1533,24 @@ impl App {
 
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
+    }
+
+    /// Spawns the future returned by the given function on the main thread with
+    /// the given priority. The closure will be invoked with [AsyncApp], which
+    /// allows the application state to be accessed across await points.
+    pub fn spawn_with_priority<AsyncFn, R>(&self, priority: Priority, f: AsyncFn) -> Task<R>
+    where
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
+        R: 'static,
+    {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+
+        let mut cx = self.to_async();
+
+        self.foreground_executor
+            .spawn_with_priority(priority, async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1693,7 +1817,10 @@ impl App {
     /// Register a global handler for actions invoked via the keyboard. These handlers are run at
     /// the end of the bubble phase for actions, and so will only be invoked if there are no other
     /// handlers or if they called `cx.propagate()`.
-    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
+    pub fn on_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut Self) + 'static,
+    ) -> &mut Self {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
@@ -1703,6 +1830,7 @@ impl App {
                     listener(action, cx)
                 }
             }));
+        self
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to
@@ -1812,8 +1940,11 @@ impl App {
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
-                .update(self, |_, window, _| {
-                    window.clear_pending_keystrokes();
+                .update(self, |_, window, cx| {
+                    if window.pending_input_keystrokes().is_some() {
+                        window.clear_pending_keystrokes();
+                        window.pending_input_changed(cx);
+                    }
                 })
                 .ok();
         }
@@ -2104,8 +2235,6 @@ impl App {
 }
 
 impl AppContext for App {
-    type Result<T> = T;
-
     /// Builds an entity that is owned by the application.
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
@@ -2127,7 +2256,7 @@ impl AppContext for App {
         })
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
         Reservation(self.entities.reserve())
     }
 
@@ -2135,7 +2264,7 @@ impl AppContext for App {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.update(|cx| {
             let slot = reservation.0;
             let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
@@ -2168,11 +2297,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -2217,7 +2342,7 @@ impl AppContext for App {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -2362,10 +2487,6 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 

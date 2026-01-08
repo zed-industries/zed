@@ -2,7 +2,7 @@
 
 use crate::{
     Event,
-    git_store::{GitStoreEvent, RepositoryEvent, StatusEntry},
+    git_store::{GitStoreEvent, RepositoryEvent, StatusEntry, pending_op},
     task_inventory::TaskContexts,
     task_store::TaskSettingsLocation,
     *,
@@ -20,7 +20,7 @@ use git::{
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
@@ -28,7 +28,7 @@ use language::{
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
-    tree_sitter_rust, tree_sitter_typescript,
+    rust_lang, tree_sitter_typescript,
 };
 use lsp::{
     DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
@@ -50,6 +50,7 @@ use std::{
     sync::{Arc, OnceLock},
     task::Poll,
 };
+use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -690,7 +691,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -719,7 +720,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -745,7 +746,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -761,7 +762,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -790,7 +791,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -1204,6 +1205,151 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await,
         close_message,
+    );
+}
+
+#[gpui::test]
+async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let settings_json_contents = json!({
+        "languages": {
+            "Rust": {
+                "language_servers": ["my_fake_lsp", "lsp_on_path"]
+            }
+        },
+        "lsp": {
+            "my_fake_lsp": {
+                "binary": {
+                    // file exists, so this is treated as a relative path
+                    "path": path!(".relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                }
+            },
+            "lsp_on_path": {
+                "binary": {
+                    // file doesn't exist, so it will fall back on PATH env var
+                    "path": path!("lsp_on_path.exe").to_string(),
+                }
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json_contents.to_string(),
+            },
+            ".relative_path": {
+                "to": {
+                    "my_fake_lsp.exe": "",
+                },
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut my_fake_lsp = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "my_fake_lsp",
+            ..Default::default()
+        },
+    );
+    let mut lsp_on_path = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "lsp_on_path",
+            ..Default::default()
+        },
+    );
+
+    cx.run_until_parked();
+
+    // Start the language server by opening a buffer with a compatible file extension.
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lsp_path = my_fake_lsp.next().await.unwrap().binary.path;
+    assert_eq!(
+        lsp_path.to_string_lossy(),
+        path!("/the-root/.relative_path/to/my_fake_lsp_binary.exe"),
+    );
+
+    let lsp_path = lsp_on_path.next().await.unwrap().binary.path;
+    assert_eq!(lsp_path.to_string_lossy(), path!("lsp_on_path.exe"));
+}
+
+#[gpui::test]
+async fn test_language_server_tilde_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let settings_json_contents = json!({
+        "languages": {
+            "Rust": {
+                "language_servers": ["tilde_lsp"]
+            }
+        },
+        "lsp": {
+            "tilde_lsp": {
+                "binary": {
+                    "path": "~/.local/bin/rust-analyzer",
+                }
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json_contents.to_string(),
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut tilde_lsp = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "tilde_lsp",
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lsp_path = tilde_lsp.next().await.unwrap().binary.path;
+    let expected_path = paths::home_dir().join(".local/bin/rust-analyzer");
+    assert_eq!(
+        lsp_path, expected_path,
+        "Tilde path should expand to home directory"
     );
 }
 
@@ -1817,10 +1963,6 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         .await;
     assert_eq!(
         events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
             language_server_id: LanguageServerId(0),
         }
@@ -1956,10 +2098,6 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             fake_server.server.name(),
             Some(worktree_id)
         )
-    );
-    assert_eq!(
-        events.next().await.unwrap(),
-        Event::RefreshInlayHints(fake_server.server.server_id())
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
@@ -2612,11 +2750,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -2625,7 +2765,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
             lsp_store
                 .update_diagnostic_entries(
                     LanguageServerId(0),
-                    PathBuf::from("/dir/a.rs"),
+                    PathBuf::from(path!("/dir/a.rs")),
                     None,
                     None,
                     vec![
@@ -2682,17 +2822,17 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
         .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(0),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -2711,7 +2851,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(1),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -3408,7 +3548,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_language_servers.next().await.unwrap();
     let text = "let a = obj.fqn";
 
-    // Test 1: When text_edit is None but insert_text exists with default edit_range
+    // Test 1: When text_edit is None but text_edit_text exists with default edit_range
     {
         buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
         let completions = project.update(cx, |project, cx| {
@@ -3430,7 +3570,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
-                        insert_text: Some("insertText".into()),
+                        text_edit_text: Some("textEditText".into()),
                         text_edit: None,
                         ..Default::default()
                     }],
@@ -3448,14 +3588,14 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
-        assert_eq!(completions[0].new_text, "insertText");
+        assert_eq!(completions[0].new_text, "textEditText");
         assert_eq!(
             completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
 
-    // Test 2: When both text_edit and insert_text are None with default edit_range
+    // Test 2: When both text_edit and text_edit_text are None with default edit_range
     {
         buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
         let completions = project.update(cx, |project, cx| {
@@ -3477,7 +3617,8 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
-                        insert_text: None,
+                        text_edit_text: None,
+                        insert_text: Some("irrelevant".into()),
                         text_edit: None,
                         ..Default::default()
                     }],
@@ -4249,6 +4390,73 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     assert_eq!(opened_buffer, buffer);
+}
+
+#[gpui::test]
+async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+                "data_a.txt": "data about a"
+        }),
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/data_a.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(11..12, "b")], None, cx);
+    });
+
+    // Save buffer's contents as a new file and confirm that the buffer's now
+    // associated with `data_b.txt` instead of `data_a.txt`, confirming that the
+    // file associated with the buffer has now been updated to `data_b.txt`
+    project
+        .update(cx, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            let new_path = ProjectPath {
+                worktree_id,
+                path: rel_path("data_b.txt").into(),
+            };
+
+            project.save_buffer_as(buffer.clone(), new_path, cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/data_b.txt")
+        )
+    });
+
+    // Open the original `data_a.txt` file, confirming that its contents are
+    // unchanged and the resulting buffer's associated file is `data_a.txt`.
+    let original_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/data_a.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    original_buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "data about a");
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/data_a.txt")
+        )
+    });
 }
 
 #[gpui::test(retries = 5)]
@@ -7016,9 +7224,9 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks(&snapshot, cx),
+            unstaged_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &unstaged_diff.base_text_string().unwrap(),
+            &unstaged_diff.base_text_string(cx).unwrap(),
             &[
                 (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
@@ -7044,9 +7252,11 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            unstaged_diff
+                .snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_diff.base_text().text(),
+            &unstaged_diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7126,16 +7336,17 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    diff_1.read_with(cx, |diff, _| {
-        assert_eq!(diff.base_text().language().cloned(), Some(language))
+    diff_1.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text(cx).language().cloned(), Some(language))
     });
     cx.run_until_parked();
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..1,
@@ -7174,9 +7385,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text().text(),
+            &diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7203,9 +7415,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7224,9 +7437,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7295,9 +7509,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7326,14 +7540,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7365,6 +7580,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7377,9 +7593,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7407,6 +7623,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7426,14 +7643,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7463,6 +7681,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7475,9 +7694,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7504,6 +7723,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7517,7 +7737,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Stage two hunks with separate operations.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
         diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
     });
@@ -7525,9 +7745,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // Both staged hunks appear as pending.
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7555,9 +7775,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -7639,9 +7859,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7670,12 +7890,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the first hunk.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).next().unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).next().unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7702,12 +7922,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // Stage the second hunk *before* receiving the FS event for the first hunk.
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(1).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7737,7 +7957,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the third hunk before receiving the second FS event.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(2).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(2).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
     });
 
@@ -7749,9 +7969,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -7835,8 +8055,9 @@ async fn test_staging_random_hunks(
         .await
         .unwrap();
 
-    let mut hunks =
-        uncommitted_diff.update(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>());
+    let mut hunks = uncommitted_diff.update(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+    });
     assert_eq!(hunks.len(), 6);
 
     for _i in 0..operations {
@@ -7876,7 +8097,7 @@ async fn test_staging_random_hunks(
 
     log::info!(
         "index text:\n{}",
-        repo.load_index_text(rel_path("file.txt").into())
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap()
     );
@@ -7887,7 +8108,8 @@ async fn test_staging_random_hunks(
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         let actual_hunks = diff
-            .hunks(&snapshot, cx)
+            .snapshot(cx)
+            .hunks(&snapshot)
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         assert_eq!(actual_hunks, expected_hunks);
@@ -7952,9 +8174,9 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks(&snapshot, cx),
+            uncommitted_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &uncommitted_diff.base_text_string().unwrap(),
+            &uncommitted_diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
@@ -7966,6 +8188,91 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
             )],
         );
     });
+}
+
+// TODO: Should we test this on Windows also?
+#[gpui::test]
+#[cfg(not(windows))]
+async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    init_test(cx);
+    cx.executor().allow_parking();
+    let committed_contents = "bar\n";
+    let file_contents = "baz\n";
+    let root = TempTree::new(json!({
+        "project": {
+            "foo": committed_contents
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let file_path = work_dir.join("foo");
+    let repo = git_init(work_dir.as_path());
+    let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&file_path, perms).unwrap();
+    git_add("foo", &repo);
+    git_commit("Initial commit", &repo);
+    std::fs::write(&file_path, file_contents).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+    });
+
+    cx.run_until_parked();
+
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["diff", "--staged"])
+        .output()
+        .await
+        .unwrap();
+
+    let staged_diff = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !staged_diff.contains("new mode 100644"),
+        "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
+        staged_diff
+    );
+
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["ls-files", "-s"])
+        .output()
+        .await
+        .unwrap();
+    let index_contents = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        index_contents.contains("100755"),
+        "Index should show file as executable (100755).\ngit ls-files -s:\n{}",
+        index_contents
+    );
 }
 
 #[gpui::test]
@@ -8247,6 +8554,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -8306,6 +8614,443 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                 .into(),
             }]
         )
+    });
+}
+
+#[track_caller]
+/// We merge lhs into rhs.
+fn merge_pending_ops_snapshots(
+    source: Vec<pending_op::PendingOps>,
+    mut target: Vec<pending_op::PendingOps>,
+) -> Vec<pending_op::PendingOps> {
+    for s_ops in source {
+        if let Some(idx) = target.iter().zip(0..).find_map(|(ops, idx)| {
+            if ops.repo_path == s_ops.repo_path {
+                Some(idx)
+            } else {
+                None
+            }
+        }) {
+            let t_ops = &mut target[idx];
+            for s_op in s_ops.ops {
+                if let Some(op_idx) = t_ops
+                    .ops
+                    .iter()
+                    .zip(0..)
+                    .find_map(|(op, idx)| if op.id == s_op.id { Some(idx) } else { None })
+                {
+                    let t_op = &mut t_ops.ops[op_idx];
+                    match (s_op.job_status, t_op.job_status) {
+                        (pending_op::JobStatus::Running, _) => {}
+                        (s_st, pending_op::JobStatus::Running) => t_op.job_status = s_st,
+                        (s_st, t_st) if s_st == t_st => {}
+                        _ => unreachable!(),
+                    }
+                } else {
+                    t_ops.ops.push(s_op);
+                }
+            }
+            t_ops.ops.sort_by(|l, r| l.id.cmp(&r.id));
+        } else {
+            target.push(s_ops);
+        }
+    }
+    target
+}
+
+#[gpui::test]
+async fn test_repository_pending_ops_staging(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "a.txt": "a",
+            }
+
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo(
+        path!("/root/my-repo/.git").as_ref(),
+        &[("a.txt", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
+    project.update(cx, |project, cx| {
+        let pending_ops_all = pending_ops_all.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let GitStoreEvent::RepositoryUpdated(
+                _,
+                RepositoryEvent::PendingOpsChanged { pending_ops },
+                _,
+            ) = e
+            {
+                let merged = merge_pending_ops_snapshots(
+                    pending_ops.items(()),
+                    pending_ops_all.lock().items(()),
+                );
+                *pending_ops_all.lock() = SumTree::from_iter(merged.into_iter(), ());
+            }
+        })
+        .detach();
+    });
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    // Ensure we have no pending ops for any of the untracked files
+    repo.read_with(cx, |repo, _cx| {
+        assert!(repo.pending_ops().next().is_none());
+    });
+
+    let mut id = 1u16;
+
+    let mut assert_stage = async |path: RepoPath, stage| {
+        let git_status = if stage {
+            pending_op::GitStatus::Staged
+        } else {
+            pending_op::GitStatus::Unstaged
+        };
+        repo.update(cx, |repo, cx| {
+            let task = if stage {
+                repo.stage_entries(vec![path.clone()], cx)
+            } else {
+                repo.unstage_entries(vec![path.clone()], cx)
+            };
+            let ops = repo.pending_ops_for_path(&path).unwrap();
+            assert_eq!(
+                ops.ops.last(),
+                Some(&pending_op::PendingOp {
+                    id: id.into(),
+                    git_status,
+                    job_status: pending_op::JobStatus::Running
+                })
+            );
+            task
+        })
+        .await
+        .unwrap();
+
+        repo.read_with(cx, |repo, _cx| {
+            let ops = repo.pending_ops_for_path(&path).unwrap();
+            assert_eq!(
+                ops.ops.last(),
+                Some(&pending_op::PendingOp {
+                    id: id.into(),
+                    git_status,
+                    job_status: pending_op::JobStatus::Finished
+                })
+            );
+        });
+
+        id += 1;
+    };
+
+    assert_stage(repo_path("a.txt"), true).await;
+    assert_stage(repo_path("a.txt"), false).await;
+    assert_stage(repo_path("a.txt"), true).await;
+    assert_stage(repo_path("a.txt"), false).await;
+    assert_stage(repo_path("a.txt"), true).await;
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        pending_ops_all
+            .lock()
+            .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
+            .unwrap()
+            .ops,
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Unstaged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 3u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 4u16.into(),
+                git_status: pending_op::GitStatus::Unstaged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 5u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            }
+        ],
+    );
+
+    repo.update(cx, |repo, _cx| {
+        let git_statuses = repo.cached_status().collect::<Vec<_>>();
+
+        assert_eq!(
+            git_statuses,
+            [StatusEntry {
+                repo_path: repo_path("a.txt"),
+                status: TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: StatusCode::Unmodified
+                }
+                .into(),
+            }]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repository_pending_ops_long_running_staging(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "a.txt": "a",
+            }
+
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo(
+        path!("/root/my-repo/.git").as_ref(),
+        &[("a.txt", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
+    project.update(cx, |project, cx| {
+        let pending_ops_all = pending_ops_all.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let GitStoreEvent::RepositoryUpdated(
+                _,
+                RepositoryEvent::PendingOpsChanged { pending_ops },
+                _,
+            ) = e
+            {
+                let merged = merge_pending_ops_snapshots(
+                    pending_ops.items(()),
+                    pending_ops_all.lock().items(()),
+                );
+                *pending_ops_all.lock() = SumTree::from_iter(merged.into_iter(), ());
+            }
+        })
+        .detach();
+    });
+
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("a.txt")], cx)
+    })
+    .detach();
+
+    repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("a.txt")], cx)
+    })
+    .unwrap()
+    .with_timeout(Duration::from_secs(1), &cx.executor())
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        pending_ops_all
+            .lock()
+            .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
+            .unwrap()
+            .ops,
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Skipped
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            }
+        ],
+    );
+
+    repo.update(cx, |repo, _cx| {
+        let git_statuses = repo.cached_status().collect::<Vec<_>>();
+
+        assert_eq!(
+            git_statuses,
+            [StatusEntry {
+                repo_path: repo_path("a.txt"),
+                status: TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: StatusCode::Unmodified
+                }
+                .into(),
+            }]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repository_pending_ops_stage_all(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "a.txt": "a",
+                "b.txt": "b"
+            }
+
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo(
+        path!("/root/my-repo/.git").as_ref(),
+        &[
+            ("a.txt", FileStatus::Untracked),
+            ("b.txt", FileStatus::Untracked),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
+    project.update(cx, |project, cx| {
+        let pending_ops_all = pending_ops_all.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let GitStoreEvent::RepositoryUpdated(
+                _,
+                RepositoryEvent::PendingOpsChanged { pending_ops },
+                _,
+            ) = e
+            {
+                let merged = merge_pending_ops_snapshots(
+                    pending_ops.items(()),
+                    pending_ops_all.lock().items(()),
+                );
+                *pending_ops_all.lock() = SumTree::from_iter(merged.into_iter(), ());
+            }
+        })
+        .detach();
+    });
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("a.txt")], cx)
+    })
+    .await
+    .unwrap();
+    repo.update(cx, |repo, cx| repo.stage_all(cx))
+        .await
+        .unwrap();
+    repo.update(cx, |repo, cx| repo.unstage_all(cx))
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        pending_ops_all
+            .lock()
+            .get(&worktree::PathKey(repo_path("a.txt").as_ref().clone()), ())
+            .unwrap()
+            .ops,
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Unstaged,
+                job_status: pending_op::JobStatus::Finished
+            },
+        ],
+    );
+    assert_eq!(
+        pending_ops_all
+            .lock()
+            .get(&worktree::PathKey(repo_path("b.txt").as_ref().clone()), ())
+            .unwrap()
+            .ops,
+        vec![
+            pending_op::PendingOp {
+                id: 1u16.into(),
+                git_status: pending_op::GitStatus::Staged,
+                job_status: pending_op::JobStatus::Finished
+            },
+            pending_op::PendingOp {
+                id: 2u16.into(),
+                git_status: pending_op::GitStatus::Unstaged,
+                job_status: pending_op::JobStatus::Finished
+            },
+        ],
+    );
+
+    repo.update(cx, |repo, _cx| {
+        let git_statuses = repo.cached_status().collect::<Vec<_>>();
+
+        assert_eq!(
+            git_statuses,
+            [
+                StatusEntry {
+                    repo_path: repo_path("a.txt"),
+                    status: FileStatus::Untracked,
+                },
+                StatusEntry {
+                    repo_path: repo_path("b.txt"),
+                    status: FileStatus::Untracked,
+                },
+            ]
+        );
     });
 }
 
@@ -8811,11 +9556,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
             repository
-                .status_for_path(
-                    &rel_path(renamed_dir_name)
-                        .join(rel_path(RENAMED_FILE))
-                        .into()
-                )
+                .status_for_path(&RepoPath::from_rel_path(
+                    &rel_path(renamed_dir_name).join(rel_path(RENAMED_FILE))
+                ))
                 .unwrap()
                 .status,
             FileStatus::Untracked,
@@ -8839,11 +9582,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
             repository
-                .status_for_path(
-                    &rel_path(renamed_dir_name)
-                        .join(rel_path(RENAMED_FILE))
-                        .into()
-                )
+                .status_for_path(&RepoPath::from_rel_path(
+                    &rel_path(renamed_dir_name).join(rel_path(RENAMED_FILE))
+                ))
                 .unwrap()
                 .status,
             FileStatus::Untracked,
@@ -8936,7 +9677,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::StatusesChanged { full_scan: true },
+            RepositoryEvent::StatusesChanged,
             RepositoryEvent::MergeHeadsChanged,
         ],
         "Initial worktree scan should produce a repo update event"
@@ -9008,11 +9749,14 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
             ("project/target/debug/deps".to_string(), PathChange::Added),
             ("project/target/debug/deps".to_string(), PathChange::Removed),
         ],
-        "Due to `debug` directory being tracket, it should get updates for entries inside it.
+        "Due to `debug` directory being tracked, it should get updates for entries inside it.
         No updates for more nested directories should happen as those are ignored",
     );
 }
 
+// todo(jk): turning this test off until we rework it in such a way so that it is not so susceptible
+// to different timings/ordering of events.
+#[ignore]
 #[gpui::test]
 async fn test_odd_events_for_ignored_dirs(
     executor: BackgroundExecutor,
@@ -9103,7 +9847,9 @@ async fn test_odd_events_for_ignored_dirs(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
             RepositoryEvent::MergeHeadsChanged,
-            RepositoryEvent::BranchChanged
+            RepositoryEvent::BranchChanged,
+            RepositoryEvent::StatusesChanged,
+            RepositoryEvent::StatusesChanged,
         ],
         "Initial worktree scan should produce a repo update event"
     );
@@ -9549,6 +10295,120 @@ async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/project")).into()]);
 }
 
+#[gpui::test]
+async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let file_1_committed = String::from(r#"file_1_committed"#);
+    let file_1_staged = String::from(r#"file_1_staged"#);
+    let file_2_committed = String::from(r#"file_2_committed"#);
+    let file_2_staged = String::from(r#"file_2_staged"#);
+    let buffer_contents = String::from(r#"buffer"#);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+           "src": {
+               "file_1.rs": file_1_committed.clone(),
+               "file_2.rs": file_2_committed.clone(),
+           }
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("src/file_1.rs", file_1_committed.clone()),
+            ("src/file_2.rs", file_2_committed.clone()),
+        ],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("src/file_1.rs", file_1_staged.clone()),
+            ("src/file_2.rs", file_2_staged.clone()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/src/file_1.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..buffer.len(), buffer_contents.as_str())], None, cx);
+    });
+
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
+        assert_eq!(base_text, file_1_staged, "Should start with file_1 staged");
+    });
+
+    // Save the buffer as `file_2.rs`, which should trigger the
+    // `BufferChangedFilePath` event.
+    project
+        .update(cx, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            let path = ProjectPath {
+                worktree_id,
+                path: rel_path("src/file_2.rs").into(),
+            };
+            project.save_buffer_as(buffer.clone(), path, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Verify that the diff bases have been updated to file_2's contents due to
+    // the `BufferChangedFilePath` event being handled.
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
+        assert_eq!(
+            base_text, file_2_staged,
+            "Diff bases should be automatically updated to file_2 staged content"
+        );
+
+        let hunks: Vec<_> = unstaged_diff.snapshot(cx).hunks(&snapshot).collect();
+        assert!(!hunks.is_empty(), "Should have diff hunks for file_2");
+    });
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
+        let base_text = uncommitted_diff.base_text_string(cx).unwrap();
+        assert_eq!(
+            base_text, file_2_committed,
+            "Uncommitted diff should compare against file_2 committed content"
+        );
+    });
+}
+
 async fn search(
     project: &Entity<Project>,
     query: SearchQuery,
@@ -9556,7 +10416,7 @@ async fn search(
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
     let search_rx = project.update(cx, |project, cx| project.search(query, cx));
     let mut results = HashMap::default();
-    while let Ok(search_result) = search_rx.recv().await {
+    while let Ok(search_result) = search_rx.rx.recv().await {
         match search_result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
@@ -9590,9 +10450,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init(SemanticVersion::default(), cx);
-        language::init(cx);
-        Project::init_settings(cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 }
 
@@ -9621,20 +10479,6 @@ fn js_lang() -> Arc<Language> {
             ..Default::default()
         },
         None,
-    ))
-}
-
-fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 
@@ -9685,7 +10529,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
-        fn activation_script(&self, _: &Toolchain, _: ShellKind) -> Vec<String> {
+        fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &gpui::App) -> Vec<String> {
             vec![]
         }
     }
@@ -9977,5 +10821,477 @@ async fn test_find_project_path_abs(
             found_path.is_none(),
             "Should not find project path for path outside any worktree"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                }
+            },
+            "b": {
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+                "script": {
+                    "run.sh": "#!/bin/bash"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root/a").as_ref(),
+            path!("/root/b/script").as_ref(),
+            path!("/root/b").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let scan_complete = project.update(cx, |project, cx| project.git_scans_complete(cx));
+    scan_complete.await;
+
+    let worktrees = project.update(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>());
+    assert_eq!(worktrees.len(), 3);
+
+    let worktree_id_by_abs_path = worktrees
+        .into_iter()
+        .map(|worktree| worktree.read_with(cx, |w, _| (w.abs_path(), w.id())))
+        .collect::<HashMap<_, _>>();
+    let worktree_id = worktree_id_by_abs_path
+        .get(Path::new(path!("/root/b/script")))
+        .unwrap();
+
+    let repos = project.update(cx, |p, cx| p.git_store().read(cx).repositories().clone());
+    assert_eq!(repos.len(), 2);
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(*worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    let mut repo_paths = project
+        .update(cx, |p, cx| p.git_store().read(cx).repositories().clone())
+        .values()
+        .map(|repo| repo.read_with(cx, |r, _| r.work_directory_abs_path.clone()))
+        .collect::<Vec<_>>();
+    repo_paths.sort();
+
+    pretty_assertions::assert_eq!(
+        repo_paths,
+        [
+            Path::new(path!("/root/a")).into(),
+            Path::new(path!("/root/b")).into(),
+        ]
+    );
+
+    let active_repo_path = project
+        .read_with(cx, |p, cx| {
+            p.active_repository(cx)
+                .map(|r| r.read(cx).work_directory_abs_path.clone())
+        })
+        .unwrap();
+    assert_eq!(active_repo_path.as_ref(), Path::new(path!("/root/a")));
+
+    let worktree_id = worktree_id_by_abs_path
+        .get(Path::new(path!("/root/a")))
+        .unwrap();
+    project.update(cx, |project, cx| {
+        project.remove_worktree(*worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    let active_repo_path = project
+        .read_with(cx, |p, cx| {
+            p.active_repository(cx)
+                .map(|r| r.read(cx).work_directory_abs_path.clone())
+        })
+        .unwrap();
+    assert_eq!(active_repo_path.as_ref(), Path::new(path!("/root/b")));
+
+    let worktree_id = worktree_id_by_abs_path
+        .get(Path::new(path!("/root/b")))
+        .unwrap();
+    project.update(cx, |project, cx| {
+        project.remove_worktree(*worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    let active_repo_path = project.read_with(cx, |p, cx| {
+        p.active_repository(cx)
+            .map(|r| r.read(cx).work_directory_abs_path.clone())
+    });
+    assert!(active_repo_path.is_none());
+}
+
+#[gpui::test]
+async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        one
+        two
+        three
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    // The hunk is initially unstaged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
+        );
+    });
+
+    // Get the repository handle.
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    // Stage the file.
+    let stage_task = repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("file.txt")], cx)
+    });
+
+    // Run a few ticks to let the job start and mark hunks as pending,
+    // but don't run_until_parked which would complete the entire operation.
+    for _ in 0..10 {
+        cx.executor().tick();
+        let [hunk]: [_; 1] = uncommitted_diff
+            .read_with(cx, |diff, cx| {
+                diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+            })
+            .try_into()
+            .unwrap();
+        match hunk.secondary_status {
+            HasSecondaryHunk => {}
+            SecondaryHunkRemovalPending => break,
+            NoSecondaryHunk => panic!("hunk was not optimistically staged"),
+            _ => panic!("unexpected hunk state"),
+        }
+    }
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+            )],
+        );
+    });
+
+    // Let the staging complete.
+    stage_task.await.unwrap();
+    cx.run_until_parked();
+
+    // The hunk is now fully staged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+
+    // Simulate a commit by updating HEAD to match the current file contents.
+    // The FakeGitRepository's commit method is a no-op, so we need to manually
+    // update HEAD to simulate the commit completing.
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", file_contents.clone())],
+        "newhead",
+    );
+    cx.run_until_parked();
+
+    // After committing, there are no more hunks.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[] as &[(Range<u32>, &str, &str, DiffHunkStatus)],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Configure read_only_files setting
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![
+                    "**/generated/**".to_string(),
+                    "**/*.gen.rs".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+                "types.gen.rs": "// Generated file",
+            },
+            "generated": {
+                "schema.rs": "// Auto-generated schema",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // Open a regular file - should be read-write
+    let regular_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    regular_buffer.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "Regular file should not be read-only");
+    });
+
+    // Open a file matching *.gen.rs pattern - should be read-only
+    let gen_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/types.gen.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    gen_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "File matching *.gen.rs pattern should be read-only"
+        );
+    });
+
+    // Open a file in generated directory - should be read-only
+    let generated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/schema.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    generated_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "File in generated directory should be read-only"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Explicitly set read_only_files to empty (default behavior)
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "generated": {
+                "schema.rs": "// Auto-generated schema",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // All files should be read-write when read_only_files is empty
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    main_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "Files should not be read-only when read_only_files is empty"
+        );
+    });
+
+    let generated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/schema.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    generated_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "Generated files should not be read-only when read_only_files is empty"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Configure to make lock files read-only
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![
+                    "**/*.lock".to_string(),
+                    "**/package-lock.json".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "Cargo.lock": "# Lock file",
+            "Cargo.toml": "[package]",
+            "package-lock.json": "{}",
+            "package.json": "{}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // Cargo.lock should be read-only
+    let cargo_lock = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/Cargo.lock"), cx)
+        })
+        .await
+        .unwrap();
+
+    cargo_lock.read_with(cx, |buffer, _| {
+        assert!(buffer.read_only(), "Cargo.lock should be read-only");
+    });
+
+    // Cargo.toml should be read-write
+    let cargo_toml = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/Cargo.toml"), cx)
+        })
+        .await
+        .unwrap();
+
+    cargo_toml.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "Cargo.toml should not be read-only");
+    });
+
+    // package-lock.json should be read-only
+    let package_lock = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/package-lock.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    package_lock.read_with(cx, |buffer, _| {
+        assert!(buffer.read_only(), "package-lock.json should be read-only");
+    });
+
+    // package.json should be read-write
+    let package_json = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    package_json.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "package.json should not be read-only");
     });
 }

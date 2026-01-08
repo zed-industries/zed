@@ -58,6 +58,9 @@ pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
 /// The name of the header used by the client to indicate that it supports receiving xAI models.
 pub const CLIENT_SUPPORTS_X_AI_HEADER_NAME: &str = "x-zed-client-supports-x-ai";
 
+/// The maximum number of edit predictions that can be rejected per request.
+pub const MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST: usize = 100;
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageLimit {
@@ -166,6 +169,17 @@ pub struct PredictEditsBody {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
+    /// The trigger for this request.
+    #[serde(default)]
+    pub trigger: PredictEditsRequestTrigger,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum PredictEditsRequestTrigger {
+    Diagnostics,
+    Cli,
+    #[default]
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,13 +197,48 @@ pub struct PredictEditsGitInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
-    pub request_id: Uuid,
+    pub request_id: String,
     pub output_excerpt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
-    pub request_id: Uuid,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RejectEditPredictionsBody {
+    pub rejections: Vec<EditPredictionRejection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectEditPredictionsBodyRef<'a> {
+    pub rejections: &'a [EditPredictionRejection],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EditPredictionRejection {
+    pub request_id: String,
+    #[serde(default)]
+    pub reason: EditPredictionRejectReason,
+    pub was_shown: bool,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum EditPredictionRejectReason {
+    /// New requests were triggered before this one completed
+    Canceled,
+    /// No edits returned
+    Empty,
+    /// Edits returned, but none remained after interpolation
+    InterpolatedEmpty,
+    /// The new prediction was preferred over the current one
+    Replaced,
+    /// The current prediction was preferred over the new one
+    CurrentPreferred,
+    /// The current prediction was discarded
+    #[default]
+    Discarded,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -322,6 +371,8 @@ pub struct LanguageModel {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
+    #[serde(default)]
+    pub supports_streaming_tools: bool,
     // only used by OpenAI and xAI
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,

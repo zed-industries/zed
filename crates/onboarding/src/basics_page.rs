@@ -3,15 +3,16 @@ use std::sync::Arc;
 use client::TelemetrySettings;
 use fs::Fs;
 use gpui::{Action, App, IntoElement};
+use project::project_settings::ProjectSettings;
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
-    Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
+    Appearance, SystemAppearance, ThemeAppearanceMode, ThemeName, ThemeRegistry, ThemeSelection,
     ThemeSettings,
 };
 use ui::{
     Divider, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*,
-    rems_from_px,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip,
+    prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
@@ -44,8 +45,8 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
     let theme_mode = theme_selection
         .mode()
         .unwrap_or_else(|| match *system_appearance {
-            Appearance::Light => ThemeMode::Light,
-            Appearance::Dark => ThemeMode::Dark,
+            Appearance::Light => ThemeAppearanceMode::Light,
+            Appearance::Dark => ThemeAppearanceMode::Dark,
         });
 
     return v_flex()
@@ -54,7 +55,12 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
             h_flex().justify_between().child(Label::new("Theme")).child(
                 ToggleButtonGroup::single_row(
                     "theme-selector-onboarding-dark-light",
-                    [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System].map(|mode| {
+                    [
+                        ThemeAppearanceMode::Light,
+                        ThemeAppearanceMode::Dark,
+                        ThemeAppearanceMode::System,
+                    ]
+                    .map(|mode| {
                         const MODE_NAMES: [SharedString; 3] = [
                             SharedString::new_static("Light"),
                             SharedString::new_static("Dark"),
@@ -100,13 +106,13 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         let theme_mode = theme_selection
             .mode()
             .unwrap_or_else(|| match *system_appearance {
-                Appearance::Light => ThemeMode::Light,
-                Appearance::Dark => ThemeMode::Dark,
+                Appearance::Light => ThemeAppearanceMode::Light,
+                Appearance::Dark => ThemeAppearanceMode::Dark,
             });
         let appearance = match theme_mode {
-            ThemeMode::Light => Appearance::Light,
-            ThemeMode::Dark => Appearance::Dark,
-            ThemeMode::System => *system_appearance,
+            ThemeAppearanceMode::Light => Appearance::Light,
+            ThemeAppearanceMode::Dark => Appearance::Dark,
+            ThemeAppearanceMode::System => *system_appearance,
         };
         let current_theme_name: SharedString = theme_selection.name(appearance).0.into();
 
@@ -164,7 +170,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                             }
                         })
                         .map(|this| {
-                            if theme_mode == ThemeMode::System {
+                            if theme_mode == ThemeAppearanceMode::System {
                                 let (light, dark) = (
                                     theme_registry.get(LIGHT_THEMES[index]).unwrap(),
                                     theme_registry.get(DARK_THEMES[index]).unwrap(),
@@ -189,29 +195,33 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         })
     }
 
-    fn write_mode_change(mode: ThemeMode, cx: &mut App) {
+    fn write_mode_change(mode: ThemeAppearanceMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
         update_settings_file(fs, cx, move |settings, _cx| {
             theme::set_mode(settings, mode);
         });
     }
 
-    fn write_theme_change(theme: impl Into<Arc<str>>, theme_mode: ThemeMode, cx: &mut App) {
+    fn write_theme_change(
+        theme: impl Into<Arc<str>>,
+        theme_mode: ThemeAppearanceMode,
+        cx: &mut App,
+    ) {
         let fs = <dyn Fs>::global(cx);
         let theme = theme.into();
         update_settings_file(fs, cx, move |settings, cx| {
-            if theme_mode == ThemeMode::System {
+            if theme_mode == ThemeAppearanceMode::System {
                 let (light_theme, dark_theme) =
                     get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
 
                 settings.theme.theme = Some(settings::ThemeSelection::Dynamic {
-                    mode: ThemeMode::System,
+                    mode: ThemeAppearanceMode::System,
                     light: ThemeName(light_theme.into()),
                     dark: ThemeName(dark_theme.into()),
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                theme::set_theme(settings, theme, appearance);
+                theme::set_theme(settings, theme, appearance, appearance);
             }
         });
     }
@@ -400,6 +410,48 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     })
 }
 
+fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
+    let toggle_state = if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
+
+    let tooltip_description = "Zed can only allow services like language servers, project settings, and MCP servers to run after you mark a new project as trusted.";
+
+    SwitchField::new(
+        "onboarding-auto-trust-worktrees",
+        Some("Trust All Projects By Default"),
+        Some("Automatically mark all new projects as trusted to unlock all Zed's features".into()),
+        toggle_state,
+        {
+            let fs = <dyn Fs>::global(cx);
+            move |&selection, _, cx| {
+                let trust = match selection {
+                    ToggleState::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Indeterminate => {
+                        return;
+                    }
+                };
+                update_settings_file(fs.clone(), cx, move |setting, _| {
+                    setting.session.get_or_insert_default().trust_all_worktrees = Some(trust);
+                });
+
+                telemetry::event!(
+                    "Welcome Page Worktree Auto Trust Toggled",
+                    options = if trust { "on" } else { "off" }
+                );
+            }
+        },
+    )
+    .tab_index({
+        *tab_index += 1;
+        *tab_index - 1
+    })
+    .tooltip(Tooltip::text(tooltip_description))
+}
+
 fn render_setting_import_button(
     tab_index: isize,
     label: SharedString,
@@ -472,6 +524,7 @@ pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
         .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))
+        .child(render_worktree_auto_trust_switch(&mut tab_index, cx))
         .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
         .child(render_telemetry_section(&mut tab_index, cx))
 }

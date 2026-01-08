@@ -471,7 +471,7 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 }
 ```
 
-Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
+Subword motion, which allows you to navigate and select individual words in `camelCase` or `snake_case`, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json [settings]
 {
@@ -484,6 +484,9 @@ Subword motion, which allows you to navigate and select individual words in came
   }
 }
 ```
+
+> Note: Operations like `dw` remain unaffected. If you would like operations to
+> also use subword motion, remove `vim_mode != operator` from the `context`.
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
 
@@ -590,7 +593,7 @@ Here's an example of these settings changed:
     "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_smartcase_find": true,
-    "toggle_relative_line_numbers": true,
+    "relative_line_numbers": "enabled",
     "highlight_on_yank_duration": 50,
     "custom_digraphs": {
       "fz": "🧟‍♀️"
@@ -606,7 +609,7 @@ Here are a few general Zed settings that can help you fine-tune your Vim experie
 | Property                | Description                                                                                                                                                   | Default Value        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | cursor_blink            | If `true`, the cursor blinks.                                                                                                                                 | `true`               |
-| relative_line_numbers   | If `true`, line numbers in the left gutter are relative to the cursor.                                                                                        | `false`              |
+| relative_line_numbers   | If `"enabled"`, line numbers in the left gutter are relative to the cursor. If `"wrapped"`, they also display for wrapped lines.                              | `"disabled"`         |
 | scrollbar               | Object that controls the scrollbar display. Set to `{ "show": "never" }` to hide the scroll bar.                                                              | `{ "show": "auto" }` |
 | scroll_beyond_last_line | If set to `"one_page"`, allows scrolling up to one page beyond the last line. Set to `"off"` to prevent this behavior.                                        | `"one_page"`         |
 | vertical_scroll_margin  | The number of lines to keep above or below the cursor when scrolling. Set to `0` to allow the cursor to go up to the edges of the screen vertically.          | `3`                  |
@@ -620,7 +623,7 @@ Here's an example of these settings changed:
   // Disable cursor blink
   "cursor_blink": false,
   // Use relative line numbers
-  "relative_line_numbers": true,
+  "relative_line_numbers": "enabled",
   // Hide the scroll bar
   "scrollbar": { "show": "never" },
   // Prevent the buffer from scrolling beyond the last line
@@ -628,7 +631,7 @@ Here's an example of these settings changed:
   // Allow the cursor to reach the edges of the screen
   "vertical_scroll_margin": 0,
   "gutter": {
-    // Disable line numbers completely:
+    // Disable line numbers completely
     "line_numbers": false
   },
   "command_aliases": {

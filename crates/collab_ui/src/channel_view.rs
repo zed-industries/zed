@@ -11,7 +11,7 @@ use editor::{
     display_map::ToDisplayPoint, scroll::Autoscroll,
 };
 use gpui::{
-    AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
+    App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
     Subscription, Task, VisualContext as _, WeakEntity, Window, actions,
 };
 use project::Project;
@@ -25,7 +25,7 @@ use util::ResultExt;
 use workspace::{CollaboratorId, item::TabContentParams};
 use workspace::{
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
-    item::{FollowableItem, Item, ItemEvent, ItemHandle},
+    item::{FollowableItem, Item, ItemEvent},
     searchable::SearchableItemHandle,
 };
 use workspace::{item::Dedup, notifications::NotificationId};
@@ -173,7 +173,7 @@ impl ChannelView {
                     };
                     buffer.set_language(Some(markdown), cx);
                 })
-            })?;
+            });
 
             cx.new_window_entity(|window, cx| {
                 let mut this = Self::new(
@@ -441,11 +441,11 @@ impl Item for ChannelView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -493,13 +493,17 @@ impl Item for ChannelView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| {
             Self::new(
                 self.project.clone(),
                 self.workspace.clone(),
@@ -508,7 +512,7 @@ impl Item for ChannelView {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn navigate(
@@ -537,7 +541,7 @@ impl Item for ChannelView {
         })
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

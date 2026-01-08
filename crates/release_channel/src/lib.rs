@@ -4,7 +4,8 @@
 
 use std::{env, str::FromStr, sync::LazyLock};
 
-use gpui::{App, Global, SemanticVersion};
+use gpui::{App, Global};
+use semver::Version;
 
 /// stable | dev | nightly | preview
 pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
@@ -70,7 +71,7 @@ impl AppCommitSha {
     }
 }
 
-struct GlobalAppVersion(SemanticVersion);
+struct GlobalAppVersion(Version);
 
 impl Global for GlobalAppVersion {}
 
@@ -79,20 +80,40 @@ pub struct AppVersion;
 
 impl AppVersion {
     /// Load the app version from env.
-    pub fn load(pkg_version: &str) -> SemanticVersion {
-        if let Ok(from_env) = env::var("ZED_APP_VERSION") {
+    pub fn load(
+        pkg_version: &str,
+        build_id: Option<&str>,
+        commit_sha: Option<AppCommitSha>,
+    ) -> Version {
+        let mut version: Version = if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {
             pkg_version.parse().expect("invalid version in Cargo.toml")
+        };
+        let mut pre = String::from(RELEASE_CHANNEL.dev_name());
+
+        if let Some(build_id) = build_id {
+            pre.push('.');
+            pre.push_str(&build_id);
         }
+
+        if let Some(sha) = commit_sha {
+            pre.push('.');
+            pre.push_str(&sha.0);
+        }
+        if let Ok(build) = semver::BuildMetadata::new(&pre) {
+            version.build = build;
+        }
+
+        version
     }
 
     /// Returns the global version number.
-    pub fn global(cx: &App) -> SemanticVersion {
+    pub fn global(cx: &App) -> Version {
         if cx.has_global::<GlobalAppVersion>() {
-            cx.global::<GlobalAppVersion>().0
+            cx.global::<GlobalAppVersion>().0.clone()
         } else {
-            SemanticVersion::default()
+            Version::new(0, 0, 0)
         }
     }
 }
@@ -121,9 +142,15 @@ struct GlobalReleaseChannel(ReleaseChannel);
 impl Global for GlobalReleaseChannel {}
 
 /// Initializes the release channel.
-pub fn init(app_version: SemanticVersion, cx: &mut App) {
+pub fn init(app_version: Version, cx: &mut App) {
     cx.set_global(GlobalAppVersion(app_version));
     cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
+}
+
+/// Initializes the release channel for tests that rely on fake release channel.
+pub fn init_test(app_version: Version, release_channel: ReleaseChannel, cx: &mut App) {
+    cx.set_global(GlobalAppVersion(app_version));
+    cx.set_global(GlobalReleaseChannel(release_channel))
 }
 
 impl ReleaseChannel {

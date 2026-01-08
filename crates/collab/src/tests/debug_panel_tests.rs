@@ -23,9 +23,6 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         theme::init(theme::LoadThemes::JustBase, cx);
         command_palette_hooks::init(cx);
-        language::init(cx);
-        workspace::init_settings(cx);
-        project::Project::init_settings(cx);
         debugger_ui::init(cx);
         editor::init(cx);
     });

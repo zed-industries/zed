@@ -466,6 +466,7 @@ message ResolveInlayHintResponse {
 message RefreshInlayHints {
     uint64 project_id = 1;
     uint64 server_id = 2;
+    optional uint64 request_id = 3;
 }
 
 message CodeLens {
@@ -552,23 +553,33 @@ message UpdateLanguageServer {
     }
 }
 
+message ProgressToken {
+    oneof value {
+        int32 number = 1;
+        string string = 2;
+    }
+}
+
 message LspWorkStart {
-    string token = 1;
+    reserved 1;
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
     optional bool is_cancellable = 5;
+    ProgressToken token = 6;
 }
 
 message LspWorkProgress {
-    string token = 1;
+    reserved 1;
     optional string message = 2;
     optional uint32 percentage = 3;
     optional bool is_cancellable = 4;
+    ProgressToken token = 5;
 }
 
 message LspWorkEnd {
-    string token = 1;
+    reserved 1;
+    ProgressToken token = 2;
 }
 
 message LspDiskBasedDiagnosticsUpdating {}
@@ -604,8 +615,16 @@ message RegisteredForBuffer {
     uint64 buffer_id = 2;
 }
 
+message LanguageServerBinaryInfo {
+    string path = 1;
+    repeated string arguments = 2;
+}
+
 message ServerMetadataUpdated {
     optional string capabilities = 1;
+    optional LanguageServerBinaryInfo binary = 2;
+    optional string configuration = 3;
+    repeated string workspace_folders = 4;
 }
 
 message LanguageServerLog {
@@ -692,6 +711,7 @@ message GetCompletions {
     uint64 buffer_id = 2;
     Anchor position = 3;
     repeated VectorClockEntry version = 4;
+    optional uint64 server_id = 5;
 }
 
 message CancelLanguageServerWork {
@@ -708,7 +728,8 @@ message CancelLanguageServerWork {
 
     message LanguageServerWork {
         uint64 language_server_id = 1;
-        optional string token = 2;
+        reserved 2;
+        optional ProgressToken token = 3;
     }
 }
 
@@ -928,6 +949,7 @@ message PulledDiagnostics {
     optional string result_id = 3;
     bool changed = 4;
     repeated LspDiagnostic diagnostics = 5;
+    optional string registration_id = 6;
 }
 
 message PullWorkspaceDiagnostics {

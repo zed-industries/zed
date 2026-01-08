@@ -1,15 +1,22 @@
 mod base_keymap_setting;
 mod editable_setting_control;
+mod fallible_options;
 mod keymap_file;
 pub mod merge_from;
 mod serde_helper;
 mod settings_content;
 mod settings_file;
-mod settings_json;
 mod settings_store;
 mod vscode_import;
 
 pub use settings_content::*;
+pub use settings_macros::RegisterSetting;
+
+#[doc(hidden)]
+pub mod private {
+    pub use crate::settings_store::{RegisteredSetting, SettingValue};
+    pub use inventory;
+}
 
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
@@ -26,8 +33,9 @@ pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsKey, SettingsLocation,
-    SettingsStore,
+    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, MigrationStatus,
+    ParseStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
+    SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
@@ -82,7 +90,6 @@ pub struct SettingsAssets;
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
-    BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 

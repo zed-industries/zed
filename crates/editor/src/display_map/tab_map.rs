@@ -20,6 +20,7 @@ const MAX_TABS: NonZeroU32 = NonZeroU32::new(SPACES.len() as u32).unwrap();
 pub struct TabMap(TabSnapshot);
 
 impl TabMap {
+    #[ztracing::instrument(skip_all)]
     pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
             fold_snapshot,
@@ -36,6 +37,7 @@ impl TabMap {
         self.0.clone()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn sync(
         &mut self,
         fold_snapshot: FoldSnapshot,
@@ -137,10 +139,10 @@ impl TabMap {
                         let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
                         let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
                         TabEdit {
-                            old: old_snapshot.to_tab_point(old_start)
-                                ..old_snapshot.to_tab_point(old_end),
-                            new: new_snapshot.to_tab_point(new_start)
-                                ..new_snapshot.to_tab_point(new_end),
+                            old: old_snapshot.fold_point_to_tab_point(old_start)
+                                ..old_snapshot.fold_point_to_tab_point(old_end),
+                            new: new_snapshot.fold_point_to_tab_point(new_start)
+                                ..new_snapshot.fold_point_to_tab_point(new_end),
                         }
                     })
                     .collect()
@@ -167,15 +169,25 @@ pub struct TabSnapshot {
     pub version: usize,
 }
 
+impl std::ops::Deref for TabSnapshot {
+    type Target = FoldSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fold_snapshot
+    }
+}
+
 impl TabSnapshot {
+    #[ztracing::instrument(skip_all)]
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.to_tab_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
+            self.fold_point_to_tab_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
                 .0
                 .column
         } else {
@@ -183,13 +195,15 @@ impl TabSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
 
+    #[ztracing::instrument(skip_all, fields(rows))]
     pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
-        let input_start = self.to_fold_point(range.start, Bias::Left).0;
-        let input_end = self.to_fold_point(range.end, Bias::Right).0;
+        let input_start = self.tab_point_to_fold_point(range.start, Bias::Left).0;
+        let input_end = self.tab_point_to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
             .fold_snapshot
             .text_summary_for_range(input_start..input_end);
@@ -226,6 +240,7 @@ impl TabSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<TabPoint>,
@@ -233,11 +248,11 @@ impl TabSnapshot {
         highlights: Highlights<'a>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
-            self.to_fold_point(range.start, Bias::Left);
+            self.tab_point_to_fold_point(range.start, Bias::Left);
         let input_column = input_start.column();
         let input_start = input_start.to_offset(&self.fold_snapshot);
         let input_end = self
-            .to_fold_point(range.end, Bias::Right)
+            .tab_point_to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.fold_snapshot);
         let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
@@ -268,11 +283,13 @@ impl TabSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn rows(&self, row: u32) -> fold_map::FoldRows<'_> {
         self.fold_snapshot.row_infos(row)
     }
 
     #[cfg(test)]
+    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.chunks(
             TabPoint::zero()..self.max_point(),
@@ -283,25 +300,34 @@ impl TabSnapshot {
         .collect()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> TabPoint {
-        self.to_tab_point(self.fold_snapshot.max_point())
+        self.fold_point_to_tab_point(self.fold_snapshot.max_point())
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
-        self.to_tab_point(
+        self.fold_point_to_tab_point(
             self.fold_snapshot
-                .clip_point(self.to_fold_point(point, bias).0, bias),
+                .clip_point(self.tab_point_to_fold_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
+    #[ztracing::instrument(skip_all)]
+    pub fn fold_point_to_tab_point(&self, input: FoldPoint) -> TabPoint {
         let chunks = self.fold_snapshot.chunks_at(FoldPoint::new(input.row(), 0));
         let tab_cursor = TabStopCursor::new(chunks);
         let expanded = self.expand_tabs(tab_cursor, input.column());
         TabPoint::new(input.row(), expanded)
     }
 
-    pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
+    #[ztracing::instrument(skip_all)]
+    pub fn tab_point_cursor(&self) -> TabPointCursor<'_> {
+        TabPointCursor { this: self }
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub fn tab_point_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
         let chunks = self
             .fold_snapshot
             .chunks_at(FoldPoint::new(output.row(), 0));
@@ -318,20 +344,23 @@ impl TabSnapshot {
         )
     }
 
-    pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
+    #[ztracing::instrument(skip_all)]
+    pub fn point_to_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        self.to_tab_point(fold_point)
+        self.fold_point_to_tab_point(fold_point)
     }
 
-    pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
-        let fold_point = self.to_fold_point(point, bias).0;
+    #[ztracing::instrument(skip_all)]
+    pub fn tab_point_to_point(&self, point: TabPoint, bias: Bias) -> Point {
+        let fold_point = self.tab_point_to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
         self.fold_snapshot
             .inlay_snapshot
             .to_buffer_point(inlay_point)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn expand_tabs<'a, I>(&self, mut cursor: TabStopCursor<'a, I>, column: u32) -> u32
     where
         I: Iterator<Item = Chunk<'a>>,
@@ -365,6 +394,7 @@ impl TabSnapshot {
         expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn collapse_tabs<'a, I>(
         &self,
         mut cursor: TabStopCursor<'a, I>,
@@ -424,6 +454,18 @@ impl TabSnapshot {
     }
 }
 
+// todo(lw): Implement TabPointCursor properly
+pub struct TabPointCursor<'this> {
+    this: &'this TabSnapshot,
+}
+
+impl TabPointCursor<'_> {
+    #[ztracing::instrument(skip_all)]
+    pub fn map(&mut self, point: FoldPoint) -> TabPoint {
+        self.this.fold_point_to_tab_point(point)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct TabPoint(pub Point);
 
@@ -463,6 +505,7 @@ pub struct TextSummary {
 }
 
 impl<'a> From<&'a str> for TextSummary {
+    #[ztracing::instrument(skip_all)]
     fn from(text: &'a str) -> Self {
         let sum = text::TextSummary::from(text);
 
@@ -477,6 +520,7 @@ impl<'a> From<&'a str> for TextSummary {
 }
 
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
+    #[ztracing::instrument(skip_all)]
     fn add_assign(&mut self, other: &'a Self) {
         let joined_chars = self.last_line_chars + other.first_line_chars;
         if joined_chars > self.longest_row_chars {
@@ -518,14 +562,16 @@ pub struct TabChunks<'a> {
 }
 
 impl TabChunks<'_> {
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, range: Range<TabPoint>) {
-        let (input_start, expanded_char_column, to_next_stop) =
-            self.snapshot.to_fold_point(range.start, Bias::Left);
+        let (input_start, expanded_char_column, to_next_stop) = self
+            .snapshot
+            .tab_point_to_fold_point(range.start, Bias::Left);
         let input_column = input_start.column();
         let input_start = input_start.to_offset(&self.snapshot.fold_snapshot);
         let input_end = self
             .snapshot
-            .to_fold_point(range.end, Bias::Right)
+            .tab_point_to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.snapshot.fold_snapshot);
         let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
@@ -552,6 +598,7 @@ impl TabChunks<'_> {
 impl<'a> Iterator for TabChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.text.is_empty() {
             if let Some(chunk) = self.fold_chunks.next() {
@@ -640,6 +687,7 @@ mod tests {
             inlay_map::InlayMap,
         },
     };
+    use multi_buffer::MultiBufferOffset;
     use rand::{Rng, prelude::StdRng};
     use util;
 
@@ -795,23 +843,23 @@ mod tests {
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Left),
-                tab_snapshot.to_fold_point(range.start, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Left),
                 "Failed with tab_point at column {ix}"
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Right),
-                tab_snapshot.to_fold_point(range.start, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Right),
                 "Failed with tab_point at column {ix}"
             );
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Left),
-                tab_snapshot.to_fold_point(range.end, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Left),
                 "Failed with tab_point at column {ix}"
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Right),
-                tab_snapshot.to_fold_point(range.end, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Right),
                 "Failed with tab_point at column {ix}"
             );
         }
@@ -831,7 +879,7 @@ mod tests {
 
         // This should panic with the expected vs actual mismatch
         let tab_point = TabPoint::new(0, 9);
-        let result = tab_snapshot.to_fold_point(tab_point, Bias::Left);
+        let result = tab_snapshot.tab_point_to_fold_point(tab_point, Bias::Left);
         let expected = tab_snapshot.expected_to_fold_point(tab_point, Bias::Left);
 
         assert_eq!(result, expected);
@@ -875,26 +923,26 @@ mod tests {
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Left),
-                tab_snapshot.to_fold_point(range.start, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Left),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Right),
-                tab_snapshot.to_fold_point(range.start, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Right),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Left),
-                tab_snapshot.to_fold_point(range.end, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Left),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Right),
-                tab_snapshot.to_fold_point(range.end, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Right),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
@@ -934,13 +982,13 @@ mod tests {
                 let input_point = Point::new(0, ix as u32);
                 let output_point = Point::new(0, output.find(c).unwrap() as u32);
                 assert_eq!(
-                    tab_snapshot.to_tab_point(FoldPoint(input_point)),
+                    tab_snapshot.fold_point_to_tab_point(FoldPoint(input_point)),
                     TabPoint(output_point),
                     "to_tab_point({input_point:?})"
                 );
                 assert_eq!(
                     tab_snapshot
-                        .to_fold_point(TabPoint(output_point), Bias::Left)
+                        .tab_point_to_fold_point(TabPoint(output_point), Bias::Left)
                         .0,
                     FoldPoint(input_point),
                     "to_fold_point({output_point:?})"
@@ -1129,7 +1177,7 @@ mod tests {
             let column = rng.random_range(0..=max_column + 10);
             let fold_point = FoldPoint::new(row, column);
 
-            let actual = tab_snapshot.to_tab_point(fold_point);
+            let actual = tab_snapshot.fold_point_to_tab_point(fold_point);
             let expected = tab_snapshot.expected_to_tab_point(fold_point);
 
             assert_eq!(
@@ -1148,7 +1196,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
-            FoldOffset(0)..fold_snapshot.len(),
+            FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
             false,
             Default::default(),
         );
@@ -1310,7 +1358,7 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
-            FoldOffset(0)..fold_snapshot.len(),
+            FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
             false,
             Default::default(),
         );
@@ -1427,6 +1475,7 @@ impl<'a, I> TabStopCursor<'a, I>
 where
     I: Iterator<Item = Chunk<'a>>,
 {
+    #[ztracing::instrument(skip_all)]
     fn new(chunks: impl IntoIterator<Item = Chunk<'a>, IntoIter = I>) -> Self {
         Self {
             chunks: chunks.into_iter(),
@@ -1436,11 +1485,12 @@ where
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn bytes_until_next_char(&self) -> Option<usize> {
         self.current_chunk.as_ref().and_then(|(chunk, idx)| {
             let mut idx = *idx;
             let mut diff = 0;
-            while idx > 0 && chunk.chars & (1 << idx) == 0 {
+            while idx > 0 && chunk.chars & (1u128.unbounded_shl(idx)) == 0 {
                 idx -= 1;
                 diff += 1;
             }
@@ -1457,13 +1507,15 @@ where
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     fn is_char_boundary(&self) -> bool {
         self.current_chunk
             .as_ref()
-            .is_some_and(|(chunk, idx)| (chunk.chars & (1 << *idx.min(&127))) != 0)
+            .is_some_and(|(chunk, idx)| (chunk.chars & 1u128.unbounded_shl(*idx)) != 0)
     }
 
     /// distance: length to move forward while searching for the next tab stop
+    #[ztracing::instrument(skip_all)]
     fn seek(&mut self, distance: u32) -> Option<TabStop> {
         if distance == 0 {
             return None;
@@ -1483,18 +1535,20 @@ where
 
                     self.byte_offset += overshoot;
                     self.char_offset += get_char_offset(
-                        chunk_position..(chunk_position + overshoot).saturating_sub(1).min(127),
+                        chunk_position..(chunk_position + overshoot).saturating_sub(1),
                         chunk.chars,
                     );
 
-                    self.current_chunk = Some((chunk, chunk_position + overshoot));
+                    if chunk_position + overshoot < 128 {
+                        self.current_chunk = Some((chunk, chunk_position + overshoot));
+                    }
 
                     return None;
                 }
 
                 self.byte_offset += chunk_distance;
                 self.char_offset += get_char_offset(
-                    chunk_position..(chunk_position + chunk_distance).saturating_sub(1).min(127),
+                    chunk_position..(chunk_position + chunk_distance).saturating_sub(1),
                     chunk.chars,
                 );
                 distance_traversed += chunk_distance;
@@ -1546,8 +1600,6 @@ where
 
 #[inline(always)]
 fn get_char_offset(range: Range<u32>, bit_map: u128) -> u32 {
-    // This edge case can happen when we're at chunk position 128
-
     if range.start == range.end {
         return if (1u128 << range.start) & bit_map == 0 {
             0
@@ -1555,7 +1607,7 @@ fn get_char_offset(range: Range<u32>, bit_map: u128) -> u32 {
             1
         };
     }
-    let end_shift: u128 = 127u128 - range.end.min(127) as u128;
+    let end_shift: u128 = 127u128 - range.end as u128;
     let mut bit_mask = (u128::MAX >> range.start) << range.start;
     bit_mask = (bit_mask << end_shift) >> end_shift;
     let bit_map = bit_map & bit_mask;

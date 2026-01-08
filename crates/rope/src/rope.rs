@@ -4,17 +4,15 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
+use arrayvec::ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
-use regex::Regex;
-use smallvec::SmallVec;
 use std::{
-    borrow::Cow,
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
     str,
-    sync::{Arc, LazyLock},
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
+use ztracing::instrument;
 
 pub use chunk::{Chunk, ChunkSlice};
 pub use offset_utf16::OffsetUtf16;
@@ -23,95 +21,6 @@ pub use point_utf16::PointUtf16;
 pub use unclipped::Unclipped;
 
 use crate::chunk::Bitmap;
-
-static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineEnding {
-    Unix,
-    Windows,
-}
-
-impl Default for LineEnding {
-    fn default() -> Self {
-        #[cfg(unix)]
-        return Self::Unix;
-
-        #[cfg(not(unix))]
-        return Self::Windows;
-    }
-}
-
-impl LineEnding {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "\n",
-            LineEnding::Windows => "\r\n",
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "LF",
-            LineEnding::Windows => "CRLF",
-        }
-    }
-
-    pub fn detect(text: &str) -> Self {
-        let mut max_ix = cmp::min(text.len(), 1000);
-        while !text.is_char_boundary(max_ix) {
-            max_ix -= 1;
-        }
-
-        if let Some(ix) = text[..max_ix].find(['\n']) {
-            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
-                Self::Windows
-            } else {
-                Self::Unix
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    pub fn normalize(text: &mut String) {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
-            *text = replaced;
-        }
-    }
-
-    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
-        }
-    }
-
-    pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
-        }
-    }
-
-    /// Converts text chunks into a [`String`] using the current line ending.
-    pub fn into_string(&self, chunks: Chunks<'_>) -> String {
-        match self {
-            LineEnding::Unix => chunks.collect(),
-            LineEnding::Windows => {
-                let line_ending = self.as_str();
-                let mut result = String::new();
-                for chunk in chunks {
-                    result.push_str(&chunk.replace('\n', line_ending));
-                }
-                result
-            }
-        }
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct Rope {
@@ -142,22 +51,30 @@ impl Rope {
 
     #[track_caller]
     #[inline(always)]
-    pub fn assert_char_boundary(&self, offset: usize) {
+    pub fn assert_char_boundary<const PANIC: bool>(&self, offset: usize) -> bool {
         if self.chunks.is_empty() && offset == 0 {
-            return;
+            return true;
         }
         let (start, _, item) = self.chunks.find::<usize, _>((), &offset, Bias::Left);
         match item {
             Some(chunk) => {
                 let chunk_offset = offset - start;
-                chunk.assert_char_boundary(chunk_offset);
+                chunk.assert_char_boundary::<PANIC>(chunk_offset)
             }
-            None => {
+            None if PANIC => {
                 panic!(
                     "byte index {} is out of bounds of rope (length: {})",
                     offset,
                     self.len()
                 );
+            }
+            None => {
+                log::error!(
+                    "byte index {} is out of bounds of rope (length: {})",
+                    offset,
+                    self.len()
+                );
+                false
             }
         }
     }
@@ -166,29 +83,9 @@ impl Rope {
         if index >= self.len() {
             self.len()
         } else {
-            #[inline]
-            pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-                // This is bit magic equivalent to: b < 128 || b >= 192
-                (u8 as i8) >= -0x40
-            }
-
             let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
             let chunk_offset = index - start;
-            let lower_idx = item.map(|chunk| {
-                let lower_bound = chunk_offset.saturating_sub(3);
-                chunk
-                    .text
-                    .as_bytes()
-                    .get(lower_bound..=chunk_offset)
-                    .map(|it| {
-                        let new_idx = it
-                            .iter()
-                            .rposition(|&b| is_utf8_char_boundary(b))
-                            .unwrap_or(0);
-                        lower_bound + new_idx
-                    })
-                    .unwrap_or(chunk.text.len())
-            });
+            let lower_idx = item.map(|chunk| chunk.text.floor_char_boundary(chunk_offset));
             lower_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
@@ -197,22 +94,9 @@ impl Rope {
         if index > self.len() {
             self.len()
         } else {
-            #[inline]
-            pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
-                // This is bit magic equivalent to: b < 128 || b >= 192
-                (u8 as i8) >= -0x40
-            }
-
             let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
             let chunk_offset = index - start;
-            let upper_idx = item.map(|chunk| {
-                let upper_bound = Ord::min(chunk_offset + 4, chunk.text.len());
-                chunk.text.as_bytes()[chunk_offset..upper_bound]
-                    .iter()
-                    .position(|&b| is_utf8_char_boundary(b))
-                    .map_or(upper_bound, |pos| pos + chunk_offset)
-            });
-
+            let upper_idx = item.map(|chunk| chunk.text.ceil_char_boundary(chunk_offset));
             upper_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
@@ -283,10 +167,19 @@ impl Rope {
             (),
         );
 
-        if text.len() > 2048 {
+        #[cfg(all(test, not(rust_analyzer)))]
+        const NUM_CHUNKS: usize = 16;
+        #[cfg(not(all(test, not(rust_analyzer))))]
+        const NUM_CHUNKS: usize = 4;
+
+        // We accommodate for NUM_CHUNKS chunks of size MAX_BASE
+        // but given the chunk boundary can land within a character
+        // we need to accommodate for the worst case where every chunk gets cut short by up to 4 bytes
+        if text.len() > NUM_CHUNKS * chunk::MAX_BASE - NUM_CHUNKS * 4 {
             return self.push_large(text);
         }
-        let mut new_chunks = SmallVec::<[_; 16]>::new();
+        // 16 is enough as otherwise we will hit the branch above
+        let mut new_chunks = ArrayVec::<_, NUM_CHUNKS>::new();
 
         while !text.is_empty() {
             let mut split_ix = cmp::min(chunk::MAX_BASE, text.len());
@@ -297,19 +190,8 @@ impl Rope {
             new_chunks.push(chunk);
             text = remainder;
         }
-
-        #[cfg(test)]
-        const PARALLEL_THRESHOLD: usize = 4;
-        #[cfg(not(test))]
-        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
-
-        if new_chunks.len() >= PARALLEL_THRESHOLD {
-            self.chunks
-                .par_extend(new_chunks.into_vec().into_par_iter().map(Chunk::new), ());
-        } else {
-            self.chunks
-                .extend(new_chunks.into_iter().map(Chunk::new), ());
-        }
+        self.chunks
+            .extend(new_chunks.into_iter().map(Chunk::new), ());
 
         self.check_invariants();
     }
@@ -342,10 +224,10 @@ impl Rope {
             text = remainder;
         }
 
-        #[cfg(test)]
+        #[cfg(all(test, not(rust_analyzer)))]
         const PARALLEL_THRESHOLD: usize = 4;
-        #[cfg(not(test))]
-        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
+        #[cfg(not(all(test, not(rust_analyzer))))]
+        const PARALLEL_THRESHOLD: usize = 84 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
             self.chunks
@@ -462,16 +344,6 @@ impl Rope {
         Chunks::new(self, range, true)
     }
 
-    /// Formats the rope's text with the specified line ending string.
-    /// This replaces all `\n` characters with the provided line ending.
-    ///
-    /// The rope internally stores all line breaks as `\n` (see `Display` impl).
-    /// Use this method to convert to different line endings for file operations,
-    /// LSP communication, or other scenarios requiring specific line ending formats.
-    pub fn to_string_with_line_ending(&self, line_ending: LineEnding) -> String {
-        line_ending.into_string(self.chunks())
-    }
-
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
         if offset >= self.summary().len {
             return self.summary().len_utf16;
@@ -557,6 +429,7 @@ impl Rope {
             })
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().len;
@@ -713,16 +586,10 @@ impl From<&String> for Rope {
     }
 }
 
-/// Display implementation for Rope.
-///
-/// Note: This always uses `\n` as the line separator, regardless of the original
-/// file's line endings. The rope internally normalizes all line breaks to `\n`.
-/// If you need to preserve original line endings (e.g., for LSP communication),
-/// use `to_string_with_line_ending` instead.
 impl fmt::Display for Rope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.chunks() {
-            write!(f, "{chunk}")?;
+            write!(f, "{}", chunk)?;
         }
         Ok(())
     }
@@ -858,10 +725,8 @@ impl<'a> Chunks<'a> {
             range.start
         };
         let chunk_offset = offset - chunks.start();
-        if let Some(chunk) = chunks.item()
-            && !chunk.text.is_char_boundary(chunk_offset)
-        {
-            panic!("byte index {} is not a char boundary", offset);
+        if let Some(chunk) = chunks.item() {
+            chunk.assert_char_boundary::<true>(chunk_offset);
         }
         Self {
             chunks,
@@ -1677,39 +1542,63 @@ where
     }
 }
 
-impl<K, V> ops::Sub for DimensionPair<K, V>
+impl<R, R2, K, V> ops::Sub for DimensionPair<K, V>
 where
-    K: ops::Sub<K, Output = K>,
-    V: ops::Sub<V, Output = V>,
+    K: ops::Sub<K, Output = R>,
+    V: ops::Sub<V, Output = R2>,
 {
-    type Output = Self;
+    type Output = DimensionPair<R, R2>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Self {
+        DimensionPair {
             key: self.key - rhs.key,
             value: self.value.zip(rhs.value).map(|(a, b)| a - b),
         }
     }
 }
 
+impl<R, R2, K, V> ops::AddAssign<DimensionPair<R, R2>> for DimensionPair<K, V>
+where
+    K: ops::AddAssign<R>,
+    V: ops::AddAssign<R2>,
+{
+    fn add_assign(&mut self, rhs: DimensionPair<R, R2>) {
+        self.key += rhs.key;
+        if let Some(value) = &mut self.value {
+            if let Some(other_value) = rhs.value {
+                *value += other_value;
+            } else {
+                self.value.take();
+            }
+        }
+    }
+}
+
+impl<D> std::ops::AddAssign<DimensionPair<Point, D>> for Point {
+    fn add_assign(&mut self, rhs: DimensionPair<Point, D>) {
+        *self += rhs.key;
+    }
+}
+
 impl<K, V> cmp::Eq for DimensionPair<K, V> where K: cmp::Eq {}
 
-impl<'a, K, V> sum_tree::Dimension<'a, ChunkSummary> for DimensionPair<K, V>
+impl<'a, K, V, S> sum_tree::Dimension<'a, S> for DimensionPair<K, V>
 where
-    K: sum_tree::Dimension<'a, ChunkSummary>,
-    V: sum_tree::Dimension<'a, ChunkSummary>,
+    S: sum_tree::Summary,
+    K: sum_tree::Dimension<'a, S>,
+    V: sum_tree::Dimension<'a, S>,
 {
-    fn zero(_cx: ()) -> Self {
+    fn zero(cx: S::Context<'_>) -> Self {
         Self {
-            key: K::zero(_cx),
-            value: Some(V::zero(_cx)),
+            key: K::zero(cx),
+            value: Some(V::zero(cx)),
         }
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _cx: ()) {
-        self.key.add_summary(summary, _cx);
+    fn add_summary(&mut self, summary: &'a S, cx: S::Context<'_>) {
+        self.key.add_summary(summary, cx);
         if let Some(value) = &mut self.value {
-            value.add_summary(summary, _cx);
+            value.add_summary(summary, cx);
         }
     }
 }
@@ -2296,127 +2185,44 @@ mod tests {
 
     #[test]
     fn test_floor_char_boundary() {
-        // polyfill of str::floor_char_boundary
-        fn floor_char_boundary(str: &str, index: usize) -> usize {
-            if index >= str.len() {
-                str.len()
-            } else {
-                let lower_bound = index.saturating_sub(3);
-                let new_index = str.as_bytes()[lower_bound..=index]
-                    .iter()
-                    .rposition(|b| (*b as i8) >= -0x40);
-
-                lower_bound + new_index.unwrap()
-            }
-        }
-
         let fixture = "地";
         let rope = Rope::from("地");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
 
         let fixture = "";
         let rope = Rope::from("");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
 
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
         let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
-            assert_eq!(
-                rope.floor_char_boundary(b),
-                floor_char_boundary(&fixture, b)
-            );
+            assert_eq!(rope.floor_char_boundary(b), fixture.floor_char_boundary(b));
         }
     }
 
     #[test]
     fn test_ceil_char_boundary() {
-        // polyfill of str::ceil_char_boundary
-        fn ceil_char_boundary(str: &str, index: usize) -> usize {
-            if index > str.len() {
-                str.len()
-            } else {
-                let upper_bound = Ord::min(index + 4, str.len());
-                str.as_bytes()[index..upper_bound]
-                    .iter()
-                    .position(|b| (*b as i8) >= -0x40)
-                    .map_or(upper_bound, |pos| pos + index)
-            }
-        }
-
         let fixture = "地";
         let rope = Rope::from("地");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
 
         let fixture = "";
         let rope = Rope::from("");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
 
         let fixture = "🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩";
         let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
         for b in 0..=fixture.len() {
-            assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
+            assert_eq!(rope.ceil_char_boundary(b), fixture.ceil_char_boundary(b));
         }
-    }
-
-    #[test]
-    fn test_to_string_with_line_ending() {
-        // Test Unix line endings (no conversion)
-        let rope = Rope::from("line1\nline2\nline3");
-        assert_eq!(
-            rope.to_string_with_line_ending(LineEnding::Unix),
-            "line1\nline2\nline3"
-        );
-
-        // Test Windows line endings
-        assert_eq!(
-            rope.to_string_with_line_ending(LineEnding::Windows),
-            "line1\r\nline2\r\nline3"
-        );
-
-        // Test empty rope
-        let empty_rope = Rope::from("");
-        assert_eq!(
-            empty_rope.to_string_with_line_ending(LineEnding::Windows),
-            ""
-        );
-
-        // Test single line (no newlines)
-        let single_line = Rope::from("single line");
-        assert_eq!(
-            single_line.to_string_with_line_ending(LineEnding::Windows),
-            "single line"
-        );
-
-        // Test rope ending with newline
-        let ending_newline = Rope::from("line1\nline2\n");
-        assert_eq!(
-            ending_newline.to_string_with_line_ending(LineEnding::Windows),
-            "line1\r\nline2\r\n"
-        );
-
-        // Test large rope with multiple chunks
-        let mut large_rope = Rope::new();
-        for i in 0..100 {
-            large_rope.push(&format!("line{}\n", i));
-        }
-        let result = large_rope.to_string_with_line_ending(LineEnding::Windows);
-        assert!(result.contains("\r\n"));
-        assert!(!result.contains("\n\n"));
-        assert_eq!(result.matches("\r\n").count(), 100);
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {

@@ -8,15 +8,13 @@ use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
 
-use futures::{
-    FutureExt as _,
-    future::{self, BoxFuture},
-};
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
+use serde::Serialize;
+use std::sync::Arc;
 #[cfg(feature = "test-support")]
-use std::fmt;
-use std::{any::type_name, sync::Arc};
-pub use url::Url;
+use std::{any::type_name, fmt};
+pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {
@@ -58,9 +56,9 @@ impl HttpRequestExt for http::request::Builder {
 }
 
 pub trait HttpClient: 'static + Send + Sync {
-    fn type_name(&self) -> &'static str;
-
     fn user_agent(&self) -> Option<&HeaderValue>;
+
+    fn proxy(&self) -> Option<&Url>;
 
     fn send(
         &self,
@@ -105,19 +103,9 @@ pub trait HttpClient: 'static + Send + Sync {
         }
     }
 
-    fn proxy(&self) -> Option<&Url>;
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         panic!("called as_fake on {}", type_name::<Self>())
-    }
-
-    fn send_multipart_form<'a>(
-        &'a self,
-        _url: &str,
-        _request: reqwest::multipart::Form,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
 
@@ -162,36 +150,18 @@ impl HttpClient for HttpClientWithProxy {
         self.proxy.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
     }
-
-    fn send_multipart_form<'a>(
-        &'a self,
-        url: &str,
-        form: reqwest::multipart::Form,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send_multipart_form(url, form)
-    }
 }
 
 /// An [`HttpClient`] that has a base URL.
+#[derive(Deref)]
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
+    #[deref]
     client: HttpClientWithProxy,
-}
-
-impl std::ops::Deref for HttpClientWithUrl {
-    type Target = HttpClientWithProxy;
-
-    fn deref(&self) -> &Self::Target {
-        &self.client
-    }
 }
 
 impl HttpClientWithUrl {
@@ -255,7 +225,7 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed Cloud URL using the given path.
-    pub fn build_zed_cloud_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
+    pub fn build_zed_cloud_url(&self, path: &str) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://cloud.zed.dev",
@@ -264,10 +234,20 @@ impl HttpClientWithUrl {
             other => other,
         };
 
-        Ok(Url::parse_with_params(
-            &format!("{}{}", base_api_url, path),
-            query,
-        )?)
+        Ok(Url::parse(&format!("{}{}", base_api_url, path))?)
+    }
+
+    /// Builds a Zed Cloud URL using the given path and query params.
+    pub fn build_zed_cloud_url_with_query(&self, path: &str, query: impl Serialize) -> Result<Url> {
+        let base_url = self.base_url();
+        let base_api_url = match base_url.as_ref() {
+            "https://zed.dev" => "https://cloud.zed.dev",
+            "https://staging.zed.dev" => "https://cloud.zed.dev",
+            "http://localhost:3000" => "http://localhost:8787",
+            other => other,
+        };
+        let query = serde_urlencoded::to_string(&query)?;
+        Ok(Url::parse(&format!("{}{}?{}", base_api_url, path, query))?)
     }
 
     /// Builds a Zed LLM URL using the given path.
@@ -303,21 +283,9 @@ impl HttpClient for HttpClientWithUrl {
         self.client.proxy.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
-    }
-
-    fn send_multipart_form<'a>(
-        &'a self,
-        url: &str,
-        request: reqwest::multipart::Form,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send_multipart_form(url, request)
     }
 }
 
@@ -373,10 +341,6 @@ impl HttpClient for BlockedHttpClient {
         None
     }
 
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
-    }
-
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         panic!("called as_fake on {}", type_name::<Self>())
@@ -417,6 +381,7 @@ impl FakeHttpClient {
     }
 
     pub fn with_404_response() -> Arc<HttpClientWithUrl> {
+        log::warn!("Using fake HTTP client with 404 response");
         Self::create(|_| async move {
             Ok(Response::builder()
                 .status(404)
@@ -426,6 +391,7 @@ impl FakeHttpClient {
     }
 
     pub fn with_200_response() -> Arc<HttpClientWithUrl> {
+        log::warn!("Using fake HTTP client with 200 response");
         Self::create(|_| async move {
             Ok(Response::builder()
                 .status(200)
@@ -469,10 +435,6 @@ impl HttpClient for FakeHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 
     fn as_fake(&self) -> &FakeHttpClient {

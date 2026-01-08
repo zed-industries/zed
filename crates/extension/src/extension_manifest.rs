@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
 use lsp::LanguageServerName;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
@@ -82,6 +82,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
+    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
+    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
@@ -91,6 +93,8 @@ pub struct ExtensionManifest {
     pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -135,7 +139,92 @@ pub fn build_debug_adapter_schema_path(
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LibManifestEntry {
     pub kind: Option<ExtensionLibraryKind>,
-    pub version: Option<SemanticVersion>,
+    pub version: Option<Version>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct AgentServerManifestEntry {
+    /// Display name for the agent (shown in menus).
+    pub name: String,
+    /// Environment variables to set when launching the agent server.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Optional icon path (relative to extension root, e.g., "ai.svg").
+    /// Should be a small SVG icon for display in menus.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Per-target configuration for archive-based installation.
+    /// The key format is "{os}-{arch}" where:
+    /// - os: "darwin" (macOS), "linux", "windows"
+    /// - arch: "aarch64" (arm64), "x86_64"
+    ///
+    /// Example:
+    /// ```toml
+    /// [agent_servers.myagent.targets.darwin-aarch64]
+    /// archive = "https://example.com/myagent-darwin-arm64.zip"
+    /// cmd = "./myagent"
+    /// args = ["--serve"]
+    /// sha256 = "abc123..."  # optional
+    /// ```
+    ///
+    /// For Node.js-based agents, you can use "node" as the cmd to automatically
+    /// use Zed's managed Node.js runtime instead of relying on the user's PATH:
+    /// ```toml
+    /// [agent_servers.nodeagent.targets.darwin-aarch64]
+    /// archive = "https://example.com/nodeagent.zip"
+    /// cmd = "node"
+    /// args = ["index.js", "--port", "3000"]
+    /// ```
+    ///
+    /// Note: All commands are executed with the archive extraction directory as the
+    /// working directory, so relative paths in args (like "index.js") will resolve
+    /// relative to the extracted archive contents.
+    pub targets: HashMap<String, TargetConfig>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct TargetConfig {
+    /// URL to download the archive from (e.g., "https://github.com/owner/repo/releases/download/v1.0.0/myagent-darwin-arm64.zip")
+    pub archive: String,
+    /// Command to run (e.g., "./myagent" or "./myagent.exe")
+    pub cmd: String,
+    /// Command-line arguments to pass to the agent server.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Optional SHA-256 hash of the archive for verification.
+    /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// Environment variables to set when launching the agent server.
+    /// These target-specific env vars will override any env vars set at the agent level.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+impl TargetConfig {
+    pub fn from_proto(proto: proto::ExternalExtensionAgentTarget) -> Self {
+        Self {
+            archive: proto.archive,
+            cmd: proto.cmd,
+            args: proto.args,
+            sha256: proto.sha256,
+            env: proto.env.into_iter().collect(),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ExternalExtensionAgentTarget {
+        proto::ExternalExtensionAgentTarget {
+            archive: self.archive.clone(),
+            cmd: self.cmd.clone(),
+            args: self.args.clone(),
+            sha256: self.sha256.clone(),
+            env: self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -201,6 +290,16 @@ pub struct DebugAdapterManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugLocatorManifestEntry {}
 
+/// Manifest entry for a language model provider.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelProviderManifestEntry {
+    /// Display name for the provider.
+    pub name: String,
+    /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
+    #[serde(default)]
+    pub icon: Option<String>,
+}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
@@ -208,27 +307,26 @@ impl ExtensionManifest {
             .and_then(OsStr::to_str)
             .context("invalid extension name")?;
 
-        let mut extension_manifest_path = extension_dir.join("extension.json");
+        let extension_manifest_path = extension_dir.join("extension.toml");
         if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
-        } else {
-            extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
+            })?;
             toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
             })
+        } else if let extension_manifest_path = extension_manifest_path.with_extension("json")
+            && fs.is_file(&extension_manifest_path).await
+        {
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
+            })?;
+
+            serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))
+        } else {
+            anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
     }
 }
@@ -266,11 +364,13 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
+        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
+        language_model_providers: Default::default(),
     }
 }
 
@@ -298,11 +398,13 @@ mod tests {
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
         }
     }
 
@@ -403,5 +505,32 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+    #[test]
+    fn parse_manifest_with_agent_server_archive_launcher() {
+        let toml_src = r#"
+id = "example.agent-server-ext"
+name = "Agent Server Example"
+version = "1.0.0"
+schema_version = 0
+
+[agent_servers.foo]
+name = "Foo Agent"
+
+[agent_servers.foo.targets.linux-x86_64]
+archive = "https://example.com/agent-linux-x64.tar.gz"
+cmd = "./agent"
+args = ["--serve"]
+"#;
+
+        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
+        assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
+        assert!(manifest.agent_servers.contains_key("foo"));
+        let entry = manifest.agent_servers.get("foo").unwrap();
+        assert!(entry.targets.contains_key("linux-x86_64"));
+        let target = entry.targets.get("linux-x86_64").unwrap();
+        assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
+        assert_eq!(target.cmd, "./agent");
+        assert_eq!(target.args, vec!["--serve"]);
     }
 }

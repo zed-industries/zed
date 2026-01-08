@@ -13,8 +13,6 @@ path = "src/extension.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-compression.workspace = true
-async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 dap.workspace = true
@@ -27,7 +25,8 @@ language.workspace = true
 log.workspace = true
 lsp.workspace = true
 parking_lot.workspace = true
-semantic_version.workspace = true
+proto.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 task.workspace = true
@@ -38,4 +37,8 @@ wasm-encoder.workspace = true
 wasmparser.workspace = true
 
 [dev-dependencies]
+fs = { workspace = true, "features" = ["test-support"] }
+gpui = { workspace = true, "features" = ["test-support"] }
+indoc.workspace = true
 pretty_assertions.workspace = true
+tempfile.workspace = true

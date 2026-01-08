@@ -1,14 +1,14 @@
 # Visual Customization
 
-Various aspects of Zed's visual layout can be configured via Zed settings.json which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}).
+Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}) and {#action zed::OpenSettingsFile} ({#kb zed::OpenSettingsFile}) respectively.
 
 See [Configuring Zed](./configuring-zed.md) for additional information and other non-visual settings.
 
 ## Themes
 
-Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
+You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
 
-You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} which will modify the following settings:
 
 ```json [settings]
 {
@@ -61,15 +61,20 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "line_height": "standard",
   },
 
-  // Agent Panel Font Settings
-  "agent_font_size": 15
+  // Controls the font size for agent responses in the agent panel.
+  // If not specified, it falls back to the UI font size.
+  "agent_ui_font_size": 15,
+  // Controls the font size for the agent panel's message editor, user message,
+  // and any other snippet of code.
+  "agent_buffer_font_size": 12
 ```
 
 ### Font ligatures
 
 By default Zed enable font ligatures which will visually combines certain adjacent characters.
 
-For example `=>` will be displayed as `→` and `!=` will be `≠`. This is purely cosmetic and the individual characters remain unchanged.
+For example `=>` will be displayed as `→` and `!=` will be `≠`.
+This is purely cosmetic and the individual characters remain unchanged.
 
 To disable this behavior use:
 
@@ -113,6 +118,7 @@ To disable this behavior use:
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
+    "show_user_menu": true,         // Show/hide app user button
     "show_sign_in": true,           // Show/hide sign-in button
     "show_menus": false             // Show/hide menus
   },
@@ -204,7 +210,7 @@ TBD: Centered layout related settings
     "folds": true,                // Show/hide show fold buttons in the gutter.
     "min_line_number_digits": 4   // Reserve space for N digit line numbers
   },
-  "relative_line_numbers": false, // Show relative line numbers in gutter
+  "relative_line_numbers": "enabled", // Show relative line numbers in gutter
 
   // Indent guides
   "indent_guides": {
@@ -213,6 +219,10 @@ TBD: Centered layout related settings
     "active_line_width": 1,           // Width of active guide in pixels [1-10]
     "coloring": "fixed",              // disabled, fixed, indent_aware
     "background_coloring": "disabled" // disabled, indent_aware
+  },
+
+  "sticky_scroll": {
+    "enabled": false // Whether to stick scopes to the top of the editor. Disabled by default.
   }
 ```
 
@@ -322,7 +332,11 @@ TBD: Centered layout related settings
     // Show/hide a button that displays the buffer's line-ending mode.
     // Clicking the button brings up the line-ending selector.
     // Defaults to false.
-    "line_endings_button": false
+    "line_endings_button": false,
+    // Show/hide a button that displays the buffer's character encoding.
+    // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
+    // Defaults to "non_utf8".
+    "active_encoding_button": "non_utf8"
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
@@ -363,6 +377,10 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
+  // When to show the scrollbar in the completion menu.
+  "completion_menu_scrollbar": "never", // auto, system, always, never
+  // Turn on colorization of brackets in editors (configurable per language)
+  "colorize_brackets": true,
 ```
 
 ### Edit Predictions {#editor-ai}
@@ -446,6 +464,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       // When to show indent guides in the project panel. (always, never)
       "show": "always"
     },
+    // Sort order for entries (directories_first, mixed, files_first)
+    "sort_mode": "directories_first",
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
@@ -464,7 +484,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "default_width": 640,   // Default width (left/right docked)
     "default_height": 320,  // Default height (bottom docked)
   },
-  "agent_font_size": 16
+  // Controls the font size for agent responses in the agent panel.
+  // If not specified, it falls back to the UI font size.
+  "agent_ui_font_size": 15,
+  // Controls the font size for the agent panel's message editor, user message,
+  // and any other snippet of code.
+  "agent_buffer_font_size": 12
 ```
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.

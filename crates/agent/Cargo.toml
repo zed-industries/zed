@@ -11,7 +11,7 @@ path = "src/agent.rs"
 [features]
 test-support = ["db/test-support"]
 eval = []
-edit-agent-eval = []
+unit-eval = []
 e2e = []
 
 [lints]
@@ -63,7 +63,6 @@ streaming_diff.workspace = true
 strsim.workspace = true
 task.workspace = true
 telemetry.workspace = true
-terminal.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
@@ -84,6 +83,7 @@ ctor.workspace = true
 db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
+eval_utils.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }
 git = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }

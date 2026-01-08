@@ -392,7 +392,7 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use editor::{Editor, SelectionEffects};
+    use editor::{Editor, MultiBufferOffset, SelectionEffects};
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
@@ -539,7 +539,7 @@ mod tests {
         // And now, let's select an identifier.
         editor2.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                selections.select_ranges([14..18])
+                selections.select_ranges([MultiBufferOffset(14)..MultiBufferOffset(18)])
             })
         });
 
@@ -602,11 +602,8 @@ mod tests {
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             TaskStore::init(None);
             state
         })

@@ -7,7 +7,7 @@ use editor::{
     RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
-    AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
+    App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, WeakEntity, Window,
 };
 use language::{BufferSnapshot, Capability, Point, Selection, SelectionGoal, TreeSitterOptions};
@@ -183,13 +183,13 @@ impl StackTraceView {
                     .await?;
 
                 let project_path = ProjectPath {
-                    worktree_id: worktree.read_with(cx, |tree, _| tree.id())?,
+                    worktree_id: worktree.read_with(cx, |tree, _| tree.id()),
                     path: relative_path,
                 };
 
                 if let Some(buffer) = this
                     .read_with(cx, |this, _| this.project.clone())?
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
                     .await
                     .log_err()
                 {
@@ -418,17 +418,17 @@ impl Item for StackTraceView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

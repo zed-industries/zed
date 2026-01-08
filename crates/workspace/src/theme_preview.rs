@@ -1,12 +1,14 @@
 #![allow(unused, dead_code)]
-use gpui::{AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, actions, hsla};
+use gpui::{
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Task, actions, hsla,
+};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
     AudioStatus, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon,
-    ElevationIndex, Facepile, IconDecoration, Indicator, KeybindingHint, Switch, TintColor,
-    Tooltip, prelude::*, utils::calculate_contrast_ratio,
+    Checkbox, CollaboratorAvailability, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
+    IconDecoration, Indicator, KeybindingHint, Switch, TintColor, Tooltip, prelude::*,
+    utils::calculate_contrast_ratio,
 };
 
 use crate::{Item, Workspace};
@@ -95,16 +97,20 @@ impl Item for ThemePreview {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<crate::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self::new(window, cx)))
+        Task::ready(Some(cx.new(|cx| Self::new(window, cx))))
     }
 }
 

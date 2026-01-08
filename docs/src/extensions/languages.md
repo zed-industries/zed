@@ -72,7 +72,7 @@ several features:
 - Runnable code detection
 - Selecting classes, functions, etc.
 
-The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers#query-syntax) enable these
+The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
 
 ### Syntax highlighting
@@ -153,6 +153,14 @@ This query identifies opening and closing brackets, braces, and quotation marks.
 | ------- | --------------------------------------------- |
 | @open   | Captures opening brackets, braces, and quotes |
 | @close  | Captures closing brackets, braces, and quotes |
+
+Zed uses these to highlight matching brackets: painting each bracket pair with a different color ("rainbow brackets") and highlighting the brackets if the cursor is inside the bracket pair.
+
+To opt out of rainbow brackets colorization, add the following to the corresponding `brackets.scm` entry:
+
+```scheme
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+```
 
 ### Code outline/structure
 
@@ -324,7 +332,7 @@ This query marks number and string values in key-value pairs and arrays for reda
 
 The `runnables.scm` file defines rules for detecting runnable code.
 
-Here's an example from an `runnables.scm` file for JSON:
+Here's an example from a `runnables.scm` file for JSON:
 
 ```scheme
 (

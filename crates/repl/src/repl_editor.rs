@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
@@ -433,6 +433,36 @@ fn runnable_ranges(
     }
 
     let snippet_range = cell_range(buffer, range.start.row, range.end.row);
+
+    // Check if the snippet range is entirely blank, if so, skip forward to find code
+    let is_blank =
+        (snippet_range.start.row..=snippet_range.end.row).all(|row| buffer.is_line_blank(row));
+
+    if is_blank {
+        // Search forward for the next non-blank line
+        let max_row = buffer.max_point().row;
+        let mut next_row = snippet_range.end.row + 1;
+        while next_row <= max_row && buffer.is_line_blank(next_row) {
+            next_row += 1;
+        }
+
+        if next_row <= max_row {
+            // Found a non-blank line, find the extent of this cell
+            let next_snippet_range = cell_range(buffer, next_row, next_row);
+            let start_language = buffer.language_at(next_snippet_range.start);
+            let end_language = buffer.language_at(next_snippet_range.end);
+
+            if start_language
+                .zip(end_language)
+                .is_some_and(|(start, end)| start == end)
+            {
+                return (vec![next_snippet_range], None);
+            }
+        }
+
+        return (Vec::new(), None);
+    }
+
     let start_language = buffer.language_at(snippet_range.start);
     let end_language = buffer.language_at(snippet_range.end);
 
@@ -477,11 +507,14 @@ fn language_supported(language: &Arc<Language>, cx: &mut App) -> bool {
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
             let selection = editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx));
-            let buffer = editor.buffer().read(cx).snapshot(cx);
-            buffer.language_at(selection.head()).cloned()
+                .newest::<MultiBufferOffset>(&display_snapshot);
+            display_snapshot
+                .buffer_snapshot()
+                .language_at(selection.head())
+                .cloned()
         })
         .ok()
         .flatten()
@@ -817,5 +850,77 @@ mod tests {
                 "#
             },]
         );
+    }
+
+    #[gpui::test]
+    fn test_skip_blank_lines_to_next_cell(cx: &mut App) {
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+                    print(2 + 2)
+                "# },
+                cx,
+            )
+            .with_language(test_language.clone(), cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Selection on blank line should skip to next non-blank cell
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(snippets, vec!["print(2 + 2)"]);
+
+        // Multiple blank lines should also skip forward
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+
+
+                    print(2 + 2)
+                "# },
+                cx,
+            )
+            .with_language(test_language.clone(), cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(snippets, vec!["print(2 + 2)"]);
+
+        // Blank lines at end of file should return nothing
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        assert!(snippets.is_empty());
     }
 }

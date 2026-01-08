@@ -4,15 +4,9 @@
 //! disable Vim/Helix modes without having to depend on the `vim` crate in its
 //! entirety.
 
-use gpui::App;
-use settings::{Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, SettingsContent};
 
-/// Initializes the `vim_mode_setting` crate.
-pub fn init(cx: &mut App) {
-    VimModeSetting::register(cx);
-    HelixModeSetting::register(cx);
-}
-
+#[derive(RegisterSetting)]
 pub struct VimModeSetting(pub bool);
 
 impl Settings for VimModeSetting {
@@ -21,6 +15,7 @@ impl Settings for VimModeSetting {
     }
 }
 
+#[derive(RegisterSetting)]
 pub struct HelixModeSetting(pub bool);
 
 impl Settings for HelixModeSetting {

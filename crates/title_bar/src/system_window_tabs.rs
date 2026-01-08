@@ -227,6 +227,15 @@ impl SystemWindowTabs {
                     window.activate_window();
                 });
             })
+            .on_mouse_up(MouseButton::Middle, move |_, window, cx| {
+                if item.handle.window_id() == window.window_handle().window_id() {
+                    window.dispatch_action(Box::new(CloseWindow), cx);
+                } else {
+                    let _ = item.handle.update(cx, |_, window, cx| {
+                        window.dispatch_action(Box::new(CloseWindow), cx);
+                    });
+                }
+            })
             .child(label)
             .map(|this| match show_close_button {
                 ShowCloseButton::Hidden => this,

@@ -44,8 +44,9 @@ impl OpenPathDelegate {
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         lister: DirectoryLister,
         creating_path: bool,
-        path_style: PathStyle,
+        cx: &App,
     ) -> Self {
+        let path_style = lister.path_style(cx);
         Self {
             tx: Some(tx),
             lister,
@@ -216,8 +217,7 @@ impl OpenPathPrompt {
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::local());
+            let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);
@@ -399,7 +399,12 @@ impl PickerDelegate for OpenPathDelegate {
                             }
                     })
                     .unwrap_or(false);
-                if should_prepend_with_current_dir {
+
+                let current_dir_in_new_entries = new_entries
+                    .iter()
+                    .any(|entry| &entry.path.string == current_dir);
+
+                if should_prepend_with_current_dir && !current_dir_in_new_entries {
                     new_entries.insert(
                         0,
                         CandidateInfo {
@@ -554,7 +559,7 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         candidate.path.string,
                         if candidate.is_dir {
-                            path_style.separator()
+                            path_style.primary_separator()
                         } else {
                             ""
                         }
@@ -564,7 +569,7 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         candidate.path.string,
                         if candidate.is_dir {
-                            path_style.separator()
+                            path_style.primary_separator()
                         } else {
                             ""
                         }
@@ -711,7 +716,9 @@ impl PickerDelegate for OpenPathDelegate {
 
         match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
-                let (label, indices) = if *parent_path == self.prompt_root {
+                let (label, indices) = if is_current_dir_candidate {
+                    ("open this directory".to_string(), vec![])
+                } else if *parent_path == self.prompt_root {
                     match_positions.iter_mut().for_each(|position| {
                         *position += self.prompt_root.len();
                     });
@@ -719,8 +726,6 @@ impl PickerDelegate for OpenPathDelegate {
                         format!("{}{}", self.prompt_root, candidate.path.string),
                         match_positions,
                     )
-                } else if is_current_dir_candidate {
-                    ("open this directory".to_string(), vec![])
                 } else {
                     (candidate.path.string, match_positions)
                 };
@@ -821,7 +826,13 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(format!("[directory{}]filename.ext", self.path_style.separator()).as_str())
+        Arc::from(
+            format!(
+                "[directory{}]filename.ext",
+                self.path_style.primary_separator()
+            )
+            .as_str(),
+        )
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {

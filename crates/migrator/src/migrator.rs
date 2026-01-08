@@ -15,6 +15,7 @@
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
 use anyhow::{Context as _, Result};
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
@@ -74,7 +75,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
 
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
-    let json_indent_size = settings::infer_json_indent_size(&current_text);
+    let json_indent_size = infer_json_indent_size(&current_text);
     for migration in migrations.iter() {
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
@@ -83,14 +84,14 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
                     return Ok(None);
                 }
                 let old_content: serde_json_lenient::Value =
-                    settings::parse_json_with_comments(&current_text)?;
+                    parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
                 let mut new_value = old_value.clone();
                 callback(&mut new_value)?;
                 if new_value != old_value {
                     let mut current = current_text.clone();
                     let mut edits = vec![];
-                    settings::update_value_in_json_text(
+                    update_value_in_json_text(
                         &mut current,
                         &mut vec![],
                         json_indent_size,
@@ -137,6 +138,10 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
         MigrationType::TreeSitter(
             migrations::m_2025_04_15::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_04_15,
+        ),
+        MigrationType::TreeSitter(
+            migrations::m_2025_12_08::KEYMAP_PATTERNS,
+            &KEYMAP_QUERY_2025_12_08,
         ),
     ];
     run_migrations(text, migrations)
@@ -213,6 +218,24 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
         MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
+        MigrationType::Json(migrations::m_2025_10_21::make_relative_line_numbers_an_enum),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_12::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_12,
+        ),
+        MigrationType::TreeSitter(
+            migrations::m_2025_12_01::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_12_01,
+        ),
+        MigrationType::TreeSitter(
+            migrations::m_2025_11_20::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_11_20,
+        ),
+        MigrationType::Json(migrations::m_2025_11_25::remove_context_server_source),
+        MigrationType::TreeSitter(
+            migrations::m_2025_12_15::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_12_15,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -331,6 +354,26 @@ define_query!(
     SETTINGS_QUERY_2025_10_03,
     migrations::m_2025_10_03::SETTINGS_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2025_11_12,
+    migrations::m_2025_11_12::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_12_01,
+    migrations::m_2025_12_01::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_11_20,
+    migrations::m_2025_11_20::SETTINGS_PATTERNS
+);
+define_query!(
+    KEYMAP_QUERY_2025_12_08,
+    migrations::m_2025_12_08::KEYMAP_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_12_15,
+    migrations::m_2025_12_15::SETTINGS_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -366,7 +409,13 @@ mod tests {
     #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(input).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = migrate_settings(&migrated).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[track_caller]
@@ -376,7 +425,13 @@ mod tests {
         output: Option<&str>,
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
-        assert_migrated_correctly(migrated, output);
+        assert_migrated_correctly(migrated.clone(), output);
+
+        // expect that rerunning the migration does not result in another migration
+        if let Some(migrated) = migrated {
+            let rerun = run_migrations(&migrated, migrations).unwrap();
+            assert_migrated_correctly(rerun, None);
+        }
     }
 
     #[test]
@@ -1171,6 +1226,63 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_agent_server_settings_migration() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2025_11_20::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_11_20,
+            )],
+            r#"{
+    "agent_servers": {
+        "gemini": {
+            "default_model": "gemini-1.5-pro"
+        },
+        "claude": {},
+        "codex": {},
+        "my-custom-agent": {
+            "command": "/path/to/agent",
+            "args": ["--foo"],
+            "default_model": "my-model"
+        },
+        "already-migrated-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
+        },
+        "future-extension-agent": {
+            "type": "extension",
+            "default_model": "ext-model"
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "agent_servers": {
+        "gemini": {
+            "default_model": "gemini-1.5-pro"
+        },
+        "claude": {},
+        "codex": {},
+        "my-custom-agent": {
+            "type": "custom",
+            "command": "/path/to/agent",
+            "args": ["--foo"],
+            "default_model": "my-model"
+        },
+        "already-migrated-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
+        },
+        "future-extension-agent": {
+            "type": "extension",
+            "default_model": "ext-model"
+        }
+    }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
     fn test_remove_version_fields() {
         assert_migrate_settings(
             r#"{
@@ -1247,7 +1359,6 @@ mod tests {
             r#"{
     "context_servers": {
         "some-mcp-server": {
-            "source": "custom",
             "command": {
                 "path": "npx",
                 "args": [
@@ -1267,7 +1378,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "some-mcp-server": {
-            "source": "custom",
             "command": "npx",
             "args": [
                 "-y",
@@ -1289,7 +1399,6 @@ mod tests {
             r#"{
     "context_servers": {
         "server-with-extras": {
-            "source": "custom",
             "command": {
                 "path": "/usr/bin/node",
                 "args": ["server.js"]
@@ -1302,7 +1411,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "server-with-extras": {
-            "source": "custom",
             "command": "/usr/bin/node",
             "args": ["server.js"],
             "settings": {}
@@ -1317,7 +1425,6 @@ mod tests {
             r#"{
     "context_servers": {
         "simple-server": {
-            "source": "custom",
             "command": {
                 "path": "simple-mcp-server"
             }
@@ -1328,7 +1435,6 @@ mod tests {
                 r#"{
     "context_servers": {
         "simple-server": {
-            "source": "custom",
             "command": "simple-mcp-server"
         }
     }
@@ -2175,6 +2281,152 @@ mod tests {
                         "include_ignored": "smart"
                     }
                 }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_remove_context_server_source() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "context_servers": {
+                    "extension_server": {
+                        "source": "extension",
+                        "settings": {
+                            "foo": "bar"
+                        }
+                    },
+                    "custom_server": {
+                        "source": "custom",
+                        "command": "foo",
+                        "args": ["bar"],
+                        "env": {
+                            "FOO": "BAR"
+                        }
+                    },
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "context_servers": {
+                        "extension_server": {
+                            "settings": {
+                                "foo": "bar"
+                            }
+                        },
+                        "custom_server": {
+                            "command": "foo",
+                            "args": ["bar"],
+                            "env": {
+                                "FOO": "BAR"
+                            }
+                        },
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_project_panel_open_file_on_paste_migration() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": true }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "open_file_on_paste": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "auto_open": { "on_paste": false }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_enable_preview_from_code_navigation_migration() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "other_setting_1": 1,
+                "preview_tabs": {
+                    "other_setting_2": 2,
+                    "enable_preview_from_code_navigation": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "other_setting_1": 1,
+                    "preview_tabs": {
+                        "other_setting_2": 2,
+                        "enable_keep_preview_on_code_navigation": false
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "other_setting_1": 1,
+                "preview_tabs": {
+                    "other_setting_2": 2,
+                    "enable_preview_from_code_navigation": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "other_setting_1": 1,
+                    "preview_tabs": {
+                        "other_setting_2": 2,
+                        "enable_keep_preview_on_code_navigation": true
+                    }
+                }
+                "#
                 .unindent(),
             ),
         );

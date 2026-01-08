@@ -6,10 +6,10 @@ use crate::markdown_elements::{
 };
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
-    TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
+    ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity,
+    Window, div, img, px, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,12 +18,7 @@ use std::{
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
-use ui::{
-    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
-    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, tooltip_container, v_flex,
-};
+use ui::{CopyButton, LinkPreview, ToggleState, prelude::*, tooltip_container};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub struct CheckboxClickedEvent {
@@ -75,8 +70,10 @@ impl RenderContext {
 
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_family = settings.buffer_font.family.clone();
+        let buffer_font_features = settings.buffer_font.features.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
+        buffer_text_style.font_features = buffer_font_features;
         buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
 
         RenderContext {
@@ -233,12 +230,11 @@ fn render_markdown_list_item(
     cx: &mut RenderContext,
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
-
-    let padding = cx.scaled_rems((parsed.depth - 1) as f32);
+    let depth = parsed.depth.saturating_sub(1) as usize;
 
     let bullet = match &parsed.item_type {
-        Ordered(order) => format!("{}.", order).into_any_element(),
-        Unordered => "•".into_any_element(),
+        Ordered(order) => list_item_prefix(*order as usize, true, depth).into_any_element(),
+        Unordered => list_item_prefix(1, false, depth).into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
             .mt(cx.scaled_rems(3.0 / 16.0))
@@ -294,13 +290,14 @@ fn render_markdown_list_item(
         .collect();
 
     let item = h_flex()
-        .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
+        .when(!parsed.nested, |this| this.pl(cx.scaled_rems(depth as f32)))
+        .when(parsed.nested && depth > 0, |this| this.ml_neg_1p5())
         .items_start()
         .children(vec![
             bullet,
             v_flex()
                 .children(contents)
-                .gap(cx.scaled_rems(1.0))
+                .when(!parsed.nested, |this| this.gap(cx.scaled_rems(1.0)))
                 .pr(cx.scaled_rems(1.0))
                 .w_full(),
         ]);
@@ -497,7 +494,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     for (row_idx, row) in parsed.header.iter().chain(parsed.body.iter()).enumerate() {
         let mut col_idx = 0;
 
-        for (cell_idx, cell) in row.columns.iter().enumerate() {
+        for cell in row.columns.iter() {
             // Skip columns occupied by row-spanning cells from previous rows
             while col_idx < max_column_count && grid_occupied[row_idx][col_idx] {
                 col_idx += 1;
@@ -507,19 +504,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 break;
             }
 
-            let alignment = parsed
-                .column_alignments
-                .get(cell_idx)
-                .copied()
-                .unwrap_or_else(|| {
-                    if cell.is_header {
-                        ParsedMarkdownTableAlignment::Center
-                    } else {
-                        ParsedMarkdownTableAlignment::None
-                    }
-                });
-
-            let container = match alignment {
+            let container = match cell.alignment {
                 ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
                 ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
                 ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
@@ -531,8 +516,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .children(render_markdown_text(&cell.children, cx))
                 .px_2()
                 .py_1()
-                .border_1()
-                .size_full()
+                .when(col_idx > 0, |this| this.border_l_1())
+                .when(row_idx > 0, |this| this.border_t_1())
                 .border_color(cx.border_color)
                 .when(cell.is_header, |this| {
                     this.bg(cx.title_bar_background_color)
@@ -553,15 +538,39 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
             col_idx += cell.col_span;
         }
+
+        // Fill remaining columns with empty cells if needed
+        while col_idx < max_column_count {
+            if grid_occupied[row_idx][col_idx] {
+                col_idx += 1;
+                continue;
+            }
+
+            let empty_cell = div()
+                .when(col_idx > 0, |this| this.border_l_1())
+                .when(row_idx > 0, |this| this.border_t_1())
+                .border_color(cx.border_color)
+                .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
+
+            cells.push(empty_cell);
+            col_idx += 1;
+        }
     }
 
-    cx.with_common_p(div())
-        .grid()
-        .size_full()
-        .grid_cols(max_column_count as u16)
-        .border_1()
-        .border_color(cx.border_color)
-        .children(cells)
+    cx.with_common_p(v_flex().items_start())
+        .when_some(parsed.caption.as_ref(), |this, caption| {
+            this.children(render_markdown_text(caption, cx))
+        })
+        .child(
+            div()
+                .grid()
+                .grid_cols(max_column_count as u16)
+                .border(px(1.5))
+                .border_color(cx.border_color)
+                .rounded_sm()
+                .overflow_hidden()
+                .children(cells),
+        )
         .into_any()
 }
 
@@ -612,19 +621,18 @@ fn render_markdown_code_block(
         StyledText::new(parsed.contents.clone())
     };
 
-    let copy_block_button = IconButton::new("copy-code", IconName::Copy)
-        .icon_size(IconSize::Small)
-        .on_click({
-            let contents = parsed.contents.clone();
-            move |_, _window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
-            }
-        })
-        .tooltip(Tooltip::text("Copy code block"))
+    let copy_block_button = CopyButton::new(parsed.contents.clone())
+        .tooltip_label("Copy Codeblock")
         .visible_on_hover("markdown-block");
 
+    let font = gpui::Font {
+        family: cx.buffer_font_family.clone(),
+        features: cx.buffer_text_style.font_features.clone(),
+        ..Default::default()
+    };
+
     cx.with_common_p(div())
-        .font_family(cx.buffer_font_family.clone())
+        .font(font)
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
@@ -669,33 +677,31 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             .to_highlight_style(&syntax_theme)
                             .map(|style| (range.clone(), style))
                     }),
-                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
-                        |(region, range)| {
-                            if region.code {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else if region.link.is_some() {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        color: Some(link_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        },
-                    ),
+                    parsed.regions.iter().filter_map(|(range, region)| {
+                        if region.code {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    background_color: Some(code_span_bg_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else if region.link.is_some() {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    color: Some(link_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else {
+                            None
+                        }
+                    }),
                 );
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
-                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                for (range, region) in parsed.regions.iter() {
                     if let Some(link) = region.link.clone() {
                         links.push(link);
                         link_ranges.push(range.clone());
@@ -874,6 +880,38 @@ impl Render for InteractiveMarkdownElementTooltip {
     }
 }
 
+/// Returns the prefix for a list item.
+fn list_item_prefix(order: usize, ordered: bool, depth: usize) -> String {
+    let ix = order.saturating_sub(1);
+    const NUMBERED_PREFIXES_1: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const NUMBERED_PREFIXES_2: &str = "abcdefghijklmnopqrstuvwxyz";
+    const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
+
+    if ordered {
+        match depth {
+            0 => format!("{}. ", order),
+            1 => format!(
+                "{}. ",
+                NUMBERED_PREFIXES_1
+                    .chars()
+                    .nth(ix % NUMBERED_PREFIXES_1.len())
+                    .unwrap()
+            ),
+            _ => format!(
+                "{}. ",
+                NUMBERED_PREFIXES_2
+                    .chars()
+                    .nth(ix % NUMBERED_PREFIXES_2.len())
+                    .unwrap()
+            ),
+        }
+    } else {
+        let depth = depth.min(BULLETS.len() - 1);
+        let bullet = BULLETS[depth];
+        return format!("{} ", bullet);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,7 +923,6 @@ mod tests {
             source_range: 0..text.len(),
             contents: SharedString::new(text),
             highlights: Default::default(),
-            region_ranges: Default::default(),
             regions: Default::default(),
         })
     }
@@ -900,6 +937,7 @@ mod tests {
             row_span,
             is_header: false,
             children,
+            alignment: ParsedMarkdownTableAlignment::None,
         }
     }
 
@@ -913,6 +951,7 @@ mod tests {
             row_span,
             is_header: false,
             children,
+            alignment: ParsedMarkdownTableAlignment::None,
         }
     }
 
@@ -1011,5 +1050,26 @@ mod tests {
                 ])
             ])
         );
+    }
+
+    #[test]
+    fn test_list_item_prefix() {
+        assert_eq!(list_item_prefix(1, true, 0), "1. ");
+        assert_eq!(list_item_prefix(2, true, 0), "2. ");
+        assert_eq!(list_item_prefix(3, true, 0), "3. ");
+        assert_eq!(list_item_prefix(11, true, 0), "11. ");
+        assert_eq!(list_item_prefix(1, true, 1), "A. ");
+        assert_eq!(list_item_prefix(2, true, 1), "B. ");
+        assert_eq!(list_item_prefix(3, true, 1), "C. ");
+        assert_eq!(list_item_prefix(1, true, 2), "a. ");
+        assert_eq!(list_item_prefix(2, true, 2), "b. ");
+        assert_eq!(list_item_prefix(7, true, 2), "g. ");
+        assert_eq!(list_item_prefix(1, true, 1), "A. ");
+        assert_eq!(list_item_prefix(1, true, 2), "a. ");
+        assert_eq!(list_item_prefix(1, false, 0), "• ");
+        assert_eq!(list_item_prefix(1, false, 1), "◦ ");
+        assert_eq!(list_item_prefix(1, false, 2), "▪ ");
+        assert_eq!(list_item_prefix(1, false, 3), "‣ ");
+        assert_eq!(list_item_prefix(1, false, 4), "⁃ ");
     }
 }

@@ -3,7 +3,7 @@ mod convert;
 mod delete;
 mod increment;
 pub(crate) mod mark;
-mod paste;
+pub(crate) mod paste;
 pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
@@ -100,6 +100,10 @@ actions!(
         GoToTab,
         /// Go to previous tab page (with count support).
         GoToPreviousTab,
+        /// Go to tab page (with count support).
+        GoToPreviousReference,
+        /// Go to previous tab page (with count support).
+        GoToNextReference,
     ]
 );
 
@@ -200,6 +204,36 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, window, cx| {
         vim.join_lines_impl(false, window, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToPreviousReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Prev,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
+    });
+
+    Vim::action(editor, cx, |vim, _: &GoToNextReference, window, cx| {
+        let count = Vim::take_count(cx);
+        vim.update_editor(cx, |_, editor, cx| {
+            let task = editor.go_to_reference_before_or_after_position(
+                editor::Direction::Next,
+                count.unwrap_or(1),
+                window,
+                cx,
+            );
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            };
+        });
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -544,8 +578,21 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
+
+            // If vim is in temporary mode and the motion being used is
+            // `EndOfLine` ($), we'll want to disable clipping at line ends so
+            // that the newline character can be selected so that, when moving
+            // back to visual mode, the cursor will be placed after the last
+            // character and not before it.
+            let clip_at_line_ends = editor.clip_at_line_ends(cx);
+            let should_disable_clip = matches!(motion, Motion::EndOfLine { .. }) && vim.temp_mode;
+
+            if should_disable_clip {
+                editor.set_clip_at_line_ends(false, cx)
+            };
+
             editor.change_selections(
                 SelectionEffects::default().nav_history(motion.push_to_jump_list()),
                 window,
@@ -557,7 +604,11 @@ impl Vim {
                             .unwrap_or((cursor, goal))
                     })
                 },
-            )
+            );
+
+            if should_disable_clip {
+                editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+            };
         });
     }
 
@@ -637,13 +688,13 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
-                return;
-            };
-
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
-            });
+            if let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx)
+                && !marks.is_empty()
+            {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
         });
     }
 
@@ -931,8 +982,17 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // We need to use `text.chars().count()` instead of `text.len()` here as
+        // `len()` counts bytes, not characters.
+        let char_count = text.chars().count();
+        let count = Vim::take_count(cx).unwrap_or(char_count);
         let is_return_char = text == "\n".into() || text == "\r".into();
-        let count = Vim::take_count(cx).unwrap_or(1);
+        let repeat_count = match (is_return_char, char_count) {
+            (true, _) => 0,
+            (_, 1) => count,
+            (_, _) => 1,
+        };
+
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
@@ -955,7 +1015,7 @@ impl Vim {
                     edits.push((
                         range.start.to_offset(&display_map, Bias::Left)
                             ..range.end.to_offset(&display_map, Bias::Left),
-                        text.repeat(if is_return_char { 0 } else { count }),
+                        text.repeat(repeat_count),
                     ));
                 }
 
@@ -1807,6 +1867,24 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_percent_in_comment(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate_at_each_offset("%", "// ˇconsole.logˇ(ˇvaˇrˇ)ˇ;")
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("%", "// ˇ{ ˇ{ˇ}ˇ }ˇ")
+            .await
+            .assert_matches();
+        // Template-style brackets (like Liquid {% %} and {{ }})
+        cx.simulate_at_each_offset("%", "ˇ{ˇ% block %ˇ}ˇ")
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("%", "ˇ{ˇ{ˇ var ˇ}ˇ}ˇ")
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_end_of_line_with_neovim(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -2225,5 +2303,36 @@ mod test {
         cx.workspace(|workspace, _, cx| {
             assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
         });
+    }
+
+    #[gpui::test]
+    async fn test_temporary_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test jumping to the end of the line ($).
+        cx.set_shared_state(indoc! {"lorem ˇipsum"}).await;
+        cx.simulate_shared_keystrokes("i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-o $").await;
+        cx.shared_state().await.assert_eq(indoc! {"lorem ipsumˇ"});
+
+        // Test jumping to the next word.
+        cx.set_shared_state(indoc! {"loremˇ ipsum dolor"}).await;
+        cx.simulate_shared_keystrokes("a").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("a n d space ctrl-o w").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {"lorem and ipsum ˇdolor"});
+
+        // Test yanking to end of line ($).
+        cx.set_shared_state(indoc! {"lorem ˇipsum dolor"}).await;
+        cx.simulate_shared_keystrokes("i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("a n d space ctrl-o y $")
+            .await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {"lorem and ˇipsum dolor"});
     }
 }

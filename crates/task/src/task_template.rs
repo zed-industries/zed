@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use util::schemars::DefaultDenyUnknownFields;
+use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
@@ -118,6 +118,7 @@ impl TaskTemplates {
     pub fn generate_json_schema() -> serde_json::Value {
         let schema = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
             .into_generator()
             .root_schema_for::<Self>();
 

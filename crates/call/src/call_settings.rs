@@ -1,6 +1,6 @@
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
-#[derive(Debug)]
+#[derive(Debug, RegisterSetting)]
 pub struct CallSettings {
     pub mute_on_join: bool,
     pub share_on_join: bool,

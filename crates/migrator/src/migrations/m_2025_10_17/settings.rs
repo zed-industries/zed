@@ -17,6 +17,7 @@ pub fn make_file_finder_include_ignored_an_enum(value: &mut Value) -> Result<()>
         Value::Bool(true) => Value::String("all".to_string()),
         Value::Bool(false) => Value::String("indexed".to_string()),
         Value::Null => Value::String("smart".to_string()),
+        Value::String(s) if s == "all" || s == "indexed" || s == "smart" => return Ok(()),
         _ => anyhow::bail!("Expected include_ignored to be a boolean or null"),
     };
     Ok(())

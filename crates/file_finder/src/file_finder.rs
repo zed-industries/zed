@@ -90,12 +90,7 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
-pub fn init_settings(cx: &mut App) {
-    FileFinderSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();
@@ -1065,7 +1060,7 @@ impl FileFinderDelegate {
                         (
                             filename.to_string(),
                             Vec::new(),
-                            prefix.display(path_style).to_string() + path_style.separator(),
+                            prefix.display(path_style).to_string() + path_style.primary_separator(),
                             Vec::new(),
                         )
                     } else {
@@ -1076,7 +1071,7 @@ impl FileFinderDelegate {
                                 .map_or(String::new(), |f| f.to_string_lossy().into_owned()),
                             Vec::new(),
                             entry_path.absolute.parent().map_or(String::new(), |path| {
-                                path.to_string_lossy().into_owned() + path_style.separator()
+                                path.to_string_lossy().into_owned() + path_style.primary_separator()
                             }),
                             Vec::new(),
                         )
@@ -1230,35 +1225,27 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = if let Ok(task) = project.update(cx, |this, cx| {
-                this.resolve_abs_file_path(query.path_query(), cx)
-            }) {
-                task.await.is_some()
-            } else {
-                false
-            };
+            let abs_file_exists = project
+                .update(cx, |this, cx| {
+                    this.resolve_abs_file_path(query.path_query(), cx)
+                })
+                .await
+                .is_some();
 
             if abs_file_exists {
-                let update_result = project
-                    .update(cx, |project, cx| {
-                        if let Some((worktree, relative_path)) =
-                            project.find_worktree(query_path, cx)
-                        {
-                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                                score: 1.0,
-                                positions: Vec::new(),
-                                worktree_id: worktree.read(cx).id().to_usize(),
-                                path: relative_path,
-                                path_prefix: RelPath::empty().into(),
-                                is_dir: false, // File finder doesn't support directories
-                                distance_to_relative_ancestor: usize::MAX,
-                            }));
-                        }
-                    })
-                    .log_err();
-                if update_result.is_none() {
-                    return abs_file_exists;
-                }
+                project.update(cx, |project, cx| {
+                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                        path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                            score: 1.0,
+                            positions: Vec::new(),
+                            worktree_id: worktree.read(cx).id().to_usize(),
+                            path: relative_path,
+                            path_prefix: RelPath::empty().into(),
+                            is_dir: false, // File finder doesn't support directories
+                            distance_to_relative_ancestor: usize::MAX,
+                        }));
+                    }
+                });
             }
 
             picker
@@ -1718,7 +1705,7 @@ impl PickerDelegate for FileFinderDelegate {
                                                 ui::IconPosition::End,
                                                 Some(ToggleIncludeIgnored.boxed_clone()),
                                                 move |window, cx| {
-                                                    window.focus(&focus_handle);
+                                                    window.focus(&focus_handle, cx);
                                                     window.dispatch_action(
                                                         ToggleIncludeIgnored.boxed_clone(),
                                                         cx,
@@ -1765,16 +1752,19 @@ impl PickerDelegate for FileFinderDelegate {
                                                 menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
-                                                        pane::SplitLeft.boxed_clone(),
+                                                        pane::SplitLeft::default().boxed_clone(),
                                                     )
                                                     .action(
                                                         "Split Right",
-                                                        pane::SplitRight.boxed_clone(),
+                                                        pane::SplitRight::default().boxed_clone(),
                                                     )
-                                                    .action("Split Up", pane::SplitUp.boxed_clone())
+                                                    .action(
+                                                        "Split Up",
+                                                        pane::SplitUp::default().boxed_clone(),
+                                                    )
                                                     .action(
                                                         "Split Down",
-                                                        pane::SplitDown.boxed_clone(),
+                                                        pane::SplitDown::default().boxed_clone(),
                                                     )
                                             }
                                         }))

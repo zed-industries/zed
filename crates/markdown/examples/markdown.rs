@@ -38,7 +38,6 @@ pub fn main() {
     Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        language::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = NodeRuntime::unavailable();

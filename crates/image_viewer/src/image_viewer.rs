@@ -11,7 +11,7 @@ use gpui::{
     InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
     Window, canvas, div, fill, img, opaque_grey, point, size,
 };
-use language::{DiskState, File as _};
+use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
@@ -44,7 +44,7 @@ impl ImageView {
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
             if let Some(image) = image_data.clone().get_render_image(window, cx) {
-                cx.drop_image(image, None);
+                cx.drop_image(image, Some(window));
             }
             image_data.remove_asset(cx);
         })
@@ -174,24 +174,28 @@ impl Item for ImageView {
         }])
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self {
+        Task::ready(Some(cx.new(|cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
-        }))
+        })))
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
-        self.image_item.read(cx).file.disk_state() == DiskState::Deleted
+        self.image_item.read(cx).file.disk_state().is_deleted()
     }
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
         workspace::item::ItemBufferKind::Singleton
@@ -230,10 +234,10 @@ impl SerializableItem for ImageView {
             let (worktree, relative_path) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(image_path.clone(), false, cx)
-                })?
+                })
                 .await
                 .context("Path not found")?;
-            let worktree_id = worktree.update(cx, |worktree, _cx| worktree.id())?;
+            let worktree_id = worktree.update(cx, |worktree, _cx| worktree.id());
 
             let project_path = ProjectPath {
                 worktree_id,
@@ -241,7 +245,7 @@ impl SerializableItem for ImageView {
             };
 
             let image_item = project
-                .update(cx, |project, cx| project.open_image(project_path, cx))?
+                .update(cx, |project, cx| project.open_image(project_path, cx))
                 .await?;
 
             cx.update(
@@ -408,7 +412,6 @@ impl ProjectItem for ImageView {
 }
 
 pub fn init(cx: &mut App) {
-    ImageViewerSettings::register(cx);
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
 }

@@ -36,7 +36,7 @@
   "#ifndef"
   "#include"
   (preproc_directive)
-] @keyword
+] @keyword.directive
 
 [
   "="
@@ -97,6 +97,8 @@
   (system_lib_string)
   (char_literal)
 ] @string
+
+(escape_sequence) @string.escape
 
 (comment) @comment
 

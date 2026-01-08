@@ -13,3 +13,8 @@
 {"Put":{"state":"<a>\n    <br\n        test = \"test\"\n    /ˇ>\n</a>"}}
 {"Key":"%"}
 {"Get":{"state":"<a>\n    ˇ<br\n        test = \"test\"\n    />\n</a>","mode":"Normal"}}
+{"Put":{"state":"<html>\n    <bˇody>\n    </body>\n</html>"}}
+{"Key":"%"}
+{"Get":{"state":"<html>\n    <body>\n    <ˇ/body>\n</html>","mode":"Normal"}}
+{"Key":"%"}
+{"Get":{"state":"<html>\n    <ˇbody>\n    </body>\n</html>","mode":"Normal"}}

@@ -2,9 +2,9 @@ use collections::HashMap;
 
 use editor::EditorSettings;
 use gpui::App;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, RegisterSetting)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
 }

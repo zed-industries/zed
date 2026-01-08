@@ -2,7 +2,7 @@ mod persistence;
 
 use std::{
     cmp::{self, Reverse},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::Arc,
     time::Duration,
 };
@@ -19,16 +19,16 @@ use gpui::{
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use persistence::COMMAND_PALETTE_HISTORY;
+use picker::Direction;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
-    client::init_settings(cx);
     command_palette_hooks::init(cx);
     cx.observe_new(CommandPalette::register).detach();
 }
@@ -143,7 +143,7 @@ impl Focusable for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
             .w(rems(34.))
@@ -164,11 +164,97 @@ pub struct CommandPaletteDelegate {
         Task<()>,
         postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, CommandInterceptResult)>,
     )>,
+    query_history: QueryHistory,
 }
 
 struct Command {
     name: String,
     action: Box<dyn Action>,
+}
+
+#[derive(Default)]
+struct QueryHistory {
+    history: Option<VecDeque<String>>,
+    cursor: Option<usize>,
+    prefix: Option<String>,
+}
+
+impl QueryHistory {
+    fn history(&mut self) -> &mut VecDeque<String> {
+        self.history.get_or_insert_with(|| {
+            COMMAND_PALETTE_HISTORY
+                .list_recent_queries()
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        })
+    }
+
+    fn add(&mut self, query: String) {
+        if let Some(pos) = self.history().iter().position(|h| h == &query) {
+            self.history().remove(pos);
+        }
+        self.history().push_back(query);
+        self.cursor = None;
+        self.prefix = None;
+    }
+
+    fn validate_cursor(&mut self, current_query: &str) -> Option<usize> {
+        if let Some(pos) = self.cursor {
+            if self.history().get(pos).map(|s| s.as_str()) != Some(current_query) {
+                self.cursor = None;
+                self.prefix = None;
+            }
+        }
+        self.cursor
+    }
+
+    fn previous(&mut self, current_query: &str) -> Option<&str> {
+        if self.validate_cursor(current_query).is_none() {
+            self.prefix = Some(current_query.to_string());
+        }
+
+        let prefix = self.prefix.clone().unwrap_or_default();
+        let start_index = self.cursor.unwrap_or(self.history().len());
+
+        for i in (0..start_index).rev() {
+            if self
+                .history()
+                .get(i)
+                .is_some_and(|e| e.starts_with(&prefix))
+            {
+                self.cursor = Some(i);
+                return self.history().get(i).map(|s| s.as_str());
+            }
+        }
+        None
+    }
+
+    fn next(&mut self, current_query: &str) -> Option<&str> {
+        let selected = self.validate_cursor(current_query)?;
+        let prefix = self.prefix.clone().unwrap_or_default();
+
+        for i in (selected + 1)..self.history().len() {
+            if self
+                .history()
+                .get(i)
+                .is_some_and(|e| e.starts_with(&prefix))
+            {
+                self.cursor = Some(i);
+                return self.history().get(i).map(|s| s.as_str());
+            }
+        }
+        None
+    }
+
+    fn reset_cursor(&mut self) {
+        self.cursor = None;
+        self.prefix = None;
+    }
+
+    fn is_navigating(&self) -> bool {
+        self.cursor.is_some()
+    }
 }
 
 impl Clone for Command {
@@ -197,6 +283,7 @@ impl CommandPaletteDelegate {
             previous_focus_handle,
             latest_query: String::new(),
             updating_matches: None,
+            query_history: Default::default(),
         }
     }
 
@@ -261,6 +348,22 @@ impl CommandPaletteDelegate {
             HashMap::new()
         }
     }
+
+    fn selected_command(&self) -> Option<&Command> {
+        let action_ix = self
+            .matches
+            .get(self.selected_ix)
+            .map(|m| m.candidate_id)
+            .unwrap_or(self.selected_ix);
+        // this gets called in headless tests where there are no commands loaded
+        // so we need to return an Option here
+        self.commands.get(action_ix)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn seed_history(&mut self, queries: &[&str]) {
+        self.query_history.history = Some(queries.iter().map(|s| s.to_string()).collect());
+    }
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
@@ -268,6 +371,38 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
+    }
+
+    fn select_history(
+        &mut self,
+        direction: Direction,
+        query: &str,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<String> {
+        match direction {
+            Direction::Up => {
+                let should_use_history =
+                    self.selected_ix == 0 || self.query_history.is_navigating();
+                if should_use_history {
+                    if let Some(query) = self.query_history.previous(query).map(|s| s.to_string()) {
+                        return Some(query);
+                    }
+                }
+            }
+            Direction::Down => {
+                if self.query_history.is_navigating() {
+                    if let Some(query) = self.query_history.next(query).map(|s| s.to_string()) {
+                        return Some(query);
+                    } else {
+                        let prefix = self.query_history.prefix.take().unwrap_or_default();
+                        self.query_history.reset_cursor();
+                        return Some(prefix);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn match_count(&self) -> usize {
@@ -411,11 +546,30 @@ impl PickerDelegate for CommandPaletteDelegate {
             .log_err();
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if secondary {
+            let Some(selected_command) = self.selected_command() else {
+                return;
+            };
+            let action_name = selected_command.action.name();
+            let open_keymap = Box::new(zed_actions::ChangeKeybinding {
+                action: action_name.to_string(),
+            });
+            window.dispatch_action(open_keymap, cx);
+            self.dismissed(window, cx);
+            return;
+        }
+
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
         }
+
+        if !self.latest_query.is_empty() {
+            self.query_history.add(self.latest_query.clone());
+            self.query_history.reset_cursor();
+        }
+
         let action_ix = self.matches[self.selected_ix].candidate_id;
         let command = self.commands.swap_remove(action_ix);
         telemetry::event!(
@@ -434,7 +588,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         })
         .detach_and_log_err(cx);
         let action = command.action;
-        window.focus(&self.previous_focus_handle);
+        window.focus(&self.previous_focus_handle, cx);
         self.dismissed(window, cx);
         window.dispatch_action(action, cx);
     }
@@ -448,6 +602,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> Option<Self::ListItem> {
         let matching_command = self.matches.get(ix)?;
         let command = self.commands.get(matching_command.candidate_id)?;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -468,6 +623,59 @@ impl PickerDelegate for CommandPaletteDelegate {
                             cx,
                         )),
                 ),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let selected_command = self.selected_command()?;
+        let keybind =
+            KeyBinding::for_action_in(&*selected_command.action, &self.previous_focus_handle, cx);
+
+        let focus_handle = &self.previous_focus_handle;
+        let keybinding_buttons = if keybind.has_binding(window) {
+            Button::new("change", "Change Keybinding…")
+                .key_binding(
+                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        } else {
+            Button::new("add", "Add Keybinding…")
+                .key_binding(
+                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        };
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(keybinding_buttons)
+                .child(
+                    Button::new("run-action", "Run")
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .into_any(),
         )
     }
 }
@@ -511,7 +719,7 @@ mod tests {
     use super::*;
     use editor::Editor;
     use go_to_line::GoToLine;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use language::Point;
     use project::Project;
     use settings::KeymapFile;
@@ -576,7 +784,7 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
+            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
         });
 
         cx.simulate_keystrokes("cmd-shift-p");
@@ -647,7 +855,7 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
+            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
         });
 
         // Test normalize (trimming whitespace and double colons)
@@ -711,20 +919,20 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
-            Project::init_settings(cx);
             cx.bind_keys(KeymapFile::load_panic_on_failure(
                 r#"[
                     {
                         "bindings": {
                             "cmd-n": "workspace::NewFile",
                             "enter": "menu::Confirm",
-                            "cmd-shift-p": "command_palette::Toggle"
+                            "cmd-shift-p": "command_palette::Toggle",
+                            "up": "menu::SelectPrevious",
+                            "down": "menu::SelectNext"
                         }
                     }
                 ]"#,
@@ -732,5 +940,265 @@ mod tests {
             ));
             app_state
         })
+    }
+
+    fn open_palette_with_history(
+        workspace: &Entity<Workspace>,
+        history: &[&str],
+        cx: &mut VisualTestContext,
+    ) -> Entity<Picker<CommandPaletteDelegate>> {
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.run_until_parked();
+
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        palette.update(cx, |palette, _cx| {
+            palette.delegate.seed_history(history);
+        });
+
+        palette
+    }
+
+    #[gpui::test]
+    async fn test_history_navigation_basic(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let palette = open_palette_with_history(&workspace, &["backspace", "select all"], cx);
+
+        // Query should be empty initially
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "");
+        });
+
+        // Press up - should load most recent query "select all"
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "select all");
+        });
+
+        // Press up again - should load "backspace"
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "backspace");
+        });
+
+        // Press down - should go back to "select all"
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "select all");
+        });
+
+        // Press down again - should clear query (exit history mode)
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_mode_exit_on_typing(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let palette = open_palette_with_history(&workspace, &["backspace"], cx);
+
+        // Press up to enter history mode
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "backspace");
+        });
+
+        // Type something - should append to the history query
+        cx.simulate_input("x");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "backspacex");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_navigation_with_suggestions(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let palette = open_palette_with_history(&workspace, &["editor: close", "editor: open"], cx);
+
+        // Open palette with a query that has multiple matches
+        cx.simulate_input("editor");
+        cx.background_executor.run_until_parked();
+
+        // Should have multiple matches, selected_ix should be 0
+        palette.read_with(cx, |palette, _| {
+            assert!(palette.delegate.matches.len() > 1);
+            assert_eq!(palette.delegate.selected_ix, 0);
+        });
+
+        // Press down - should navigate to next suggestion (not history)
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, _| {
+            assert_eq!(palette.delegate.selected_ix, 1);
+        });
+
+        // Press up - should go back to first suggestion
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, _| {
+            assert_eq!(palette.delegate.selected_ix, 0);
+        });
+
+        // Press up again at top - should enter history mode and show previous query
+        // that matches the "editor" prefix
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "editor: open");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_prefix_search(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let palette = open_palette_with_history(
+            &workspace,
+            &["open file", "select all", "select line", "backspace"],
+            cx,
+        );
+
+        // Type "sel" as a prefix
+        cx.simulate_input("sel");
+        cx.background_executor.run_until_parked();
+
+        // Press up - should get "select line" (most recent matching "sel")
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "select line");
+        });
+
+        // Press up again - should get "select all" (next matching "sel")
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "select all");
+        });
+
+        // Press up again - should stay at "select all" (no more matches for "sel")
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "select all");
+        });
+
+        // Press down - should go back to "select line"
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "select line");
+        });
+
+        // Press down again - should return to original prefix "sel"
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "sel");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_prefix_search_no_matches(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let palette =
+            open_palette_with_history(&workspace, &["open file", "backspace", "select all"], cx);
+
+        // Type "xyz" as a prefix that doesn't match anything
+        cx.simulate_input("xyz");
+        cx.background_executor.run_until_parked();
+
+        // Press up - should stay at "xyz" (no matches)
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "xyz");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_empty_prefix_searches_all(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let palette = open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);
+
+        // With empty query, press up - should get "gamma" (most recent)
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "gamma");
+        });
+
+        // Press up - should get "beta"
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "beta");
+        });
+
+        // Press up - should get "alpha"
+        cx.simulate_keystrokes("up");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "alpha");
+        });
+
+        // Press down - should get "beta"
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "beta");
+        });
+
+        // Press down - should get "gamma"
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "gamma");
+        });
+
+        // Press down - should return to empty string (exit history mode)
+        cx.simulate_keystrokes("down");
+        cx.background_executor.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert_eq!(palette.query(cx), "");
+        });
     }
 }

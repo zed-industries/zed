@@ -3,6 +3,8 @@ use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
+
+#[cfg(not(target_os = "windows"))]
 use smol::process::Command;
 
 #[cfg(target_os = "macos")]
@@ -51,11 +53,13 @@ pub async fn init(crash_init: InitCrashHandler) {
                 unsafe { env::set_var("RUST_BACKTRACE", "1") };
                 old_hook(info);
                 // prevent the macOS crash dialog from popping up
-                std::process::exit(1);
+                if cfg!(target_os = "macos") {
+                    std::process::exit(1);
+                }
             }));
             return;
         }
-        (Some(true), _) | (None, _) => {
+        _ => {
             panic::set_hook(Box::new(panic_hook));
         }
     }
@@ -68,11 +72,16 @@ pub async fn init(crash_init: InitCrashHandler) {
     // used by the crash handler isn't destroyed correctly which causes it to stay on the file
     // system and block further attempts to initialize crash handlers with that socket path.
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
+    #[cfg(not(target_os = "windows"))]
     let _crash_handler = Command::new(exe)
         .arg("--crash-handler")
         .arg(&socket_name)
         .spawn()
         .expect("unable to spawn server process");
+
+    #[cfg(target_os = "windows")]
+    spawn_crash_handler_windows(&exe, &socket_name);
+
     #[cfg(target_os = "linux")]
     let server_pid = _crash_handler.id();
     info!("spawning crash handler process");
@@ -265,9 +274,10 @@ impl minidumper::ServerHandler for CrashServer {
             3 => {
                 let gpu_specs: system_specs::GpuSpecs =
                     bincode::deserialize(&buffer).expect("gpu specs");
-                self.active_gpu
-                    .set(gpu_specs)
-                    .expect("already set active gpu");
+                // we ignore the case where it was already set because this message is sent
+                // on each new window. in theory all zed windows should be using the same
+                // GPU so this is fine.
+                self.active_gpu.set(gpu_specs).ok();
             }
             _ => {
                 panic!("invalid message kind");
@@ -288,26 +298,29 @@ impl minidumper::ServerHandler for CrashServer {
 pub fn panic_hook(info: &PanicHookInfo) {
     // Don't handle a panic on threads that are not relevant to the main execution.
     if extension_host::wasm_host::IS_WASM_THREAD.with(|v| v.load(Ordering::Acquire)) {
+        log::error!("wasm thread panicked!");
         return;
     }
 
-    let message = info
-        .payload()
-        .downcast_ref::<&str>()
-        .map(|s| s.to_string())
-        .or_else(|| info.payload().downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "Box<Any>".to_string());
+    let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
 
     let span = info
         .location()
         .map(|loc| format!("{}:{}", loc.file(), loc.line()))
         .unwrap_or_default();
 
+    let current_thread = std::thread::current();
+    let thread_name = current_thread.name().unwrap_or("<unnamed>");
+
     // wait 500ms for the crash handler process to start up
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);
     for _ in 0..5 {
         if let Some(client) = CRASH_HANDLER.get() {
+            let location = info
+                .location()
+                .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+            log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
             client
                 .send_message(
                     2,
@@ -333,6 +346,57 @@ pub fn panic_hook(info: &PanicHookInfo) {
             }
         }
         thread::sleep(retry_frequency);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
+    use std::ffi::OsStr;
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Threading::{
+        CreateProcessW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTF_FORCEOFFFEEDBACK,
+        STARTUPINFOW,
+    };
+    use windows::core::PWSTR;
+
+    let mut command_line: Vec<u16> = OsStr::new(&format!(
+        "\"{}\" --crash-handler \"{}\"",
+        exe.display(),
+        socket_name.display()
+    ))
+    .encode_wide()
+    .chain(once(0))
+    .collect();
+
+    let mut startup_info = STARTUPINFOW::default();
+    startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+    // By default, Windows enables a "busy" cursor when a GUI application is launched.
+    // This cursor is disabled once the application starts processing window messages.
+    // Since the crash handler process doesn't process messages, this "busy" cursor stays enabled for a long time.
+    // Disable the cursor feedback to prevent this from happening.
+    startup_info.dwFlags = STARTF_FORCEOFFFEEDBACK;
+
+    let mut process_info = PROCESS_INFORMATION::default();
+
+    unsafe {
+        CreateProcessW(
+            None,
+            Some(PWSTR(command_line.as_mut_ptr())),
+            None,
+            None,
+            false,
+            PROCESS_CREATION_FLAGS(0),
+            None,
+            None,
+            &startup_info,
+            &mut process_info,
+        )
+        .expect("unable to spawn server process");
+
+        windows::Win32::Foundation::CloseHandle(process_info.hProcess).ok();
+        windows::Win32::Foundation::CloseHandle(process_info.hThread).ok();
     }
 }
 

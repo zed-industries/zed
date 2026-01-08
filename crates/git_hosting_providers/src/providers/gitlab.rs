@@ -1,7 +1,13 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
+use async_trait::async_trait;
+use futures::AsyncReadExt;
+use gpui::SharedString;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
+use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -9,6 +15,16 @@ use git::{
 };
 
 use crate::get_host_from_git_remote_url;
+
+#[derive(Debug, Deserialize)]
+struct CommitDetails {
+    author_email: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AvatarInfo {
+    avatar_url: String,
+}
 
 #[derive(Debug)]
 pub struct Gitlab {
@@ -46,8 +62,79 @@ impl Gitlab {
             Url::parse(&format!("https://{}", host))?,
         ))
     }
+
+    async fn fetch_gitlab_commit_author(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Option<AvatarInfo>> {
+        let Some(host) = self.base_url.host_str() else {
+            bail!("failed to get host from gitlab base url");
+        };
+        let project_path = format!("{}/{}", repo_owner, repo);
+        let project_path_encoded = urlencoding::encode(&project_path);
+        let url = format!(
+            "https://{host}/api/v4/projects/{project_path_encoded}/repository/commits/{commit}"
+        );
+
+        let request = Request::get(&url)
+            .header("Content-Type", "application/json")
+            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+
+        let mut response = client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("error fetching GitLab commit details at {:?}", url))?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        let body_str = std::str::from_utf8(&body)?;
+
+        let author_email = serde_json::from_str::<CommitDetails>(body_str)
+            .map(|commit| commit.author_email)
+            .context("failed to deserialize GitLab commit details")?;
+
+        let avatar_info_url = format!("https://{host}/api/v4/avatar?email={author_email}");
+
+        let request = Request::get(&avatar_info_url)
+            .header("Content-Type", "application/json")
+            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+
+        let mut response = client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("error fetching GitLab avatar info at {:?}", url))?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        let body_str = std::str::from_utf8(&body)?;
+
+        serde_json::from_str::<Option<AvatarInfo>>(body_str)
+            .context("failed to deserialize GitLab avatar info")
+    }
 }
 
+#[async_trait]
 impl GitHostingProvider for Gitlab {
     fn name(&self) -> String {
         self.name.clone()
@@ -58,7 +145,7 @@ impl GitHostingProvider for Gitlab {
     }
 
     fn supports_avatars(&self) -> bool {
-        false
+        true
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -122,6 +209,58 @@ impl GitHostingProvider for Gitlab {
         );
         permalink
     }
+
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let mut url = self
+            .base_url()
+            .join(&format!(
+                "{}/{}/-/merge_requests/new",
+                remote.owner, remote.repo
+            ))
+            .ok()?;
+
+        let query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
+
+        url.set_query(Some(&query));
+        Some(url)
+    }
+
+    async fn commit_author_avatar_url(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: SharedString,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        let commit = commit.to_string();
+        let avatar_url = self
+            .fetch_gitlab_commit_author(repo_owner, repo, &commit, &http_client)
+            .await?
+            .map(|author| -> Result<Url, url::ParseError> {
+                let mut url = Url::parse(&author.avatar_url)?;
+                if let Some(host) = url.host_str() {
+                    let size_query = if host.contains("gravatar") || host.contains("libravatar") {
+                        Some("s=128")
+                    } else if self
+                        .base_url
+                        .host_str()
+                        .is_some_and(|base_host| host.contains(base_host))
+                    {
+                        Some("width=128")
+                    } else {
+                        None
+                    };
+                    url.set_query(size_query);
+                }
+                Ok(url)
+            })
+            .transpose()?;
+        Ok(avatar_url)
+    }
 }
 
 #[cfg(test)]
@@ -134,8 +273,8 @@ mod tests {
     #[test]
     fn test_invalid_self_hosted_remote_url() {
         let remote_url = "https://gitlab.com/zed-industries/zed.git";
-        let github = Gitlab::from_remote_url(remote_url);
-        assert!(github.is_err());
+        let gitlab = Gitlab::from_remote_url(remote_url);
+        assert!(gitlab.is_err());
     }
 
     #[test]
@@ -258,6 +397,25 @@ mod tests {
     }
 
     #[test]
+    fn test_build_gitlab_create_pr_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        let url = provider
+            .build_create_pull_request_url(&remote, "feature/cool stuff")
+            .expect("create PR url should be constructed");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff"
+        );
+    }
+
+    #[test]
     fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
         let gitlab =
             Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
@@ -297,5 +455,34 @@ mod tests {
 
         let expected_url = "https://gitlab-instance.big-co.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let github = Gitlab::public_instance();
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew-feature"
+        );
+
+        let base_url = Url::parse("https://gitlab.zed.com").unwrap();
+        let github = Gitlab::new("GitLab Self-Hosted", base_url);
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.zed.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew-feature"
+        );
     }
 }

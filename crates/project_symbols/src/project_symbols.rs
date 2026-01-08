@@ -133,8 +133,9 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         workspace.active_pane().clone()
                     };
 
-                    let editor =
-                        workspace.open_project_item::<Editor>(pane, buffer, true, true, window, cx);
+                    let editor = workspace.open_project_item::<Editor>(
+                        pane, buffer, true, true, true, true, window, cx,
+                    );
 
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(
@@ -224,7 +225,9 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let path_style = self.project.read(cx).path_style(cx);
         let string_match = &self.matches.get(ix)?;
         let symbol = &self.symbols.get(string_match.candidate_id)?;
-        let syntax_runs = styled_runs_for_code_label(&symbol.label, cx.theme().syntax());
+        let theme = cx.theme();
+        let local_player = theme.players().local();
+        let syntax_runs = styled_runs_for_code_label(&symbol.label, theme.syntax(), &local_player);
 
         let path = match &symbol.path {
             SymbolLocation::InProject(project_path) => {
@@ -289,7 +292,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{SemanticVersion, TestAppContext, VisualContext};
+    use gpui::{TestAppContext, VisualContext};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
     use lsp::OneOf;
     use project::FakeFs;
@@ -438,10 +441,7 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
             editor::init(cx);
         });
     }

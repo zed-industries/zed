@@ -362,8 +362,8 @@ fn possible_open_target(
     cx.spawn(async move |cx| {
         background_fs_checks_task.await.or_else(|| {
             for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-                let found_entry = worktree
-                    .update(cx, |worktree, _| -> Option<OpenTarget> {
+                if let Some(found_entry) =
+                    worktree.update(cx, |worktree, _| -> Option<OpenTarget> {
                         let traversal =
                             worktree.traverse_from_path(true, true, false, RelPath::empty());
                         for entry in traversal {
@@ -387,8 +387,7 @@ fn possible_open_target(
                         }
                         None
                     })
-                    .ok()?;
-                if let Some(found_entry) = found_entry {
+                {
                     return Some(found_entry);
                 }
             }
@@ -534,10 +533,7 @@ mod tests {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
 
         app_cx.update(|cx| {
-            terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init_settings(cx);
-            language::init(cx);
             editor::init(cx);
         });
 

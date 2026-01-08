@@ -53,7 +53,7 @@ If instead you wanted to restrict yourself only to [Zed Language-Specific Docume
 
 ### Implicit Wildcards
 
-When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
+When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
 
 Alternatively, if in your Zed settings you wanted a [`file_types`](./configuring-zed.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as Jinja2 template you could use the following:
 

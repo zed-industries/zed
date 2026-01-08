@@ -2,17 +2,17 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Point, Stateful,
-    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point,
+    Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
 use crate::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
-    StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex, px,
-    single_example, v_flex,
+    ScrollAxes, ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled,
+    StyledExt as _, StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex,
+    px, single_example, v_flex,
 };
 use itertools::intersperse_with;
 
@@ -22,14 +22,23 @@ const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 struct DraggedColumn(usize);
 
 struct UniformListData<const COLS: usize> {
-    render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
+    render_list_of_rows_fn:
+        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
     element_id: ElementId,
+    row_count: usize,
+}
+
+struct VariableRowHeightListData<const COLS: usize> {
+    /// Unlike UniformList, this closure renders only single row, allowing each one to have its own height
+    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
+    list_state: ListState,
     row_count: usize,
 }
 
 enum TableContents<const COLS: usize> {
     Vec(Vec<[AnyElement; COLS]>),
     UniformList(UniformListData<COLS>),
+    VariableRowHeightList(VariableRowHeightListData<COLS>),
 }
 
 impl<const COLS: usize> TableContents<COLS> {
@@ -37,6 +46,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => Some(rows),
             TableContents::UniformList(_) => None,
+            TableContents::VariableRowHeightList(_) => None,
         }
     }
 
@@ -44,6 +54,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => rows.len(),
             TableContents::UniformList(data) => data.row_count,
+            TableContents::VariableRowHeightList(data) => data.row_count,
         }
     }
 
@@ -485,6 +496,7 @@ pub struct Table<const COLS: usize = 3> {
     interaction_state: Option<WeakEntity<TableInteractionState>>,
     col_widths: Option<TableWidths<COLS>>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
 }
 
@@ -498,6 +510,7 @@ impl<const COLS: usize> Table<COLS> {
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
             map_row: None,
+            use_ui_font: true,
             empty_table_callback: None,
             col_widths: None,
         }
@@ -517,7 +530,30 @@ impl<const COLS: usize> Table<COLS> {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
             row_count,
-            render_item_fn: Box::new(render_item_fn),
+            render_list_of_rows_fn: Box::new(render_item_fn),
+        });
+        self
+    }
+
+    /// Enables rendering of tables with variable row heights, allowing each row to have its own height.
+    ///
+    /// This mode is useful for displaying content such as CSV data or multiline cells, where rows may not have uniform heights.
+    /// It is generally slower than [`Table::uniform_list`] due to the need to measure each row individually, but it provides correct layout for non-uniform or multiline content.
+    ///
+    /// # Parameters
+    /// - `row_count`: The total number of rows in the table.
+    /// - `list_state`: The [`ListState`] used for managing scroll position and virtualization. This must be initialized and managed by the caller, and should be kept in sync with the number of rows.
+    /// - `render_row_fn`: A closure that renders a single row, given the row index, a mutable reference to [`Window`], and a mutable reference to [`App`]. It should return an array of [`AnyElement`]s, one for each column.
+    pub fn variable_row_height_list(
+        mut self,
+        row_count: usize,
+        list_state: ListState,
+        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
+    ) -> Self {
+        self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
+            render_row_fn: Box::new(render_row_fn),
+            list_state,
+            row_count,
         });
         self
     }
@@ -590,6 +626,11 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
+    pub fn no_ui_font(mut self) -> Self {
+        self.use_ui_font = false;
+        self
+    }
+
     pub fn map_row(
         mut self,
         callback: impl Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement + 'static,
@@ -618,8 +659,8 @@ fn base_cell_style(width: Option<Length>) -> Div {
         .overflow_hidden()
 }
 
-fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
-    base_cell_style(width).text_ui(cx)
+fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> Div {
+    base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
 pub fn render_table_row<const COLS: usize>(
@@ -640,12 +681,15 @@ pub fn render_table_row<const COLS: usize>(
         .column_widths
         .map_or([None; COLS], |widths| widths.map(Some));
 
-    let mut row = h_flex()
-        .h_full()
+    let mut row = div()
+        // NOTE: `h_flex()` sneakily applies `items_center()` which is not default behavior for div element.
+        // Applying `.flex().flex_row()` manually to overcome that
+        .flex()
+        .flex_row()
         .id(("table_row", row_index))
-        .w_full()
-        .justify_between()
+        .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
+        .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
         .when(!is_striped, |row| {
             row.border_b_1()
                 .border_color(transparent_black())
@@ -657,7 +701,12 @@ pub fn render_table_row<const COLS: usize>(
             .map(IntoElement::into_any_element)
             .into_iter()
             .zip(column_widths)
-            .map(|(cell, width)| base_cell_style_text(width, cx).px_1().py_0p5().child(cell)),
+            .map(|(cell, width)| {
+                base_cell_style_text(width, table_context.use_ui_font, cx)
+                    .px_1()
+                    .py_0p5()
+                    .child(cell)
+            }),
     );
 
     let row = if let Some(map_row) = table_context.map_row {
@@ -701,7 +750,7 @@ pub fn render_table_header<const COLS: usize>(
         .border_color(cx.theme().colors().border)
         .children(headers.into_iter().enumerate().zip(column_widths).map(
             |((header_idx, h), width)| {
-                base_cell_style_text(width, cx)
+                base_cell_style_text(width, table_context.use_ui_font, cx)
                     .child(h)
                     .id(ElementId::NamedInteger(
                         shared_element_id.clone(),
@@ -740,6 +789,7 @@ pub struct TableRenderContext<const COLS: usize> {
     pub total_row_count: usize,
     pub column_widths: Option<[Length; COLS]>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    pub use_ui_font: bool,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -749,6 +799,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             total_row_count: table.rows.len(),
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
+            use_ui_font: table.use_ui_font,
         }
     }
 }
@@ -842,7 +893,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 uniform_list_data.element_id,
                                 uniform_list_data.row_count,
                                 {
-                                    let render_item_fn = uniform_list_data.render_item_fn;
+                                    let render_item_fn = uniform_list_data.render_list_of_rows_fn;
                                     move |range: Range<usize>, window, cx| {
                                         let elements = render_item_fn(range.clone(), window, cx);
                                         elements
@@ -873,10 +924,28 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 interaction_state.as_ref(),
                                 |this, state| {
                                     this.track_scroll(
-                                        state.read_with(cx, |s, _| s.scroll_handle.clone()),
+                                        &state.read_with(cx, |s, _| s.scroll_handle.clone()),
                                     )
                                 },
                             ),
+                        ),
+                        TableContents::VariableRowHeightList(variable_list_data) => parent.child(
+                            list(variable_list_data.list_state.clone(), {
+                                let render_item_fn = variable_list_data.render_row_fn;
+                                move |row_index: usize, window: &mut Window, cx: &mut App| {
+                                    let row = render_item_fn(row_index, window, cx);
+                                    render_table_row(
+                                        row_index,
+                                        row,
+                                        table_context.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .size_full()
+                            .flex_grow()
+                            .with_sizing_behavior(ListSizingBehavior::Auto),
                         ),
                     })
                     .when_some(
@@ -904,10 +973,10 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         .read(cx)
                         .custom_scrollbar
                         .clone()
-                        .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
+                        .unwrap_or_else(|| Scrollbars::new(ScrollAxes::Both));
                     content
                         .custom_scrollbars(
-                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            scrollbars.tracked_scroll_handle(&state.read(cx).scroll_handle),
                             window,
                             cx,
                         )

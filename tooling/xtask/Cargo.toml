@@ -10,9 +10,14 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+backtrace.workspace = true
 cargo_metadata.workspace = true
 cargo_toml.workspace = true
 clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 indoc.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 toml_edit.workspace = true
+gh-workflow.workspace = true

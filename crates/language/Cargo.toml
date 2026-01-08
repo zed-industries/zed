@@ -20,8 +20,8 @@ test-support = [
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-python",
-    "tree-sitter-rust",
     "tree-sitter-typescript",
+    "tree-sitter-md",
     "settings/test-support",
     "util/test-support",
 ]
@@ -32,6 +32,7 @@ async-trait.workspace = true
 clock.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
+encoding_rs.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -48,6 +49,7 @@ rand = { workspace = true, optional = true }
 regex.workspace = true
 rpc.workspace = true
 schemars.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -60,6 +62,7 @@ sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }

@@ -22,7 +22,6 @@ pub fn main() {
     Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        language::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = NodeRuntime::unavailable();
@@ -55,11 +54,11 @@ impl Render for HelloWorld {
                 ..Default::default()
             },
             code_block: StyleRefinement {
-                text: Some(gpui::TextStyleRefinement {
+                text: gpui::TextStyleRefinement {
                     font_family: Some("Zed Mono".into()),
                     background_color: Some(cx.theme().colors().editor_background),
                     ..Default::default()
-                }),
+                },
                 margin: gpui::EdgesRefinement {
                     top: Some(Length::Definite(rems(4.).into())),
                     left: Some(Length::Definite(rems(4.).into())),

@@ -197,8 +197,17 @@ impl TerminalOutput {
         }
     }
 
-    fn full_text(&self) -> String {
-        let mut full_text = String::new();
+    pub fn full_text(&self) -> String {
+        fn sanitize(mut line: String) -> Option<String> {
+            line.retain(|ch| ch != '\u{0}' && ch != '\r');
+            if line.trim().is_empty() {
+                return None;
+            }
+            let trimmed = line.trim_end_matches([' ', '\t']);
+            Some(trimmed.to_owned())
+        }
+
+        let mut lines = Vec::new();
 
         // Get the total number of lines, including history
         let total_lines = self.handler.grid().total_lines();
@@ -210,11 +219,8 @@ impl TerminalOutput {
             let line_index = Line(-(line as i32) - 1);
             let start = Point::new(line_index, Column(0));
             let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            let line_content = self.handler.bounds_to_string(start, end);
-
-            if !line_content.trim().is_empty() {
-                full_text.push_str(&line_content);
-                full_text.push('\n');
+            if let Some(cleaned) = sanitize(self.handler.bounds_to_string(start, end)) {
+                lines.push(cleaned);
             }
         }
 
@@ -223,15 +229,18 @@ impl TerminalOutput {
             let line_index = Line(line as i32);
             let start = Point::new(line_index, Column(0));
             let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            let line_content = self.handler.bounds_to_string(start, end);
-
-            if !line_content.trim().is_empty() {
-                full_text.push_str(&line_content);
-                full_text.push('\n');
+            if let Some(cleaned) = sanitize(self.handler.bounds_to_string(start, end)) {
+                lines.push(cleaned);
             }
         }
 
-        full_text
+        if lines.is_empty() {
+            String::new()
+        } else {
+            let mut full_text = lines.join("\n");
+            full_text.push('\n');
+            full_text
+        }
     }
 }
 

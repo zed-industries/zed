@@ -15,14 +15,9 @@ pub use settings::{
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{Settings, SettingsLocation, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-
-/// Initializes the language settings.
-pub fn init(cx: &mut App) {
-    AllLanguageSettings::register(cx);
-}
 
 /// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
@@ -50,23 +45,23 @@ pub fn all_language_settings<'a>(
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RegisterSetting)]
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WhitespaceMap {
     pub space: SharedString,
     pub tab: SharedString,
 }
 
 /// The settings for a particular language.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LanguageSettings {
     /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
@@ -127,6 +122,10 @@ pub struct LanguageSettings {
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Whether to continue markdown lists when pressing enter.
+    pub extend_list_on_newline: bool,
+    /// Whether to indent list items when pressing tab after a list marker.
+    pub indent_list_on_tab: bool,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
@@ -158,9 +157,18 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: `true`
+    pub word_diff_enabled: bool,
+    /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
+    pub colorize_brackets: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompletionSettings {
     /// Controls how words are completed.
     /// For large documents, not all words may be fetched for completion.
@@ -212,7 +220,7 @@ pub struct IndentGuideSettings {
     pub background_coloring: settings::IndentGuideBackgroundColoring,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LanguageTaskSettings {
     /// Extra task variables to set for a particular language.
     pub variables: HashMap<String, String>,
@@ -230,7 +238,7 @@ pub struct LanguageTaskSettings {
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PrettierSettings {
     /// Enables or disables formatting with Prettier for a given language.
     pub allowed: bool,
@@ -369,6 +377,8 @@ impl InlayHintSettings {
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
+    /// Whether to use the experimental edit prediction context retrieval system.
+    pub use_context: bool,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
@@ -382,6 +392,8 @@ pub struct EditPredictionSettings {
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
+    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -420,6 +432,8 @@ pub struct CodestralSettings {
     pub model: Option<String>,
     /// Maximum tokens to generate.
     pub max_tokens: Option<u32>,
+    /// Custom API URL to use for Codestral.
+    pub api_url: Option<String>,
 }
 
 impl AllLanguageSettings {
@@ -559,6 +573,8 @@ impl settings::Settings for AllLanguageSettings {
                     tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
                 },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
+                extend_list_on_newline: settings.extend_list_on_newline.unwrap(),
+                indent_list_on_tab: settings.indent_list_on_tab.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
                     show_value_hints: inlay_hints.show_value_hints.unwrap(),
@@ -587,6 +603,7 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 show_completions_on_input: settings.show_completions_on_input.unwrap(),
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
+                colorize_brackets: settings.colorize_brackets.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
                     words_min_length: completions.words_min_length.unwrap() as usize,
@@ -595,6 +612,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
+                word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
 
@@ -614,6 +632,11 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
+        let use_edit_prediction_context = all_languages
+            .features
+            .as_ref()
+            .and_then(|f| f.experimental_edit_prediction_context_retrieval)
+            .unwrap_or_default();
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
@@ -636,11 +659,12 @@ impl settings::Settings for AllLanguageSettings {
         let codestral_settings = CodestralSettings {
             model: codestral.model,
             max_tokens: codestral.max_tokens,
+            api_url: codestral.api_url,
         };
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
-        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
             let mut builder = GlobSetBuilder::new();
@@ -649,7 +673,10 @@ impl settings::Settings for AllLanguageSettings {
                 builder.add(Glob::new(pattern).unwrap());
             }
 
-            file_types.insert(language.clone(), builder.build().unwrap());
+            file_types.insert(
+                language.clone(),
+                (builder.build().unwrap(), patterns.0.clone()),
+            );
         }
 
         Self {
@@ -659,6 +686,7 @@ impl settings::Settings for AllLanguageSettings {
                 } else {
                     EditPredictionProvider::None
                 },
+                use_context: use_edit_prediction_context,
                 disabled_globs: disabled_globs
                     .iter()
                     .filter_map(|g| {
@@ -673,6 +701,8 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
+                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

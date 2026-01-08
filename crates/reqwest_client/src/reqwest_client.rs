@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
-use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
+use std::{borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -80,20 +80,22 @@ impl ReqwestClient {
     }
 }
 
+pub fn runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            // Since we now have two executors, let's try to keep our footprint small
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("Failed to initialize HTTP client")
+    })
+}
+
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
         let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
             log::debug!("no tokio runtime found, creating one for Reqwest...");
-            let runtime = RUNTIME.get_or_init(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    // Since we now have two executors, let's try to keep our footprint small
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()
-                    .expect("Failed to initialize HTTP client")
-            });
-
-            runtime.handle().clone()
+            runtime().handle().clone()
         });
         Self {
             client,
@@ -215,10 +217,6 @@ impl http_client::HttpClient for ReqwestClient {
         self.proxy.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
-    }
-
     fn user_agent(&self) -> Option<&HeaderValue> {
         self.user_agent.as_ref()
     }
@@ -271,26 +269,6 @@ impl http_client::HttpClient for ReqwestClient {
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
-    }
-
-    fn send_multipart_form<'a>(
-        &'a self,
-        url: &str,
-        form: reqwest::multipart::Form,
-    ) -> futures::future::BoxFuture<'a, anyhow::Result<http_client::Response<http_client::AsyncBody>>>
-    {
-        let response = self.client.post(url).multipart(form).send();
-        self.handle
-            .spawn(async move {
-                let response = response.await?;
-                let mut builder = http::response::Builder::new().status(response.status());
-                for (k, v) in response.headers() {
-                    builder = builder.header(k, v)
-                }
-                Ok(builder.body(response.bytes().await?.into())?)
-            })
-            .map(|e| e?)
-            .boxed()
     }
 }
 

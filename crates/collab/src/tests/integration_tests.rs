@@ -2,7 +2,7 @@ use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
         RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
-        room_participants, rust_lang,
+        room_participants,
     },
 };
 use anyhow::{Result, anyhow};
@@ -26,7 +26,7 @@ use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{Formatter, FormatterList},
-    tree_sitter_rust, tree_sitter_typescript,
+    rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
@@ -2647,13 +2647,13 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_a.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2677,13 +2677,13 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2699,13 +2699,13 @@ async fn test_git_diff_base_change(
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(committed_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "TWO\n",
@@ -2731,13 +2731,13 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_a.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2746,13 +2746,13 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2760,13 +2760,13 @@ async fn test_git_diff_base_change(
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(new_committed_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "TWO_HUNDRED\n",
@@ -2813,13 +2813,13 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_b.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2842,11 +2842,11 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_b.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
             &staged_text,
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
@@ -2864,11 +2864,11 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_b.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
             &new_staged_text,
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
@@ -2878,11 +2878,11 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_b.read(cx);
         assert_eq!(
-            diff.base_text_string().as_deref(),
+            diff.base_text_string(cx).as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
-            diff.hunks_in_row_range(0..4, buffer, cx),
+            diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
             &new_staged_text,
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
@@ -5195,7 +5195,7 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Ok(result) = search_rx.recv().await {
+    while let Ok(result) = search_rx.rx.recv().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
@@ -6551,12 +6551,12 @@ async fn test_pane_split_left(cx: &mut TestAppContext) {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
     cx.simulate_keystrokes("cmd-k");
-    // sleep for longer than the timeout in keyboard shortcut handling
-    // to verify that it doesn't fire in this case.
+    // Sleep past the historical timeout to ensure the multi-stroke binding
+    // still fires now that unambiguous prefixes no longer auto-expire.
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.simulate_keystrokes("left");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 3);
     });
 }
 
@@ -6745,10 +6745,15 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Split pane to the right
-    pane.update(cx, |pane, cx| {
-        pane.split(workspace::SplitDirection::Right, cx);
+    pane.update_in(cx, |pane, window, cx| {
+        pane.split(
+            workspace::SplitDirection::Right,
+            workspace::SplitMode::default(),
+            window,
+            cx,
+        );
     });
-
+    cx.run_until_parked();
     let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     pane.update(cx, |pane, cx| {
@@ -7065,7 +7070,7 @@ async fn test_remote_git_branches(
     // Also try creating a new branch
     cx_b.update(|cx| {
         repo_b.update(cx, |repository, _cx| {
-            repository.create_branch("totally-new-branch".to_string())
+            repository.create_branch("totally-new-branch".to_string(), None)
         })
     })
     .await

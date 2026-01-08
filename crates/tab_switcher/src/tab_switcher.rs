@@ -23,9 +23,9 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    ModalView, Pane, SaveIntent, Workspace,
+    Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
     item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
-    pane::{Event as PaneEvent, render_item_indicator, tab_details},
+    pane::{render_item_indicator, tab_details},
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
@@ -155,9 +155,9 @@ impl TabSwitcher {
         Self {
             picker: cx.new(|cx| {
                 if is_global {
-                    Picker::uniform_list(delegate, window, cx)
+                    Picker::list(delegate, window, cx)
                 } else {
-                    Picker::nonsearchable_uniform_list(delegate, window, cx)
+                    Picker::nonsearchable_list(delegate, window, cx)
                 }
             }),
             init_modifiers,
@@ -322,7 +322,7 @@ impl TabSwitcherDelegate {
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
     ) -> Self {
-        Self::subscribe_to_updates(&pane, window, cx);
+        Self::subscribe_to_updates(&workspace, window, cx);
         Self {
             select_last,
             tab_switcher,
@@ -338,22 +338,36 @@ impl TabSwitcherDelegate {
     }
 
     fn subscribe_to_updates(
-        pane: &WeakEntity<Pane>,
+        workspace: &WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
     ) {
-        let Some(pane) = pane.upgrade() else {
+        let Some(workspace) = workspace.upgrade() else {
             return;
         };
-        cx.subscribe_in(&pane, window, |tab_switcher, _, event, window, cx| {
+        cx.subscribe_in(&workspace, window, |tab_switcher, _, event, window, cx| {
             match event {
-                PaneEvent::AddItem { .. }
-                | PaneEvent::RemovedItem { .. }
-                | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    let query = picker.query(cx);
-                    picker.delegate.update_matches(query, window, cx);
-                    cx.notify();
-                }),
+                WorkspaceEvent::ItemAdded { .. } | WorkspaceEvent::PaneRemoved => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+                        cx.notify();
+                    })
+                }
+                WorkspaceEvent::ItemRemoved { .. } => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+
+                        // When the Tab Switcher is being used and an item is
+                        // removed, there's a chance that the new selected index
+                        // will not match the actual tab that is now being displayed
+                        // by the pane, as such, the selected index needs to be
+                        // updated to match the pane's state.
+                        picker.delegate.sync_selected_index(cx);
+                        cx.notify();
+                    })
+                }
                 _ => {}
             };
         })
@@ -515,7 +529,9 @@ impl TabSwitcherDelegate {
         }
 
         if self.select_last {
-            return self.matches.len() - 1;
+            let item_index = self.matches.len() - 1;
+            self.set_selected_index(item_index, window, cx);
+            return item_index;
         }
 
         // This only runs when initially opening the picker
@@ -537,13 +553,42 @@ impl TabSwitcherDelegate {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
-        let Some(pane) = self.pane.upgrade() else {
+        let Some(pane) = tab_match.pane.upgrade() else {
             return;
         };
+
         pane.update(cx, |pane, cx| {
             pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, window, cx)
                 .detach_and_log_err(cx);
         });
+    }
+
+    /// Updates the selected index to ensure it matches the pane's active item,
+    /// as the pane's active item can be indirectly updated and this method
+    /// ensures that the picker can react to those changes.
+    fn sync_selected_index(&mut self, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
+        let item = if self.is_all_panes {
+            self.workspace
+                .read_with(cx, |workspace, cx| workspace.active_item(cx))
+        } else {
+            self.pane.read_with(cx, |pane, _cx| pane.active_item())
+        };
+
+        let Ok(Some(item)) = item else {
+            return;
+        };
+
+        let item_id = item.item_id();
+        let Some((index, _tab_match)) = self
+            .matches
+            .iter()
+            .enumerate()
+            .find(|(_index, tab_match)| tab_match.item.item_id() == item_id)
+        else {
+            return;
+        };
+
+        self.selected_index = index;
     }
 }
 

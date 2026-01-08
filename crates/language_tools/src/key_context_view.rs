@@ -1,6 +1,7 @@
 use gpui::{
     Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription, actions,
+    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription, Task,
+    actions,
 };
 use itertools::Itertools;
 use serde_json::json;
@@ -152,16 +153,20 @@ impl Item for KeyContextView {
         None
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| KeyContextView::new(window, cx)))
+        Task::ready(Some(cx.new(|cx| KeyContextView::new(window, cx))))
     }
 }
 

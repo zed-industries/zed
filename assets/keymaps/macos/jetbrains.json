@@ -5,14 +5,16 @@
       "cmd-}": "pane::ActivateNextItem",
       "cmd-0": "git_panel::ToggleFocus", // overrides `cmd-0` zoom reset
       "shift-escape": null, // Unmap workspace::zoom
+      "cmd-~": "git::Branch",
       "ctrl-f2": "debugger::Stop",
       "f6": "debugger::Pause",
       "f7": "debugger::StepInto",
       "f8": "debugger::StepOver",
       "shift-f8": "debugger::StepOut",
       "f9": "debugger::Continue",
-      "alt-shift-f9": "debugger::Start"
-    }
+      "shift-f9": "debugger::Start",
+      "alt-shift-f9": "debugger::Start",
+    },
   },
   {
     "context": "Editor",
@@ -45,7 +47,7 @@
       "alt-f7": "editor::FindAllReferences",
       "cmd-alt-f7": "editor::FindAllReferences",
       "cmd-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
-      "cmd-alt-b": "editor::GoToDefinitionSplit",
+      "cmd-alt-b": "editor::GoToImplementation",
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
@@ -58,24 +60,30 @@
       "cmd-shift-end": "editor::SelectToEnd",
       "ctrl-f8": "editor::ToggleBreakpoint",
       "ctrl-shift-f8": "editor::EditLogBreakpoint",
-      "cmd-shift-u": "editor::ToggleCase"
-    }
+      "cmd-shift-u": "editor::ToggleCase",
+    },
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
       "cmd-f12": "outline::Toggle",
       "cmd-r": ["buffer_search::Deploy", { "replace_enabled": true }],
-      "cmd-shift-o": "file_finder::Toggle",
       "cmd-l": "go_to_line::Toggle",
-      "alt-enter": "editor::ToggleCodeActions"
-    }
+      "cmd-e": "file_finder::Toggle",
+      "cmd-shift-o": "file_finder::Toggle",
+      "cmd-shift-n": "file_finder::Toggle",
+      "alt-enter": "editor::ToggleCodeActions",
+      "ctrl-space": "editor::ShowCompletions",
+      "cmd-j": "editor::Hover",
+      "cmd-p": "editor::ShowSignatureHelp",
+      "cmd-\\": "assistant::InlineAssist",
+    },
   },
   {
     "context": "BufferSearchBar",
     "bindings": {
-      "shift-enter": "search::SelectPreviousMatch"
-    }
+      "shift-enter": "search::SelectPreviousMatch",
+    },
   },
   {
     "context": "BufferSearchBar || ProjectSearchBar",
@@ -87,18 +95,22 @@
       "ctrl-alt-c": "search::ToggleCaseSensitive",
       "ctrl-alt-e": "search::ToggleSelection",
       "ctrl-alt-w": "search::ToggleWholeWord",
-      "ctrl-alt-x": "search::ToggleRegex"
-    }
+      "ctrl-alt-x": "search::ToggleRegex",
+    },
   },
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-shift-f12": "workspace::CloseAllDocks",
+      "cmd-shift-f12": "workspace::ToggleAllDocks",
       "cmd-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-alt-r": "task::Spawn",
+      "shift-f10": "task::Spawn",
+      "cmd-f5": "task::Rerun",
       "cmd-e": "file_finder::Toggle",
-      // "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "cmd-shift-o": "file_finder::Toggle",
+      "cmd-shift-n": "file_finder::Toggle",
+      "cmd-n": "project_symbols::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
       "cmd-alt-o": "project_symbols::Toggle", // JetBrains: Go to Symbol
@@ -106,8 +118,8 @@
       "cmd-1": "project_panel::ToggleFocus",
       "cmd-5": "debug_panel::ToggleFocus",
       "cmd-6": "diagnostics::Deploy",
-      "cmd-7": "outline_panel::ToggleFocus"
-    }
+      "cmd-7": "outline_panel::ToggleFocus",
+    },
   },
   {
     "context": "Pane", // this is to override the default Pane mappings to switch tabs
@@ -121,22 +133,24 @@
       "cmd-7": "outline_panel::ToggleFocus",
       "cmd-8": null, // Services (bottom dock)
       "cmd-9": null, // Git History (bottom dock)
-      "cmd-0": "git_panel::ToggleFocus"
-    }
+      "cmd-0": "git_panel::ToggleFocus",
+    },
   },
   {
     "context": "Workspace || Editor",
     "bindings": {
       "alt-f12": "terminal_panel::Toggle",
-      "cmd-shift-k": "git::Push"
-    }
+      "cmd-shift-k": "git::Push",
+    },
   },
   {
     "context": "Pane",
     "bindings": {
       "cmd-alt-left": "pane::GoBack",
-      "cmd-alt-right": "pane::GoForward"
-    }
+      "cmd-alt-right": "pane::GoForward",
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem",
+    },
   },
   {
     "context": "ProjectPanel",
@@ -147,8 +161,8 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
-      "shift-f6": "project_panel::Rename"
-    }
+      "shift-f6": "project_panel::Rename",
+    },
   },
   {
     "context": "Terminal",
@@ -158,8 +172,8 @@
       "cmd-up": "terminal::ScrollLineUp",
       "cmd-down": "terminal::ScrollLineDown",
       "shift-pageup": "terminal::ScrollPageUp",
-      "shift-pagedown": "terminal::ScrollPageDown"
-    }
+      "shift-pagedown": "terminal::ScrollPageDown",
+    },
   },
   { "context": "GitPanel", "bindings": { "cmd-0": "workspace::CloseActiveDock" } },
   { "context": "ProjectPanel", "bindings": { "cmd-1": "workspace::CloseActiveDock" } },
@@ -170,7 +184,7 @@
     "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
     "bindings": {
       "escape": "editor::ToggleFocus",
-      "shift-escape": "workspace::CloseActiveDock"
-    }
-  }
+      "shift-escape": "workspace::CloseActiveDock",
+    },
+  },
 ]

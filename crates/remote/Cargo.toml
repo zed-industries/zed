@@ -31,17 +31,17 @@ paths.workspace = true
 prost.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
+schemars.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-shlex.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 which.workspace = true
-
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

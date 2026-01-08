@@ -1,4 +1,8 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    ffi::{c_uint, c_void},
+    sync::Arc,
+};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
@@ -60,6 +64,7 @@ struct DirectWriteState {
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
     font_id_by_identifier: HashMap<FontIdentifier, FontId>,
+    system_subpixel_rendering: bool,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -199,6 +204,7 @@ impl DirectWriteTextSystem {
                 .CreateFontCollectionFromFontSet(&custom_font_set)?
         };
         let system_ui_font_name = get_system_ui_font_name();
+        let system_subpixel_rendering = get_system_subpixel_rendering();
 
         Ok(Self(RwLock::new(DirectWriteState {
             components,
@@ -208,11 +214,12 @@ impl DirectWriteTextSystem {
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
+            system_subpixel_rendering,
         })))
     }
 
-    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) {
-        self.0.write().handle_gpu_lost(directx_devices);
+    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
+        self.0.write().handle_gpu_lost(directx_devices)
     }
 }
 
@@ -231,7 +238,9 @@ impl PlatformTextSystem for DirectWriteTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let font_id = lock.select_font(font);
+            let font_id = lock
+                .select_font(font)
+                .with_context(|| format!("Failed to select font: {:?}", font))?;
             lock.font_selections.insert(font.clone(), font_id);
             Ok(font_id)
         }
@@ -277,6 +286,18 @@ impl PlatformTextSystem for DirectWriteTextSystem {
                 font_size,
                 ..Default::default()
             })
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        if self.0.read().system_subpixel_rendering {
+            TextRenderingMode::Subpixel
+        } else {
+            TextRenderingMode::Grayscale
+        }
     }
 }
 
@@ -457,7 +478,7 @@ impl DirectWriteState {
         }
     }
 
-    fn select_font(&mut self, target_font: &Font) -> FontId {
+    fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
             if target_font.family == ".SystemUIFont" {
                 let family = self.system_ui_font_name.clone();
@@ -468,7 +489,6 @@ impl DirectWriteState {
                     &target_font.features,
                     target_font.fallbacks.as_ref(),
                 )
-                .unwrap()
             } else {
                 let family = self.system_ui_font_name.clone();
                 self.find_font_id(
@@ -478,7 +498,7 @@ impl DirectWriteState {
                     &target_font.features,
                     target_font.fallbacks.as_ref(),
                 )
-                .unwrap_or_else(|| {
+                .or_else(|| {
                     #[cfg(any(test, feature = "test-support"))]
                     {
                         panic!("ERROR: {} font not found!", target_font.family);
@@ -494,7 +514,6 @@ impl DirectWriteState {
                             target_font.fallbacks.as_ref(),
                             true,
                         )
-                        .unwrap()
                     }
                 })
             }
@@ -608,6 +627,7 @@ impl DirectWriteState {
             let mut first_run = true;
             let mut ascent = Pixels::default();
             let mut descent = Pixels::default();
+            let mut break_ligatures = false;
             for run in font_runs {
                 if first_run {
                     first_run = false;
@@ -616,6 +636,7 @@ impl DirectWriteState {
                     text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
                     ascent = px(metrics[0].baseline);
                     descent = px(metrics[0].height - metrics[0].baseline);
+                    break_ligatures = !break_ligatures;
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
@@ -636,10 +657,17 @@ impl DirectWriteState {
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
-                text_layout.SetFontSize(font_size.0, text_range)?;
+                let font_size = if break_ligatures {
+                    font_size.0.next_up()
+                } else {
+                    font_size.0
+                };
+                text_layout.SetFontSize(font_size, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
+
+                break_ligatures = !break_ligatures;
             }
 
             let mut runs = Vec::new();
@@ -750,6 +778,12 @@ impl DirectWriteState {
             m => m,
         };
 
+        let antialias_mode = if params.subpixel_rendering {
+            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE
+        } else {
+            DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE
+        };
+
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
                 &glyph_run,
@@ -757,7 +791,7 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
-                DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                antialias_mode,
                 baseline_origin_x,
                 baseline_origin_y,
             )
@@ -768,7 +802,13 @@ impl DirectWriteState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
+        let texture_type = if params.subpixel_rendering {
+            DWRITE_TEXTURE_CLEARTYPE_3x1
+        } else {
+            DWRITE_TEXTURE_ALIASED_1x1
+        };
+
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
 
         if bounds.right < bounds.left {
             Ok(Bounds {
@@ -830,21 +870,62 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
-        let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
+        if !params.subpixel_rendering {
+            let mut bitmap_data =
+                vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
+
+            let glyph_analysis = self.create_glyph_run_analysis(params)?;
+            unsafe {
+                glyph_analysis.CreateAlphaTexture(
+                    DWRITE_TEXTURE_ALIASED_1x1,
+                    &RECT {
+                        left: glyph_bounds.origin.x.0,
+                        top: glyph_bounds.origin.y.0,
+                        right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
+                        bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
+                    },
+                    &mut bitmap_data,
+                )?;
+            }
+
+            return Ok(bitmap_data);
+        }
+
+        let width = glyph_bounds.size.width.0 as usize;
+        let height = glyph_bounds.size.height.0 as usize;
+        let pixel_count = width * height;
+
+        let mut bitmap_data = vec![0u8; pixel_count * 4];
 
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
-                DWRITE_TEXTURE_ALIASED_1x1,
+                DWRITE_TEXTURE_CLEARTYPE_3x1,
                 &RECT {
                     left: glyph_bounds.origin.x.0,
                     top: glyph_bounds.origin.y.0,
                     right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
                     bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
                 },
-                &mut bitmap_data,
+                &mut bitmap_data[..pixel_count * 3],
             )?;
+        }
+
+        // The output buffer expects RGBA data, so pad the alpha channel with zeros.
+        for pixel_ix in (0..pixel_count).rev() {
+            let src = pixel_ix * 3;
+            let dst = pixel_ix * 4;
+            (
+                bitmap_data[dst],
+                bitmap_data[dst + 1],
+                bitmap_data[dst + 2],
+                bitmap_data[dst + 3],
+            ) = (
+                bitmap_data[src],
+                bitmap_data[src + 1],
+                bitmap_data[src + 2],
+                0,
+            );
         }
 
         Ok(bitmap_data)
@@ -1067,6 +1148,7 @@ impl DirectWriteState {
         let crate::FontInfo {
             gamma_ratios,
             grayscale_enhanced_contrast,
+            ..
         } = DirectXRenderer::get_font_info();
 
         for layer in glyph_layers {
@@ -1215,18 +1297,11 @@ impl DirectWriteState {
         result
     }
 
-    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) {
-        try_to_recover_from_device_lost(
-            || GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite"),
-            |gpu_state| self.components.gpu_state = gpu_state,
-            || {
-                log::error!(
-                    "Failed to recreate GPU state for DirectWrite after multiple attempts."
-                );
-                // Do something here?
-                // At this point, the device loss is considered unrecoverable.
-            },
-        );
+    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
+        try_to_recover_from_device_lost(|| {
+            GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
+        })
+        .map(|gpu_state| self.components.gpu_state = gpu_state)
     }
 }
 
@@ -1479,8 +1554,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             .get(&font_identifier)
         {
             *id
+        } else if let Some(id) = context.text_system.select_font(&font_struct) {
+            id
         } else {
-            context.text_system.select_font(&font_struct)
+            return Err(Error::new(DWRITE_E_NOFONT, "Failed to select font"));
         };
 
         let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };
@@ -1511,7 +1588,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     id,
                     position: point(
                         px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(0.0),
+                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
                     ),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
@@ -1814,6 +1891,23 @@ fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
     }
 
     Ok(String::from_utf16_lossy(&name_vec[..name_length]))
+}
+
+fn get_system_subpixel_rendering() -> bool {
+    let mut value = c_uint::default();
+    let result = unsafe {
+        SystemParametersInfoW(
+            SPI_GETFONTSMOOTHINGTYPE,
+            0,
+            Some((&mut value) as *mut c_uint as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+        )
+    };
+    if result.log_err().is_some() {
+        value == FE_FONTSMOOTHINGCLEARTYPE
+    } else {
+        true
+    }
 }
 
 fn get_system_ui_font_name() -> SharedString {

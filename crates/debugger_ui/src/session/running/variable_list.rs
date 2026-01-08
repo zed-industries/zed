@@ -11,14 +11,17 @@ use gpui::{
     FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
+use itertools::Itertools;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::{
     dap_command::DataBreakpointContext,
     session::{Session, SessionEvent, Watcher},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{ContextMenu, ListItem, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
+use ui::{ContextMenu, ListItem, ScrollAxes, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
 use util::{debug_panic, maybe};
+
+static INDENT_STEP_SIZE: Pixels = px(10.0);
 
 actions!(
     variable_list,
@@ -185,6 +188,7 @@ struct VariableColor {
 
 pub struct VariableList {
     entries: Vec<ListEntry>,
+    max_width_index: Option<usize>,
     entry_states: HashMap<EntryPath, EntryState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list_handle: UniformListScrollHandle,
@@ -213,6 +217,12 @@ impl VariableList {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.subscribe(&session, |this, _, event, cx| match event {
+                SessionEvent::HistoricSnapshotSelected => {
+                    this.selection.take();
+                    this.edited_path.take();
+                    this.selected_stack_frame_id.take();
+                    this.build_entries(cx);
+                }
                 SessionEvent::Stopped(_) => {
                     this.selection.take();
                     this.edited_path.take();
@@ -221,7 +231,6 @@ impl VariableList {
                 SessionEvent::Variables | SessionEvent::Watchers => {
                     this.build_entries(cx);
                 }
-
                 _ => {}
             }),
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
@@ -243,6 +252,7 @@ impl VariableList {
             disabled: false,
             edited_path: None,
             entries: Default::default(),
+            max_width_index: None,
             entry_states: Default::default(),
             weak_running,
             memory_view,
@@ -368,6 +378,26 @@ impl VariableList {
         }
 
         self.entries = entries;
+
+        let text_pixels = ui::TextSize::Default.pixels(cx).to_f64() as f32;
+        let indent_size = INDENT_STEP_SIZE.to_f64() as f32;
+
+        self.max_width_index = self
+            .entries
+            .iter()
+            .map(|entry| match &entry.entry {
+                DapEntry::Scope(scope) => scope.name.len() as f32 * text_pixels,
+                DapEntry::Variable(variable) => {
+                    (variable.value.len() + variable.name.len()) as f32 * text_pixels
+                        + (entry.path.indices.len() as f32 * indent_size)
+                }
+                DapEntry::Watcher(watcher) => {
+                    (watcher.value.len() + watcher.expression.len()) as f32 * text_pixels
+                        + (entry.path.indices.len() as f32 * indent_size)
+                }
+            })
+            .position_max_by(|left, right| left.total_cmp(right));
+
         cx.notify();
     }
 
@@ -499,7 +529,7 @@ impl VariableList {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.edited_path.take();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -1037,7 +1067,7 @@ impl VariableList {
             editor.select_all(&editor::actions::SelectAll, window, cx);
             editor
         });
-        editor.focus_handle(cx).focus(window);
+        editor.focus_handle(cx).focus(window, cx);
         editor
     }
 
@@ -1129,6 +1159,7 @@ impl VariableList {
                                         this.color(Color::from(color))
                                     }),
                             )
+                            .tooltip(Tooltip::text(value))
                     }
                 })
                 .into_any_element()
@@ -1243,7 +1274,7 @@ impl VariableList {
                 .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth)
-                .indent_step_size(px(10.))
+                .indent_step_size(INDENT_STEP_SIZE)
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -1378,6 +1409,7 @@ impl VariableList {
                         div()
                             .text_ui(cx)
                             .w_full()
+                            .truncate()
                             .when(self.disabled, |this| {
                                 this.text_color(Color::Disabled.color(cx))
                             })
@@ -1444,7 +1476,7 @@ impl VariableList {
                 .disabled(self.disabled)
                 .selectable(false)
                 .indent_level(state.depth)
-                .indent_step_size(px(10.))
+                .indent_step_size(INDENT_STEP_SIZE)
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -1506,7 +1538,6 @@ impl Render for VariableList {
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
-            .overflow_y_scroll()
             .size_full()
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -1531,7 +1562,10 @@ impl Render for VariableList {
                         this.render_entries(range, window, cx)
                     }),
                 )
-                .track_scroll(self.list_handle.clone())
+                .track_scroll(&self.list_handle)
+                .with_width_from_item(self.max_width_index)
+                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
                 .gap_1_5()
                 .size_full()
                 .flex_grow(),
@@ -1545,7 +1579,15 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
-            .vertical_scrollbar_for(self.list_handle.clone(), window, cx)
+            // .vertical_scrollbar_for(&self.list_handle, window, cx)
+            .custom_scrollbars(
+                ui::Scrollbars::new(ScrollAxes::Both)
+                    .tracked_scroll_handle(&self.list_handle)
+                    .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
+                    .tracked_entity(cx.entity_id()),
+                window,
+                cx,
+            )
     }
 }
 

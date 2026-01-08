@@ -14,6 +14,7 @@ use gpui::{
 use language::Buffer;
 use text::BufferId;
 use util::ResultExt;
+use ztracing::instrument;
 
 use crate::{
     Project,
@@ -63,11 +64,7 @@ impl BranchDiff {
             window,
             move |this, _git_store, event, _window, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::StatusesChanged { full_scan: _ },
-                    true,
-                )
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, true)
                 | GitStoreEvent::ConflictsUpdated => {
                     cx.emit(BranchDiffEvent::FileListChanged);
                     *this.update_needed.borrow_mut() = ();
@@ -258,6 +255,7 @@ impl BranchDiff {
         self.repo.as_ref()
     }
 
+    #[instrument(skip_all)]
     pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
         let mut output = Vec::default();
         let Some(repo) = self.repo.clone() else {
@@ -274,9 +272,10 @@ impl BranchDiff {
                     .as_ref()
                     .and_then(|t| t.entries.get(&item.repo_path))
                     .cloned();
-                let status = self
-                    .merge_statuses(Some(item.status), branch_diff.as_ref())
-                    .unwrap();
+                let Some(status) = self.merge_statuses(Some(item.status), branch_diff.as_ref())
+                else {
+                    continue;
+                };
                 if !status.has_changes() {
                     continue;
                 }
@@ -321,6 +320,7 @@ impl BranchDiff {
         output
     }
 
+    #[instrument(skip_all)]
     fn load_buffer(
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
@@ -332,8 +332,6 @@ impl BranchDiff {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let languages = project.update(cx, |project, _cx| project.languages().clone())?;
-
             let changes = if let Some(entry) = branch_diff {
                 let oid = match entry {
                     git::status::TreeDiffStatus::Added { .. } => None,
@@ -343,7 +341,7 @@ impl BranchDiff {
                 project
                     .update(cx, |project, cx| {
                         project.git_store().update(cx, |git_store, cx| {
-                            git_store.open_diff_since(oid, buffer.clone(), repo, languages, cx)
+                            git_store.open_diff_since(oid, buffer.clone(), repo, cx)
                         })
                     })?
                     .await?

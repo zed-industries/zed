@@ -51,6 +51,13 @@ pub enum Model {
         alias = "claude-opus-4-1-thinking-latest"
     )]
     ClaudeOpus4_1Thinking,
+    #[serde(rename = "claude-opus-4-5", alias = "claude-opus-4-5-latest")]
+    ClaudeOpus4_5,
+    #[serde(
+        rename = "claude-opus-4-5-thinking",
+        alias = "claude-opus-4-5-thinking-latest"
+    )]
+    ClaudeOpus4_5Thinking,
     #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
     Claude3_5SonnetV2,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
@@ -66,6 +73,8 @@ pub enum Model {
     Claude3Sonnet,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
+    #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
+    ClaudeHaiku4_5,
     Claude3_5Sonnet,
     Claude3Haiku,
     // Amazon Nova Models
@@ -139,7 +148,19 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
-        if id.starts_with("claude-3-5-sonnet-v2") {
+        if id.starts_with("claude-opus-4-5-thinking") {
+            Ok(Self::ClaudeOpus4_5Thinking)
+        } else if id.starts_with("claude-opus-4-5") {
+            Ok(Self::ClaudeOpus4_5)
+        } else if id.starts_with("claude-opus-4-1-thinking") {
+            Ok(Self::ClaudeOpus4_1Thinking)
+        } else if id.starts_with("claude-opus-4-1") {
+            Ok(Self::ClaudeOpus4_1)
+        } else if id.starts_with("claude-opus-4-thinking") {
+            Ok(Self::ClaudeOpus4Thinking)
+        } else if id.starts_with("claude-opus-4") {
+            Ok(Self::ClaudeOpus4)
+        } else if id.starts_with("claude-3-5-sonnet-v2") {
             Ok(Self::Claude3_5SonnetV2)
         } else if id.starts_with("claude-3-opus") {
             Ok(Self::Claude3Opus)
@@ -147,6 +168,8 @@ impl Model {
             Ok(Self::Claude3Sonnet)
         } else if id.starts_with("claude-3-5-haiku") {
             Ok(Self::Claude3_5Haiku)
+        } else if id.starts_with("claude-haiku-4-5") {
+            Ok(Self::ClaudeHaiku4_5)
         } else if id.starts_with("claude-3-7-sonnet") {
             Ok(Self::Claude3_7Sonnet)
         } else if id.starts_with("claude-3-7-sonnet-thinking") {
@@ -174,12 +197,15 @@ impl Model {
             Model::ClaudeOpus4_1 => "claude-opus-4-1",
             Model::ClaudeOpus4Thinking => "claude-opus-4-thinking",
             Model::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking",
+            Model::ClaudeOpus4_5 => "claude-opus-4-5",
+            Model::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking",
             Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet",
             Model::Claude3Opus => "claude-3-opus",
             Model::Claude3Sonnet => "claude-3-sonnet",
             Model::Claude3Haiku => "claude-3-haiku",
             Model::Claude3_5Haiku => "claude-3-5-haiku",
+            Model::ClaudeHaiku4_5 => "claude-haiku-4-5",
             Model::Claude3_7Sonnet => "claude-3-7-sonnet",
             Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking",
             Model::AmazonNovaLite => "amazon-nova-lite",
@@ -240,12 +266,16 @@ impl Model {
             Model::ClaudeOpus4_1 | Model::ClaudeOpus4_1Thinking => {
                 "anthropic.claude-opus-4-1-20250805-v1:0"
             }
+            Model::ClaudeOpus4_5 | Model::ClaudeOpus4_5Thinking => {
+                "anthropic.claude-opus-4-5-20251101-v1:0"
+            }
             Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
             Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
             Model::Claude3Haiku => "anthropic.claude-3-haiku-20240307-v1:0",
             Model::Claude3_5Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",
+            Model::ClaudeHaiku4_5 => "anthropic.claude-haiku-4-5-20251001-v1:0",
             Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => {
                 "anthropic.claude-3-7-sonnet-20250219-v1:0"
             }
@@ -303,12 +333,15 @@ impl Model {
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
             Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
+            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
+            Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
             Self::Claude3_5SonnetV2 => "Claude 3.5 Sonnet v2",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
+            Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::AmazonNovaLite => "Amazon Nova Lite",
@@ -363,6 +396,7 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
+            | Self::ClaudeHaiku4_5
             | Self::Claude3_7Sonnet
             | Self::ClaudeSonnet4
             | Self::ClaudeOpus4
@@ -371,7 +405,9 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking => 200_000,
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
@@ -385,7 +421,11 @@ impl Model {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 64_000,
-            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking => 64_000,
+            Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => 64_000,
             Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
@@ -404,11 +444,14 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
+            | Self::ClaudeHaiku4_5
             | Self::Claude3_7Sonnet
             | Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -434,11 +477,14 @@ impl Model {
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
-            | Self::Claude3_5Haiku => true,
+            | Self::Claude3_5Haiku
+            | Self::ClaudeHaiku4_5 => true,
 
             // Amazon Nova models (all support tool use)
             Self::AmazonNovaPremier
@@ -464,6 +510,7 @@ impl Model {
             // Nova models support only text caching
             // https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models
             Self::Claude3_5Haiku
+            | Self::ClaudeHaiku4_5
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::ClaudeSonnet4
@@ -473,7 +520,9 @@ impl Model {
             | Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking => true,
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => true,
 
             // Custom models - check if they have cache configuration
             Self::Custom {
@@ -495,12 +544,14 @@ impl Model {
             | Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking => Some(BedrockModelCacheConfiguration {
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking => Some(BedrockModelCacheConfiguration {
                 max_cache_anchors: 4,
                 min_total_token: 1024,
             }),
 
-            Self::Claude3_5Haiku => Some(BedrockModelCacheConfiguration {
+            Self::Claude3_5Haiku | Self::ClaudeHaiku4_5 => Some(BedrockModelCacheConfiguration {
                 max_cache_anchors: 4,
                 min_total_token: 2048,
             }),
@@ -524,51 +575,111 @@ impl Model {
                     budget_tokens: Some(4096),
                 }
             }
-            Model::ClaudeOpus4Thinking | Model::ClaudeOpus4_1Thinking => {
-                BedrockModelMode::Thinking {
-                    budget_tokens: Some(4096),
-                }
-            }
+            Model::ClaudeOpus4Thinking
+            | Model::ClaudeOpus4_1Thinking
+            | Model::ClaudeOpus4_5Thinking => BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            },
             _ => BedrockModelMode::Default,
         }
     }
 
-    pub fn cross_region_inference_id(&self, region: &str) -> anyhow::Result<String> {
+    pub fn cross_region_inference_id(
+        &self,
+        region: &str,
+        allow_global: bool,
+    ) -> anyhow::Result<String> {
+        // List derived from here:
+        // https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html#inference-profiles-support-system
+        let model_id = self.request_id();
+
+        let supports_global = matches!(
+            self,
+            Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
+                | Model::ClaudeHaiku4_5
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking
+        );
+
         let region_group = if region.starts_with("us-gov-") {
             "us-gov"
-        } else if region.starts_with("us-") {
-            "us"
+        } else if region.starts_with("us-")
+            || region.starts_with("ca-")
+            || region.starts_with("sa-")
+        {
+            if allow_global && supports_global {
+                "global"
+            } else {
+                "us"
+            }
         } else if region.starts_with("eu-") {
-            "eu"
+            if allow_global && supports_global {
+                "global"
+            } else {
+                "eu"
+            }
         } else if region.starts_with("ap-") || region == "me-central-1" || region == "me-south-1" {
-            "apac"
-        } else if region.starts_with("ca-") || region.starts_with("sa-") {
-            // Canada and South America regions - default to US profiles
-            "us"
+            if allow_global && supports_global {
+                "global"
+            } else {
+                "apac"
+            }
         } else {
             anyhow::bail!("Unsupported Region {region}");
         };
 
-        let model_id = self.request_id();
+        match (self, region_group, region) {
+            (Model::Custom { .. }, _, _) => Ok(self.request_id().into()),
 
-        match (self, region_group) {
-            // Custom models can't have CRI IDs
-            (Model::Custom { .. }, _) => Ok(self.request_id().into()),
+            (
+                Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
+                | Model::ClaudeHaiku4_5
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking,
+                "global",
+                _,
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models with US Gov only
-            (Model::Claude3_5Sonnet, "us-gov") | (Model::Claude3Haiku, "us-gov") => {
-                Ok(format!("{}.{}", region_group, model_id))
+            (
+                Model::Claude3Haiku
+                | Model::Claude3_5Sonnet
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking,
+                "us-gov",
+                _,
+            ) => Ok(format!("{}.{}", region_group, model_id)),
+
+            (
+                Model::ClaudeHaiku4_5 | Model::ClaudeSonnet4_5 | Model::ClaudeSonnet4_5Thinking,
+                "apac",
+                "ap-southeast-2" | "ap-southeast-4",
+            ) => Ok(format!("au.{}", model_id)),
+
+            (
+                Model::ClaudeHaiku4_5 | Model::ClaudeSonnet4_5 | Model::ClaudeSonnet4_5Thinking,
+                "apac",
+                "ap-northeast-1" | "ap-northeast-3",
+            ) => Ok(format!("jp.{}", model_id)),
+
+            (Model::AmazonNovaLite, "us", r) if r.starts_with("ca-") => {
+                Ok(format!("ca.{}", model_id))
             }
 
-            // Available everywhere
-            (Model::AmazonNovaLite | Model::AmazonNovaMicro | Model::AmazonNovaPro, _) => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
-            // Models in US
             (
                 Model::AmazonNovaPremier
+                | Model::AmazonNovaLite
+                | Model::AmazonNovaMicro
+                | Model::AmazonNovaPro
                 | Model::Claude3_5Haiku
+                | Model::ClaudeHaiku4_5
                 | Model::Claude3_5Sonnet
                 | Model::Claude3_5SonnetV2
                 | Model::Claude3_7Sonnet
@@ -581,6 +692,8 @@ impl Model {
                 | Model::ClaudeOpus4Thinking
                 | Model::ClaudeOpus4_1
                 | Model::ClaudeOpus4_1Thinking
+                | Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
                 | Model::Claude3Haiku
                 | Model::Claude3Opus
                 | Model::Claude3Sonnet
@@ -601,15 +714,18 @@ impl Model {
                 | Model::PalmyraWriterX4
                 | Model::PalmyraWriterX5,
                 "us",
+                _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models available in EU
             (
-                Model::Claude3_5Sonnet
+                Model::AmazonNovaLite
+                | Model::AmazonNovaMicro
+                | Model::AmazonNovaPro
+                | Model::Claude3_5Sonnet
+                | Model::ClaudeHaiku4_5
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4
-                | Model::ClaudeSonnet4Thinking
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking
                 | Model::Claude3Haiku
@@ -618,25 +734,26 @@ impl Model {
                 | Model::MetaLlama323BInstructV1
                 | Model::MistralPixtralLarge2502V1,
                 "eu",
+                _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models available in APAC
             (
-                Model::Claude3_5Sonnet
+                Model::AmazonNovaLite
+                | Model::AmazonNovaMicro
+                | Model::AmazonNovaPro
+                | Model::Claude3_5Sonnet
                 | Model::Claude3_5SonnetV2
-                | Model::Claude3Haiku
-                | Model::Claude3Sonnet
+                | Model::ClaudeHaiku4_5
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4
-                | Model::ClaudeSonnet4Thinking
-                | Model::ClaudeSonnet4_5
-                | Model::ClaudeSonnet4_5Thinking,
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet,
                 "apac",
+                _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Any other combination is not supported
-            _ => Ok(self.request_id().into()),
+            _ => Ok(model_id.into()),
         }
     }
 }
@@ -649,15 +766,15 @@ mod tests {
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
         // Test US regions
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("us-east-1")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("us-west-2")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("us-west-2", false)?,
             "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::AmazonNovaPro.cross_region_inference_id("us-east-2")?,
+            Model::AmazonNovaPro.cross_region_inference_id("us-east-2", false)?,
             "us.amazon.nova-pro-v1:0"
         );
         Ok(())
@@ -667,19 +784,19 @@ mod tests {
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         // Test European regions
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1")?,
+            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1")?,
+            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::Claude3Sonnet.cross_region_inference_id("eu-west-1")?,
+            Model::Claude3Sonnet.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-3-sonnet-20240229-v1:0"
         );
         assert_eq!(
-            Model::AmazonNovaMicro.cross_region_inference_id("eu-north-1")?,
+            Model::AmazonNovaMicro.cross_region_inference_id("eu-north-1", false)?,
             "eu.amazon.nova-micro-v1:0"
         );
         Ok(())
@@ -689,15 +806,15 @@ mod tests {
     fn test_apac_region_inference_ids() -> anyhow::Result<()> {
         // Test Asia-Pacific regions
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-northeast-1")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-northeast-1", false)?,
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-southeast-2")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-southeast-2", false)?,
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::AmazonNovaLite.cross_region_inference_id("ap-south-1")?,
+            Model::AmazonNovaLite.cross_region_inference_id("ap-south-1", false)?,
             "apac.amazon.nova-lite-v1:0"
         );
         Ok(())
@@ -707,11 +824,11 @@ mod tests {
     fn test_gov_region_inference_ids() -> anyhow::Result<()> {
         // Test Government regions
         assert_eq!(
-            Model::Claude3_5Sonnet.cross_region_inference_id("us-gov-east-1")?,
+            Model::Claude3_5Sonnet.cross_region_inference_id("us-gov-east-1", false)?,
             "us-gov.anthropic.claude-3-5-sonnet-20240620-v1:0"
         );
         assert_eq!(
-            Model::Claude3Haiku.cross_region_inference_id("us-gov-west-1")?,
+            Model::Claude3Haiku.cross_region_inference_id("us-gov-west-1", false)?,
             "us-gov.anthropic.claude-3-haiku-20240307-v1:0"
         );
         Ok(())
@@ -721,15 +838,15 @@ mod tests {
     fn test_meta_models_inference_ids() -> anyhow::Result<()> {
         // Test Meta models
         assert_eq!(
-            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1")?,
+            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1", false)?,
             "meta.llama3-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama3170BInstructV1.cross_region_inference_id("us-east-1")?,
+            Model::MetaLlama3170BInstructV1.cross_region_inference_id("us-east-1", false)?,
             "us.meta.llama3-1-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1")?,
+            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1", false)?,
             "eu.meta.llama3-2-1b-instruct-v1:0"
         );
         Ok(())
@@ -740,11 +857,11 @@ mod tests {
         // Mistral models don't follow the regional prefix pattern,
         // so they should return their original IDs
         assert_eq!(
-            Model::MistralMistralLarge2402V1.cross_region_inference_id("us-east-1")?,
+            Model::MistralMistralLarge2402V1.cross_region_inference_id("us-east-1", false)?,
             "mistral.mistral-large-2402-v1:0"
         );
         assert_eq!(
-            Model::MistralMixtral8x7BInstructV0.cross_region_inference_id("eu-west-1")?,
+            Model::MistralMixtral8x7BInstructV0.cross_region_inference_id("eu-west-1", false)?,
             "mistral.mixtral-8x7b-instruct-v0:1"
         );
         Ok(())
@@ -755,11 +872,11 @@ mod tests {
         // AI21 models don't follow the regional prefix pattern,
         // so they should return their original IDs
         assert_eq!(
-            Model::AI21J2UltraV1.cross_region_inference_id("us-east-1")?,
+            Model::AI21J2UltraV1.cross_region_inference_id("us-east-1", false)?,
             "ai21.j2-ultra-v1"
         );
         assert_eq!(
-            Model::AI21JambaInstructV1.cross_region_inference_id("eu-west-1")?,
+            Model::AI21JambaInstructV1.cross_region_inference_id("eu-west-1", false)?,
             "ai21.jamba-instruct-v1:0"
         );
         Ok(())
@@ -770,11 +887,11 @@ mod tests {
         // Cohere models don't follow the regional prefix pattern,
         // so they should return their original IDs
         assert_eq!(
-            Model::CohereCommandRV1.cross_region_inference_id("us-east-1")?,
+            Model::CohereCommandRV1.cross_region_inference_id("us-east-1", false)?,
             "cohere.command-r-v1:0"
         );
         assert_eq!(
-            Model::CohereCommandTextV14_4k.cross_region_inference_id("ap-southeast-1")?,
+            Model::CohereCommandTextV14_4k.cross_region_inference_id("ap-southeast-1", false)?,
             "cohere.command-text-v14:7:4k"
         );
         Ok(())
@@ -794,8 +911,15 @@ mod tests {
 
         // Custom model should return its name unchanged
         assert_eq!(
-            custom_model.cross_region_inference_id("us-east-1")?,
+            custom_model.cross_region_inference_id("us-east-1", false)?,
             "custom.my-model-v1:0"
+        );
+
+        // Test that models without global support fall back to regional when allow_global is true
+        assert_eq!(
+            Model::AmazonNovaPro.cross_region_inference_id("us-east-1", true)?,
+            "us.amazon.nova-pro-v1:0",
+            "Nova Pro should fall back to regional profile even when allow_global is true"
         );
 
         Ok(())
@@ -835,4 +959,29 @@ mod tests {
             Model::ClaudeSonnet4Thinking.request_id()
         );
     }
+}
+
+#[test]
+fn test_global_inference_ids() -> anyhow::Result<()> {
+    // Test global inference for models that support it when allow_global is true
+    assert_eq!(
+        Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
+        "global.anthropic.claude-sonnet-4-20250514-v1:0"
+    );
+    assert_eq!(
+        Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", true)?,
+        "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    );
+    assert_eq!(
+        Model::ClaudeHaiku4_5.cross_region_inference_id("ap-south-1", true)?,
+        "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    );
+
+    // Test that regional prefix is used when allow_global is false
+    assert_eq!(
+        Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", false)?,
+        "us.anthropic.claude-sonnet-4-20250514-v1:0"
+    );
+
+    Ok(())
 }

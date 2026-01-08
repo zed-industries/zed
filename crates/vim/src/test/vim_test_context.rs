@@ -1,8 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
+use gpui::{Context, Entity, UpdateGlobal};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
+use semver::Version;
 
 use crate::{state::Operator, *};
 
@@ -19,17 +20,16 @@ impl VimTestContext {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             project_panel::init(cx);
+            outline_panel::init(cx);
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
-            workspace::init_settings(cx);
-            language::init(cx);
-            editor::init_settings(cx);
-            project::Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            settings_ui::init(cx);
+            markdown_preview::init(cx);
         });
     }
 
@@ -42,6 +42,11 @@ impl VimTestContext {
     pub async fn new_html(cx: &mut gpui::TestAppContext) -> VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(EditorLspTestContext::new_html(cx).await, true)
+    }
+
+    pub async fn new_markdown_with_rust(cx: &mut gpui::TestAppContext) -> VimTestContext {
+        Self::init(cx);
+        Self::new_with_lsp(EditorLspTestContext::new_markdown_with_rust(cx).await, true)
     }
 
     pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> VimTestContext {
@@ -57,6 +62,7 @@ impl VimTestContext {
                         prepare_provider: Some(true),
                         work_done_progress_options: Default::default(),
                     })),
+                    definition_provider: Some(lsp::OneOf::Left(true)),
                     ..Default::default()
                 },
                 cx,

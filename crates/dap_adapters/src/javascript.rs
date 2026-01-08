@@ -6,7 +6,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, shell::ShellKind};
 
 use crate::*;
 
@@ -67,7 +67,7 @@ impl JsDebugAdapter {
                     .get("type")
                     .filter(|value| value == &"node-terminal")?;
                 let command = configuration.get("command")?.as_str()?.to_owned();
-                let mut args = shlex::split(&command)?.into_iter();
+                let mut args = ShellKind::Posix.split(&command)?.into_iter();
                 let program = args.next()?;
                 configuration.insert("runtimeExecutable".to_owned(), program.into());
                 configuration.insert(

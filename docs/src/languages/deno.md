@@ -78,7 +78,7 @@ To get completions for `deno.json` or `package.json` you can add the following t
               "fileMatch": [
                 "package.json"
               ],
-              "url": "http://json.schemastore.org/package"
+              "url": "https://www.schemastore.org/package"
             }
           ]
         }

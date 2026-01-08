@@ -9,8 +9,12 @@ disallowed-methods = [
     { path = "std::process::Command::spawn", reason = "Spawning `std::process::Command` can block the current thread for an unknown duration", replacement = "smol::process::Command::spawn" },
     { path = "std::process::Command::output", reason = "Spawning `std::process::Command` can block the current thread for an unknown duration", replacement = "smol::process::Command::output" },
     { path = "std::process::Command::status", reason = "Spawning `std::process::Command` can block the current thread for an unknown duration", replacement = "smol::process::Command::status" },
+    { path = "std::process::Command::stdin", reason = "`smol::process::Command::from()` does not preserve stdio configuration", replacement = "smol::process::Command::stdin" },
+    { path = "std::process::Command::stdout", reason = "`smol::process::Command::from()` does not preserve stdio configuration", replacement = "smol::process::Command::stdout" },
+    { path = "std::process::Command::stderr", reason = "`smol::process::Command::from()` does not preserve stdio configuration", replacement = "smol::process::Command::stderr" },
     { path = "serde_json::from_reader", reason = "Parsing from a buffer is much slower than first reading the buffer into a Vec/String, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892. Use `serde_json::from_slice` instead." },
     { path = "serde_json_lenient::from_reader", reason = "Parsing from a buffer is much slower than first reading the buffer into a Vec/String, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892, Use `serde_json_lenient::from_slice` instead." },
+    { path = "cocoa::foundation::NSString::alloc", reason = "NSString must be autoreleased to avoid memory leaks. Use `ns_string()` helper instead." },
 ]
 disallowed-types = [
     # { path = "std::collections::HashMap", replacement = "collections::HashMap" },

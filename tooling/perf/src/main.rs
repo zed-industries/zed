@@ -413,10 +413,26 @@ fn triage_test(
     }
 }
 
+/// Try to find the hyperfine binary the user has installed.
+fn hyp_binary() -> Option<Command> {
+    const HYP_PATH: &str = "hyperfine";
+    const HYP_HOME: &str = "~/.cargo/bin/hyperfine";
+    if Command::new(HYP_PATH).output().is_err() {
+        if Command::new(HYP_HOME).output().is_err() {
+            None
+        } else {
+            Some(Command::new(HYP_HOME))
+        }
+    } else {
+        Some(Command::new(HYP_PATH))
+    }
+}
+
 /// Profiles a given test with hyperfine, returning the mean and standard deviation
 /// for its runtime. If the test errors, returns `None` instead.
 fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<Timings> {
-    let mut perf_cmd = Command::new("hyperfine");
+    let mut perf_cmd = hyp_binary().expect("Couldn't find the Hyperfine binary on the system");
+
     // Warm up the cache and print markdown output to stdout, which we parse.
     perf_cmd.args([
         "--style",

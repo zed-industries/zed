@@ -38,6 +38,7 @@ pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
+    pub model_name: Option<String>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -79,9 +80,11 @@ mod tests {
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(rendered.contains("## Fixing Diagnostics"));
+        assert!(rendered.contains("test-model"));
     }
 }

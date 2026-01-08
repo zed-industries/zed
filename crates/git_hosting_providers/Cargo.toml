@@ -18,11 +18,13 @@ futures.workspace = true
 git.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+itertools.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 url.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 
 [dev-dependencies]

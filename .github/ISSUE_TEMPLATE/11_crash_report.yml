@@ -1,44 +1,35 @@
-name: Crash Report
-description: Zed is Crashing or Hanging
-type: "Crash"
+name: Report a crash
+description: Zed is crashing or freezing or hanging.
+type: Crash
+labels: "state:needs triage"
 body:
   - type: textarea
     attributes:
-      label: Summary
-      description: Summarize the issue with detailed reproduction steps
-      value: |
-        <!-- Begin your issue with a one sentence summary -->
-        SUMMARY_SENTENCE_HERE
-
-        ### Description
-        <!-- Include all steps necessary to reproduce from a clean Zed installation. Be verbose -->
-        Steps to trigger the problem:
-        1.
-        2.
-        3.
-
-        Actual Behavior:
-        Expected Behavior:
-
-    validations:
-      required: true
-  - type: textarea
-    id: environment
-    attributes:
-      label: Zed Version and System Specs
-      description: 'Open Zed, and in the command palette select "zed: copy system specs into clipboard"'
+      label: Reproduction steps
+      description: A step-by-step description of how to reproduce the crash from a **clean Zed install**. The more context you provide, the easier it is to find and fix the problem fast.
       placeholder: |
-        Output of "zed: copy system specs into clipboard"
+        1. Start Zed
+        2. Perform an action
+        3. Zed crashes
     validations:
       required: true
   - type: textarea
     attributes:
-      label: If applicable, attach your `Zed.log` file to this issue.
+      label: Zed version and system specs
       description: |
-        macOS: `~/Library/Logs/Zed/Zed.log`
-        Windows: `C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
-        Linux: `~/.local/share/zed/logs/Zed.log` or $XDG_DATA_HOME
-        If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
+        Open the command palette in Zed, then type “zed: copy system specs into clipboard”.
+      placeholder: |
+        Zed: v0.215.0 (Zed Nightly bfe141ea79aa4984028934067ba75c48d99136ae)
+        OS: macOS 15.1
+        Memory: 36 GiB
+        Architecture: aarch64
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Attach Zed log file
+      description: |
+        Open the command palette in Zed, then type `zed: open log` to see the last 1000 lines. Or type `zed: reveal log in file manager` in the command palette to reveal the log file itself.
       value: |
         <details><summary>Zed.log</summary>
 

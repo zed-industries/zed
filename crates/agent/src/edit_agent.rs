@@ -114,8 +114,8 @@ impl EditAgent {
         let (events_tx, events_rx) = mpsc::unbounded();
         let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx));
             let prompt = CreateFilePromptTemplate {
                 path,
                 edit_description,
@@ -148,7 +148,7 @@ impl EditAgent {
         let this = self.clone();
         let task = cx.spawn(async move |cx| {
             this.action_log
-                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
+                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
             this.overwrite_with_chunks_internal(buffer, parse_rx, output_events_tx, cx)
                 .await?;
             parse_task.await
@@ -172,22 +172,22 @@ impl EditAgent {
                 project.set_agent_location(
                     Some(AgentLocation {
                         buffer: buffer.downgrade(),
-                        position: language::Anchor::MAX,
+                        position: language::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
                     }),
                     cx,
                 )
             });
             output_events_tx
                 .unbounded_send(EditAgentOutputEvent::Edited(
-                    language::Anchor::MIN..language::Anchor::MAX,
+                    Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
                 ))
                 .ok();
-        })?;
+        });
 
         while let Some(event) = parse_rx.next().await {
             match event? {
                 CreateFileParserEvent::NewTextChunk { chunk } => {
-                    cx.update(|cx| {
+                    let buffer_id = cx.update(|cx| {
                         buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
                         self.action_log
                             .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
@@ -195,15 +195,18 @@ impl EditAgent {
                             project.set_agent_location(
                                 Some(AgentLocation {
                                     buffer: buffer.downgrade(),
-                                    position: language::Anchor::MAX,
+                                    position: language::Anchor::max_for_buffer(
+                                        buffer.read(cx).remote_id(),
+                                    ),
                                 }),
                                 cx,
                             )
                         });
-                    })?;
+                        buffer.read(cx).remote_id()
+                    });
                     output_events_tx
                         .unbounded_send(EditAgentOutputEvent::Edited(
-                            language::Anchor::MIN..language::Anchor::MAX,
+                            Anchor::min_max_range_for_buffer(buffer_id),
                         ))
                         .ok();
                 }
@@ -228,8 +231,8 @@ impl EditAgent {
         let conversation = conversation.clone();
         let edit_format = self.edit_format;
         let output = cx.spawn(async move |cx| {
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx));
             let prompt = match edit_format {
                 EditFormat::XmlTags => EditFileXmlPromptTemplate {
                     path,
@@ -260,7 +263,7 @@ impl EditAgent {
         cx: &mut AsyncApp,
     ) -> Result<EditAgentOutput> {
         self.action_log
-            .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
+            .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, self.edit_format, cx);
         let mut edit_events = edit_events.peekable();
@@ -271,7 +274,7 @@ impl EditAgent {
                 continue;
             };
 
-            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
             // Resolve the old text in the background, updating the agent
             // location as we keep refining which range it corresponds to.
@@ -289,7 +292,7 @@ impl EditAgent {
                             }),
                             cx,
                         );
-                    })?;
+                    });
                     output_events
                         .unbounded_send(EditAgentOutputEvent::ResolvingEditRange(old_range))
                         .ok();
@@ -372,7 +375,7 @@ impl EditAgent {
                         );
                     });
                     (min_edit_start, max_edit_end)
-                })?;
+                });
                 output_events
                     .unbounded_send(EditAgentOutputEvent::Edited(min_edit_start..max_edit_end))
                     .ok();
@@ -703,6 +706,7 @@ impl EditAgent {
             role: Role::User,
             content: vec![MessageContent::Text(prompt)],
             cache: false,
+            reasoning_details: None,
         });
 
         // Include tools in the request so that we can take advantage of
@@ -1199,7 +1203,9 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::MAX
+                position: language::Anchor::max_for_buffer(
+                    cx.update(|cx| buffer.read(cx).remote_id())
+                ),
             })
         );
 
@@ -1217,7 +1223,9 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::MAX
+                position: language::Anchor::max_for_buffer(
+                    cx.update(|cx| buffer.read(cx).remote_id())
+                ),
             })
         );
 
@@ -1235,7 +1243,9 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::MAX
+                position: language::Anchor::max_for_buffer(
+                    cx.update(|cx| buffer.read(cx).remote_id())
+                ),
             })
         );
 
@@ -1253,7 +1263,9 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::MAX
+                position: language::Anchor::max_for_buffer(
+                    cx.update(|cx| buffer.read(cx).remote_id())
+                ),
             })
         );
 
@@ -1268,7 +1280,9 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: language::Anchor::MAX
+                position: language::Anchor::max_for_buffer(
+                    cx.update(|cx| buffer.read(cx).remote_id())
+                ),
             })
         );
     }
@@ -1394,7 +1408,7 @@ mod tests {
 
     async fn init_test(cx: &mut TestAppContext) -> EditAgent {
         cx.update(settings::init);
-        cx.update(Project::init_settings);
+
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));

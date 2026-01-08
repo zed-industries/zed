@@ -1,8 +1,7 @@
 use std::any::TypeId;
 
-use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::DebugPanel;
-use editor::Editor;
+use editor::{Editor, MultiBufferOffsetUtf16};
 use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use onboarding_modal::DebuggerOnboardingModal;
@@ -10,7 +9,6 @@ use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::Threa
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::DebugSession;
-use settings::Settings;
 use stack_trace_view::StackTraceView;
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
@@ -115,7 +113,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    DebuggerSettings::register(cx);
     workspace::FollowableViewRegistry::register::<DebugSession>(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -390,14 +387,17 @@ pub fn init(cx: &mut App) {
                     window.on_action(
                         TypeId::of::<editor::actions::EvaluateSelectedText>(),
                         move |_, _, window, cx| {
-                            maybe!({
+                            let status = maybe!({
                                 let text = editor
                                     .update(cx, |editor, cx| {
+                                        let range = editor
+                                            .selections
+                                            .newest::<MultiBufferOffsetUtf16>(
+                                                &editor.display_snapshot(cx),
+                                            )
+                                            .range();
                                         editor.text_for_range(
-                                            editor
-                                                .selections
-                                                .newest(&editor.display_snapshot(cx))
-                                                .range(),
+                                            range.start.0.0..range.end.0.0,
                                             &mut None,
                                             window,
                                             cx,
@@ -411,7 +411,13 @@ pub fn init(cx: &mut App) {
 
                                         state.session().update(cx, |session, cx| {
                                             session
-                                                .evaluate(text, None, stack_id, None, cx)
+                                                .evaluate(
+                                                    text,
+                                                    Some(dap::EvaluateArgumentsContext::Repl),
+                                                    stack_id,
+                                                    None,
+                                                    cx,
+                                                )
                                                 .detach();
                                         });
                                     });
@@ -419,6 +425,9 @@ pub fn init(cx: &mut App) {
 
                                 Some(())
                             });
+                            if status.is_some() {
+                                cx.stop_propagation();
+                            }
                         },
                     );
                 })

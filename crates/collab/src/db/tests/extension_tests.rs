@@ -16,6 +16,72 @@ test_both_dbs!(
     test_extensions_sqlite
 );
 
+test_both_dbs!(
+    test_agent_servers_filter,
+    test_agent_servers_filter_postgres,
+    test_agent_servers_filter_sqlite
+);
+
+async fn test_agent_servers_filter(db: &Arc<Database>) {
+    // No extensions initially
+    let versions = db.get_known_extension_versions().await.unwrap();
+    assert!(versions.is_empty());
+
+    // Shared timestamp
+    let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
+    let t0 = time::PrimitiveDateTime::new(t0.date(), t0.time());
+
+    // Insert two extensions, only one provides AgentServers
+    db.insert_extension_versions(
+        &[
+            (
+                "ext_agent_servers",
+                vec![NewExtensionVersion {
+                    name: "Agent Servers Provider".into(),
+                    version: semver::Version::parse("1.0.0").unwrap(),
+                    description: "has agent servers".into(),
+                    authors: vec!["author".into()],
+                    repository: "org/agent-servers".into(),
+                    schema_version: 1,
+                    wasm_api_version: None,
+                    provides: BTreeSet::from_iter([ExtensionProvides::AgentServers]),
+                    published_at: t0,
+                }],
+            ),
+            (
+                "ext_plain",
+                vec![NewExtensionVersion {
+                    name: "Plain Extension".into(),
+                    version: semver::Version::parse("0.1.0").unwrap(),
+                    description: "no agent servers".into(),
+                    authors: vec!["author2".into()],
+                    repository: "org/plain".into(),
+                    schema_version: 1,
+                    wasm_api_version: None,
+                    provides: BTreeSet::default(),
+                    published_at: t0,
+                }],
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
+    .await
+    .unwrap();
+
+    // Filter by AgentServers provides
+    let provides_filter = BTreeSet::from_iter([ExtensionProvides::AgentServers]);
+
+    let filtered = db
+        .get_extensions(None, Some(&provides_filter), 1, 10)
+        .await
+        .unwrap();
+
+    // Expect only the extension that declared AgentServers
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id.as_ref(), "ext_agent_servers");
+}
+
 async fn test_extensions(db: &Arc<Database>) {
     let versions = db.get_known_extension_versions().await.unwrap();
     assert!(versions.is_empty());
