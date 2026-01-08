@@ -1461,6 +1461,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let prev_read_dir_count = fs.read_dir_call_count();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     let server_id = lsp_store.read_with(cx, |lsp_store, _| {
         let (id, _) = lsp_store.language_server_statuses().next().unwrap();
         id
@@ -2076,6 +2077,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     fake_server.start_progress(progress_token).await;
 
     // Restart the server before the diagnostics finish updating.
@@ -2086,6 +2088,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     assert_eq!(
         events.next().await.unwrap(),
         Event::LanguageServerRemoved(LanguageServerId(0))
@@ -3548,6 +3551,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     let text = "let a = obj.fqn";
 
     // Test 1: When text_edit is None but text_edit_text exists with default edit_range
@@ -3685,6 +3689,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     // Test 1: When text_edit is None but insert_text exists (no edit_range in defaults)
     let text = "let a = b.fqn";
@@ -3791,6 +3796,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
@@ -3865,6 +3871,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     // Language server returns code actions that contain commands, and not edits.
     let actions = project.update(cx, |project, cx| {
@@ -5374,6 +5381,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     let response = project.update(cx, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
         let entry = worktree
@@ -5485,6 +5493,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     let response = project.update(cx, |project, cx| {
         project.prepare_rename(buffer.clone(), 7, cx)

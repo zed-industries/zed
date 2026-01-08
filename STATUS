@@ -25,17 +25,17 @@ cx.executor().run_until_parked();  // <-- ADD THIS LINE
 
 ## Failing Tests (18)
 
-### project crate (9 tests) - HIGHEST PRIORITY
-- [ ] `project_tests::test_apply_code_actions_with_commands`
-- [ ] `project_tests::test_completions_with_carriage_returns`
+### project crate (10 tests) - HIGHEST PRIORITY - ALL FIXED ✓
+- [x] `project_tests::test_apply_code_actions_with_commands`
+- [x] `project_tests::test_completions_with_carriage_returns`
 - [x] `project_tests::test_completions_with_text_edit`
-- [ ] `project_tests::test_completions_with_edit_ranges`
-- [ ] `project_tests::test_completions_without_edit_ranges`
+- [x] `project_tests::test_completions_with_edit_ranges`
+- [x] `project_tests::test_completions_without_edit_ranges`
 - [x] `project_tests::test_definition`
-- [ ] `project_tests::test_lsp_rename_notifications`
-- [ ] `project_tests::test_rename`
-- [ ] `project_tests::test_reporting_fs_changes_to_language_servers`
-- [ ] `project_tests::test_restarting_server_with_diagnostics_running`
+- [x] `project_tests::test_lsp_rename_notifications`
+- [x] `project_tests::test_rename`
+- [x] `project_tests::test_reporting_fs_changes_to_language_servers`
+- [x] `project_tests::test_restarting_server_with_diagnostics_running`
 
 ### collab crate (4 tests)
 - [ ] `tests::editor_tests::test_language_server_statuses`
