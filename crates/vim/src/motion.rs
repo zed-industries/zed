@@ -2394,7 +2394,7 @@ fn matching(
 
     let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
 
-    let make_range_filter = |match_quotes: bool, require_on_bracket: bool| {
+    let make_range_filter = |require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot,
               opening_range: Range<BufferOffset>,
               closing_range: Range<BufferOffset>| {
@@ -2419,15 +2419,10 @@ fn matching(
     };
 
     let bracket_ranges = snapshot
-        .innermost_enclosing_bracket_ranges(
-            offset..offset,
-            Some(&make_range_filter(match_quotes, true)),
-        )
+        .innermost_enclosing_bracket_ranges(offset..offset, Some(&make_range_filter(true)))
         .or_else(|| {
-            snapshot.innermost_enclosing_bracket_ranges(
-                offset..offset,
-                Some(&make_range_filter(match_quotes, false)),
-            )
+            snapshot
+                .innermost_enclosing_bracket_ranges(offset..offset, Some(&make_range_filter(false)))
         });
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
