@@ -2662,6 +2662,14 @@ impl ToolCallEventStream {
             return Task::ready(Ok(()));
         }
 
+        self.authorize_required(title, cx)
+    }
+
+    /// Like `authorize`, but always prompts for confirmation regardless of
+    /// the `always_allow_tool_actions` setting. Use this when tool-specific
+    /// permission rules (like `always_confirm` patterns) have already determined
+    /// that confirmation is required.
+    pub fn authorize_required(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
             .0

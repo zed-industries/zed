@@ -117,7 +117,8 @@ impl AgentTool for TerminalTool {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx))
+                // Use authorize_required since permission rules already determined confirmation is needed
+                Some(event_stream.authorize_required(self.initial_title(Ok(input.clone()), cx), cx))
             }
         };
         cx.spawn(async move |cx| {
