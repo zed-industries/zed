@@ -3716,12 +3716,8 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
- "task",
- "theme",
- "ui",
  "url",
  "util",
- "workspace",
  "zlog",
 ]
 
@@ -3743,6 +3739,23 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+]
+
+[[package]]
+name = "copilot_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "gpui",
+ "log",
+ "lsp",
+ "menu",
+ "serde_json",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -5237,6 +5250,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "copilot",
+ "copilot_ui",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5386,6 +5400,7 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "copilot_chat",
+ "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
  "editor",
@@ -8997,6 +9012,7 @@ dependencies = [
  "convert_case 0.8.0",
  "copilot",
  "copilot_chat",
+ "copilot_ui",
  "credentials_provider",
  "deepseek",
  "editor",
@@ -14944,6 +14960,7 @@ dependencies = [
  "bm25",
  "client",
  "copilot",
+ "copilot_ui",
  "edit_prediction",
  "editor",
  "feature_flags",
@@ -20734,6 +20751,7 @@ dependencies = [
  "component_preview",
  "copilot",
  "copilot_chat",
+ "copilot_ui",
  "crashes",
  "dap",
  "dap_adapters",

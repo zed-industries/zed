@@ -179,13 +179,13 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| {
-            copilot::ConfigurationView::new(
+            copilot_ui::ConfigurationView::new(
                 |cx| {
                     CopilotChat::global(cx)
                         .map(|m| m.read(cx).is_authenticated())
                         .unwrap_or(false)
                 },
-                copilot::ConfigurationMode::Chat,
+                copilot_ui::ConfigurationMode::Chat,
                 cx,
             )
         })

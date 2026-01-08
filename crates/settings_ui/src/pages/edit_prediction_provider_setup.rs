@@ -342,12 +342,12 @@ pub(crate) fn render_github_copilot_provider(
     cx: &mut App,
 ) -> impl IntoElement {
     let configuration_view = window.use_state(cx, |_, cx| {
-        copilot::ConfigurationView::new(
+        copilot_ui::ConfigurationView::new(
             |cx| {
                 copilot::Copilot::global(cx)
                     .is_some_and(|copilot| copilot.read(cx).is_authenticated())
             },
-            copilot::ConfigurationMode::EditPrediction,
+            copilot_ui::ConfigurationMode::EditPrediction,
             cx,
         )
     });

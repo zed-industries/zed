@@ -73,7 +73,7 @@ impl ZedPredictModal {
                                 ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                copilot::initiate_sign_in(window, cx);
+                                copilot_ui::initiate_sign_in(window, cx);
                             }
                         }),
                         cx,

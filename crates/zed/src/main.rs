@@ -591,13 +591,26 @@ fn main() {
         );
         command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
+        let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
+            enterprise_uri: language::language_settings::all_language_settings(None, cx)
+                .edit_predictions
+                .copilot
+                .enterprise_uri
+                .clone(),
+        };
+        copilot_chat::init(
+            app_state.fs.clone(),
+            app_state.client.http_client(),
+            copilot_chat_configuration,
+            cx,
+        );
         copilot::init(
             copilot_language_server_id,
             app_state.fs.clone(),
-            app_state.client.http_client(),
             app_state.node_runtime.clone(),
             cx,
         );
+        copilot_ui::init(cx);
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);

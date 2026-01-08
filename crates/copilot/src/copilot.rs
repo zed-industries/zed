@@ -1,9 +1,7 @@
 mod copilot_edit_prediction_delegate;
 pub mod request;
-mod sign_in;
 
 use crate::request::NextEditSuggestions;
-use crate::sign_in::initiate_sign_out;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -13,7 +11,6 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
     WeakEntity, actions,
 };
-use http_client::HttpClient;
 use language::language_settings::CopilotSettings;
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
@@ -40,13 +37,8 @@ use std::{
 };
 use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
-use workspace::Workspace;
 
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
-pub use crate::sign_in::{
-    ConfigurationMode, ConfigurationView, CopilotCodeVerification, initiate_sign_in,
-    reinstall_and_sign_in,
-};
 
 actions!(
     copilot,
@@ -69,20 +61,9 @@ actions!(
 pub fn init(
     new_server_id: LanguageServerId,
     fs: Arc<dyn Fs>,
-    http: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    let language_settings = all_language_settings(None, cx);
-    let configuration = copilot_chat::CopilotChatConfiguration {
-        enterprise_uri: language_settings
-            .edit_predictions
-            .copilot
-            .enterprise_uri
-            .clone(),
-    };
-    copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
-
     let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
@@ -93,19 +74,6 @@ pub fn init(
         if let Some(copilot) = Copilot::global(cx) {
             copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
         }
-    })
-    .detach();
-
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_, _: &SignIn, window, cx| {
-            initiate_sign_in(window, cx);
-        });
-        workspace.register_action(|_, _: &Reinstall, window, cx| {
-            reinstall_and_sign_in(window, cx);
-        });
-        workspace.register_action(|_, _: &SignOut, window, cx| {
-            initiate_sign_out(window, cx);
-        });
     })
     .detach();
 }
@@ -721,7 +689,7 @@ impl Copilot {
         }
     }
 
-    pub(crate) fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         match &self.server {
             CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
@@ -743,7 +711,7 @@ impl Copilot {
         }
     }
 
-    pub(crate) fn reinstall(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
+    pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let language_settings = all_language_settings(None, cx);
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
@@ -1018,7 +986,11 @@ impl Copilot {
         }
     }
 
-    fn update_sign_in_status(&mut self, lsp_status: request::SignInStatus, cx: &mut Context<Self>) {
+    pub fn update_sign_in_status(
+        &mut self,
+        lsp_status: request::SignInStatus,
+        cx: &mut Context<Self>,
+    ) {
         self.buffers.retain(|buffer| buffer.is_upgradable());
 
         if let Ok(server) = self.server.as_running() {

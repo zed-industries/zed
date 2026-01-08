@@ -1,5 +1,5 @@
-use crate::{Copilot, Status, request, request::PromptUserDeviceFlow};
 use anyhow::Context as _;
+use copilot::{Copilot, Status, request, request::PromptUserDeviceFlow};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,

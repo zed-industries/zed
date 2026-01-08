@@ -31,7 +31,6 @@ copilot_chat.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 edit_prediction_types.workspace = true
 language.workspace = true
 log.workspace = true
@@ -46,10 +45,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sum_tree.workspace = true
-task.workspace = true
-ui.workspace = true
 util.workspace = true
-workspace.workspace = true
 url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -72,7 +68,5 @@ project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

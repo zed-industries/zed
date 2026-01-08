@@ -86,6 +86,7 @@ component.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
+copilot_ui.workspace = true
 crashes.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
