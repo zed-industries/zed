@@ -381,8 +381,7 @@ mod tests {
             parsed,
             indoc::indoc! {"
             one
-            two three
-            "}
+            two three"}
         );
     }
 
@@ -428,8 +427,7 @@ mod tests {
     fn test_extract_editable_region_no_markers() {
         let text = indoc::indoc! {"
             one
-            two three
-            "};
+            two three"};
         let parsed = TeacherPrompt::extract_editable_region(text);
         assert_eq!(
             parsed,
@@ -453,8 +451,7 @@ mod tests {
             parsed,
             indoc::indoc! {"
             one
-            two three
-            "}
+            two three"}
         );
     }
 }
