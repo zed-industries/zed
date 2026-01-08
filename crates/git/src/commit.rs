@@ -82,6 +82,7 @@ async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec
     const MARKER: &str = "<MARKER>";
     let mut cmd = util::command::new_smol_command("git");
     cmd.current_dir(working_directory)
+        .kill_on_drop(true)
         .arg("show")
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))

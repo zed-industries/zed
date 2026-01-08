@@ -165,3 +165,84 @@ tracy-csvexport -u run_X.tracy | grep "for_path{" | \
 
 ## Full Details
 See `PERF_NOTES.md` for complete analysis with all data.
+
+---
+
+# Fix Attempts (Continued Session 2)
+
+## Why Cancellation Tokens Are Complex
+
+Investigated using `CancellationToken` to cancel background tasks. Key finding:
+
+**GPUI's `Task` does cancel on drop** (documented in `crates/gpui/src/executor.rs:102-103`), but:
+- `async_task` semantics: if task is **already running** on a worker thread, it runs to completion
+- The `executor.spawn()` in `repository.rs` immediately queues work that starts executing
+- By the time parent is dropped, `for_path` tasks are already in-flight
+
+## Fix Attempt 1: Debouncing
+
+Added 100ms debounce to all event-triggered `generate()` calls.
+
+**Changes to `crates/editor/src/git/blame.rs`:**
+- Added `debounced_generate_task: Task<Result<()>>` field
+- Added `DEBOUNCE_GENERATE_INTERVAL: Duration = 100ms` constant
+- Added `debounced_generate()` method with timer
+- Changed all event handlers to use `debounced_generate()`:
+  - `DirtyChanged`, `WorktreeUpdatedEntries`, `RepositoryUpdated`
+  - `RepositoryAdded`, `RepositoryRemoved`, `focus`
+- Kept direct `generate()` only for init and inside `regenerate_on_edit`
+
+## Fix Attempt 2: kill_on_drop
+
+Added `kill_on_drop` to smol commands executing `git blame` subprocess.
+
+**Purpose:** Kill the actual git subprocess when Task is dropped, rather than letting it run to completion.
+
+## Tracy Results After Fixes
+
+### run_5.tracy (debounce only)
+| Metric | Value |
+|--------|-------|
+| `for_path` calls | 7813 |
+| `generate` calls | 5 |
+| generation_ids | 2 (0, 1) |
+
+- gen_id=0: 131 calls, completed successfully (~7s)
+- gen_id=1: 7682 calls, **orphaned** (51s-186s = 135 seconds!)
+
+### run_6.tracy (debounce + kill_on_drop, missed one spot)
+| Metric | Value |
+|--------|-------|
+| `for_path` calls | 6055 |
+| generation_ids | 4 (0, 1, 2, 3) |
+
+All `blame_task` spans were microseconds (cancelled), but orphaned work continued.
+
+### run_7.tracy (debounce + kill_on_drop complete)
+| Metric | Value |
+|--------|-------|
+| `for_path` calls | 9517 |
+| generation_ids | 3 (0, 1, 2) |
+
+| gen_id | for_path | blame_task duration | Span |
+|--------|----------|---------------------|------|
+| 0 | 155 | **121.4s** (completed!) | 17.6s-19.9s |
+| 1 | 5860 | 0.027ms (cancelled) | 19.8s-70.8s (orphaned) |
+| 2 | 3502 | 1.4ms (cancelled) | 70.8s-139s (orphaned) |
+
+Same files blamed repeatedly:
+- `AUTHORS`: 2996 times
+- `DEPS`: 1799 times
+
+## Current Status
+
+**Fixes applied but problem persists:**
+1. Debouncing reduces `generate()` call frequency
+2. `kill_on_drop` should kill git subprocess on Task drop
+3. But orphaned tasks still run for 50-130+ seconds
+4. Same small set of files blamed thousands of times
+
+**Remaining investigation needed:**
+- Verify `kill_on_drop` is correctly propagating
+- Check if there are additional spawn layers not being cancelled
+- Consider architectural changes (lazy blame, visible-only blame)

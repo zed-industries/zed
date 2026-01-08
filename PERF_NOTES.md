@@ -693,3 +693,68 @@ The 2-second debounce in `regenerate_on_edit` doesn't help because:
 1. The debounce only delays calling `generate()`
 2. Once `generate()` is called, it still spawns background tasks that can't be cancelled
 3. If another event triggers `generate()` before the background work completes, all that work is orphaned
+
+# Fix Attempt: Debouncing All generate() Calls
+
+## Rationale
+
+Since cancelling already-spawned background tasks is complex (they run to completion once picked
+up by a worker thread), a simpler approach is to reduce the number of `generate()` calls by
+debouncing all event-triggered regenerations.
+
+## Implementation
+
+### Changes to `crates/editor/src/git/blame.rs`
+
+1. Added new field to `GitBlame` struct:
+```rust
+debounced_generate_task: Task<Result<()>>,
+```
+
+2. Added debounce interval constant (100ms):
+```rust
+const DEBOUNCE_GENERATE_INTERVAL: Duration = Duration::from_millis(100);
+```
+
+3. Added `debounced_generate` method:
+```rust
+fn debounced_generate(&mut self, cx: &mut Context<Self>) {
+    self.debounced_generate_task = cx.spawn(async move |this, cx| {
+        cx.background_executor()
+            .timer(DEBOUNCE_GENERATE_INTERVAL)
+            .await;
+
+        this.update(cx, |this, cx| {
+            this.generate(cx);
+        })
+    });
+}
+```
+
+4. Changed all event handlers to use `debounced_generate()` instead of `generate()`:
+   - `DirtyChanged` handler (line 214)
+   - `WorktreeUpdatedEntries` handler (line 242)
+   - `RepositoryUpdated` handler (line 258)
+   - `RepositoryAdded` handler (line 264)
+   - `RepositoryRemoved` handler (line 270)
+   - `focus` handler (line 374)
+
+5. Kept direct `generate()` call only for:
+   - Initial `generate()` in constructor (line 293) - needs immediate blame on creation
+   - Inside `regenerate_on_edit` (line 684) - already has 2-second debounce
+
+## Expected Behavior
+
+When multiple events fire in rapid succession (< 100ms apart):
+1. Each event calls `debounced_generate()`
+2. Each call replaces `debounced_generate_task`, cancelling the previous timer
+3. Only after 100ms of "quiet time" does `generate()` actually execute
+4. Result: Many fewer `generate()` calls, many fewer orphaned background tasks
+
+## Test Command
+
+```bash
+RUSTFLAGS="-C force-frame-pointers=yes" ZTRACING=1 cargo build --features tracy --release
+```
+
+Then capture a new trace (run_5.tracy) and compare `for_path` counts with previous runs.

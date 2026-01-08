@@ -61,6 +61,7 @@ async fn run_git_blame(
     line_ending: LineEnding,
 ) -> Result<String> {
     let mut child = util::command::new_smol_command(git_binary)
+        .kill_on_drop(true)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")

@@ -88,8 +88,11 @@ pub struct GitBlame {
     changed_while_blurred: bool,
     user_triggered: bool,
     regenerate_on_edit_task: Task<Result<()>>,
+    debounced_generate_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
 }
+
+const DEBOUNCE_GENERATE_INTERVAL: Duration = Duration::from_millis(100);
 
 pub trait BlameRenderer {
     fn max_author_length(&self) -> usize;
@@ -211,7 +214,7 @@ impl GitBlame {
                     if !multi_buffer.read(cx).is_dirty(cx) {
                         let span = ztracing::info_span!("blame_trigger_dirty_changed");
                         let _enter = span.enter();
-                        git_blame.generate(cx);
+                        git_blame.debounced_generate(cx);
                     }
                 }
                 multi_buffer::Event::ExcerptsAdded { .. }
@@ -239,7 +242,7 @@ impl GitBlame {
                         let span = ztracing::info_span!("blame_trigger_worktree_updated");
                         let _enter = span.enter();
                         log::debug!("Updated buffers. Regenerating blame data...",);
-                        git_blame.generate(cx);
+                        git_blame.debounced_generate(cx);
                     }
                 }
             }
@@ -255,19 +258,19 @@ impl GitBlame {
                         "Repository updated ({:?}). Regenerating blame data...",
                         repo_event
                     );
-                    this.generate(cx);
+                    this.debounced_generate(cx);
                 }
                 GitStoreEvent::RepositoryAdded => {
                     let span = ztracing::info_span!("blame_trigger_repo_added");
                     let _enter = span.enter();
                     log::debug!("Repository added. Regenerating blame data...");
-                    this.generate(cx);
+                    this.debounced_generate(cx);
                 }
                 GitStoreEvent::RepositoryRemoved(_) => {
                     let span = ztracing::info_span!("blame_trigger_repo_removed");
                     let _enter = span.enter();
                     log::debug!("Repository removed. Regenerating blame data...");
-                    this.generate(cx);
+                    this.debounced_generate(cx);
                 }
                 _ => {}
             });
@@ -281,6 +284,7 @@ impl GitBlame {
             changed_while_blurred: false,
             task: Task::ready(Ok(())),
             regenerate_on_edit_task: Task::ready(Ok(())),
+            debounced_generate_task: Task::ready(Ok(())),
             _regenerate_subscriptions: vec![
                 multi_buffer_subscription,
                 project_subscription,
@@ -371,7 +375,7 @@ impl GitBlame {
             self.changed_while_blurred = false;
             let span = ztracing::info_span!("blame_trigger_focus");
             let _enter = span.enter();
-            self.generate(cx);
+            self.debounced_generate(cx);
         }
     }
 
@@ -678,6 +682,18 @@ impl GitBlame {
         self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
+                .await;
+
+            this.update(cx, |this, cx| {
+                this.generate(cx);
+            })
+        });
+    }
+
+    fn debounced_generate(&mut self, cx: &mut Context<Self>) {
+        self.debounced_generate_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(DEBOUNCE_GENERATE_INTERVAL)
                 .await;
 
             this.update(cx, |this, cx| {
