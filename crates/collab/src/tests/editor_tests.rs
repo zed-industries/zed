@@ -1,5 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
+use collections::{HashMap, HashSet};
 use editor::{
     DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
     SelectionEffects,
@@ -26,6 +27,7 @@ use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -4637,6 +4639,119 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .filter_map(|inlay| inlay.get_color())
         .map(Rgba::from)
         .collect()
+}
+
+#[gpui::test]
+async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let has_restricted_worktrees = |project: &gpui::Entity<project::Project>,
+                                    cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let worktree_store = project.read(cx).worktree_store();
+            TrustedWorktrees::try_get_global(cx)
+                .unwrap()
+                .read(cx)
+                .has_restricted_worktrees(&worktree_store, cx)
+        })
+    };
+
+    cx_a.update(|cx| {
+        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+    });
+    cx_b.update(|cx| {
+        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+    });
+
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "file.txt": "contents",
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a
+        .build_local_project_with_trust(path!("/a"), cx_a)
+        .await;
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let _editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/main.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let _editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/main.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    assert!(
+        has_restricted_worktrees(&project_a, cx_a),
+        "local client should have restricted worktrees after opening it"
+    );
+    assert!(
+        !has_restricted_worktrees(&project_b, cx_b),
+        "remote client joined a project should have no restricted worktrees"
+    );
+
+    cx_a.update(|_, cx| {
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project_a.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        }
+    });
+    assert!(
+        !has_restricted_worktrees(&project_a, cx_a),
+        "local client should have no worktrees after trusting those"
+    );
+    assert!(
+        !has_restricted_worktrees(&project_b, cx_b),
+        "remote client should still be trusted"
+    );
 }
 
 fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {

@@ -719,6 +719,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         RemoteConnectionOptions::Ssh { .. } => IconName::Server,
                                         RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
                                         RemoteConnectionOptions::Docker(_) => IconName::Box,
+                                        #[cfg(any(test, feature = "test-support"))]
+                                        RemoteConnectionOptions::Mock(_) => IconName::Server,
                                     })
                                     .color(Color::Muted)
                                     .into_any_element()

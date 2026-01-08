@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.219.0"
+version = "0.220.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -23,6 +23,7 @@ test-support = [
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
+    "recent_projects/test-support",
 ]
 visual-tests = [
     "gpui/test-support",
@@ -92,6 +93,7 @@ debugger_tools.workspace = true
 debugger_ui.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
+encoding_selector.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true

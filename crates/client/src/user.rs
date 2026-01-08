@@ -256,7 +256,7 @@ impl UserStore {
                                     } else {
                                         anyhow::Ok(())
                                     }
-                                })??;
+                                })?;
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }
@@ -299,7 +299,7 @@ impl UserStore {
         _: TypedEnvelope<proto::ShowContacts>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
+        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts));
         Ok(())
     }
 
@@ -312,7 +312,7 @@ impl UserStore {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
-        })?;
+        });
         Ok(())
     }
 
@@ -353,7 +353,7 @@ impl UserStore {
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
                         incoming_requests.push({
-                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))
                                 .await?
                         });
                     }
@@ -361,7 +361,7 @@ impl UserStore {
                     let mut outgoing_requests = Vec::new();
                     for requested_user_id in message.outgoing_requests {
                         outgoing_requests.push(
-                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))
                                 .await?,
                         );
                     }
@@ -428,7 +428,7 @@ impl UserStore {
                         }
 
                         cx.notify();
-                    })?;
+                    });
 
                     Ok(())
                 })
@@ -798,7 +798,7 @@ impl UserStore {
                             this.read_with(cx, |this, _cx| {
                                 this.client.upgrade().map(|client| client.cloud_client())
                             })
-                        })??
+                        })?
                         .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
 
                     let response = cloud_client.get_authenticated_user().await?;
@@ -806,7 +806,7 @@ impl UserStore {
                         this.update(cx, |this, cx| {
                             this.update_authenticated_user(response, cx);
                         })
-                    })??;
+                    })?;
                 }
             }
 
@@ -914,7 +914,7 @@ impl Contact {
         let user = user_store
             .update(cx, |user_store, cx| {
                 user_store.get_user(contact.user_id, cx)
-            })?
+            })
             .await?;
         Ok(Self {
             user,

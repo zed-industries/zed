@@ -736,9 +736,7 @@ impl AcpThreadView {
                             })
                         });
 
-                        if this.focus_handle(cx).is_focused(window) {
-                            this.message_editor.focus_handle(cx).focus(window, cx);
-                        }
+                        this.message_editor.focus_handle(cx).focus(window, cx);
 
                         cx.notify();
                     }
@@ -987,7 +985,7 @@ impl AcpThreadView {
                         );
                     });
                 }
-            })?;
+            });
 
             anyhow::Ok(())
         })
@@ -1021,7 +1019,7 @@ impl AcpThreadView {
             history_store
                 .update(&mut cx.clone(), |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, cx)
-                })?
+                })
                 .await?;
 
             let thread_metadata = agent::DbThreadMetadata {
@@ -1654,18 +1652,18 @@ impl AcpThreadView {
                     .iter()
                     .take(entry_ix)
                     .any(|entry| entry.diffs().next().is_some())
-            })?;
+            });
 
             if has_earlier_edits {
                 thread.update(cx, |thread, cx| {
                     thread.action_log().update(cx, |action_log, cx| {
                         action_log.keep_all_edits(None, cx);
                     });
-                })?;
+                });
             }
 
             thread
-                .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
+                .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
                 .await?;
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
@@ -2142,7 +2140,7 @@ impl AcpThreadView {
                             })
                         });
 
-                    if let Ok(Some(resolve_task)) = resolved_node_runtime {
+                    if let Some(resolve_task) = resolved_node_runtime {
                         if let Ok(node_path) = resolve_task.await {
                             task.command = Some(node_path.to_string_lossy().to_string());
                         }
@@ -2161,11 +2159,11 @@ impl AcpThreadView {
             task.allow_concurrent_runs = true;
             task.hide = task::HideStrategy::Always;
 
-            let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(&task, window, cx)
-            })?;
-
-            let terminal = terminal.await?;
+            let terminal = terminal_panel
+                .update_in(cx, |terminal_panel, window, cx| {
+                    terminal_panel.spawn_task(&task, window, cx)
+                })?
+                .await?;
 
             if check_exit_code {
                 // For extension-based auth, wait for the process to exit and check exit code
@@ -2216,7 +2214,7 @@ impl AcpThreadView {
                         }
                     }
                     _ = exit_status => {
-                        if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server())? && login.label.contains("gemini") {
+                        if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
                             return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), true, false, window, cx))?.await
                         }
                         return Err(anyhow!("exited before logging in"));
@@ -3709,9 +3707,8 @@ impl AcpThreadView {
                         .on_click({
                             let terminal = terminal.clone();
                             cx.listener(move |_this, _event, _window, cx| {
-                                let inner_terminal = terminal.read(cx).inner().clone();
-                                inner_terminal.update(cx, |inner_terminal, _cx| {
-                                    inner_terminal.kill_active_task();
+                                terminal.update(cx, |terminal, cx| {
+                                    terminal.stop_by_user(cx);
                                 });
                             })
                         }),
@@ -5670,14 +5667,14 @@ impl AcpThreadView {
             let markdown_language = markdown_language_task.await?;
 
             let buffer = project
-                .update(cx, |project, cx| project.create_buffer(false, cx))?
+                .update(cx, |project, cx| project.create_buffer(false, cx))
                 .await?;
 
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(markdown, cx);
                 buffer.set_language(Some(markdown_language), cx);
                 buffer.set_capability(language::Capability::ReadWrite, cx);
-            })?;
+            });
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let buffer = cx

@@ -59,6 +59,7 @@ members = [
     "crates/edit_prediction_ui",
     "crates/edit_prediction_context",
     "crates/editor",
+    "crates/encoding_selector",
     "crates/eval",
     "crates/eval_utils",
     "crates/explorer_command_injector",
@@ -292,6 +293,7 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+encoding_selector = { path = "crates/encoding_selector" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -599,7 +601,7 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-pulldown-cmark = { version = "0.12.0", default-features = false }
+pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"

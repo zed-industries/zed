@@ -1982,7 +1982,7 @@ pub fn command_interceptor(
                 let (range, query) = VimCommand::parse_range(&string[1..]);
                 let action =
                     match cx.update(|cx| commands(cx).get(cmd_idx)?.parse(&query, &range, cx)) {
-                        Ok(Some(action)) => action,
+                        Some(action) => action,
                         _ => continue,
                     };
                 results.push(CommandInterceptItem {
