@@ -36,6 +36,7 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
@@ -1266,7 +1267,11 @@ impl EditorElement {
             }
         }
 
-        let breakpoint_indicator = if gutter_hovered {
+        // Check if we're on the row where the diff review button is shown
+        let is_on_diff_review_button_row = editor.show_diff_review_button()
+            && valid_point.row() == position_map.snapshot.display_snapshot.max_point().row();
+
+        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -2984,10 +2989,19 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
+        eprintln!(
+            "[DEBUG] layout_breakpoints called with {} breakpoints, range {:?}",
+            breakpoints.len(),
+            range
+        );
         self.editor.update(cx, |editor, cx| {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp, state))| {
+                    eprintln!(
+                        "[DEBUG] Processing breakpoint at display_row {:?}",
+                        display_row
+                    );
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
                         .is_some_and(|row_info| {
@@ -3001,6 +3015,10 @@ impl EditorElement {
                     }
 
                     if range.start > display_row || range.end < display_row {
+                        eprintln!(
+                            "[DEBUG] Breakpoint at row {:?} filtered out: not in range {:?}",
+                            display_row, range
+                        );
                         return None;
                     }
 
@@ -3010,10 +3028,14 @@ impl EditorElement {
                         return None;
                     }
 
+                    eprintln!(
+                        "[DEBUG] Creating breakpoint button at display_row {:?}",
+                        display_row
+                    );
                     let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -3027,6 +3049,54 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_diff_review_button(
+        &self,
+        line_height: Pixels,
+        scroll_position: gpui::Point<ScrollOffset>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        snapshot: &EditorSnapshot,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if !cx.has_flag::<DiffReviewFeatureFlag>() {
+            return None;
+        }
+
+        let show_diff_review_button = self.editor.read(cx).show_diff_review_button();
+        if !show_diff_review_button {
+            return None;
+        }
+
+        let max_point = snapshot.display_snapshot.max_point();
+        let last_row = max_point.row();
+
+        let button = IconButton::new("diff_review_button", ui::IconName::Plus)
+            .icon_size(ui::IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(ui::Color::Default)
+            .style(ui::ButtonStyle::Filled)
+            .layer(ui::ElevationIndex::Surface)
+            .tooltip(Tooltip::text("Add Review"))
+            .into_any_element();
+
+        let button = prepaint_gutter_button(
+            button,
+            last_row,
+            line_height,
+            gutter_dimensions,
+            scroll_position,
+            gutter_hitbox,
+            display_hunks,
+            window,
+            cx,
+        );
+
+        Some(button)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3115,16 +3185,23 @@ impl EditorElement {
                         return None;
                     }
 
+                    let removed_breakpoint = breakpoints.remove(&display_row);
+                    if removed_breakpoint.is_some() {
+                        eprintln!(
+                            "[DEBUG] layout_run_indicators: REMOVING breakpoint at row {:?} for run indicator",
+                            display_row
+                        );
+                    }
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
-                        breakpoints.remove(&display_row),
+                        removed_breakpoint,
                         cx,
                     );
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -5791,10 +5868,6 @@ impl EditorElement {
 
                     let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
 
-                    if x < text_hitbox.bounds.left() {
-                        continue;
-                    }
-
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));
 
@@ -6463,12 +6536,25 @@ impl EditorElement {
                 }
             });
 
+            eprintln!(
+                "[DEBUG] paint_gutter_indicators: painting {} breakpoints, gutter_hitbox.bounds=({:.2}, {:.2}, {:.2}, {:.2})",
+                layout.breakpoints.len(),
+                layout.gutter_hitbox.bounds.origin.x,
+                layout.gutter_hitbox.bounds.origin.y,
+                layout.gutter_hitbox.bounds.size.width,
+                layout.gutter_hitbox.bounds.size.height
+            );
             for breakpoint in layout.breakpoints.iter_mut() {
+                eprintln!("[DEBUG] painting breakpoint element");
                 breakpoint.paint(window, cx);
             }
 
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
+            }
+
+            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
+                diff_review_button.paint(window, cx);
             }
         });
     }
@@ -8200,7 +8286,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    button: IconButton,
+    mut button: AnyElement,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
@@ -8210,8 +8296,6 @@ fn prepaint_gutter_button(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let mut button = button.into_any_element();
-
     let available_space = size(
         AvailableSpace::MinContent,
         AvailableSpace::Definite(line_height),
@@ -8248,12 +8332,18 @@ fn prepaint_gutter_button(
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
     y += (line_height - indicator_size.height) / 2.;
 
-    button.prepaint_as_root(
-        gutter_hitbox.origin + point(x, y),
-        available_space,
-        window,
-        cx,
+    let final_origin = gutter_hitbox.origin + point(x, y);
+    eprintln!(
+        "[DEBUG] prepaint_gutter_button: row={:?}, origin=({:.2}, {:.2}), size=({:.2}, {:.2}), gutter_hitbox.origin=({:.2}, {:.2})",
+        row,
+        final_origin.x,
+        final_origin.y,
+        indicator_size.width,
+        indicator_size.height,
+        gutter_hitbox.origin.x,
+        gutter_hitbox.origin.y
     );
+    button.prepaint_as_root(final_origin, available_space, window, cx);
     button
 }
 
@@ -9691,16 +9781,28 @@ impl Element for EditorElement {
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
                     self.editor.update(cx, |editor, _| {
+                        let indicator = &editor.gutter_breakpoint_indicator.0;
+                        eprintln!(
+                            "[DEBUG] Checking phantom breakpoint: indicator={:?}",
+                            indicator.as_ref().map(|i| (i.display_row, i.is_active))
+                        );
                         if let Some(phantom_breakpoint) = &mut editor
                             .gutter_breakpoint_indicator
                             .0
                             .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
                         {
+                            eprintln!(
+                                "[DEBUG] Phantom breakpoint is active at row {:?}",
+                                phantom_breakpoint.display_row
+                            );
                             // Is there a non-phantom breakpoint on this line?
                             phantom_breakpoint.collides_with_existing_breakpoint = true;
                             breakpoint_rows
                                 .entry(phantom_breakpoint.display_row)
                                 .or_insert_with(|| {
+                                    eprintln!(
+                                        "[DEBUG] Inserting phantom breakpoint into breakpoint_rows"
+                                    );
                                     let position = snapshot.display_point_to_anchor(
                                         DisplayPoint::new(phantom_breakpoint.display_row, 0),
                                         Bias::Right,
@@ -10275,6 +10377,16 @@ impl Element for EditorElement {
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
+                    eprintln!(
+                        "[DEBUG] Before layout_breakpoints: show_breakpoints={}, gutter_settings.breakpoints={}, gutter_settings.runnables={}, breakpoint_rows.len()={}",
+                        show_breakpoints,
+                        gutter_settings.breakpoints,
+                        gutter_settings.runnables,
+                        breakpoint_rows.len()
+                    );
+                    for (row, _) in &breakpoint_rows {
+                        eprintln!("[DEBUG] breakpoint_rows contains row {:?}", row);
+                    }
                     let breakpoints = if show_breakpoints {
                         self.layout_breakpoints(
                             line_height,
@@ -10292,6 +10404,21 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
+                    eprintln!(
+                        "[DEBUG] After layout_breakpoints: breakpoints.len()={}",
+                        breakpoints.len()
+                    );
+
+                    let diff_review_button = self.layout_diff_review_button(
+                        line_height,
+                        scroll_position,
+                        &gutter_dimensions,
+                        &gutter_hitbox,
+                        &display_hunks,
+                        &snapshot,
+                        window,
+                        cx,
+                    );
 
                     self.layout_signature_help(
                         &hitbox,
@@ -10490,6 +10617,7 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
+                        diff_review_button,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -10668,6 +10796,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
+    diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,

@@ -8617,11 +8617,15 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
-            let color = cx.theme().colors();
+            let theme_colors = cx.theme().colors();
 
             let color = if is_phantom {
                 if collides_with_existing {
-                    Color::Custom(color.debugger_accent.blend(color.text.opacity(0.6)))
+                    Color::Custom(
+                        theme_colors
+                            .debugger_accent
+                            .blend(theme_colors.text.opacity(0.6)),
+                    )
                 } else {
                     Color::Hint
                 }
@@ -8631,6 +8635,17 @@ impl Editor {
                 Color::Debugger
             };
 
+            let resolved_color = color.color(cx);
+            eprintln!(
+                "[DEBUG] render_breakpoint: is_phantom={}, row={:?}, color={:?}, resolved_color=(h={:.2}, s={:.2}, l={:.2}, a={:.2})",
+                is_phantom,
+                row,
+                color,
+                resolved_color.h,
+                resolved_color.s,
+                resolved_color.l,
+                resolved_color.a
+            );
             (color, icon)
         };
 

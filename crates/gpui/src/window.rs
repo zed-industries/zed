@@ -3288,18 +3288,40 @@ impl Window {
             }),
         };
 
+        eprintln!(
+            "[DEBUG] paint_svg: path={}, bounds=({:.2}, {:.2}, {:.2}, {:.2}), scale_factor={:.2}",
+            params.path,
+            bounds.origin.x.0,
+            bounds.origin.y.0,
+            bounds.size.width.0,
+            bounds.size.height.0,
+            scale_factor
+        );
+
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
                     let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
                     else {
+                        eprintln!(
+                            "[DEBUG] paint_svg: svg_renderer returned None for path={}",
+                            params.path
+                        );
                         return Ok(None);
                     };
+                    eprintln!(
+                        "[DEBUG] paint_svg: svg_renderer returned size=({}, {}), bytes_len={}",
+                        size.width.0,
+                        size.height.0,
+                        bytes.len()
+                    );
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
         else {
+            eprintln!("[DEBUG] paint_svg: tile was None, returning early");
             return Ok(());
         };
+        eprintln!("[DEBUG] paint_svg: got tile, inserting MonochromeSprite");
         let content_mask = self.content_mask().scale(scale_factor);
         let svg_bounds = Bounds {
             origin: bounds.center()
