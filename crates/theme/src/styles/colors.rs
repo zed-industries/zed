@@ -190,6 +190,7 @@ pub struct ThemeColors {
     pub editor_gutter_background: Hsla,
     pub editor_subheader_background: Hsla,
     pub editor_active_line_background: Hsla,
+    pub editor_active_line_border: Hsla,
     pub editor_highlighted_line_background: Hsla,
     /// Line color of the line a debugger is currently stopped at
     pub editor_debugger_active_line_background: Hsla,
