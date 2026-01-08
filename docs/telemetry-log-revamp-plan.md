@@ -21,6 +21,7 @@ This document outlines the plan to revamp the telemetry log view to make it more
 Location: `crates/zed/src/zed.rs:1985-2050`
 
 **Problems:**
+
 - **No live updates**: Reads file once when opened, creates a local buffer
 - **Raw JSON**: Hard to read, especially for non-developers
 - **No filtering**: Shows all events, no way to filter by type
@@ -71,6 +72,7 @@ Modify the telemetry system to support subscribers, with a careful synchronizati
 #### Synchronization Strategy
 
 When the user opens the telemetry log view, we need to capture:
+
 1. Historical events (already flushed to disk)
 2. Queued events (in memory, not yet flushed)
 3. Future events (arriving after we subscribe)
@@ -175,13 +177,16 @@ impl Telemetry {
 ### Phase 1: Core Infrastructure
 
 **Files to create:**
+
 - `crates/zed/src/telemetry_log.rs` - View implementation in the zed crate
 
 **Files to modify:**
+
 - `crates/client/src/telemetry.rs` - Add subscriber support and broadcast mechanism
 - `crates/zed/src/zed.rs` - Register new action and view, replace existing `open_telemetry_log_file`
 
 **Tasks:**
+
 1. Add `subscribers` field to `TelemetryState` and broadcast mechanism
 2. Implement `subscribe_with_history` on `Telemetry`
 3. Create `TelemetryLogView` in zed crate
@@ -191,6 +196,7 @@ impl Telemetry {
 **Reference:** `crates/acp_tools/src/acp_tools.rs`
 
 **Components:**
+
 1. `TelemetryLogView` - Main view struct implementing `Item`, `Render`, `Focusable`
 2. `TelemetryLogToolbarItemView` - Toolbar with filter controls
 3. `TelemetryLogEntry` - Individual event display
@@ -222,6 +228,7 @@ struct TelemetryLogEntry {
 ### Phase 3: Filtering UI
 
 **Toolbar components:**
+
 1. **Search input** - Text search within event type and properties
 2. **Clear button** - Clear displayed events
 3. **Open log file button** - Open the raw `telemetry.log` file
@@ -255,6 +262,7 @@ pub struct TelemetryLogEntry {
 **Timestamps:** Show relative time (e.g., "4s ago") with exact timestamp in tooltip on hover.
 
 **Collapsed view (one line per event):**
+
 ```
 ▼ 4s ago    Agent Message Sent
   { agent: "claude-code", session: "abc123", message_count: 5 }
@@ -263,6 +271,7 @@ pub struct TelemetryLogEntry {
 ```
 
 **Expanded view (click to expand):**
+
 ```
 ▼ 4s ago    Agent Message Sent
   {
