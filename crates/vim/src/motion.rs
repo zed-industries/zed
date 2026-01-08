@@ -3136,14 +3136,15 @@ fn indent_motion(
 mod test {
 
     use crate::{
+        motion::Matching,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Inlay;
+    use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
-    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3267,10 +3268,16 @@ mod test {
     async fn test_matching_quotes_disabled(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |s| {
-                s.vim.get_or_insert_default().use_match_quotes = Some(false);
-            });
+        // Bind % to Matching with match_quotes: false to match Neovim's behavior
+        // (Neovim's % doesn't match quotes by default)
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "%",
+                Matching {
+                    match_quotes: false,
+                },
+                None,
+            )]);
         });
 
         cx.set_shared_state("one {two 'thˇree' four}").await;
@@ -3308,12 +3315,8 @@ mod test {
     #[gpui::test]
     async fn test_matching_quotes_enabled(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new_markdown_with_rust(cx).await;
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |s| {
-                s.vim.get_or_insert_default().use_match_quotes = Some(true);
-            });
-        });
 
+        // Test default behavior (match_quotes: true as configured in keymap/vim.json)
         cx.set_state("one {two 'thˇree' four}", Mode::Normal);
         cx.simulate_keystrokes("%");
         cx.assert_state("one {two ˇ'three' four}", Mode::Normal);
@@ -3606,10 +3609,14 @@ mod test {
     #[gpui::test]
     async fn test_matching_tag_with_quotes(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_html(cx).await;
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |s| {
-                s.vim.get_or_insert_default().use_match_quotes = Some(false);
-            });
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "%",
+                Matching {
+                    match_quotes: false,
+                },
+                None,
+            )]);
         });
 
         cx.neovim.exec("set filetype=html").await;
@@ -3624,10 +3631,8 @@ mod test {
             <ˇ/div>
             "});
 
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |s| {
-                s.vim.get_or_insert_default().use_match_quotes = Some(true);
-            });
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("%", Matching { match_quotes: true }, None)]);
         });
 
         cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
