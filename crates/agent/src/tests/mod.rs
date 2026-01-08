@@ -1596,7 +1596,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     // Cancel the current send and ensure that the event stream is closed, even
     // if one of the tools is still running.
-    thread.update(cx, |thread, cx| thread.cancel(cx));
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
     let events = events.collect::<Vec<_>>().await;
     let last_event = events.last();
     assert!(
@@ -1628,6 +1628,159 @@ async fn test_cancellation(cx: &mut TestAppContext) {
         );
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    let fake_model = model.as_fake();
+
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let environment = Rc::new(FakeThreadEnvironment {
+        handle: handle.clone(),
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(crate::TerminalTool::new(
+                thread.project().clone(),
+                environment,
+            ));
+            thread.send(UserMessageId::new(), ["run a command"], cx)
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Simulate the model calling the terminal tool
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "terminal_tool_1".into(),
+            name: "terminal".into(),
+            raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
+            input: json!({"command": "sleep 1000", "cd": "."}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Wait for the terminal tool to start running by polling events
+    let mut terminal_started = false;
+    for _ in 0..100 {
+        cx.run_until_parked();
+
+        while let Some(Some(event)) = events.next().now_or_never() {
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+                update,
+            ))) = &event
+            {
+                if update.fields.content.as_ref().is_some_and(|content| {
+                    content
+                        .iter()
+                        .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                }) {
+                    terminal_started = true;
+                    break;
+                }
+            }
+        }
+        if terminal_started {
+            break;
+        }
+        cx.background_executor
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    assert!(terminal_started, "terminal tool should have started");
+
+    // Cancel the thread while the terminal is running.
+    // Detach the cancel task and collect events while it runs.
+    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+
+    // Drive the executor and collect events until we see the Stop event
+    let mut remaining_events = Vec::new();
+    for _ in 0..200 {
+        // Advance the clock to let timers fire (for the fake terminal's wait_for_exit)
+        cx.executor().advance_clock(Duration::from_millis(10));
+        cx.run_until_parked();
+
+        // Collect any available events
+        while let Some(Some(event)) = events.next().now_or_never() {
+            let is_stop = matches!(&event, Ok(ThreadEvent::Stop(_)));
+            remaining_events.push(event);
+            if is_stop {
+                break;
+            }
+        }
+
+        // Check if we got the stop event
+        if remaining_events
+            .iter()
+            .any(|e| matches!(e, Ok(ThreadEvent::Stop(_))))
+        {
+            break;
+        }
+    }
+
+    // Verify the terminal was killed
+    assert!(
+        handle.was_killed(),
+        "expected terminal handle to be killed on cancellation"
+    );
+
+    // Verify we got a cancellation stop event
+    let last_event = remaining_events.last();
+    assert!(
+        matches!(
+            last_event,
+            Some(Ok(ThreadEvent::Stop(acp::StopReason::Cancelled)))
+        ),
+        "expected cancellation stop event, got: {last_event:?}"
+    );
+
+    // Verify the tool result contains the terminal output, not just "Tool canceled by user"
+    thread.update(cx, |thread, _cx| {
+        let message = thread.last_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+
+        // Find the tool use in the content
+        let tool_use = agent_message
+            .content
+            .iter()
+            .find_map(|content| {
+                if let AgentMessageContent::ToolUse(tool_use) = content {
+                    Some(tool_use)
+                } else {
+                    None
+                }
+            })
+            .expect("expected tool use in agent message");
+
+        // Get the tool result
+        let tool_result = agent_message
+            .tool_results
+            .get(&tool_use.id)
+            .expect("expected tool result");
+
+        let result_text = match &tool_result.content {
+            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
+            _ => panic!("expected text content in tool result"),
+        };
+
+        // The result should contain the terminal output ("partial output" from FakeTerminalHandle)
+        assert!(
+            result_text.contains("partial output"),
+            "expected tool result to contain terminal output, got: {result_text}"
+        );
+
+        // The result should indicate the user stopped the command
+        assert!(
+            result_text.contains("user stopped"),
+            "expected tool result to indicate user stopped, got: {result_text}"
+        );
+    });
 }
 
 #[gpui::test]
@@ -2616,6 +2769,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             ToolRequiringPermission::name(): true,
                             InfiniteTool::name(): true,
                             ThinkingTool::name(): true,
+                            "terminal": true,
                         }
                     }
                 }

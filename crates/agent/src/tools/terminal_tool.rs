@@ -125,6 +125,7 @@ impl AgentTool for TerminalTool {
             let timeout = input.timeout_ms.map(Duration::from_millis);
 
             let mut timed_out = false;
+            let mut user_stopped_via_signal = false;
             let wait_for_exit = terminal.wait_for_exit(cx)?;
 
             match timeout {
@@ -140,17 +141,32 @@ impl AgentTool for TerminalTool {
                             terminal.kill(cx)?;
                             wait_for_exit.await;
                         }
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            user_stopped_via_signal = true;
+                            terminal.kill(cx)?;
+                            wait_for_exit.await;
+                        }
                     }
                 }
                 None => {
-                    wait_for_exit.await;
+                    futures::select! {
+                        _ = wait_for_exit.clone().fuse() => {},
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            user_stopped_via_signal = true;
+                            terminal.kill(cx)?;
+                            wait_for_exit.await;
+                        }
+                    }
                 }
             };
 
             // Check if user stopped - we check both:
             // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
             // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
-            let user_stopped_via_signal = event_stream.was_cancelled_by_user();
+            // Note: user_stopped_via_signal is already set above if we detected cancellation in the select!
+            // but we also check was_cancelled_by_user() for cases where cancellation happened after wait_for_exit completed
+            let user_stopped_via_signal =
+                user_stopped_via_signal || event_stream.was_cancelled_by_user();
             let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
             let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
 

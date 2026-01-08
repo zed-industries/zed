@@ -1309,7 +1309,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
             if let Some(agent) = agent.sessions.get(session_id) {
-                agent.thread.update(cx, |thread, cx| thread.cancel(cx));
+                agent
+                    .thread
+                    .update(cx, |thread, cx| thread.cancel(cx))
+                    .detach();
             }
         });
     }
