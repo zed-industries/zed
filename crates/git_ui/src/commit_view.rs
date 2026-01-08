@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, RepoPath};
+use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
     parse_git_remote_url,
@@ -20,6 +20,7 @@ use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
+    collections::HashSet,
     path::PathBuf,
     sync::Arc,
 };
@@ -69,6 +70,7 @@ struct GitBlob {
     path: RepoPath,
     worktree_id: WorktreeId,
     is_deleted: bool,
+    is_binary: bool,
     display_name: String,
 }
 
@@ -226,10 +228,25 @@ impl CommitView {
         let repository_clone = repository.clone();
 
         cx.spawn(async move |this, cx| {
+            let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
+
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
-                let new_text = file.new_text.unwrap_or_default();
-                let old_text = file.old_text;
+                let raw_new_text = file.new_text.unwrap_or_default();
+                let raw_old_text = file.old_text;
+
+                let is_binary = file.is_binary
+                    || is_binary_content(raw_new_text.as_bytes())
+                    || raw_old_text
+                        .as_ref()
+                        .is_some_and(|text| is_binary_content(text.as_bytes()));
+
+                let new_text = if is_binary {
+                    "(binary file not shown)".to_string()
+                } else {
+                    raw_new_text
+                };
+                let old_text = if is_binary { None } else { raw_old_text };
                 let worktree_id = repository_clone
                     .update(cx, |repository, cx| {
                         repository
@@ -249,19 +266,31 @@ impl CommitView {
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
                     is_deleted,
+                    is_binary,
                     worktree_id,
                     display_name,
                 }) as Arc<dyn language::File>;
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                let buffer_diff =
-                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
+                let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
+
+                if is_binary {
+                    binary_buffer_ids.insert(buffer_id);
+                }
+
+                let buffer_diff = if is_binary {
+                    None
+                } else {
+                    Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await?)
+                };
 
                 this.update(cx, |this, cx| {
                     this.multibuffer.update(cx, |multibuffer, cx| {
                         let snapshot = buffer.read(cx).snapshot();
                         let path = snapshot.file().unwrap().path().clone();
-                        let excerpt_ranges = {
+                        let excerpt_ranges = if is_binary {
+                            vec![language::Point::zero()..snapshot.max_point()]
+                        } else if let Some(buffer_diff) = &buffer_diff {
                             let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
                             let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
                             if hunks.peek().is_none() {
@@ -271,6 +300,8 @@ impl CommitView {
                                     .map(|hunk| hunk.buffer_range.to_point(&snapshot))
                                     .collect::<Vec<_>>()
                             }
+                        } else {
+                            vec![language::Point::zero()..snapshot.max_point()]
                         };
 
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
@@ -280,7 +311,19 @@ impl CommitView {
                             multibuffer_context_lines(cx),
                             cx,
                         );
-                        multibuffer.add_diff(buffer_diff, cx);
+                        if let Some(buffer_diff) = buffer_diff {
+                            multibuffer.add_diff(buffer_diff, cx);
+                        }
+                    });
+                })?;
+            }
+
+            if !binary_buffer_ids.is_empty() {
+                this.update(cx, |this, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        for buffer_id in binary_buffer_ids {
+                            editor.fold_buffer(buffer_id, cx);
+                        }
                     });
                 })?;
             }
@@ -740,6 +783,10 @@ impl language::File for GitBlob {
 
     fn is_private(&self) -> bool {
         false
+    }
+
+    fn can_open(&self) -> bool {
+        !self.is_binary
     }
 }
 

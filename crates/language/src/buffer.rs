@@ -423,6 +423,10 @@ pub trait File: Send + Sync + Any {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+
+    fn can_open(&self) -> bool {
+        !self.is_local()
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last
