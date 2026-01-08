@@ -1420,6 +1420,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
     fake_language_server.start_progress("the-token").await;
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);

@@ -37,11 +37,11 @@ cx.executor().run_until_parked();  // <-- ADD THIS LINE
 - [x] `project_tests::test_reporting_fs_changes_to_language_servers`
 - [x] `project_tests::test_restarting_server_with_diagnostics_running`
 
-### collab crate (4 tests)
-- [ ] `tests::editor_tests::test_language_server_statuses`
-- [ ] `tests::integration_tests::test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering`
-- [ ] `tests::integration_tests::test_formatting_buffer`
-- [ ] `tests::integration_tests::test_project_symbols`
+### collab crate (4 tests) - ALL FIXED ✓
+- [x] `tests::editor_tests::test_language_server_statuses`
+- [x] `tests::integration_tests::test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering`
+- [x] `tests::integration_tests::test_formatting_buffer`
+- [x] `tests::integration_tests::test_project_symbols`
 
 ### Other crates (5 tests)
 - [ ] `extension_host extension_store_test::test_extension_store_with_test_extension`
