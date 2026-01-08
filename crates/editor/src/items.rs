@@ -38,7 +38,7 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, BufferSnapshot, Selection};
-use theme::{Theme, ThemeSettings};
+use theme::Theme;
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
@@ -398,7 +398,7 @@ async fn update_editor_from_message(
             .into_iter()
             .map(|id| BufferId::new(id).map(|id| project.open_buffer_by_id(id, cx)))
             .collect::<Result<Vec<_>>>()
-    })??;
+    })?;
     let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
 
     // Update the editor's excerpts.
@@ -805,8 +805,8 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
-    fn is_read_only(&self, cx: &App) -> bool {
-        self.read_only(cx)
+    fn capability(&self, cx: &App) -> Capability {
+        self.capability(cx)
     }
 
     // Note: this mirrors the logic in `Editor::toggle_read_only`, but is reachable
@@ -892,7 +892,7 @@ impl Item for Editor {
                 project
                     .update(cx, |project, cx| {
                         project.save_buffers(buffers_to_save.clone(), cx)
-                    })?
+                    })
                     .await?;
             }
 
@@ -938,15 +938,13 @@ impl Item for Editor {
             this.update(cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
-            buffer
-                .update(cx, |buffer, cx| {
-                    if let Some(transaction) = transaction
-                        && !buffer.is_singleton()
-                    {
-                        buffer.push_transaction(&transaction.0, cx);
-                    }
-                })
-                .ok();
+            buffer.update(cx, |buffer, cx| {
+                if let Some(transaction) = transaction
+                    && !buffer.is_singleton()
+                {
+                    buffer.push_transaction(&transaction.0, cx);
+                }
+            });
             Ok(())
         })
     }
@@ -963,56 +961,21 @@ impl Item for Editor {
         self.pixel_position_of_newest_cursor
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs {
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
         }
     }
 
+    // In a non-singleton case, the breadcrumbs are actually shown on sticky file headers of the multibuffer.
     fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        let cursor = self.selections.newest_anchor().head();
-        let multibuffer = self.buffer().read(cx);
-        let (buffer_id, symbols) = multibuffer
-            .read(cx)
-            .symbols_containing(cursor, Some(variant.syntax()))?;
-        let buffer = multibuffer.buffer(buffer_id)?;
-
-        let buffer = buffer.read(cx);
-        let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
-            buffer
-                .snapshot()
-                .resolve_file_path(
-                    self.project
-                        .as_ref()
-                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                        .unwrap_or_default(),
-                    cx,
-                )
-                .unwrap_or_else(|| {
-                    if multibuffer.is_singleton() {
-                        multibuffer.title(cx).to_string()
-                    } else {
-                        "untitled".to_string()
-                    }
-                })
-        });
-
-        let settings = ThemeSettings::get_global(cx);
-
-        let mut breadcrumbs = vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }];
-
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-            text: symbol.text,
-            highlights: Some(symbol.highlight_ranges),
-            font: Some(settings.buffer_font.clone()),
-        }));
-        Some(breadcrumbs)
+        if self.buffer.read(cx).is_singleton() {
+            self.breadcrumbs_inner(variant, cx)
+        } else {
+            None
+        }
     }
 
     fn added_to_workspace(
@@ -1138,7 +1101,7 @@ impl SerializableItem for Editor {
                 let project = project.clone();
                 async move |cx| {
                     let language_registry =
-                        project.read_with(cx, |project, _| project.languages().clone())?;
+                        project.read_with(cx, |project, _| project.languages().clone());
 
                     let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
@@ -1153,7 +1116,7 @@ impl SerializableItem for Editor {
 
                     // First create the empty buffer
                     let buffer = project
-                        .update(cx, |project, cx| project.create_buffer(true, cx))?
+                        .update(cx, |project, cx| project.create_buffer(true, cx))
                         .await
                         .context("Failed to create buffer while deserializing editor")?;
 
@@ -1167,7 +1130,7 @@ impl SerializableItem for Editor {
                         if let Some(entry) = buffer.peek_undo_stack() {
                             buffer.forget_transaction(entry.transaction_id());
                         }
-                    })?;
+                    });
 
                     cx.update(|window, cx| {
                         cx.new(|cx| {
@@ -1222,7 +1185,7 @@ impl SerializableItem for Editor {
                                     if let Some(entry) = buffer.peek_undo_stack() {
                                         buffer.forget_transaction(entry.transaction_id());
                                     }
-                                })?;
+                                });
                             }
 
                             cx.update(|window, cx| {
@@ -1264,7 +1227,7 @@ impl SerializableItem for Editor {
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer(true, cx))?
+                    .update(cx, |project, cx| project.create_buffer(true, cx))
                     .await
                     .context("Failed to create buffer")?;
 
@@ -1682,19 +1645,27 @@ impl SearchableItem for Editor {
         let text = text.snapshot(cx);
         let mut edits = vec![];
 
-        for m in matches {
-            let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
+        // A regex might have replacement variables so we cannot apply
+        // the same replacement to all matches
+        if query.is_regex() {
+            edits = matches
+                .filter_map(|m| {
+                    let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
 
-            let text: Cow<_> = if text.len() == 1 {
-                text.first().cloned().unwrap().into()
-            } else {
-                let joined_chunks = text.join("");
-                joined_chunks.into()
-            };
+                    let text: Cow<_> = if text.len() == 1 {
+                        text.first().cloned().unwrap().into()
+                    } else {
+                        let joined_chunks = text.join("");
+                        joined_chunks.into()
+                    };
 
-            if let Some(replacement) = query.replacement_for(&text) {
-                edits.push((m.clone(), Arc::from(&*replacement)));
-            }
+                    query
+                        .replacement_for(&text)
+                        .map(|replacement| (m.clone(), Arc::from(&*replacement)))
+                })
+                .collect();
+        } else if let Some(replacement) = query.replacement().map(Arc::<str>::from) {
+            edits = matches.map(|m| (m.clone(), replacement.clone())).collect();
         }
 
         if !edits.is_empty() {

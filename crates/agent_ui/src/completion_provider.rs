@@ -1091,8 +1091,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     )
                                 }
                             })
-                            .collect()
-                    })?;
+                            .collect::<Vec<_>>()
+                    });
 
                     Ok(vec![CompletionResponse {
                         completions,
@@ -1469,26 +1469,19 @@ pub(crate) fn search_symbols(
         let Some(symbols) = symbols_task.await.log_err() else {
             return Vec::new();
         };
-        let Some((visible_match_candidates, external_match_candidates)): Option<(Vec<_>, Vec<_>)> =
-            project
-                .update(cx, |project, cx| {
-                    symbols
-                        .iter()
-                        .enumerate()
-                        .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, symbol.label.filter_text())
-                        })
-                        .partition(|candidate| match &symbols[candidate.id].path {
-                            SymbolLocation::InProject(project_path) => project
-                                .entry_for_path(project_path, cx)
-                                .is_some_and(|e| !e.is_ignored),
-                            SymbolLocation::OutsideProject { .. } => false,
-                        })
-                })
-                .log_err()
-        else {
-            return Vec::new();
-        };
+        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
+            .update(cx, |project, cx| {
+                symbols
+                    .iter()
+                    .enumerate()
+                    .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.label.filter_text()))
+                    .partition(|candidate| match &symbols[candidate.id].path {
+                        SymbolLocation::InProject(project_path) => project
+                            .entry_for_path(project_path, cx)
+                            .is_some_and(|e| !e.is_ignored),
+                        SymbolLocation::OutsideProject { .. } => false,
+                    })
+            });
 
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(

@@ -248,8 +248,9 @@ impl WindowsWindowInner {
 
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-            for runnable in self.main_receiver.drain() {
-                WindowsDispatcher::execute_runnable(runnable);
+            let mut runnables = self.main_receiver.clone().try_iter();
+            while let Some(Ok(runnable)) = runnables.next() {
+                runnable.run_and_profile();
             }
             self.handle_paint_msg(handle)
         } else {
@@ -585,30 +586,32 @@ impl WindowsWindowInner {
     }
 
     fn handle_ime_position(&self, handle: HWND) -> Option<isize> {
+        if let Some(caret_position) = self.retrieve_caret_position() {
+            self.update_ime_position(handle, caret_position);
+        }
+        Some(0)
+    }
+
+    pub(crate) fn update_ime_position(&self, handle: HWND, caret_position: POINT) {
         unsafe {
             let ctx = ImmGetContext(handle);
+            if ctx.is_invalid() {
+                return;
+            }
 
-            let Some(caret_position) = self.retrieve_caret_position() else {
-                return Some(0);
+            let config = COMPOSITIONFORM {
+                dwStyle: CFS_POINT,
+                ptCurrentPos: caret_position,
+                ..Default::default()
             };
-            {
-                let config = COMPOSITIONFORM {
-                    dwStyle: CFS_POINT,
-                    ptCurrentPos: caret_position,
-                    ..Default::default()
-                };
-                ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
-            }
-            {
-                let config = CANDIDATEFORM {
-                    dwStyle: CFS_CANDIDATEPOS,
-                    ptCurrentPos: caret_position,
-                    ..Default::default()
-                };
-                ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
-            }
+            ImmSetCompositionWindow(ctx, &config).ok().log_err();
+            let config = CANDIDATEFORM {
+                dwStyle: CFS_CANDIDATEPOS,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCandidateWindow(ctx, &config).ok().log_err();
             ImmReleaseContext(handle, ctx).ok().log_err();
-            Some(0)
         }
     }
 

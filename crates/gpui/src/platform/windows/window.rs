@@ -45,6 +45,7 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Cell<Bounds<Pixels>>,
     pub border_offset: WindowBorderOffset,
     pub appearance: Cell<WindowAppearance>,
+    pub background_appearance: Cell<WindowBackgroundAppearance>,
     pub scale_factor: Cell<f32>,
     pub restore_from_minimized: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
 
@@ -81,7 +82,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
+    pub(crate) main_receiver: PriorityQueueReceiver<GpuiRunnable>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) parent_hwnd: Option<HWND>,
 }
@@ -135,6 +136,7 @@ impl WindowsWindowState {
             fullscreen_restore_bounds: Cell::new(fullscreen_restore_bounds),
             border_offset,
             appearance: Cell::new(appearance),
+            background_appearance: Cell::new(WindowBackgroundAppearance::Opaque),
             scale_factor: Cell::new(scale_factor),
             restore_from_minimized: Cell::new(restore_from_minimized),
             min_size,
@@ -364,7 +366,7 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
-    main_receiver: flume::Receiver<RunnableVariant>,
+    main_receiver: PriorityQueueReceiver<GpuiRunnable>,
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
@@ -788,6 +790,14 @@ impl PlatformWindow for WindowsWindow {
         self.state.hovered.get()
     }
 
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.state.background_appearance.get()
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        true
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.0.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
@@ -795,6 +805,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        self.state.background_appearance.set(background_appearance);
         let hwnd = self.0.hwnd;
 
         // using Dwm APIs for Mica and MicaAlt backdrops.
@@ -905,7 +916,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.state.renderer.borrow_mut().draw(scene).log_err();
+        self.state
+            .renderer
+            .borrow_mut()
+            .draw(scene, self.state.background_appearance.get())
+            .log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -920,8 +935,15 @@ impl PlatformWindow for WindowsWindow {
         self.state.renderer.borrow().gpu_specs().log_err()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
-        // There is no such thing on Windows.
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let scale_factor = self.state.scale_factor.get();
+        let caret_position = POINT {
+            x: (bounds.origin.x.0 * scale_factor) as i32,
+            y: (bounds.origin.y.0 * scale_factor) as i32
+                + ((bounds.size.height.0 * scale_factor) as i32 / 2),
+        };
+
+        self.0.update_ime_position(self.0.hwnd, caret_position);
     }
 }
 

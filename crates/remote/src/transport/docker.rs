@@ -24,8 +24,8 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use rpc::proto::Envelope;
 
 use crate::{
-    RemoteArch, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs,
-    RemotePlatform, remote_client::CommandTemplate,
+    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
+    remote_client::CommandTemplate, transport::parse_platform,
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -66,7 +66,7 @@ impl DockerExecConnection {
                 AppVersion::global(cx),
                 AppCommitSha::try_global(cx),
             )
-        })?;
+        });
         let remote_platform = this.check_remote_platform().await?;
 
         this.path_style = match remote_platform.os {
@@ -119,33 +119,7 @@ impl DockerExecConnection {
         let uname = self
             .run_docker_exec("uname", None, &Default::default(), &["-sm"])
             .await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
-        };
-
-        let os = match os.trim() {
-            "Darwin" => RemoteOs::MacOs,
-            "Linux" => RemoteOs::Linux,
-            _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ),
-        };
-        // exclude armv5,6,7 as they are 32-bit.
-        let arch = if arch.starts_with("armv8")
-            || arch.starts_with("armv9")
-            || arch.starts_with("arm64")
-            || arch.starts_with("aarch64")
-        {
-            RemoteArch::Aarch64
-        } else if arch.starts_with("x86") {
-            RemoteArch::X86_64
-        } else {
-            anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-            )
-        };
-
-        Ok(RemotePlatform { os, arch })
+        parse_platform(&uname)
     }
 
     async fn ensure_server_binary(
@@ -226,7 +200,7 @@ impl DockerExecConnection {
                 )
             }
             _ => Ok(Some(AppVersion::global(cx))),
-        })??;
+        })?;
 
         let tmp_path_gz = paths::remote_server_dir_relative().join(
             RelPath::unix(&format!(

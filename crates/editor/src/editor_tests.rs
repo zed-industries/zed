@@ -17639,7 +17639,7 @@ async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
             .read(cx)
             .nav_history_for_item(&cx.entity());
         editor.set_nav_history(Some(nav_history));
-        window.focus(&editor.focus_handle(cx))
+        window.focus(&editor.focus_handle(cx), cx)
     });
 
     let toml_server_1 = toml_server_1.next().await.unwrap();
@@ -17908,7 +17908,7 @@ async fn lsp_semantic_tokens_multibuffer_part(cx: &mut TestAppContext) {
             .read(cx)
             .nav_history_for_item(&cx.entity());
         editor.set_nav_history(Some(nav_history));
-        window.focus(&editor.focus_handle(cx))
+        window.focus(&editor.focus_handle(cx), cx)
     });
 
     let toml_server = toml_server.next().await.unwrap();
@@ -18094,7 +18094,7 @@ async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
             .read(cx)
             .nav_history_for_item(&cx.entity());
         editor.set_nav_history(Some(nav_history));
-        window.focus(&editor.focus_handle(cx))
+        window.focus(&editor.focus_handle(cx), cx)
     });
 
     let toml_server = toml_server.next().await.unwrap();
@@ -19150,7 +19150,7 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
 
     cx.update_buffer(|buffer, _| {
         // This causes autoindent to be async.
-        buffer.set_sync_parse_timeout(Duration::ZERO)
+        buffer.set_sync_parse_timeout(None)
     });
 
     cx.set_state("fn c() {\n    d()ˇ\n}\n");
@@ -19168,7 +19168,7 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
                         "fn c() {\n    d()\n        .\n}\n",
                         "OnTypeFormatting should triggered after autoindent applied"
                     )
-                })?;
+                });
 
                 Ok(Some(vec![]))
             }
@@ -28231,6 +28231,38 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
             display_ranges(editor, cx),
             &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
+    });
+
+    // Set up text where selections are in the middle of a soft-wrapped line.
+    // When adding selection below with `skip_soft_wrap` set to `true`, the new
+    // selection should be at the same buffer column, not the same pixel
+    // position.
+    cx.set_state(indoc!(
+        r#"1. Very long line to show «howˇ» a wrapped line would look
+           2. Very long line to show how a wrapped line would look"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        // Enable soft wrapping with a narrow width to force soft wrapping and
+        // confirm that more than 2 rows are being displayed.
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        assert!(editor.display_text(cx).lines().count() > 2);
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        // Assert that there's now 2 selections, both selecting the same column
+        // range in the buffer row.
+        let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = editor.selections.all::<Point>(&display_map);
+        assert_eq!(selections.len(), 2);
+        assert_eq!(selections[0].start.column, selections[1].start.column);
+        assert_eq!(selections[0].end.column, selections[1].end.column);
     });
 }
 

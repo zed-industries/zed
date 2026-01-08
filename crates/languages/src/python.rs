@@ -249,7 +249,7 @@ impl LspAdapter for TyLspAdapter {
             .update(|cx| {
                 language_server_settings(delegate.as_ref(), &self.name(), cx)
                     .and_then(|s| s.settings.clone())
-            })?
+            })
             .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
             serde_json::from_value::<PythonToolchainData>(toolchain.as_json).ok()
@@ -574,7 +574,7 @@ impl LspAdapter for PyrightLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
+        Ok(cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
@@ -636,7 +636,7 @@ impl LspAdapter for PyrightLspAdapter {
             }
 
             user_settings
-        })
+        }))
     }
 }
 
@@ -1358,7 +1358,12 @@ impl ToolchainLister for PythonToolchainProvider {
                     activation_script.push(format!("{manager} activate base"));
                 }
             }
-            Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+            Some(
+                PythonEnvironmentKind::Venv
+                | PythonEnvironmentKind::VirtualEnv
+                | PythonEnvironmentKind::Uv
+                | PythonEnvironmentKind::UvWorkspace,
+            ) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
                         let activate_keyword = shell.activate_keyword();
@@ -1415,9 +1420,12 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
 
     let mut activation_scripts = HashMap::default();
     match venv.kind {
-        Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
-            resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await
-        }
+        Some(
+            PythonEnvironmentKind::Venv
+            | PythonEnvironmentKind::VirtualEnv
+            | PythonEnvironmentKind::Uv
+            | PythonEnvironmentKind::UvWorkspace,
+        ) => resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await,
         _ => {}
     }
     let data = PythonToolchainData {
@@ -1695,7 +1703,7 @@ impl LspAdapter for PyLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
+        Ok(cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
@@ -1753,7 +1761,7 @@ impl LspAdapter for PyLspAdapter {
             )]));
 
             user_settings
-        })
+        }))
     }
 }
 
@@ -1987,7 +1995,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
+        Ok(cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
@@ -2053,10 +2061,16 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     }
                     Some(())
                 });
+                // Disable basedpyright's organizeImports so ruff handles it instead
+                if let serde_json::map::Entry::Vacant(v) =
+                    object.entry("basedpyright.disableOrganizeImports")
+                {
+                    v.insert(Value::Bool(true));
+                }
             }
 
             user_settings
-        })
+        }))
     }
 }
 

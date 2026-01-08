@@ -183,6 +183,19 @@ pub enum ThemeSelection {
     },
 }
 
+pub const DEFAULT_LIGHT_THEME: &'static str = "One Light";
+pub const DEFAULT_DARK_THEME: &'static str = "One Dark";
+
+impl Default for ThemeSelection {
+    fn default() -> Self {
+        Self::Dynamic {
+            mode: ThemeAppearanceMode::default(),
+            light: ThemeName(DEFAULT_LIGHT_THEME.into()),
+            dark: ThemeName(DEFAULT_DARK_THEME.into()),
+        }
+    }
+}
+
 /// Represents the selection of an icon theme, which can be either static or dynamic.
 #[derive(
     Clone,

@@ -280,7 +280,7 @@ impl LspStore {
                 server_id: LanguageServerId::from_proto(envelope.payload.server_id),
                 request_id: envelope.payload.request_id.map(|id| id as usize),
             });
-        })?;
+        });
         Ok(proto::Ack {})
     }
 

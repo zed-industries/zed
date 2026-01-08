@@ -85,7 +85,7 @@ pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new)
 pub enum Capability {
     /// The buffer is a mutable replica.
     ReadWrite,
-    /// The buffer is a mutable replica, but toggled to read-only.
+    /// The buffer is a mutable replica, but toggled to be only readable.
     Read,
     /// The buffer is a read-only replica.
     ReadOnly,
@@ -121,7 +121,7 @@ pub struct Buffer {
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
-    sync_parse_timeout: Duration,
+    sync_parse_timeout: Option<Duration>,
     syntax_map: Mutex<SyntaxMap>,
     reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
@@ -423,6 +423,10 @@ pub trait File: Send + Sync + Any {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+
+    fn can_open(&self) -> bool {
+        !self.is_local()
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last
@@ -520,11 +524,10 @@ struct AutoindentRequest {
 struct AutoindentRequestEntry {
     /// A range of the buffer whose indentation should be adjusted.
     range: Range<Anchor>,
-    /// Whether or not these lines should be considered brand new, for the
-    /// purpose of auto-indent. When text is not new, its indentation will
-    /// only be adjusted if the suggested indentation level has *changed*
-    /// since the edit was made.
-    first_line_is_new: bool,
+    /// The row of the edit start in the buffer before the edit was applied.
+    /// This is stored here because the anchor in range is created after
+    /// the edit, so it cannot be used with the before_edit snapshot.
+    old_row: Option<u32>,
     indent_size: IndentSize,
     original_indent_column: Option<u32>,
 }
@@ -1125,7 +1128,11 @@ impl Buffer {
             syntax_map,
             reparse: None,
             non_text_state_update_count: 0,
-            sync_parse_timeout: Duration::from_millis(1),
+            sync_parse_timeout: if cfg!(any(test, feature = "test-support")) {
+                Some(Duration::from_millis(10))
+            } else {
+                Some(Duration::from_millis(1))
+            },
             parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             wait_for_autoindent_txs: Default::default(),
@@ -1705,7 +1712,7 @@ impl Buffer {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
+    pub fn set_sync_parse_timeout(&mut self, timeout: Option<Duration>) {
         self.sync_parse_timeout = timeout;
     }
 
@@ -1764,6 +1771,20 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
+        self.parse_status.0.send(ParseStatus::Parsing).unwrap();
+        if may_block && let Some(sync_parse_timeout) = self.sync_parse_timeout {
+            if let Ok(()) = syntax_snapshot.reparse_with_timeout(
+                &text,
+                language_registry.clone(),
+                language.clone(),
+                sync_parse_timeout,
+            ) {
+                self.did_finish_parsing(syntax_snapshot, Duration::from_millis(300), cx);
+                self.reparse = None;
+                return;
+            }
+        }
+
         let parse_task = cx.background_spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
@@ -1773,79 +1794,43 @@ impl Buffer {
             }
         });
 
-        self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        if may_block {
-            match cx
-                .background_executor()
-                .block_with_timeout(self.sync_parse_timeout, parse_task)
-            {
-                Ok(new_syntax_snapshot) => {
-                    self.did_finish_parsing(new_syntax_snapshot, cx);
-                    self.reparse = None;
-                }
-                Err(parse_task) => {
-                    self.reparse = Some(cx.spawn(async move |this, cx| {
-                        let new_syntax_map = cx.background_spawn(parse_task).await;
-                        this.update(cx, move |this, cx| {
-                            let grammar_changed = || {
-                                this.language.as_ref().is_none_or(|current_language| {
-                                    !Arc::ptr_eq(&language, current_language)
-                                })
-                            };
-                            let language_registry_changed = || {
-                                new_syntax_map.contains_unknown_injections()
-                                    && language_registry.is_some_and(|registry| {
-                                        registry.version()
-                                            != new_syntax_map.language_registry_version()
-                                    })
-                            };
-                            let parse_again = this.version.changed_since(&parsed_version)
-                                || language_registry_changed()
-                                || grammar_changed();
-                            this.did_finish_parsing(new_syntax_map, cx);
-                            this.reparse = None;
-                            if parse_again {
-                                this.reparse(cx, false);
-                            }
+        self.reparse = Some(cx.spawn(async move |this, cx| {
+            let new_syntax_map = parse_task.await;
+            this.update(cx, move |this, cx| {
+                let grammar_changed = || {
+                    this.language
+                        .as_ref()
+                        .is_none_or(|current_language| !Arc::ptr_eq(&language, current_language))
+                };
+                let language_registry_changed = || {
+                    new_syntax_map.contains_unknown_injections()
+                        && language_registry.is_some_and(|registry| {
+                            registry.version() != new_syntax_map.language_registry_version()
                         })
-                        .ok();
-                    }));
+                };
+                let parse_again = this.version.changed_since(&parsed_version)
+                    || language_registry_changed()
+                    || grammar_changed();
+                this.did_finish_parsing(new_syntax_map, Duration::ZERO, cx);
+                this.reparse = None;
+                if parse_again {
+                    this.reparse(cx, false);
                 }
-            }
-        } else {
-            self.reparse = Some(cx.spawn(async move |this, cx| {
-                let new_syntax_map = cx.background_spawn(parse_task).await;
-                this.update(cx, move |this, cx| {
-                    let grammar_changed = || {
-                        this.language.as_ref().is_none_or(|current_language| {
-                            !Arc::ptr_eq(&language, current_language)
-                        })
-                    };
-                    let language_registry_changed = || {
-                        new_syntax_map.contains_unknown_injections()
-                            && language_registry.is_some_and(|registry| {
-                                registry.version() != new_syntax_map.language_registry_version()
-                            })
-                    };
-                    let parse_again = this.version.changed_since(&parsed_version)
-                        || language_registry_changed()
-                        || grammar_changed();
-                    this.did_finish_parsing(new_syntax_map, cx);
-                    this.reparse = None;
-                    if parse_again {
-                        this.reparse(cx, false);
-                    }
-                })
-                .ok();
-            }));
-        }
+            })
+            .ok();
+        }));
     }
 
-    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
-        self.was_changed();
+    fn did_finish_parsing(
+        &mut self,
+        syntax_snapshot: SyntaxSnapshot,
+        block_budget: Duration,
+        cx: &mut Context<Self>,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
-        self.request_autoindent(cx);
+        self.was_changed();
+        self.request_autoindent(cx, block_budget);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
         self.invalidate_tree_sitter_data(self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
@@ -1903,12 +1888,12 @@ impl Buffer {
         }
     }
 
-    fn request_autoindent(&mut self, cx: &mut Context<Self>) {
+    fn request_autoindent(&mut self, cx: &mut Context<Self>, block_budget: Duration) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
-                .block_with_timeout(Duration::from_micros(500), indent_sizes)
+                .block_with_timeout(block_budget, indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
                 Err(indent_sizes) => {
@@ -1953,8 +1938,7 @@ impl Buffer {
                     let new_end_row = entry.range.end.to_point(&snapshot).row + 1;
                     language_indent_sizes_by_new_row.push((new_row, entry.indent_size));
 
-                    if !entry.first_line_is_new {
-                        let old_row = position.to_point(&request.before_edit).row;
+                    if let Some(old_row) = entry.old_row {
                         old_to_new_rows.insert(old_row, new_row);
                     }
                     row_ranges.push((new_row..new_end_row, entry.original_indent_column));
@@ -2569,7 +2553,7 @@ impl Buffer {
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
-    /// delete, and a string of text to insert at that location.
+    /// delete, and a string of text to insert at that location. Adjacent edits are coalesced.
     ///
     /// If an [`AutoindentMode`] is provided, then the buffer will enqueue an auto-indent
     /// request for the edited ranges, which will be processed when the buffer finishes
@@ -2588,6 +2572,36 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        self.edit_internal(edits_iter, autoindent_mode, true, cx)
+    }
+
+    /// Like [`edit`](Self::edit), but does not coalesce adjacent edits.
+    pub fn edit_non_coalesce<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(edits_iter, autoindent_mode, false, cx)
+    }
+
+    fn edit_internal<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        coalesce_adjacent: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
 
@@ -2599,8 +2613,17 @@ impl Buffer {
             }
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
-                if let Some((prev_range, prev_text)) = edits.last_mut()
-                    && prev_range.end >= range.start
+                let prev_edit = edits.last_mut();
+                let should_coalesce = prev_edit.as_ref().is_some_and(|(prev_range, _)| {
+                    if coalesce_adjacent {
+                        prev_range.end >= range.start
+                    } else {
+                        prev_range.end > range.start
+                    }
+                });
+
+                if let Some((prev_range, prev_text)) = prev_edit
+                    && should_coalesce
                 {
                     prev_range.end = cmp::max(prev_range.end, range.end);
                     *prev_text = format!("{prev_text}{new_text}").into();
@@ -2708,8 +2731,12 @@ impl Buffer {
                     }
 
                     AutoindentRequestEntry {
-                        first_line_is_new,
                         original_indent_column,
+                        old_row: if first_line_is_new {
+                            None
+                        } else {
+                            Some(old_start.row)
+                        },
                         indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
@@ -2757,7 +2784,7 @@ impl Buffer {
             .into_iter()
             .map(|range| AutoindentRequestEntry {
                 range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
-                first_line_is_new: true,
+                old_row: None,
                 indent_size: before_edit.language_indent_size_at(range.start, cx),
                 original_indent_column: None,
             })
@@ -2768,7 +2795,7 @@ impl Buffer {
             is_block_mode: false,
             ignore_empty_lines: true,
         }));
-        self.request_autoindent(cx);
+        self.request_autoindent(cx, Duration::from_micros(300));
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.

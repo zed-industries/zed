@@ -41,7 +41,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -716,8 +716,7 @@ impl ProjectDiff {
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
     let settings = GitPanelSettings::get_global(cx);
 
-    // Tree view can only sort by path
-    if settings.sort_by_path || settings.tree_view {
+    if settings.sort_by_path && !settings.tree_view {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
         CONFLICT_SORT_PREFIX
@@ -910,18 +909,6 @@ impl Item for ProjectDiff {
         } else {
             None
         }
-    }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor
-            .read(cx)
-            .last_selected_editor()
-            .read(cx)
-            .breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(

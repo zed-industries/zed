@@ -32,7 +32,7 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-use smol::Async;
+
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
@@ -242,7 +242,7 @@ fn start_server(
                         // when calling quit, but it should be.
                         cx.shutdown();
                         cx.quit();
-                    })?;
+                    });
                     break;
                 }
                 _ = app_quit_rx.next().fuse() => {
@@ -627,19 +627,19 @@ pub(crate) fn execute_proxy(
     })?;
 
     let stdin_task = smol::spawn(async move {
-        let stdin = Async::new(std::io::stdin())?;
+        let stdin = smol::Unblock::new(std::io::stdin());
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
         handle_io(stdin, stream, "stdin").await
     });
 
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
-        let stdout = Async::new(std::io::stdout())?;
+        let stdout = smol::Unblock::new(std::io::stdout());
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
         handle_io(stream, stdout, "stdout").await
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
-        let mut stderr = Async::new(std::io::stderr())?;
+        let mut stderr = smol::Unblock::new(std::io::stderr());
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
@@ -717,6 +717,9 @@ pub(crate) enum SpawnServerError {
 
     #[error("failed to launch and detach server process: {status}\n{paths}")]
     LaunchStatus { status: ExitStatus, paths: String },
+
+    #[error("failed to wait for server to be ready to accept connections")]
+    Timeout,
 }
 
 async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
@@ -769,6 +772,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
         log::debug!("waiting for server to be ready to accept connections...");
         std::thread::sleep(wait_duration);
         total_time_waited += wait_duration;
+        if total_time_waited > std::time::Duration::from_secs(10) {
+            return Err(SpawnServerError::Timeout);
+        }
     }
 
     log::info!(
@@ -933,7 +939,7 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(async move |cx| {
         while let Some(server_settings_content) = server_settings_file.next().await {
-            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_server_settings(&server_settings_content, cx);
                 if let Err(err) = &result {
                     log::error!("Failed to load server settings: {err}");
@@ -941,9 +947,6 @@ pub fn handle_settings_file_changes(
                 settings_changed(result.err(), cx);
                 cx.refresh_windows();
             });
-            if result.is_err() {
-                break; // App dropped
-            }
         }
     })
     .detach();
@@ -953,8 +956,10 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
 
     proxy_str
-        .as_ref()
-        .and_then(|input: &String| {
+        .as_deref()
+        .map(str::trim)
+        .filter(|input| !input.is_empty())
+        .and_then(|input| {
             input
                 .parse::<Url>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))

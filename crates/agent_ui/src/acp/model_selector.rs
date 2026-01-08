@@ -3,6 +3,7 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol::ModelId;
 use agent_servers::AgentServer;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
@@ -15,7 +16,7 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use ui::{DocumentationAside, DocumentationSide, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
@@ -378,7 +379,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
     fn documentation_aside(
         &self,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<ui::DocumentationAside> {
         self.selected_description
             .as_ref()
@@ -386,8 +387,16 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 let description = description.clone();
                 let is_default = *is_default;
 
+                let settings = AgentSettings::get_global(cx);
+                let side = match settings.dock {
+                    settings::DockPosition::Left => DocumentationSide::Right,
+                    settings::DockPosition::Bottom | settings::DockPosition::Right => {
+                        DocumentationSide::Left
+                    }
+                };
+
                 DocumentationAside::new(
-                    DocumentationSide::Left,
+                    side,
                     Rc::new(move |_| {
                         v_flex()
                             .gap_1()
