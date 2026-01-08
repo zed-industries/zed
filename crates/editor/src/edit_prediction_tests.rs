@@ -6,8 +6,8 @@ use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
 use crate::{
-    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
-    test::editor_test_context::EditorTestContext,
+    AcceptEditPrediction, EditPrediction, EditPredictionPreview, MenuEditPredictionsPolicy,
+    editor_tests::init_test, test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
@@ -564,4 +564,76 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
     ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
+}
+
+/// Test that edit prediction preview is properly cleaned up after window reactivation.
+#[gpui::test]
+async fn test_edit_prediction_preview_cleanup_on_window_reactivation(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    // Bind `ctrl-shift-a` to accept the provided edit prediction.
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("ctrl-shift-a", AcceptEditPrediction, None)]));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx)
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+    });
+
+    // Simulate pressing Ctrl+Shift modifiers (which activates edit prediction preview)
+    let modifiers = Modifiers::control_shift();
+    cx.simulate_modifiers_change(modifiers);
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Simulate window deactivation
+    // This simulates the user switching to another window while Alt is still pressed
+    cx.simulate_window_deactivation();
+    cx.run_until_parked();
+
+    // Now simulate the Alt key still being "held" by manually activating the preview again
+    // This simulates the bug where the modifier state becomes stale after Alt+Tab
+    cx.update_editor(|editor, _, _| {
+        editor.edit_prediction_preview = EditPredictionPreview::Active {
+            previous_scroll_position: None,
+            since: std::time::Instant::now(),
+        };
+    });
+
+    // Verify that edit prediction preview is stuck in Active state (the bug)
+    cx.editor(|editor, _, _| {
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Simulate window reactivation (back to Zed)
+    // This should clear the stale edit prediction preview state
+    cx.simulate_window_activation();
+    cx.run_until_parked();
+
+    // After the fix, edit prediction preview should be cleared
+    cx.editor(|editor, _, _| {
+        assert!(
+            !editor.edit_prediction_preview_is_active(),
+            "Edit prediction preview should be cleared after window reactivation"
+        );
+    });
+
+    // Verify that editor is still functional
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+    });
 }

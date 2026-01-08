@@ -810,6 +810,18 @@ impl VisualTestContext {
         })
     }
 
+    /// Simulate window activation (e.g., Alt+Tab back to the window)
+    pub fn simulate_window_activation(&mut self, window: AnyWindowHandle) {
+        let test_window = self.test_window(window);
+        test_window.simulate_active_status_change(true);
+    }
+
+    /// Simulate window deactivation (e.g., Alt+Tab away from the window)
+    pub fn simulate_window_deactivation(&mut self, window: AnyWindowHandle) {
+        let test_window = self.test_window(window);
+        test_window.simulate_active_status_change(false);
+    }
+
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
         self.simulate_window_resize(self.window, size)
