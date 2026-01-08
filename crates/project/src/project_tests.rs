@@ -3352,6 +3352,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
     fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
         assert_eq!(
