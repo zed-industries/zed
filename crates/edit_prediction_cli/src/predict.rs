@@ -46,9 +46,7 @@ pub async fn run_prediction(
     ) {
         let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
-        if example.prompt.is_none() {
-            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
-        }
+        run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
 
         let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
