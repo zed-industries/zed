@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashSet;
+use futures::select_biased;
 use language::File;
 use lsp::LanguageServerId;
 
@@ -32,7 +33,6 @@ use rpc::{
 };
 
 use settings::initial_server_settings_content;
-use smol::stream::StreamExt;
 use std::{
     num::NonZeroU64,
     path::{Path, PathBuf},
@@ -781,6 +781,8 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        use futures::stream::StreamExt as _;
+        use smol::future::FutureExt;
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
@@ -794,9 +796,6 @@ impl HeadlessProject {
         let _buffer_store = buffer_store.clone();
         let client = this.read_with(&cx, |this, _| this.session.clone());
         let task = cx.spawn(async move |cx| {
-            let bomb = util::defer(|| {
-                log::error!("Stopped search yayy");
-            });
             let results = this.update(cx, |this, cx| {
                 project::Search::local(
                     this.fs.clone(),
@@ -808,39 +807,63 @@ impl HeadlessProject {
                 .into_handle(query, cx)
                 .matching_buffers(cx)
             });
-            let mut batcher = project::project_search::AdaptiveBatcher::new();
-            while let Ok(buffer) = results.rx.recv().await {
-                buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                    })
-                    .await?;
-                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
-                if let Some(buffer_ids) = batcher.push(buffer_id) {
-                    client
-                        .request(proto::FindSearchCandidatesChunk {
-                            handle,
-                            peer_id: Some(peer_id),
-                            project_id,
-                            variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
-                                proto::FindSearchCandidatesMatches { buffer_ids },
-                            )),
-                        })
-                        .await?;
-                }
+            let (batcher, batches) =
+                project::project_search::AdaptiveBatcher::new(cx.background_executor());
+            let mut batches = Box::pin(batches.fuse());
+            let mut new_matches = Box::pin(results.rx.fuse());
+            loop {
+                select_biased! {
+                    new_batch = batches.next() => {
+                        if let Some(buffer_ids) = new_batch {
+
+                            let _ = client
+                                .request(proto::FindSearchCandidatesChunk {
+                                    handle,
+                                    peer_id: Some(peer_id),
+                                    project_id,
+                                    variant: Some(
+                                        proto::find_search_candidates_chunk::Variant::Matches(
+                                            proto::FindSearchCandidatesMatches { buffer_ids },
+                                        ),
+                                    ),
+                                })
+                                .await.unwrap();
+                            } else {
+                                break;
+                            }
+                        }
+                        new_match =  new_matches.next() => {
+                            if let Some(buffer) = new_match {
+                                let _ = buffer_store.update(cx, |this, cx| {
+                                    this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+                                }).await;
+                                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
+                                batcher.push(buffer_id).await;
+                            } else {
+                                log::error!("Bailing because the matches are just uhh");
+                                break;
+                            }
+                        }
+                        complete => {
+                            log::error!("Complete yay");
+
+                            break;
+                        }
+
+                };
             }
-            if let Some(buffer_ids) = batcher.flush() {
-                client
-                    .request(proto::FindSearchCandidatesChunk {
-                        handle,
-                        peer_id: Some(peer_id),
-                        project_id,
-                        variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
-                            proto::FindSearchCandidatesMatches { buffer_ids },
-                        )),
-                    })
-                    .await?;
-            }
+            // if let Some(buffer_ids) = batcher.flush() {
+            //     client
+            //         .request(proto::FindSearchCandidatesChunk {
+            //             handle,
+            //             peer_id: Some(peer_id),
+            //             project_id,
+            //             variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+            //                 proto::FindSearchCandidatesMatches { buffer_ids },
+            //             )),
+            //         })
+            //         .await?;
+            // }
             client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
@@ -851,7 +874,6 @@ impl HeadlessProject {
                     )),
                 })
                 .await?;
-            bomb.abort();
             anyhow::Ok(())
         });
         _buffer_store.update(&mut cx, |this, _| {
@@ -877,6 +899,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
+        use smol::stream::StreamExt;
         let fs = cx.read_entity(&this, |this, _| this.fs.clone());
         let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
         let check_info = envelope

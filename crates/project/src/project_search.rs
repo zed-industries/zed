@@ -4,15 +4,19 @@ use std::{
     io::{BufRead, BufReader},
     ops::Range,
     path::{Path, PathBuf},
-    pin::pin,
+    pin::{Pin, pin},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
-use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use futures::{
+    SinkExt, StreamExt, select_biased,
+    stream::{FusedStream, FuturesOrdered},
+};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
@@ -932,59 +936,56 @@ impl PathInclusionMatcher {
 /// when items arrive quickly, reducing RPC overhead while preserving low latency
 /// for slow streams.
 pub struct AdaptiveBatcher<T> {
-    items: Vec<T>,
-    batch_size: usize,
-    last_send: std::time::Instant,
-    min_send_interval: std::time::Duration,
-    max_batch_size: usize,
+    items: Sender<T>,
+    _batch_task: Task<()>,
 }
 
-impl<T> AdaptiveBatcher<T> {
-    pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            batch_size: 1,
-            last_send: std::time::Instant::now(),
-            min_send_interval: std::time::Duration::from_millis(50),
-            max_batch_size: 64,
-        }
+impl<T: 'static + Send> AdaptiveBatcher<T> {
+    pub fn new(cx: &BackgroundExecutor) -> (Self, Receiver<Vec<T>>) {
+        use futures::future::FutureExt as _;
+        let (items, rx) = unbounded();
+        let (batch_tx, batch_rx) = unbounded();
+        let executor = cx.clone();
+        let _batch_task = cx.spawn(async move {
+            let mut current_batch = vec![];
+            let mut items_produced_so_far = 0_u64;
+            let mut get_next_item = Box::pin(rx.fuse());
+            let timer =
+                Box::pin(futures::stream::pending().fuse()) as Pin<Box<dyn FusedStream<Item = ()> + Send>>;
+            let mut timer = timer;
+
+            loop {
+                select_biased! {
+                    _ = timer.next() => {
+                        if !current_batch.is_empty() {
+                            _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                        }
+                    }
+                    next_item = get_next_item.next() => {
+                        if let Some(item) = next_item {
+                            items_produced_so_far += 1;
+                            current_batch.push(item);
+                            if current_batch.len() == 1 {
+                                // Chosen arbitrarily based on some experimentation with plots.
+                                let desired_duration_ms = (20 * (items_produced_so_far + 2).ilog2() as u64 ).min(300);
+                                let new_timer = Box::pin(executor.timer(Duration::from_millis(desired_duration_ms)).into_stream().fuse()) as Pin<Box<dyn FusedStream<Item = ()> + Send>>;
+                                timer = new_timer;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                }
+            }
+        });
+        let this = Self { items, _batch_task };
+        (this, batch_rx)
     }
 
     /// Push an item and return items to send if batch is ready.
-    pub fn push(&mut self, item: T) -> Option<Vec<T>> {
-        self.items.push(item);
-        if self.items.len() >= self.batch_size {
-            Some(self.take())
-        } else {
-            None
-        }
-    }
-
-    /// Take all pending items and adjust batch size based on timing.
-    pub fn take(&mut self) -> Vec<T> {
-        let elapsed = self.last_send.elapsed();
-        if elapsed < self.min_send_interval {
-            self.batch_size = (self.batch_size * 2).min(self.max_batch_size);
-        } else if elapsed > self.min_send_interval * 4 && self.batch_size > 1 {
-            self.batch_size /= 2;
-        }
-        self.last_send = std::time::Instant::now();
-        std::mem::take(&mut self.items)
-    }
-
-    /// Flush remaining items, if any.
-    pub fn flush(&mut self) -> Option<Vec<T>> {
-        if self.items.is_empty() {
-            None
-        } else {
-            Some(self.take())
-        }
-    }
-}
-
-impl<T> Default for AdaptiveBatcher<T> {
-    fn default() -> Self {
-        Self::new()
+    pub async fn push(&self, item: T) {
+        _ = self.items.send(item).await;
     }
 }
 
