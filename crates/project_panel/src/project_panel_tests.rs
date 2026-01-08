@@ -1918,6 +1918,56 @@ async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_undo_redo(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // - paste (?)
+    // -
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/test",
+        json!({
+            "dir1": {
+                "a.txt": "",
+                "b.txt": "",
+            },
+            "dir2": {},
+            "c.txt": "",
+            "d.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "test/dir1", cx);
+
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        control: true,
+        ..Default::default()
+    });
+
+    // todo!(andrew) test cut/paste conflict->rename, copy/paste conflict->rename, drag rename, and rename with 'enter' key
+
+    select_path(&panel, path, cx);
+    // select_path_with_mark(&panel, "test/dir1/a.txt", cx);
+    // select_path_with_mark(&panel, "test/dir1", cx);
+    // select_path_with_mark(&panel, "test/c.txt", cx);
+    drag_selection_to(&panel, target_path, is_file, cx);
+    panel.update_in(cx, |this, window, cx| {
+        this.undo(&Undo, window, cx);
+    });
+    panel.update_in(cx, |this, window, cx| {
+        this.rename(&Undo, window, cx);
+    });
+}
+
+#[gpui::test]
 async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
