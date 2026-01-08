@@ -213,7 +213,7 @@ fn main() {
             .with_assets(assets::Assets)
             .run(move |cx| {
                 // Load embedded fonts (Zed Sans and Zed Mono)
-                load_embedded_fonts(cx);
+                assets::Assets.load_fonts(cx).unwrap();
 
                 // Initialize settings store with real default settings (not test settings)
                 // Test settings use Courier font, but we want the real Zed fonts for visual tests
@@ -641,30 +641,6 @@ cargo test
 "#;
 
 /// Initialize AppState with real filesystem for visual testing.
-fn load_embedded_fonts(cx: &gpui::App) {
-    let asset_source = cx.asset_source();
-    let font_paths = asset_source.list("fonts").unwrap();
-    let embedded_fonts = std::sync::Mutex::new(Vec::new());
-    let executor = cx.background_executor();
-
-    executor.block(executor.scoped(|scope| {
-        for font_path in &font_paths {
-            if !font_path.ends_with(".ttf") {
-                continue;
-            }
-
-            scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap().unwrap();
-                embedded_fonts.lock().unwrap().push(font_bytes);
-            });
-        }
-    }));
-
-    cx.text_system()
-        .add_fonts(embedded_fonts.into_inner().unwrap())
-        .unwrap();
-}
-
 fn init_app_state(cx: &mut gpui::App) -> Arc<AppState> {
     use client::Client;
     use clock::FakeSystemClock;
