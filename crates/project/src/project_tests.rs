@@ -3464,6 +3464,7 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     // When text_edit exists, it takes precedence over insert_text and label
     let text = "let a = obj.fqn";
