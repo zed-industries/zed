@@ -377,6 +377,8 @@ actions!(
         UnfoldDirectory,
         /// Folds the selected directory.
         FoldDirectory,
+        /// Refreshes the selected folder from the file system.
+        RefreshFolder,
         /// Scroll half a page upwards
         ScrollUp,
         /// Scroll half a page downwards
@@ -1147,6 +1149,9 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(is_dir, |menu| {
+                                menu.action("Refresh Folder", Box::new(RefreshFolder))
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -2575,6 +2580,25 @@ impl ProjectPanel {
 
             self.update_visible_entries(None, false, true, window, cx);
             cx.notify();
+        }
+    }
+
+    /// Triggers a full rescan of the selected folder from the file system.
+    fn refresh_folder(&mut self, _: &RefreshFolder, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
+            if !entry.is_dir() {
+                return;
+            }
+
+            let path = entry.path.clone();
+
+            // Use the rescan_directory API which works for both local and remote worktrees
+            // This properly handles new files, deleted files, and ignore status
+            let task = worktree.update(cx, |worktree, cx| {
+                worktree.rescan_directory(path, cx)
+            });
+
+            task.detach_and_log_err(cx);
         }
     }
 
@@ -6630,6 +6654,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
+                .on_action(cx.listener(Self::refresh_folder))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
                 .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |el| {

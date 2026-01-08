@@ -102,6 +102,7 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_delete_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
+        client.add_entity_request_handler(Self::handle_rescan_directory);
     }
 
     pub fn init_remote(client: &AnyProtoClient) {
@@ -1246,6 +1247,20 @@ impl WorktreeStore {
     ) -> Result<proto::AllocateWorktreeIdResponse> {
         let worktree_id = cx.update(|cx| WorktreeIdCounter::get(cx).next());
         Ok(proto::AllocateWorktreeIdResponse { worktree_id })
+    }
+
+    /// Handles a remote request to rescan a directory in a worktree.
+    /// Forwards the request to the appropriate worktree handler.
+    pub async fn handle_rescan_directory(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RescanDirectory>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::RescanDirectoryResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let worktree = this
+            .update(&mut cx, |this, cx| this.worktree_for_id(worktree_id, cx))
+            .context("invalid request")?;
+        Worktree::handle_rescan_directory(worktree, envelope.payload, cx).await
     }
 
     pub fn fs(&self) -> Option<Arc<dyn Fs>> {
