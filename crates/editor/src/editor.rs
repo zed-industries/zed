@@ -22103,6 +22103,7 @@ impl Editor {
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
+                jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -22150,7 +22151,9 @@ impl Editor {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.colorize_brackets(true, cx);
-                jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
+                // Note: We intentionally don't call jsx_tag_auto_close::refresh_enabled_in_any_buffer
+                // here because reparsing doesn't change whether JSX auto-close is enabled - that only
+                // changes when the language changes or excerpts are added/removed.
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }

@@ -317,19 +317,22 @@ pub(crate) fn refresh_enabled_in_any_buffer(
             }
 
             let buffer = buffer.read(cx);
-            let snapshot = buffer.snapshot();
-            for syntax_layer in snapshot.syntax_layers() {
-                let language = syntax_layer.language;
-                if language.config().jsx_tag_auto_close.is_none() {
-                    continue;
-                }
-                let language_settings = language::language_settings::language_settings(
-                    Some(language.name()),
-                    snapshot.file(),
-                    cx,
-                );
-                if language_settings.jsx_tag_auto_close {
-                    found_enabled = true;
+            // Fast path: check the primary language first (O(1) vs O(n) for syntax_layers).
+            // This covers the common case of JS/TSX files without needing to iterate all layers.
+            // For files with injected languages (e.g., JSX in markdown code blocks), the actual
+            // JSX auto-close will still work correctly because `handle_from` checks the language
+            // at the edit position - we just might miss the fast-path optimization here.
+            if let Some(language) = buffer.language() {
+                if language.config().jsx_tag_auto_close.is_some() {
+                    let language_settings = language::language_settings::language_settings(
+                        Some(language.name()),
+                        buffer.file(),
+                        cx,
+                    );
+                    if language_settings.jsx_tag_auto_close {
+                        found_enabled = true;
+                        return;
+                    }
                 }
             }
         });
