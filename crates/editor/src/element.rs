@@ -3913,7 +3913,7 @@ impl EditorElement {
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
         let file = for_excerpt.buffer.file();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let can_open_excerpts = file.is_none_or(|file| file.can_open());
         let path_style = file.map(|file| file.path_style(cx));
         let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
         let (parent_path, filename) = if let Some(path) = &relative_path {

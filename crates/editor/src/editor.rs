@@ -22489,7 +22489,7 @@ impl Editor {
         }
 
         new_selections_by_buffer
-            .retain(|buffer, _| Self::can_open_excerpts_in_file(buffer.read(cx).file()));
+            .retain(|buffer, _| buffer.read(cx).file().is_none_or(|file| file.can_open()));
 
         if new_selections_by_buffer.is_empty() {
             return;
@@ -22595,13 +22595,6 @@ impl Editor {
                 }
             })
         });
-    }
-
-    // Allow opening excerpts for buffers that either belong to the current project
-    // or represent synthetic/non-local files (e.g., git blobs). File-less buffers
-    // are also supported so tests and other in-memory views keep working.
-    fn can_open_excerpts_in_file(file: Option<&Arc<dyn language::File>>) -> bool {
-        file.is_none_or(|file| project::File::from_dyn(Some(file)).is_some() || !file.is_local())
     }
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
