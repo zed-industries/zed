@@ -18,7 +18,6 @@ use crate::{
 };
 use itertools::intersperse_with;
 
-// FOR-REVIEW: Let's decide where to put it, but I want to make it publicly accessible, as it will be used by the CSV preview crate too
 pub mod table_row {
     //! A newtype for a table row that enforces a fixed column count at runtime.
     //!
@@ -67,9 +66,10 @@ pub mod table_row {
             }
         }
 
-        /// Returns reference to element by column id.
+        /// Returns reference to element by column index.
         ///
-        /// # Panics if `col` is greater than `TableRow` len
+        /// # Panics
+        /// Panics if `col` is out of bounds (i.e., `col >= self.cols()`).
         pub fn expect_get(&self, col: usize) -> &T {
             self.0.get(col).unwrap_or_else(|| {
                 panic!(
@@ -147,16 +147,6 @@ pub mod table_row {
     impl<T> IntoTableRow<T> for Vec<T> {
         fn into_table_row(self, expected_length: usize) -> TableRow<T> {
             TableRow::from_vec(self, expected_length)
-        }
-    }
-
-    pub trait IntoTableRowForArray<T> {
-        fn into_table_row(self) -> TableRow<T>;
-    }
-
-    impl<T, const COLS: usize> IntoTableRowForArray<T> for [T; COLS] {
-        fn into_table_row(self) -> TableRow<T> {
-            TableRow::from_vec(self.into(), COLS)
         }
     }
 
@@ -332,7 +322,6 @@ impl TableInteractionState {
     /// 2. Intersperses (inserts) resize handles between spacers (interactive only for resizable columns)
     /// 3. Each handle supports hover highlighting, double-click to reset, and drag to resize
     /// 4. Returns an absolute-positioned overlay that sits on top of table content
-    // TODO: improve glossary: spacers and dividers are too confusing
     fn render_resize_handles(
         &self,
         column_widths: &TableRow<Length>,
@@ -460,7 +449,6 @@ impl TableColumnWidths {
         }
     }
 
-    /// Returns the number of columns in the table.
     pub fn cols(&self) -> usize {
         self.widths.cols()
     }
