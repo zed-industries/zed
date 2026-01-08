@@ -37,7 +37,9 @@ impl VisualTestAppContext {
     /// - Screenshots can be captured via ScreenCaptureKit
     /// - All platform APIs work as they do in production
     pub fn new() -> Self {
-        let platform = current_platform(false);
+        let liveness = Arc::new(());
+        let liveness_weak = Arc::downgrade(&liveness);
+        let platform = current_platform(false, liveness_weak);
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -45,7 +47,7 @@ impl VisualTestAppContext {
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        let mut app = App::new_app(platform.clone(), liveness, asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -364,17 +366,12 @@ impl Default for VisualTestAppContext {
 }
 
 impl AppContext for VisualTestAppContext {
-    type Result<T> = T;
-
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
         let mut app = self.app.borrow_mut();
         app.reserve_entity()
     }
@@ -383,7 +380,7 @@ impl AppContext for VisualTestAppContext {
         &mut self,
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.insert_entity(reservation, build_entity)
     }
@@ -392,23 +389,19 @@ impl AppContext for VisualTestAppContext {
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> Self::Result<R> {
+    ) -> R {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
     }
 
-    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<crate::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> crate::GpuiBorrow<'a, T>
     where
         T: 'static,
     {
         panic!("Cannot use as_mut with a visual test app context. Try calling update() first")
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -443,7 +436,7 @@ impl AppContext for VisualTestAppContext {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {

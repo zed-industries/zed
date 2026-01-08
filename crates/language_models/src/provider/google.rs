@@ -1,7 +1,7 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
     FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
     ThinkingConfig, UsageMetadata,
@@ -256,12 +256,10 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = GoogleLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         async move {
             let api_key = api_key.context("Missing Google API key")?;
@@ -771,10 +769,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -807,7 +802,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -820,7 +815,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -874,7 +869,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {GEMINI_API_KEY_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {GEMINI_API_KEY_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )

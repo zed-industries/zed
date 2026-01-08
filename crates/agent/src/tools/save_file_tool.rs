@@ -71,49 +71,29 @@ impl AgentTool for SaveFileTool {
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
-            let mut dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
+            let dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
-                let project_path =
-                    project.read_with(cx, |project, cx| project.find_project_path(&path, cx));
-
-                let project_path = match project_path {
-                    Ok(Some(project_path)) => project_path,
-                    Ok(None) => {
-                        not_found_paths.push(path);
-                        continue;
-                    }
-                    Err(error) => {
-                        open_errors.push((path, error.to_string()));
-                        continue;
-                    }
+                let Some(project_path) =
+                    project.read_with(cx, |project, cx| project.find_project_path(&path, cx))
+                else {
+                    not_found_paths.push(path);
+                    continue;
                 };
 
                 let open_buffer_task =
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-                let buffer = match open_buffer_task {
-                    Ok(task) => match task.await {
-                        Ok(buffer) => buffer,
-                        Err(error) => {
-                            open_errors.push((path, error.to_string()));
-                            continue;
-                        }
-                    },
+                let buffer = match open_buffer_task.await {
+                    Ok(buffer) => buffer,
                     Err(error) => {
                         open_errors.push((path, error.to_string()));
                         continue;
                     }
                 };
 
-                let is_dirty = match buffer.read_with(cx, |buffer, _| buffer.is_dirty()) {
-                    Ok(is_dirty) => is_dirty,
-                    Err(error) => {
-                        dirty_check_errors.push((path, error.to_string()));
-                        continue;
-                    }
-                };
+                let is_dirty = buffer.read_with(cx, |buffer, _| buffer.is_dirty());
 
                 if is_dirty {
                     buffers_to_save.insert(buffer);
@@ -125,30 +105,19 @@ impl AgentTool for SaveFileTool {
 
             // Save each buffer individually since there's no batch save API.
             for buffer in buffers_to_save {
-                let path_for_buffer = match buffer.read_with(cx, |buffer, _| {
-                    buffer
-                        .file()
-                        .map(|file| file.path().to_rel_path_buf())
-                        .map(|path| path.as_rel_path().as_unix_str().to_owned())
-                }) {
-                    Ok(path) => path.unwrap_or_else(|| "<unknown>".to_string()),
-                    Err(error) => {
-                        save_errors.push(("<unknown>".to_string(), error.to_string()));
-                        continue;
-                    }
-                };
+                let path_for_buffer = buffer
+                    .read_with(cx, |buffer, _| {
+                        buffer
+                            .file()
+                            .map(|file| file.path().to_rel_path_buf())
+                            .map(|path| path.as_rel_path().as_unix_str().to_owned())
+                    })
+                    .unwrap_or_else(|| "<unknown>".to_string());
 
                 let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
 
-                match save_task {
-                    Ok(task) => {
-                        if let Err(error) = task.await {
-                            save_errors.push((path_for_buffer, error.to_string()));
-                        }
-                    }
-                    Err(error) => {
-                        save_errors.push((path_for_buffer, error.to_string()));
-                    }
+                if let Err(error) = save_task.await {
+                    save_errors.push((path_for_buffer, error.to_string()));
                 }
             }
 

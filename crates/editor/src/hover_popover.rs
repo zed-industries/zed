@@ -165,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone());
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content =
                     parse_blocks(&blocks, Some(&language_registry), None, cx).await;

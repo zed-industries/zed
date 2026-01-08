@@ -92,43 +92,45 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
-    current_platform(true).background_executor()
+    // For standalone background executor, use a dead liveness since there's no App.
+    // Weak::new() creates a weak reference that always returns None on upgrade.
+    current_platform(true, std::sync::Weak::new()).background_executor()
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new(headless))
+pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new(headless, liveness))
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
     #[cfg(feature = "x11")]
     use anyhow::Context as _;
 
     if headless {
-        return Rc::new(HeadlessClient::new());
+        return Rc::new(HeadlessClient::new(liveness));
     }
 
     match guess_compositor() {
         #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new()),
+        "Wayland" => Rc::new(WaylandClient::new(liveness)),
 
         #[cfg(feature = "x11")]
         "X11" => Rc::new(
-            X11Client::new()
+            X11Client::new(liveness)
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
         ),
 
-        "Headless" => Rc::new(HeadlessClient::new()),
+        "Headless" => Rc::new(HeadlessClient::new(liveness)),
         _ => unreachable!(),
     }
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(_headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
     Rc::new(
-        WindowsPlatform::new()
+        WindowsPlatform::new(liveness)
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
@@ -604,7 +606,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 /// be considered part of our public API.
 #[doc(hidden)]
 pub struct RunnableMeta {
-    /// Location of the runnable
+    pub priority: Priority,
+    /// Location of the runnable, only set for futures we spawn
     pub location: &'static core::panic::Location<'static>,
     /// Weak reference to check if the app is still alive before running this task
     pub app: Option<std::sync::Weak<()>>,
@@ -613,6 +616,7 @@ pub struct RunnableMeta {
 impl std::fmt::Debug for RunnableMeta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunnableMeta")
+            .field("priority", &self.priority)
             .field("location", &self.location)
             .field("app_alive", &self.is_app_alive())
             .finish()
@@ -629,10 +633,69 @@ impl RunnableMeta {
     }
 }
 
+/// Both of these need meta for priority
 #[doc(hidden)]
-pub enum RunnableVariant {
-    Meta(Runnable<RunnableMeta>),
-    Compat(Runnable),
+pub enum GpuiRunnable {
+    /// Spawned by us, we set useful metadata for profiling and scheduling.
+    /// Yay we have nice things!
+    GpuiSpawned(Runnable<RunnableMeta>),
+    /// Spawned by a dependency through runtimelib. We only have the
+    /// runnable ('task'). No access to metadata.
+    DependencySpawned(Runnable<()>),
+}
+
+impl GpuiRunnable {
+    fn run_and_profile(self) -> Instant {
+        if self.app_dropped() {
+            // optimizer will cut it out if it doesnt it does not really matter
+            // cause we are closing the app anyway.
+            return Instant::now();
+        }
+
+        let mut timing = TaskTiming {
+            // use a placeholder location if we dont have one
+            location: self.location().unwrap_or(core::panic::Location::caller()),
+            start: Instant::now(),
+            end: None,
+        };
+
+        crate::profiler::add_task_timing(timing);
+        self.run_unprofiled(); // surrounded by profiling so its ok
+        timing.end = Some(Instant::now());
+        crate::profiler::add_task_timing(timing);
+        timing.start
+    }
+
+    fn app_dropped(&self) -> bool {
+        match self {
+            GpuiRunnable::GpuiSpawned(runnable) => !runnable.metadata().is_app_alive(),
+            GpuiRunnable::DependencySpawned(_) => false,
+        }
+    }
+
+    fn location(&self) -> Option<&'static core::panic::Location<'static>> {
+        match self {
+            GpuiRunnable::GpuiSpawned(runnable) => runnable.metadata().location.into(),
+            GpuiRunnable::DependencySpawned(_) => None,
+        }
+    }
+
+    /// ONLY use for tests or headless client.
+    /// ideally everything should be profiled
+    fn run_unprofiled(self) {
+        self.priority().set_as_default_for_spawns();
+        match self {
+            GpuiRunnable::GpuiSpawned(r) => r.run(),
+            GpuiRunnable::DependencySpawned(r) => r.run(),
+        };
+    }
+
+    fn priority(&self) -> Priority {
+        match self {
+            GpuiRunnable::GpuiSpawned(r) => r.metadata().priority,
+            GpuiRunnable::DependencySpawned(_) => Priority::Medium,
+        }
+    }
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not
@@ -642,9 +705,9 @@ pub trait PlatformDispatcher: Send + Sync {
     fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
     fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority);
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
-    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+    fn dispatch(&self, runnable: GpuiRunnable, label: Option<TaskLabel>);
+    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable);
+    fn dispatch_after(&self, duration: Duration, runnable: GpuiRunnable);
     fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {

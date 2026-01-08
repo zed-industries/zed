@@ -1894,7 +1894,7 @@ async fn test_remote_external_agent_server(
     assert_eq!(
         command,
         AgentServerCommand {
-            path: "ssh".into(),
+            path: "mock".into(),
             args: vec!["foo-cli".into(), "--flag".into()],
             env: Some(HashMap::from_iter([
                 ("VAR".into(), "val".into()),

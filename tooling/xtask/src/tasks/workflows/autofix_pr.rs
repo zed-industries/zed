@@ -59,6 +59,16 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
+    fn install_cargo_machete() -> Step<Use> {
+        named::uses(
+            "clechasseur",
+            "rs-cargo",
+            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+        )
+        .add_with(("command", "install"))
+        .add_with(("args", "cargo-machete@0.7.0"))
+    }
+
     fn run_cargo_fmt() -> Step<Run> {
         named::bash("cargo fmt --all")
     }
@@ -67,6 +77,10 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
         named::bash(
             "cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged",
         )
+    }
+
+    fn run_cargo_machete_fix() -> Step<Run> {
+        named::bash("cargo machete --fix")
     }
 
     fn run_clippy_fix() -> Step<Run> {
@@ -107,7 +121,9 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::setup_pnpm())
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
+            .add_step(install_cargo_machete().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_cargo_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(run_cargo_machete_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(create_patch())
             .add_step(upload_patch_artifact())

@@ -75,14 +75,12 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             let completions = copilot
                 .update(cx, |copilot, cx| {
                     copilot.completions(&buffer, cursor_position, cx)
-                })?
+                })
                 .await?;
 
             if let Some(mut completion) = completions.into_iter().next()
-                && let Some((trimmed_range, trimmed_text, snapshot)) = cx
-                    .update(|cx| trim_completion(&completion, cx))
-                    .ok()
-                    .flatten()
+                && let Some((trimmed_range, trimmed_text, snapshot)) =
+                    cx.update(|cx| trim_completion(&completion, cx))
             {
                 let preview = buffer
                     .update(cx, |this, cx| {
@@ -90,7 +88,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
                             Arc::from([(trimmed_range.clone(), trimmed_text.clone())].as_slice()),
                             cx,
                         )
-                    })?
+                    })
                     .await;
                 this.update(cx, |this, cx| {
                     this.pending_refresh = None;
