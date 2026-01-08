@@ -5,8 +5,8 @@ use anyhow::Context as _;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, ListAlignment, ListState, ParentElement, Pixels, Point, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
-    list, px,
+    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
+    anchored, deferred, list, px,
 };
 use graph_rendering::accent_colors_count;
 use project::{
@@ -202,6 +202,26 @@ impl GitGraph {
         self.render_commit_row(idx, row_height, date_width, author_width, commit_width, cx)
     }
 
+    fn handle_graph_scroll(
+        &mut self,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let line_height = window.line_height();
+        let delta = event.delta.pixel_delta(line_height);
+
+        let current_offset = -self.list_state.scroll_px_offset_for_scrollbar().y;
+        let max_offset = self.list_state.max_offset_for_scrollbar().height;
+        let new_offset = (current_offset - delta.y).clamp(px(0.), max_offset);
+        let clamped_delta = new_offset - current_offset;
+
+        if clamped_delta != px(0.) {
+            self.list_state.scroll_by(clamped_delta);
+            cx.notify();
+        }
+    }
+
     fn render_commit_row(
         &mut self,
         idx: usize,
@@ -379,7 +399,13 @@ impl Render for GitGraph {
                     h_flex()
                         .flex_1()
                         .size_full()
-                        .child(div().h_full().overflow_hidden().child(render_graph(&self)))
+                        .child(
+                            div()
+                                .h_full()
+                                .overflow_hidden()
+                                .child(render_graph(&self))
+                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
+                        )
                         .child(
                             list(
                                 self.list_state.clone(),
