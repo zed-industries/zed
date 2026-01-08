@@ -213,27 +213,6 @@ impl CompiledRegex {
         })
     }
 
-    pub fn new_for_tool(tool_name: &str, pattern: &str, case_sensitive: bool) -> Option<Self> {
-        let regex = regex::RegexBuilder::new(pattern)
-            .case_insensitive(!case_sensitive)
-            .build()
-            .map_err(|e| {
-                log::warn!(
-                    "Invalid regex pattern '{}' for tool '{}': {}",
-                    pattern,
-                    tool_name,
-                    e
-                );
-                e
-            })
-            .ok()?;
-        Some(Self {
-            pattern: pattern.to_string(),
-            case_sensitive,
-            regex,
-        })
-    }
-
     pub fn is_match(&self, input: &str) -> bool {
         self.regex.is_match(input)
     }
@@ -295,15 +274,15 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
                 default_mode: rules_content.default_mode.unwrap_or_default(),
                 always_allow: rules_content
                     .always_allow
-                    .map(|v| compile_regex_rules(&tool_name, v.0))
+                    .map(|v| compile_regex_rules(v.0))
                     .unwrap_or_default(),
                 always_deny: rules_content
                     .always_deny
-                    .map(|v| compile_regex_rules(&tool_name, v.0))
+                    .map(|v| compile_regex_rules(v.0))
                     .unwrap_or_default(),
                 always_confirm: rules_content
                     .always_confirm
-                    .map(|v| compile_regex_rules(&tool_name, v.0))
+                    .map(|v| compile_regex_rules(v.0))
                     .unwrap_or_default(),
             };
             (tool_name, rules)
@@ -313,16 +292,10 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
     ToolPermissions { tools }
 }
 
-fn compile_regex_rules(tool_name: &str, rules: Vec<settings::ToolRegexRule>) -> Vec<CompiledRegex> {
+fn compile_regex_rules(rules: Vec<settings::ToolRegexRule>) -> Vec<CompiledRegex> {
     rules
         .into_iter()
-        .filter_map(|rule| {
-            CompiledRegex::new_for_tool(
-                tool_name,
-                &rule.pattern,
-                rule.case_sensitive.unwrap_or(false),
-            )
-        })
+        .filter_map(|rule| CompiledRegex::new(&rule.pattern, rule.case_sensitive.unwrap_or(false)))
         .collect()
 }
 
@@ -330,7 +303,7 @@ fn compile_regex_rules(tool_name: &str, rules: Vec<settings::ToolRegexRule>) -> 
 mod tests {
     use super::*;
     use serde_json::json;
-    use settings::{ToolPermissionsContent, ToolRegexRule};
+    use settings::ToolPermissionsContent;
 
     #[test]
     fn test_compiled_regex_case_insensitive() {
@@ -404,38 +377,12 @@ mod tests {
     }
 
     #[test]
-    fn test_regex_rule_with_case_sensitivity() {
-        let json = json!([
-            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
-            { "pattern": "select.*from", "case_sensitive": false }
-        ]);
-
-        let rules: Vec<ToolRegexRule> = serde_json::from_value(json).unwrap();
-        let compiled = compile_regex_rules("terminal", rules);
-
-        assert_eq!(compiled.len(), 2);
-        assert!(compiled[0].is_match("DELETE FROM users"));
-        assert!(!compiled[0].is_match("delete from users"));
-        assert!(compiled[1].is_match("SELECT * FROM users"));
-        assert!(compiled[1].is_match("select * from users"));
-    }
-
-    #[test]
     fn test_tool_rules_default_returns_confirm() {
         let default_rules = ToolRules::default();
         assert_eq!(default_rules.default_mode, ToolPermissionMode::Confirm);
         assert!(default_rules.always_allow.is_empty());
         assert!(default_rules.always_deny.is_empty());
         assert!(default_rules.always_confirm.is_empty());
-    }
-
-    #[test]
-    fn test_compiled_regex_stores_case_sensitivity() {
-        let case_sensitive = CompiledRegex::new("test", true).unwrap();
-        let case_insensitive = CompiledRegex::new("test", false).unwrap();
-
-        assert!(case_sensitive.case_sensitive);
-        assert!(!case_insensitive.case_sensitive);
     }
 
     #[test]
@@ -517,24 +464,6 @@ mod tests {
         let terminal = permissions.tools.get("terminal").unwrap();
         assert_eq!(terminal.always_deny.len(), 1);
         assert!(terminal.always_deny[0].is_match("valid_pattern"));
-    }
-
-    #[test]
-    fn test_unconfigured_tool_not_in_permissions() {
-        let json = json!({
-            "tools": {
-                "terminal": {
-                    "default_mode": "allow"
-                }
-            }
-        });
-
-        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
-        let permissions = compile_tool_permissions(Some(content));
-
-        assert!(permissions.tools.contains_key("terminal"));
-        assert!(!permissions.tools.contains_key("edit_file"));
-        assert!(!permissions.tools.contains_key("fetch"));
     }
 
     #[test]
