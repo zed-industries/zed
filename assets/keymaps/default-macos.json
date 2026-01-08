@@ -795,7 +795,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction",
+    "context": "Editor && edit_prediction && (vim_mode == insert || !VimControl)",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
@@ -804,7 +804,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction_conflict",
+    "context": "Editor && edit_prediction_conflict && (vim_mode == insert || !VimControl)",
     "use_key_equivalents": true,
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",

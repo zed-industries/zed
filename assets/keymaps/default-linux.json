@@ -733,7 +733,7 @@
   // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is
   // because alt-tab may not be available, as it is often used for window switching.
   {
-    "context": "Editor && edit_prediction",
+    "context": "Editor && edit_prediction && (vim_mode == insert || !VimControl)",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
@@ -743,7 +743,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction_conflict",
+    "context": "Editor && edit_prediction_conflict && (vim_mode == insert || !VimControl)",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
