@@ -28,10 +28,11 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Hsla, Length, ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
+    pulsating_between,
 };
 use language::Buffer;
 
@@ -263,6 +264,15 @@ impl ThreadFeedbackState {
         editor
     }
 }
+
+#[derive(Debug)]
+pub enum AcpThreadViewEvent {
+    Started,
+    Stopped,
+    Error,
+}
+
+impl EventEmitter<AcpThreadViewEvent> for AcpThreadView {}
 
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
@@ -1747,6 +1757,9 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match event {
+            AcpThreadEvent::Started => {
+                cx.emit(AcpThreadViewEvent::Started);
+            }
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
@@ -1799,6 +1812,8 @@ impl AcpThreadView {
                 } else if !self.message_queue.is_empty() {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
+
+                cx.emit(AcpThreadViewEvent::Stopped);
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
@@ -1816,6 +1831,7 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+                cx.emit(AcpThreadViewEvent::Error);
             }
             AcpThreadEvent::LoadError(error) => {
                 self.thread_retry_status.take();

@@ -1,5 +1,6 @@
-use agent::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryEntryId, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use collections::HashSet;
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -10,8 +11,8 @@ use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
-    prelude::*,
+    CommonAnimationExt, HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip,
+    WithScrollbar, prelude::*,
 };
 
 actions!(
@@ -34,6 +35,8 @@ pub struct AcpThreadHistory {
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
+    running_thread_ids: HashSet<HistoryEntryId>,
+    completed_thread_ids: HashSet<HistoryEntryId>,
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -43,10 +46,14 @@ enum ListItemType {
     Entry {
         entry: HistoryEntry,
         format: EntryTimeFormat,
+        is_running: bool,
+        is_completed: bool,
     },
     SearchResult {
         entry: HistoryEntry,
         positions: Vec<usize>,
+        is_running: bool,
+        is_completed: bool,
     },
 }
 
@@ -60,9 +67,9 @@ impl ListItemType {
     }
 }
 
-#[allow(dead_code)]
 pub enum ThreadHistoryEvent {
     Open(HistoryEntry),
+    Deleted(HistoryEntryId),
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
@@ -109,11 +116,28 @@ impl AcpThreadHistory {
             .unwrap(),
             search_query: SharedString::default(),
             confirming_delete_history: false,
+            running_thread_ids: HashSet::default(),
+            completed_thread_ids: HashSet::default(),
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
             _update_task: Task::ready(()),
         };
         this.update_visible_items(false, cx);
         this
+    }
+
+    pub fn set_running_threads(
+        &mut self,
+        running_thread_ids: HashSet<HistoryEntryId>,
+        completed_thread_ids: HashSet<HistoryEntryId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.running_thread_ids != running_thread_ids
+            || self.completed_thread_ids != completed_thread_ids
+        {
+            self.running_thread_ids = running_thread_ids;
+            self.completed_thread_ids = completed_thread_ids;
+            self.update_visible_items(true, cx);
+        }
     }
 
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
@@ -157,12 +181,33 @@ impl AcpThreadHistory {
     }
 
     fn add_list_separators(&self, entries: Vec<HistoryEntry>, cx: &App) -> Task<Vec<ListItemType>> {
+        let running_thread_ids = self.running_thread_ids.clone();
+        let completed_thread_ids = self.completed_thread_ids.clone();
+
         cx.background_spawn(async move {
-            let mut items = Vec::with_capacity(entries.len() + 1);
+            let mut items = Vec::with_capacity(entries.len() + 2);
             let mut bucket = None;
             let today = Local::now().naive_local().date();
 
-            for entry in entries.into_iter() {
+            let (active, other): (Vec<_>, Vec<_>) = entries.into_iter().partition(|e| {
+                running_thread_ids.contains(&e.id()) || completed_thread_ids.contains(&e.id())
+            });
+
+            if !active.is_empty() {
+                items.push(ListItemType::BucketSeparator(TimeBucket::Running));
+                for entry in active {
+                    let is_running = running_thread_ids.contains(&entry.id());
+                    let is_completed = completed_thread_ids.contains(&entry.id());
+                    items.push(ListItemType::Entry {
+                        entry,
+                        format: EntryTimeFormat::TimeOnly,
+                        is_running,
+                        is_completed,
+                    });
+                }
+            }
+
+            for entry in other {
                 let entry_date = entry
                     .updated_at()
                     .with_timezone(&Local)
@@ -178,6 +223,8 @@ impl AcpThreadHistory {
                 items.push(ListItemType::Entry {
                     entry,
                     format: entry_bucket.into(),
+                    is_running: false,
+                    is_completed: false,
                 });
             }
             items
@@ -190,6 +237,9 @@ impl AcpThreadHistory {
         cx: &App,
     ) -> Task<Vec<ListItemType>> {
         let query = self.search_query.clone();
+        let running_thread_ids = self.running_thread_ids.clone();
+        let completed_thread_ids = self.completed_thread_ids.clone();
+
         cx.background_spawn({
             let executor = cx.background_executor().clone();
             async move {
@@ -214,9 +264,16 @@ impl AcpThreadHistory {
 
                 matches
                     .into_iter()
-                    .map(|search_match| ListItemType::SearchResult {
-                        entry: entries[search_match.candidate_id].clone(),
-                        positions: search_match.positions,
+                    .map(|search_match| {
+                        let entry = entries[search_match.candidate_id].clone();
+                        let is_running = running_thread_ids.contains(&entry.id());
+                        let is_completed = completed_thread_ids.contains(&entry.id());
+                        ListItemType::SearchResult {
+                            entry,
+                            positions: search_match.positions,
+                            is_running,
+                            is_completed,
+                        }
                     })
                     .collect()
             }
@@ -331,6 +388,9 @@ impl AcpThreadHistory {
             return;
         };
 
+        let entry_id = entry.id();
+        cx.emit(ThreadHistoryEvent::Deleted(entry_id));
+
         let task = match entry {
             HistoryEntry::AcpThread(thread) => self
                 .history_store
@@ -377,14 +437,34 @@ impl AcpThreadHistory {
 
     fn render_list_item(&self, item: &ListItemType, ix: usize, cx: &Context<Self>) -> AnyElement {
         match item {
-            ListItemType::Entry { entry, format } => self
-                .render_history_entry(entry, *format, ix, Vec::default(), cx)
+            ListItemType::Entry {
+                entry,
+                format,
+                is_running,
+                is_completed,
+            } => self
+                .render_history_entry(
+                    entry,
+                    *format,
+                    ix,
+                    Vec::default(),
+                    *is_running,
+                    *is_completed,
+                    cx,
+                )
                 .into_any(),
-            ListItemType::SearchResult { entry, positions } => self.render_history_entry(
+            ListItemType::SearchResult {
+                entry,
+                positions,
+                is_running,
+                is_completed,
+            } => self.render_history_entry(
                 entry,
                 EntryTimeFormat::DateAndTime,
                 ix,
                 positions.clone(),
+                *is_running,
+                *is_completed,
                 cx,
             ),
             ListItemType::BucketSeparator(bucket) => div()
@@ -406,6 +486,8 @@ impl AcpThreadHistory {
         format: EntryTimeFormat,
         ix: usize,
         highlight_positions: Vec<usize>,
+        is_running: bool,
+        is_completed: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
         let selected = ix == self.selected_index;
@@ -446,11 +528,23 @@ impl AcpThreadHistory {
                                     .size(LabelSize::Small)
                                     .truncate(),
                             )
-                            .child(
+                            .child(if is_running {
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                                    .with_rotate_animation(2)
+                                    .into_any_element()
+                            } else if is_completed {
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success)
+                                    .into_any_element()
+                            } else {
                                 Label::new(display_text)
                                     .color(Color::Muted)
-                                    .size(LabelSize::XSmall),
-                            ),
+                                    .size(LabelSize::XSmall)
+                                    .into_any_element()
+                            }),
                     )
                     .tooltip(move |_, cx| {
                         Tooltip::with_meta(title.clone(), None, full_date.clone(), cx)
@@ -626,7 +720,7 @@ impl Render for AcpThreadHistory {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryTimeFormat {
     DateAndTime,
     TimeOnly,
@@ -651,6 +745,7 @@ impl EntryTimeFormat {
 impl From<TimeBucket> for EntryTimeFormat {
     fn from(bucket: TimeBucket) -> Self {
         match bucket {
+            TimeBucket::Running => EntryTimeFormat::TimeOnly,
             TimeBucket::Today => EntryTimeFormat::TimeOnly,
             TimeBucket::Yesterday => EntryTimeFormat::TimeOnly,
             TimeBucket::ThisWeek => EntryTimeFormat::DateAndTime,
@@ -662,6 +757,7 @@ impl From<TimeBucket> for EntryTimeFormat {
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum TimeBucket {
+    Running,
     Today,
     Yesterday,
     ThisWeek,
@@ -698,6 +794,7 @@ impl TimeBucket {
 impl Display for TimeBucket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TimeBucket::Running => write!(f, "Running"),
             TimeBucket::Today => write!(f, "Today"),
             TimeBucket::Yesterday => write!(f, "Yesterday"),
             TimeBucket::ThisWeek => write!(f, "This Week"),
@@ -711,6 +808,44 @@ impl Display for TimeBucket {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    #[test]
+    fn test_time_bucket_display() {
+        assert_eq!(TimeBucket::Running.to_string(), "Running");
+        assert_eq!(TimeBucket::Today.to_string(), "Today");
+        assert_eq!(TimeBucket::Yesterday.to_string(), "Yesterday");
+        assert_eq!(TimeBucket::ThisWeek.to_string(), "This Week");
+        assert_eq!(TimeBucket::PastWeek.to_string(), "Past Week");
+        assert_eq!(TimeBucket::All.to_string(), "All");
+    }
+
+    #[test]
+    fn test_entry_time_format_from_bucket() {
+        assert_eq!(
+            EntryTimeFormat::from(TimeBucket::Running),
+            EntryTimeFormat::TimeOnly
+        );
+        assert_eq!(
+            EntryTimeFormat::from(TimeBucket::Today),
+            EntryTimeFormat::TimeOnly
+        );
+        assert_eq!(
+            EntryTimeFormat::from(TimeBucket::Yesterday),
+            EntryTimeFormat::TimeOnly
+        );
+        assert_eq!(
+            EntryTimeFormat::from(TimeBucket::ThisWeek),
+            EntryTimeFormat::DateAndTime
+        );
+        assert_eq!(
+            EntryTimeFormat::from(TimeBucket::PastWeek),
+            EntryTimeFormat::DateAndTime
+        );
+        assert_eq!(
+            EntryTimeFormat::from(TimeBucket::All),
+            EntryTimeFormat::DateAndTime
+        );
+    }
 
     #[test]
     fn test_time_bucket_from_dates() {

@@ -913,6 +913,7 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Retry(RetryStatus),
+    Started,
     Stopped,
     Error,
     LoadError(LoadError),
@@ -1840,6 +1841,7 @@ impl AcpThread {
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
     ) -> BoxFuture<'static, Result<()>> {
         self.clear_completed_plan_entries(cx);
+        cx.emit(AcpThreadEvent::Started);
 
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);

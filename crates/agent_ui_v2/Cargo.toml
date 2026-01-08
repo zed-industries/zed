@@ -19,6 +19,7 @@ test-support = ["agent/test-support"]
 [dependencies]
 agent.workspace = true
 agent_servers.workspace = true
+collections.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
@@ -44,4 +45,18 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+acp_thread.workspace = true
 agent = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
+agent_ui = { workspace = true, features = ["test-support"] }
+db = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+futures.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+parking_lot.workspace = true
+project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+smol.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

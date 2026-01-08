@@ -1348,7 +1348,8 @@ impl AgentDiff {
             | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
-            AcpThreadEvent::TitleUpdated
+            AcpThreadEvent::Started
+            | AcpThreadEvent::TitleUpdated
             | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired

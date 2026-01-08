@@ -86,6 +86,29 @@ impl AgentThreadPane {
         self.thread_view.as_ref().map(|tv| tv.thread_id.clone())
     }
 
+    pub fn thread_view(&self) -> Option<Entity<AcpThreadView>> {
+        self.thread_view.as_ref().map(|tv| tv.view.clone())
+    }
+
+    pub fn set_thread_view(
+        &mut self,
+        view: Entity<AcpThreadView>,
+        thread_id: HistoryEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        let notify = cx.observe(&view, |_, _, cx| {
+            cx.notify();
+        });
+
+        self.thread_view = Some(ActiveThreadView {
+            view,
+            thread_id,
+            _notify: notify,
+        });
+
+        cx.notify();
+    }
+
     pub fn serialize(&self) -> SerializedAgentThreadPane {
         SerializedAgentThreadPane {
             expanded: self.expanded,
@@ -129,17 +152,7 @@ impl AgentThreadPane {
             )
         });
 
-        let notify = cx.observe(&thread_view, |_, _, cx| {
-            cx.notify();
-        });
-
-        self.thread_view = Some(ActiveThreadView {
-            view: thread_view,
-            thread_id,
-            _notify: notify,
-        });
-
-        cx.notify();
+        self.set_thread_view(thread_view, thread_id, cx);
     }
 
     fn title(&self, cx: &App) -> SharedString {
