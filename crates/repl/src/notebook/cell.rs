@@ -401,7 +401,6 @@ impl MarkdownCell {
             })
         };
 
-        // Subscribe to editor events
         let cell_id = id.clone();
         let editor_subscription =
             cx.subscribe(&editor, move |this, _editor, event, cx| match event {

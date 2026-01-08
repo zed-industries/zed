@@ -427,21 +427,17 @@ impl NotebookEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // shutdown the current kernel if running
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.force_shutdown(window, cx).detach();
         }
 
-        // clear execution requests since we're switching kernels
         self.execution_requests.clear();
 
-        // launch new
         self.launch_kernel_with_spec(spec, window, cx);
     }
 
     fn restart_kernel(&mut self, _: &RestartKernel, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(spec) = self.kernel_specification.clone() {
-            // shutdown
             if let Kernel::RunningKernel(kernel) = &mut self.kernel {
                 kernel.force_shutdown(window, cx).detach();
             }
@@ -449,7 +445,6 @@ impl NotebookEditor {
             self.kernel = Kernel::Restarting;
             cx.notify();
 
-            // relaunch
             self.launch_kernel_with_spec(spec, window, cx);
         }
     }
@@ -461,7 +456,6 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) {
         if let Kernel::RunningKernel(kernel) = &self.kernel {
-            // interrupt request to the kernel
             let interrupt_request = runtimelib::InterruptRequest {};
             let message: JupyterMessage = interrupt_request.into();
             kernel.request_tx().try_send(message).ok();
@@ -481,7 +475,6 @@ impl NotebookEditor {
             return;
         };
 
-        // clear output then -> start execution
         if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
             cell.update(cx, |cell, cx| {
                 if cell.has_outputs() {
@@ -635,7 +628,6 @@ impl NotebookEditor {
             .insert(new_cell_id.clone(), Cell::Markdown(markdown_cell.clone()));
         self.selected_cell_index = insert_index;
 
-        // subscribe to markdown cell events
         cx.subscribe(
             &markdown_cell,
             move |_this, cell, event: &MarkdownCellEvent, cx| match event {
@@ -648,7 +640,6 @@ impl NotebookEditor {
         )
         .detach();
 
-        // subscribe to editor focus events
         let cell_id_for_editor = new_cell_id.clone();
         let editor = markdown_cell.read(cx).editor().clone();
         cx.subscribe(&editor, move |this, _editor, event, cx| {
@@ -692,7 +683,6 @@ impl NotebookEditor {
             .insert(new_cell_id.clone(), Cell::Code(code_cell.clone()));
         self.selected_cell_index = insert_index;
 
-        // subscribe to run events
         let cell_id_for_run = new_cell_id.clone();
         cx.subscribe(&code_cell, move |this, _cell, event, cx| match event {
             CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
@@ -705,7 +695,6 @@ impl NotebookEditor {
         })
         .detach();
 
-        // subscribe to editor focus events
         let cell_id_for_editor = new_cell_id.clone();
         let editor = code_cell.read(cx).editor().clone();
         cx.subscribe(&editor, move |this, _editor, event, cx| {
