@@ -759,4 +759,29 @@ mod tests {
             "Case sensitivity should not be enabled when \\C pattern item is preceded by a backslash."
         );
     }
+
+    #[gpui::test]
+    async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
+        let search_query = SearchQuery::regex(
+            "^hello$\n",
+            false,
+            false,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .expect("Should be able to create a regex SearchQuery");
+
+        use language::Buffer;
+        let text = crate::Rope::from("hello\nworld\nhello\nworld");
+        let snapshot = cx
+            .update(|app| Buffer::build_snapshot(text, None, None, app))
+            .await;
+
+        let results = search_query.search(&snapshot, None).await;
+        assert_eq!(results.len(), 2);
+    }
 }
