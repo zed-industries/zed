@@ -2136,14 +2136,6 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
-    /// Whether the `%` motion matches quote characters (`'`, `"`, `` ` ``).
-    ///
-    /// When enabled, pressing `%` inside quotes jumps between opening and
-    /// closing quotes. This extends Vim's default `%` behavior, which only
-    /// matches bracket-like pairs.
-    ///
-    /// Default: true
-    "use_match_quotes": true,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
     // Cursor shape for the each mode.
