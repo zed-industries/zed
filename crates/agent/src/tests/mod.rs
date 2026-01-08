@@ -1,4 +1,6 @@
 use super::*;
+use super::thread::{MAX_TOOL_DESCRIPTION_LENGTH, truncate_tool_description};
+use super::tools::built_in_tools;
 use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
@@ -51,6 +53,151 @@ use util::path;
 
 mod test_tools;
 use test_tools::*;
+
+/// Test that verifies tool description lengths for OpenAI-compatible providers.
+///
+/// This test documents issue https://github.com/zed-industries/zed/issues/46012
+/// where tool descriptions in WRITE mode exceed 1024 characters, causing API
+/// requests to fail with certain OpenAI-compatible providers.
+///
+/// The issue reports that "Tool 14" exceeds the limit. With alphabetical ordering
+/// of tool names (as used by BTreeMap), Tool 14 (0-indexed) would be `save_file`
+/// or Tool 14 (1-indexed) would be `restore_file_from_disk`.
+///
+/// NOTE: The issue might actually be caused by MCP/context server tools, not
+/// built-in tools. This test verifies that built-in tools stay within limits.
+#[test]
+fn test_tool_description_lengths_for_openai_compatible_providers() {
+    // Collect all built-in tool descriptions using the same mechanism as the agent
+    let tools: Vec<_> = built_in_tools().collect();
+
+    // Find tools that exceed or are close to the limit
+    let mut exceeding_tools = Vec::new();
+    let mut near_limit_tools = Vec::new();
+
+    println!("\nBuilt-in tool description lengths:");
+    println!("{:-<80}", "");
+
+    for tool in &tools {
+        let len = tool.description.len();
+        let status = if len > MAX_TOOL_DESCRIPTION_LENGTH {
+            exceeding_tools.push((&tool.name, &tool.description, len));
+            "EXCEEDS LIMIT"
+        } else if len > MAX_TOOL_DESCRIPTION_LENGTH - 100 {
+            near_limit_tools.push((&tool.name, &tool.description, len));
+            "NEAR LIMIT"
+        } else {
+            "OK"
+        };
+        println!("{:<25} {:>5} chars  {}", tool.name, len, status);
+    }
+    println!("{:-<80}", "");
+    println!("Total built-in tools: {}", tools.len());
+
+    // Print details of tools that exceed the limit
+    if !exceeding_tools.is_empty() {
+        println!(
+            "\nTools exceeding {} character limit:",
+            MAX_TOOL_DESCRIPTION_LENGTH
+        );
+        for (name, description, len) in &exceeding_tools {
+            println!(
+                "\n=== {} ({} chars, {} over limit) ===",
+                name,
+                len,
+                len - MAX_TOOL_DESCRIPTION_LENGTH
+            );
+            println!("{}", description);
+        }
+    }
+
+    // Print details of tools that are near the limit
+    if !near_limit_tools.is_empty() {
+        println!(
+            "\nTools within 100 chars of {} limit (may cause issues if descriptions grow):",
+            MAX_TOOL_DESCRIPTION_LENGTH
+        );
+        for (name, _, len) in &near_limit_tools {
+            println!(
+                "  {} ({} chars, {} remaining)",
+                name,
+                len,
+                MAX_TOOL_DESCRIPTION_LENGTH - len
+            );
+        }
+    }
+
+    // Assert that NO built-in tools exceed the limit
+    // If this fails, we need to shorten the tool description
+    assert!(
+        exceeding_tools.is_empty(),
+        "Built-in tools should not exceed {} character limit for OpenAI-compatible providers. \
+         Exceeding tools: {:?}",
+        MAX_TOOL_DESCRIPTION_LENGTH,
+        exceeding_tools
+            .iter()
+            .map(|(name, _, len)| format!("{} ({} chars)", name, len))
+            .collect::<Vec<_>>()
+    );
+
+    // Also assert that tools aren't too close to the limit
+    // This helps prevent future regressions when descriptions are updated
+    let very_close_tools: Vec<_> = near_limit_tools
+        .iter()
+        .filter(|(_, _, len)| *len > MAX_TOOL_DESCRIPTION_LENGTH - 50)
+        .collect();
+
+    if !very_close_tools.is_empty() {
+        println!(
+            "\nWARNING: {} tools are within 50 chars of the limit",
+            very_close_tools.len()
+        );
+    }
+}
+
+#[test]
+fn test_truncate_tool_description() {
+    // Short description should not be truncated
+    let short = "This is a short description";
+    assert_eq!(truncate_tool_description(short), short);
+
+    // Exactly at limit should not be truncated
+    let at_limit = "x".repeat(MAX_TOOL_DESCRIPTION_LENGTH);
+    assert_eq!(truncate_tool_description(&at_limit), at_limit);
+
+    // Over limit should be truncated with ellipsis
+    let over_limit = "x".repeat(MAX_TOOL_DESCRIPTION_LENGTH + 100);
+    let truncated = truncate_tool_description(&over_limit);
+    assert_eq!(truncated.len(), MAX_TOOL_DESCRIPTION_LENGTH);
+    assert!(truncated.ends_with("..."));
+
+    // Unicode characters should be handled correctly (no panic on char boundary)
+    // Note: For multi-byte chars, byte length may exceed char count, so we just verify
+    // that truncation doesn't panic and produces a valid string ending with ellipsis
+    let unicode = "é".repeat(MAX_TOOL_DESCRIPTION_LENGTH + 10);
+    let truncated_unicode = truncate_tool_description(&unicode);
+    assert!(truncated_unicode.ends_with("..."));
+    // The truncated string should have fewer characters than the original
+    assert!(truncated_unicode.chars().count() < unicode.chars().count());
+}
+
+#[test]
+fn test_provider_requires_truncate_openai_and_non_openai() {
+    let mut cx = TestAppContext::single();
+    init_test(&mut cx);
+
+    cx.update(|cx| {
+        // OpenAI should require truncation
+        assert!(crate::thread::provider_requires_truncate(
+            &language_model::OPEN_AI_PROVIDER_ID,
+            cx
+        ));
+
+        // A non-OpenAI provider should not require truncation by default
+        let non_openai = language_model::LanguageModelProviderId::from("fake".to_string());
+        assert!(!crate::thread::provider_requires_truncate(&non_openai, cx));
+    });
+}
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
