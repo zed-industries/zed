@@ -25,10 +25,9 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
-dirs.workspace = true
+copilot_chat.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -51,7 +50,6 @@ task.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-itertools.workspace = true
 url.workspace = true
 
 [target.'cfg(windows)'.dependencies]

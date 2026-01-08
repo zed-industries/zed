@@ -3689,13 +3689,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
- "chrono",
  "client",
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot_chat",
  "ctor",
- "dirs 4.0.0",
  "edit_prediction_types",
  "editor",
  "fs",
@@ -3703,7 +3702,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -3725,6 +3723,26 @@ dependencies = [
  "util",
  "workspace",
  "zlog",
+]
+
+[[package]]
+name = "copilot_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "dirs 4.0.0",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "itertools 0.14.0",
+ "log",
+ "paths",
+ "serde",
+ "serde_json",
+ "settings",
 ]
 
 [[package]]
