@@ -5313,6 +5313,7 @@ dependencies = [
  "util",
  "wasmtime",
  "watch",
+ "workspace",
  "zeta_prompt",
 ]
 
@@ -20808,12 +20809,14 @@ dependencies = [
  "task",
  "tasks_ui",
  "telemetry",
+ "telemetry_events",
  "tempfile",
  "terminal_view",
  "theme",
  "theme_extension",
  "theme_selector",
  "time",
+ "time_format",
  "title_bar",
  "toolchain_selector",
  "tracing",
