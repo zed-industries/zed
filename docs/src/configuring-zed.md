@@ -2932,7 +2932,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -4315,6 +4314,38 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
   // Clamped with [4, 256] range.
   "max_lines": 32
 },
+```
+
+## Text Rendering Mode
+
+- Description: The text rendering mode to use.
+- Setting: `text_rendering_mode`
+- Default: `platform_default`
+
+**Options**
+
+1. Use grayscale text rendering.
+
+```json [settings]
+{
+  "text_rendering_mode": "grayscale"
+}
+```
+
+2. Use subpixel (ClearType-style) text rendering.
+
+```json [settings]
+{
+  "text_rendering_mode": "subpixel"
+}
+```
+
+3. Use platform default behavior.
+
+```json [settings]
+{
+  "text_rendering_mode": "platform_default"
+}
 ```
 
 ## Theme
