@@ -114,9 +114,6 @@
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
-(enumerator
-  name: (identifier) @constant)
-
 (call_expression
   function: (identifier) @function)
 (call_expression
