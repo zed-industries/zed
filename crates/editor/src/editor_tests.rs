@@ -27350,6 +27350,51 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_multicolumn_multicursor_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"
+        ˇabcdefghij
+        абвгдеёжзийклмнопрстуфхцчшщъыьэюя
+    "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(1), 0),
+                reset: false,
+                mode: ColumnarMode::FromMouse,
+                column_overshoot: 0,
+            },
+            window,
+            cx,
+        );
+
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 13),
+                reset: false,
+                mode: ColumnarMode::FromMouse,
+                column_overshoot: 0,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            display_ranges(editor, cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 10),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 20),
+            ],
+        )
+    })
+}
+
+#[gpui::test]
 async fn test_insert_snippet(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
