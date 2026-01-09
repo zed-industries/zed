@@ -13,8 +13,8 @@ use windows::{
     Win32::{
         Foundation::{LPARAM, WPARAM},
         System::Threading::{
-            GetCurrentProcess, GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass,
-            SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
+            THREAD_PRIORITY_TIME_CRITICAL,
         },
         UI::WindowsAndMessaging::PostMessageW,
     },
@@ -175,15 +175,14 @@ impl PlatformDispatcher for WindowsDispatcher {
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
             // SAFETY: always safe to call
-            let process_handle = unsafe { GetCurrentProcess() };
             let thread_handle = unsafe { GetCurrentThread() };
 
-            // SAFETY: process_handle is a valid handle to the current process
-            unsafe { SetPriorityClass(process_handle, HIGH_PRIORITY_CLASS) }
-                .context("process priority class")
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
+                .context("thread priority class")
                 .log_err();
 
-            // SAFETY: thread_handle is a valid handle to the current thread
+            // SAFETY: thread_handle is a valid handle to a thread
             unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
                 .context("thread priority")
                 .log_err();
