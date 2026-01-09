@@ -283,6 +283,9 @@ struct FirstNonWhitespace {
 #[serde(deny_unknown_fields)]
 struct Matching {
     #[serde(default)]
+    /// Whether to include quote characters (`'`, `"`, `` ` ``) when searching
+    /// for matching pairs. When `false`, only brackets and parentheses are
+    /// matched, which aligns with Neovim's default `%` behavior.
     match_quotes: bool,
 }
 

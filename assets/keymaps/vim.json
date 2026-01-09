@@ -642,7 +642,7 @@
   {
     "context": "vim_operator == helix_m",
     "bindings": {
-      "m": "vim::Matching",
+      "m": ["vim::Matching", { "match_quotes": true }],
       "s": "vim::PushHelixSurroundAdd",
       "r": "vim::PushHelixSurroundReplace",
       "d": "vim::PushHelixSurroundDelete",
