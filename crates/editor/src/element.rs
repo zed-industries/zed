@@ -3677,6 +3677,12 @@ impl EditorElement {
         cx: &mut App,
     ) -> Option<(AnyElement, Size<Pixels>, DisplayRow, Pixels)> {
         let mut x_position = None;
+        if let Block::BufferHeader { .. } = block {
+            if !self.editor.read(cx).show_breadcrumbs {
+                return None;
+            }
+        }
+
         let mut element = match block {
             Block::Custom(custom) => {
                 let block_start = custom.start().to_point(&snapshot.buffer_snapshot());
@@ -3880,7 +3886,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
+        if !self.editor.read(cx).show_breadcrumbs {
+            return div().into_any_element();
+        }
         let editor = self.editor.read(cx);
+
         let multi_buffer = editor.buffer.read(cx);
         let is_read_only = self.editor.read(cx).read_only(cx);
         let editor_handle: &dyn ItemHandle = &self.editor;
@@ -4294,6 +4304,7 @@ impl EditorElement {
                     menu.context(menu_context)
                 })
             })
+            .into_any_element()
     }
 
     fn render_blocks(
@@ -4723,6 +4734,9 @@ impl EditorElement {
         style: &EditorStyle,
         cx: &App,
     ) -> Vec<StickyHeader> {
+        if !editor.show_breadcrumbs {
+            return Vec::new();
+        }
         let scroll_top = snapshot.scroll_position().y;
 
         let mut end_rows = Vec::<DisplayRow>::new();

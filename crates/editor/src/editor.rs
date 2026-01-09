@@ -1189,6 +1189,7 @@ pub struct Editor {
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
+    pub(crate) show_breadcrumbs_override: Option<bool>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
@@ -2384,6 +2385,7 @@ impl Editor {
             in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
+            show_breadcrumbs_override: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: HashMap::default(),
@@ -21520,6 +21522,14 @@ impl Editor {
         self.breadcrumb_header = Some(new_header);
     }
 
+    pub fn set_show_breadcrumbs(&mut self, show_breadcrumbs: bool, cx: &mut Context<Self>) {
+        self.show_breadcrumbs_override = Some(show_breadcrumbs);
+        if self.show_breadcrumbs != show_breadcrumbs {
+            self.show_breadcrumbs = show_breadcrumbs;
+            cx.notify();
+        }
+    }
+
     pub fn clear_search_within_ranges(&mut self, cx: &mut Context<Self>) {
         self.clear_background_highlights::<SearchWithinRange>(cx);
     }
@@ -22315,7 +22325,7 @@ impl Editor {
         {
             let editor_settings = EditorSettings::get_global(cx);
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
-            self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+            self.show_breadcrumbs = self.show_breadcrumbs_override.unwrap_or(editor_settings.toolbar.breadcrumbs);
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
         }
@@ -23406,6 +23416,9 @@ impl Editor {
         }
     }
     fn breadcrumbs_inner(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        if !self.show_breadcrumbs {
+            return None;
+        }
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = self.buffer().read(cx);
         let is_singleton = multibuffer.is_singleton();
