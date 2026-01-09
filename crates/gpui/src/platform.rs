@@ -88,6 +88,10 @@ pub use linux::layer_shell;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
+// Re-export MacTextSystem publicly so consumers can use real font shaping
+#[cfg(target_os = "macos")]
+pub use mac::MacTextSystem;
+
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
     current_platform(true).background_executor()
@@ -603,20 +607,31 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 }
 
-pub(crate) trait PlatformTextSystem: Send + Sync {
+/// Trait for platform-specific text shaping and font management.
+pub trait PlatformTextSystem: Send + Sync {
+    /// Add fonts from raw bytes.
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
+    /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    /// Get typographic bounds for a glyph.
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
+    /// Get the advance width for a glyph.
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
+    /// Get the glyph ID for a character.
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
+    /// Get raster bounds for a glyph.
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    /// Rasterize a glyph.
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+    /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
 }
 

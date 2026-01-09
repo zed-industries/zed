@@ -595,8 +595,10 @@ impl LineLayoutCache {
 /// A run of text with a single font.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FontRun {
-    pub(crate) len: usize,
-    pub(crate) font_id: FontId,
+    /// The length of this run in bytes.
+    pub len: usize,
+    /// The font ID for this run.
+    pub font_id: FontId,
 }
 
 trait AsCacheKeyRef {

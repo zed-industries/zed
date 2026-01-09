@@ -55,6 +55,10 @@ pub(crate) use window::*;
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;
 
+// Re-export MacTextSystem publicly so consumers can use real font shaping
+#[cfg(feature = "font-kit")]
+pub use text_system::MacTextSystem;
+
 /// A frame of video captured from a screen.
 pub(crate) type PlatformScreenCaptureFrame = CVImageBuffer;
 

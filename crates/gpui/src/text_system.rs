@@ -62,7 +62,8 @@ pub struct TextSystem {
 }
 
 impl TextSystem {
-    pub(crate) fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    /// Create a new TextSystem with the given platform text system.
+    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
             platform_text_system,
             font_metrics: RwLock::default(),
@@ -337,7 +338,8 @@ pub struct WindowTextSystem {
 }
 
 impl WindowTextSystem {
-    pub(crate) fn new(text_system: Arc<TextSystem>) -> Self {
+    /// Create a new WindowTextSystem with the given TextSystem.
+    pub fn new(text_system: Arc<TextSystem>) -> Self {
         Self {
             line_layout_cache: LineLayoutCache::new(text_system.platform_text_system.clone()),
             text_system,

@@ -53,7 +53,8 @@ use super::open_type::apply_features_and_fallbacks;
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
+/// macOS text system using CoreText for font shaping.
+pub struct MacTextSystem(RwLock<MacTextSystemState>);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -73,7 +74,8 @@ struct MacTextSystemState {
 }
 
 impl MacTextSystem {
-    pub(crate) fn new() -> Self {
+    /// Create a new MacTextSystem.
+    pub fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
