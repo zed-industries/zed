@@ -30,6 +30,7 @@ client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
+dap.workspace = true
 db.workspace = true
 derive_more.workspace = true
 feature_flags.workspace = true

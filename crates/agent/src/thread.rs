@@ -1,6 +1,6 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
+    DebuggerTool, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
     TerminalTool, ThinkingTool, WebSearchTool,
@@ -1005,6 +1005,7 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
+        self.add_tool(DebuggerTool::new(self.project.clone()));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
             self.project.clone(),

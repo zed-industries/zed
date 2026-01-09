@@ -167,6 +167,7 @@ dependencies = [
  "collections",
  "context_server",
  "ctor",
+ "dap",
  "db",
  "derive_more 0.99.20",
  "editor",
