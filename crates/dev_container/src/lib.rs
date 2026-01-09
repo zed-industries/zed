@@ -4,6 +4,8 @@ use futures::AsyncReadExt;
 use http::Request;
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
+use smol::fs::File;
+use util::command::new_smol_command;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +26,7 @@ fn devcontainer_templates_repository() -> &'static str {
 pub struct ManifestLayer {
     digest: String,
 }
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateOptions {
     #[serde(rename = "type")]
@@ -34,6 +36,27 @@ pub struct TemplateOptions {
     #[serde(rename = "enum")]
     pub enum_values: Option<Vec<String>>,
     pub default: String,
+}
+
+impl TemplateOptions {
+    // TODO put this under test
+    pub fn possible_values(&self) -> Vec<String> {
+        match self.option_type.as_str() {
+            "string" => self
+                .enum_values
+                .clone()
+                .or(self.proposals.clone().or(Some(vec![self.default.clone()])))
+                .unwrap_or_default(),
+            // If not string, must be boolean
+            _ => {
+                if self.default == "true" {
+                    vec!["true".to_string(), "false".to_string()]
+                } else {
+                    vec!["false".to_string(), "true".to_string()]
+                }
+            }
+        }
+    }
 }
 
 // https://distribution.github.io/distribution/spec/api/#pulling-an-image-manifest
@@ -60,37 +83,19 @@ pub struct DevContainerTemplatesResponse {
     pub templates: Vec<DevContainerTemplate>,
 }
 
-pub async fn get_template_text(_template: &DevContainerTemplate) -> Result<String, String> {
-    Ok("
-        // For format details, see https://aka.ms/devcontainer.json. For config options, see the
-        // README at: https://github.com/devcontainers/templates/tree/main/src/docker-in-docker
-        {
-	\"name\": \"Docker in Docker\",
-	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	\"image\": \"mcr.microsoft.com/devcontainers/base:bullseye\",
+pub async fn get_template_text(
+    client: Arc<dyn HttpClient>,
+    template: &DevContainerTemplate,
+) -> Result<String, String> {
+    let id = template.id.clone();
+    let token = get_ghcr_token(&client).await?;
+    let manifest = get_latest_manifest_for_id(&id, &token.token, &client).await?;
 
-	\"features\": {
-		\"ghcr.io/devcontainers/features/docker-in-docker:2\": {
-			\"version\": \"${templateOption:dockerVersion}\",
-			\"enableNonRootDocker\": \"${templateOption:enableNonRootDocker}\",
-			\"moby\": \"${templateOption:moby}\"
-		}
-	}
+    let file =
+        get_devcontainer_template_files(&id, &token.token, &manifest.layers[0].digest, &client)
+            .await?;
 
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// \"forwardPorts\": [],
-
-	// Use 'postCreateCommand' to run commands after the container is created.
-	// \"postCreateCommand\": \"docker --version\",
-
-	// Configure tool-specific properties.
-	// \"customizations\": {},
-
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// \"remoteUser\": \"root\"
-"
-    .trim()
-    .to_string())
+    Ok(file)
 }
 
 pub async fn get_templates(
@@ -117,6 +122,21 @@ pub async fn get_ghcr_token(client: &Arc<dyn HttpClient>) -> Result<GithubTokenR
     get_deserialized_response("", &url, client).await
 }
 
+pub async fn get_latest_manifest_for_id(
+    id: &str,
+    token: &str,
+    client: &Arc<dyn HttpClient>,
+) -> Result<DockerManifestsResponse, String> {
+    let url = format!(
+        "{}/v2/{}/{}/manifests/latest",
+        ghcr_url(),
+        devcontainer_templates_repository(),
+        id
+    );
+    dbg!(&url, token);
+    get_deserialized_response(token, &url, client).await
+}
+
 pub async fn get_latest_manifest(
     token: &str,
     client: &Arc<dyn HttpClient>,
@@ -128,6 +148,70 @@ pub async fn get_latest_manifest(
     );
     dbg!(&url, token);
     get_deserialized_response(token, &url, client).await
+}
+
+pub async fn get_devcontainer_template_files(
+    id: &str,
+    token: &str,
+    blob_digest: &str,
+    client: &Arc<dyn HttpClient>,
+) -> Result<String, String> {
+    let url = format!(
+        "{}/v2/{}/{}/blobs/{}",
+        ghcr_url(),
+        devcontainer_templates_repository(),
+        id,
+        blob_digest
+    );
+    dbg!(&url, token);
+    let request = Request::get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.oci.image.manifest.v1+json")
+        .body(AsyncBody::default())
+        .unwrap();
+    // client.send(request).await.unwrap();
+
+    // Need to organize this code better
+    let temp_dir = tempfile::Builder::new().tempdir().unwrap();
+    let target_path = temp_dir.path().join("downloadme.tar");
+    let mut target_file = File::create(&target_path).await.unwrap();
+    let extracted = temp_dir.path().join("extracted");
+    std::fs::create_dir(&extracted).unwrap();
+    let Ok(mut response) = client.send(request).await else {
+        return Err("Failed get reponse - TODO fix error handling".to_string());
+    };
+
+    smol::io::copy(response.body_mut(), &mut target_file)
+        .await
+        .unwrap();
+
+    let command_output = new_smol_command("tar")
+        .arg("-xvf")
+        .arg(&target_path)
+        .arg("-C")
+        .arg(&extracted)
+        .output()
+        .await
+        .unwrap();
+
+    dbg!(&command_output);
+
+    // let Ok(_) = comm
+
+    let extracted_location = &extracted.join(".devcontainer/devcontainer.json");
+
+    dbg!(&extracted_location);
+
+    let devcontainer_json = std::fs::read_to_string(extracted_location).unwrap();
+
+    //
+    // let mut output = String::new();
+
+    // let Ok(_) = response.into_body().read_to_string(&mut output).await else {
+    //     return Err("Failed to read response body - TODO fix error handling".to_string());
+    // };
+
+    Ok(devcontainer_json)
 }
 
 pub async fn get_devcontainer_templates(

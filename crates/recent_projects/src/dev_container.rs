@@ -1,4 +1,6 @@
+use dev_container::TemplateOptions;
 use regex::Regex;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::ops::Range;
@@ -395,6 +397,14 @@ pub fn init(cx: &mut App) {
 pub struct TemplateEntry {
     template: DevContainerTemplate,
     entry: NavigableEntry,
+    options_selected: HashMap<String, String>,
+    next_option: Option<TemplateOptionSelection>,
+}
+
+#[derive(Clone)]
+pub struct TemplateOptionSelection {
+    option_name: String,
+    navigable_options: Vec<(String, NavigableEntry)>,
 }
 
 // TODO this could be better
@@ -417,7 +427,7 @@ pub enum DevContainerState {
     Initial,
     QueryingTemplates,
     TemplateQueryReturned(Result<Vec<TemplateEntry>, String>), // TODO, it's either a successful query manifest or an error
-    UserOptionsSpecifying,
+    UserOptionsSpecifying(TemplateEntry),
     ConfirmingWriteDevContainer,
 }
 
@@ -425,7 +435,9 @@ pub enum DevContainerState {
 pub enum DevContainerMessage {
     SearchTemplates,
     TemplatesRetrieved(Vec<DevContainerTemplate>),
-    TemplateSelected(DevContainerTemplate),
+    TemplateSelected(TemplateEntry),
+    TemplateOptionsSpecified(TemplateEntry),
+    TemplateOptionsCompleted(TemplateEntry),
     GoBack,
 }
 
@@ -486,7 +498,7 @@ impl DevContainerModal {
 
     fn render_retrieved_templates(
         &self,
-        items: &Vec<TemplateEntry>,
+        items: Vec<TemplateEntry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -503,7 +515,7 @@ impl DevContainerModal {
                         div()
                             .track_focus(&template_entry.entry.focus_handle)
                             .on_action({
-                                let template = template_entry.template.clone();
+                                let template = template_entry.clone();
                                 cx.listener(move |this, _: &menu::Confirm, window, cx| {
                                     this.accept_message(
                                         DevContainerMessage::TemplateSelected(template.clone()),
@@ -549,6 +561,86 @@ impl DevContainerModal {
 
         for item in items {
             view = view.entry(item.entry.clone());
+        }
+        view = view.entry(self.back_entry.clone());
+        view.render(window, cx).into_any_element()
+    }
+
+    fn render_user_options_specifying(
+        &self,
+        template_entry: TemplateEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(next_option_entries) = &template_entry.next_option else {
+            return div().into_any_element();
+        };
+        let mut view =
+            Navigable::new(
+                div()
+                    .child(
+                        div().track_focus(&self.focus_handle).child(
+                            ModalHeader::new().child(
+                                Headline::new(&next_option_entries.option_name)
+                                    .size(HeadlineSize::XSmall),
+                            ),
+                        ),
+                    )
+                    .child(ListSeparator)
+                    .children(next_option_entries.navigable_options.iter().map(
+                        |(option, entry)| {
+                            div()
+                                .track_focus(&entry.focus_handle)
+                                .on_action({
+                                    let mut template = template_entry.clone();
+                                    template.options_selected.insert(
+                                        next_option_entries.option_name.clone(),
+                                        option.clone(),
+                                    );
+                                    cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                        this.accept_message(
+                                            DevContainerMessage::TemplateOptionsSpecified(
+                                                template.clone(),
+                                            ),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                })
+                                .child(
+                                    ListItem::new("li-todo")
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Box))
+                                        .toggle_state(
+                                            entry.focus_handle.contains_focused(window, cx),
+                                        )
+                                        .child(Label::new(option)),
+                                )
+                        },
+                    ))
+                    .child(ListSeparator)
+                    .child(
+                        div()
+                            .track_focus(&self.back_entry.focus_handle)
+                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                this.accept_message(DevContainerMessage::GoBack, window, cx);
+                            }))
+                            .child(
+                                ListItem::new("li-goback")
+                                    .inset(true)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                    .toggle_state(
+                                        self.back_entry.focus_handle.contains_focused(window, cx),
+                                    )
+                                    .child(Label::new("Go Back")),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        for (_, entry) in &next_option_entries.navigable_options {
+            view = view.entry(entry.clone());
         }
         view = view.entry(self.back_entry.clone());
         view.render(window, cx).into_any_element()
@@ -614,7 +706,7 @@ impl StatefulModal for DevContainerModal {
 
     fn render_for_state(
         &self,
-        state: &Self::State,
+        state: Self::State,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -623,6 +715,9 @@ impl StatefulModal for DevContainerModal {
             DevContainerState::QueryingTemplates => self.render_querying_templates(window, cx),
             DevContainerState::TemplateQueryReturned(Ok(items)) => {
                 self.render_retrieved_templates(items, window, cx)
+            }
+            DevContainerState::UserOptionsSpecifying(template_entry) => {
+                self.render_user_options_specifying(template_entry, window, cx)
             }
             _ => div().into_any_element(),
         }
@@ -634,7 +729,7 @@ impl StatefulModal for DevContainerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let message = match message {
+        let new_state = match message {
             DevContainerMessage::SearchTemplates => {
                 cx.spawn_in(window, async move |this, cx| {
                     let client = cx.update(|_, cx| cx.http_client()).unwrap();
@@ -659,18 +754,82 @@ impl StatefulModal for DevContainerModal {
                 if self.state == DevContainerState::QueryingTemplates {
                     Some(DevContainerState::TemplateQueryReturned(Ok(items
                         .into_iter()
-                        .filter(|item| item.id == "docker-in-docker".to_string()) // TODO just for simplicity, we'll keep it to one element
+                        // .filter(|item| item.id == "docker-in-docker".to_string()) // TODO just for simplicity, we'll keep it to one element
                         .map(|item| TemplateEntry {
                             template: item,
                             entry: NavigableEntry::focusable(cx),
+                            options_selected: HashMap::new(),
+                            next_option: None,
                         })
                         .collect())))
                 } else {
                     None
                 }
             }
-            // Dismiss, open a buffer with the template, do a template expand to fill in the values.
-            DevContainerMessage::TemplateSelected(template) => {
+            DevContainerMessage::TemplateSelected(mut template_entry) => {
+                let Some(options) = template_entry.template.clone().options else {
+                    panic!("not ready yet");
+                };
+
+                let options = options
+                    .iter()
+                    .collect::<Vec<(&String, &TemplateOptions)>>()
+                    .clone();
+
+                let Some((first_option_name, first_option)) = options.get(0) else {
+                    return self.accept_message(
+                        DevContainerMessage::TemplateOptionsCompleted(template_entry),
+                        window,
+                        cx,
+                    );
+                };
+
+                let next_option_entries = first_option
+                    .possible_values()
+                    .into_iter()
+                    .map(|option| (option, NavigableEntry::focusable(cx)))
+                    .collect();
+
+                template_entry.next_option = Some(TemplateOptionSelection {
+                    option_name: (*first_option_name).clone(),
+                    navigable_options: next_option_entries,
+                });
+
+                Some(DevContainerState::UserOptionsSpecifying(template_entry))
+            }
+            DevContainerMessage::TemplateOptionsSpecified(mut template_entry) => {
+                let Some(options) = template_entry.template.clone().options else {
+                    panic!("not ready yet");
+                };
+                let options = options
+                    .iter()
+                    // This has to be better, we're iterating over all for no reason. We really just want the first
+                    .filter(|(k, _)| !&template_entry.options_selected.contains_key(*k))
+                    .collect::<Vec<(&String, &TemplateOptions)>>();
+
+                let Some((next_option_name, next_option)) = options.get(0) else {
+                    return self.accept_message(
+                        DevContainerMessage::TemplateOptionsCompleted(template_entry),
+                        window,
+                        cx,
+                    );
+                };
+
+                let next_option_entries = next_option
+                    .possible_values()
+                    .into_iter()
+                    .map(|option| (option, NavigableEntry::focusable(cx)))
+                    .collect();
+
+                template_entry.next_option = Some(TemplateOptionSelection {
+                    option_name: (*next_option_name).clone(),
+                    navigable_options: next_option_entries,
+                });
+
+                Some(DevContainerState::UserOptionsSpecifying(template_entry))
+            }
+            // Create the files here
+            DevContainerMessage::TemplateOptionsCompleted(template_entry) => {
                 let workspace = self.workspace.upgrade().expect("TODO");
                 workspace.update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
@@ -685,8 +844,10 @@ impl StatefulModal for DevContainerModal {
                         let devcontainer_path =
                             RelPath::unix(".devcontainer/devcontainer.json").unwrap();
                         cx.spawn_in(window, async move |workspace, cx| {
-                            let template_text =
-                                get_template_text(&template).await.expect("Hard-coded");
+                            let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                            let template_text = get_template_text(client, &template_entry.template)
+                                .await
+                                .expect("Hard-coded");
 
                             let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
                                 workspace.open_path(
@@ -700,47 +861,14 @@ impl StatefulModal for DevContainerModal {
                                 return;
                             };
 
-                            // let our_important_data = (template.options, template_text); // How are we going to use this?
-
-                            // let mut small_vec = SmallVec::<[Range<isize>; 2]>::new();
-                            // small_vec.push(54_isize..82_isize);
-
-                            // let mut other_small_vec = SmallVec::<[Range<isize>; 2]>::new();
-                            // other_small_vec.push(83_isize..83_isize);
-
-                            // let snippet = Snippet {
-                            //     text: "\"image\": \"mcr.microsoft.com/devcontainers/base:alpine-${templateOption:imageVariant}\"".to_string(),
-                            //     tabstops: vec![
-                            //         TabStop {
-                            //             ranges: small_vec,
-                            //             choices: None,
-                            //         },
-                            //         TabStop {
-                            //             ranges: other_small_vec,
-                            //             choices: None,
-                            //         },
-                            //     ]
-                            // };
-
-                            let snippet = build_snippet_from_template(template, template_text);
+                            let snippet = expand_template_text(template_entry, template_text);
 
                             if let Ok(item) = open_task.await {
                                 if let Some(editor) = item.downcast::<Editor>() {
                                     editor
                                         .update_in(cx, |editor, window, cx| {
-                                            // Things we want to do today:
-                                            // - Make this a snippet-expansion workflow
-                                            // - Set up a warning if the file already exists - do we want to overwrite?
-                                            // - If time:
-                                            //   - Dive deeper into the actual call to get the content
                                             editor.clear(window, cx);
-                                            editor.insert_snippet(
-                                                &vec![MultiBufferOffset(0)..MultiBufferOffset(0)],
-                                                snippet,
-                                                window,
-                                                cx,
-                                            )
-                                            //editor.insert_snippet(Range<MultiBufferOffset>(0..0), snippet, window, cx)
+                                            editor.insert(&snippet, window, cx);
                                         })
                                         .log_err();
                                 };
@@ -756,7 +884,7 @@ impl StatefulModal for DevContainerModal {
                 None
             }
         };
-        if let Some(state) = message {
+        if let Some(state) = new_state {
             self.state = state;
             self.focus_handle.focus(window, cx);
         }
@@ -785,7 +913,7 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
 
     fn render_for_state(
         &self,
-        state: &Self::State,
+        state: Self::State,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement;
@@ -802,7 +930,7 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     }
 
     fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let element = self.render_for_state(&self.state(), window, cx);
+        let element = self.render_for_state(self.state(), window, cx);
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -810,6 +938,30 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
             .on_action(cx.listener(Self::dismiss))
             .child(element)
     }
+}
+
+fn expand_template_text(template_entry: TemplateEntry, template_text: String) -> String {
+    let mut new_text = template_text.clone();
+    static TEMPLATE_OPTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\$\{templateOption:([^\}]+)\}").expect("Failed to create REGEX")
+    });
+
+    let replacements = TEMPLATE_OPTION_REGEX
+        .captures_iter(&template_text)
+        .filter(|c| c.get(1).is_some())
+        .map(|c| {
+            let full_match = c.get_match();
+            let option_name = c.get(1).unwrap().as_str();
+            let Some(option_value) = template_entry.options_selected.get(option_name) else {
+                return (full_match.as_str(), full_match.as_str());
+            };
+            (option_value.as_str(), full_match.as_str())
+        })
+        .collect::<Vec<_>>();
+    for (replacement, to_replace) in replacements {
+        new_text = new_text.replace(to_replace, replacement);
+    }
+    new_text
 }
 
 // Note that it looks like we will have to support Dockerfile and all other files in the .devcontainer directory

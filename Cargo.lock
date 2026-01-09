@@ -4880,6 +4880,9 @@ dependencies = [
  "http_client",
  "serde",
  "serde_json",
+ "smol",
+ "tempfile",
+ "util",
 ]
 
 [[package]]
