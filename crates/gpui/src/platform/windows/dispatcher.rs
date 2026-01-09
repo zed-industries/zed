@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
 use util::ResultExt;
 use windows::{
     System::Threading::{
@@ -11,6 +12,10 @@ use windows::{
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
+        System::Threading::{
+            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
+            THREAD_PRIORITY_TIME_CRITICAL,
+        },
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
@@ -167,7 +172,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         self.dispatch_on_threadpool_after(runnable, duration);
     }
 
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
             // SAFETY: always safe to call
             let thread_handle = unsafe { GetCurrentThread() };
