@@ -3,7 +3,7 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{Context, EventEmitter, Task};
+use gpui::{AsyncApp, Context, EventEmitter, Task, WeakEntity};
 use paths::EDITORCONFIG_NAME;
 use smallvec::SmallVec;
 use std::{path::Path, str::FromStr, sync::Arc};
@@ -139,7 +139,7 @@ impl EditorconfigStore {
     pub fn load_external_configs(
         &mut self,
         worktree_id: WorktreeId,
-        worktree_abs_path: Arc<Path>,
+        worktree_path: Arc<Path>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) {
@@ -149,75 +149,38 @@ impl EditorconfigStore {
         if state.external_config_paths.is_some() {
             return;
         }
+
+        // We don't always traverse up to look for external editor configs, only when there exists some internal config for the worktree
+        // We can use a better heuristic here to figure out when to/not to traverse
         if state.internal_configs.is_empty() {
             return;
         }
+
         if let Some((_, Some(parsed))) = state.internal_configs.get(RelPath::empty()) {
             if parsed.is_root {
                 return;
             }
         }
 
-        let cached_configs: HashMap<Arc<Path>, Option<Editorconfig>> = self
-            .external_configs
-            .iter()
-            .map(|(path, (config, _))| (path.clone(), config.clone()))
-            .collect();
-
         let task = cx.spawn(async move |this, cx| {
-            let mut external_configs_to_load: Vec<(Arc<Path>, Option<Editorconfig>)> = Vec::new();
-
-            let mut current = worktree_abs_path.parent().map(|p| p.to_path_buf());
-
-            while let Some(dir) = current {
-                let dir_path: Arc<Path> = Arc::from(dir.as_path());
-                if let Some(cached) = cached_configs.get(&dir_path) {
-                    let is_root = cached.as_ref().is_some_and(|c| c.is_root);
-                    external_configs_to_load.push((dir_path, None));
-                    if is_root {
-                        break;
-                    }
-                } else {
-                    let editorconfig_path = dir.join(EDITORCONFIG_NAME);
-                    if let Ok(content) = fs.load(&editorconfig_path).await {
-                        match content.parse::<Editorconfig>() {
-                            Ok(parsed) => {
-                                let is_root = parsed.is_root;
-                                external_configs_to_load.push((dir_path, Some(parsed)));
-                                if is_root {
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to parse external editorconfig at {:?}: {}",
-                                    editorconfig_path,
-                                    err
-                                );
-                            }
-                        }
-                    }
-                }
-                current = dir.parent().map(|p| p.to_path_buf());
-            }
-
-            if external_configs_to_load.is_empty() {
+            let external_configs =
+                Self::reload_external_config_chain(&this, worktree_path, &fs, &cx).await;
+            // todo(smit): need to think more on this case
+            if external_configs.is_empty() {
                 return;
             }
-
             this.update(cx, |this, cx| {
                 let state = this
                     .worktree_editorconfig_state
                     .entry(worktree_id)
                     .or_default();
                 state.external_config_paths = Some(
-                    external_configs_to_load
+                    external_configs
                         .iter()
                         .map(|(path, _)| path.clone())
                         .collect(),
                 );
-
-                for (dir_path, config) in external_configs_to_load {
+                for (dir_path, config) in external_configs {
                     if this.external_configs.contains_key(&dir_path) {
                         continue;
                     }
@@ -239,6 +202,59 @@ impl EditorconfigStore {
             .entry(worktree_id)
             .or_default()
             .external_configs_loading_task = Some(task);
+    }
+
+    async fn reload_external_config_chain(
+        this: &WeakEntity<Self>,
+        worktree_path: Arc<Path>,
+        fs: &Arc<dyn Fs>,
+        cx: &AsyncApp,
+    ) -> Vec<(Arc<Path>, Option<Editorconfig>)> {
+        let cached_configs: HashMap<Arc<Path>, Option<Editorconfig>> = this
+            .read_with(cx, |this, _| {
+                this.external_configs
+                    .iter()
+                    .map(|(path, (config, _))| (path.clone(), config.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut external_configs = Vec::new();
+        let mut current = worktree_path.parent().map(|p| p.to_path_buf());
+
+        while let Some(dir) = current {
+            let dir_path: Arc<Path> = Arc::from(dir.as_path());
+            if let Some(cached) = cached_configs.get(&dir_path) {
+                let is_root = cached.as_ref().is_some_and(|c| c.is_root);
+                external_configs.push((dir_path, None));
+                if is_root {
+                    break;
+                }
+            } else {
+                let editorconfig_path = dir.join(EDITORCONFIG_NAME);
+                if let Ok(content) = fs.load(&editorconfig_path).await {
+                    match content.parse::<Editorconfig>() {
+                        Ok(parsed) => {
+                            let is_root = parsed.is_root;
+                            external_configs.push((dir_path, Some(parsed)));
+                            if is_root {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            log::warn!(
+                                "Failed to parse external editorconfig at {:?}: {}",
+                                editorconfig_path,
+                                err
+                            );
+                        }
+                    }
+                }
+            }
+            current = dir.parent().map(|p| p.to_path_buf());
+        }
+
+        external_configs
     }
 
     fn watch_external_config(
@@ -288,12 +304,12 @@ impl EditorconfigStore {
         let mut properties = EditorconfigProperties::new();
         let state = self.worktree_editorconfig_state.get(&for_worktree);
         let empty_path: Arc<RelPath> = RelPath::empty().into();
-        let root_has_root_true = state
+        let internal_root_config_is_root = state
             .and_then(|state| state.internal_configs.get(&empty_path))
             .and_then(|(_, parsed)| parsed.as_ref())
             .is_some_and(|ec| ec.is_root);
 
-        if !root_has_root_true {
+        if !internal_root_config_is_root {
             if let Some(state) = state {
                 for path in state.external_config_paths.iter().flatten() {
                     if let Some((Some(parsed_editorconfig), _)) = self.external_configs.get(path) {
