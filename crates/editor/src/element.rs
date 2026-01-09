@@ -8015,124 +8015,77 @@ pub fn render_breadcrumb_text(
     let has_project_path = active_item.project_path(cx).is_some();
 
     match editor {
-        Some(editor) => {
-            let on_click_toggle_outline = {
-                let editor = editor.clone();
-                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                    if let Some((editor, callback)) = editor
-                        .upgrade()
-                        .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                    {
-                        callback(editor.to_any_view(), window, cx);
-                    }
-                }
-            };
-
-            let menu_toggle_outline = {
-                let editor = editor.clone();
-                move |window: &mut Window, cx: &mut App| {
-                    if let Some((editor, callback)) = editor
-                        .upgrade()
-                        .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                    {
-                        callback(editor.to_any_view(), window, cx);
-                    }
-                }
-            };
-
-            let child = if multibuffer_header {
-                ButtonLike::new("in_multibuffer_breadcrumbs")
+        Some(editor) => element
+            .id("breadcrumb_container")
+            .when(!multibuffer_header, |this| this.overflow_x_scroll())
+            .child(
+                ButtonLike::new("toggle outline view")
                     .child(breadcrumbs)
-                    .style(ButtonStyle::Transparent)
-                    .into_any_element()
-            } else if has_project_path {
-                let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+                    .when(multibuffer_header, |this| {
+                        this.style(ButtonStyle::Transparent)
+                    })
+                    .when(!multibuffer_header, |this| {
+                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
 
-                right_click_menu("breadcrumb-context-menu")
-                    .trigger({
-                        let focus_handle = focus_handle.clone();
-                        let on_click_toggle_outline = on_click_toggle_outline.clone();
-
-                        move |is_menu_open, _, _| {
-                            ButtonLike::new("toggle outline view")
-                                .child(breadcrumbs)
-                                .when(!is_menu_open, |this| {
-                                    let focus_handle = focus_handle.clone();
-                                    this.tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Show Symbol Outline",
+                        this.tooltip(Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .justify_between()
+                                        .child(Label::new("Show Symbol Outline"))
+                                        .child(ui::KeyBinding::for_action_in(
                                             &zed_actions::outline::ToggleOutline,
                                             &focus_handle,
                                             cx,
-                                        )
-                                    })
+                                        )),
+                                )
+                                .when(has_project_path, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_between()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(Label::new("Right-Click to Copy Path")),
+                                    )
                                 })
-                                .on_click(on_click_toggle_outline.clone())
-                        }
-                    })
-                    .menu({
-                        let editor = editor.clone();
-                        let menu_toggle_outline = menu_toggle_outline.clone();
-                        move |window, cx| {
-                            let menu_toggle_outline = menu_toggle_outline.clone();
-                            let abs_path: Option<std::path::PathBuf> =
-                                editor.upgrade().and_then(|editor| {
-                                    editor.update(cx, |editor, cx| editor.target_file_abs_path(cx))
-                                });
-
-                            ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                menu.entry(
-                                    "Show Symbol Outline",
-                                    Some(Box::new(zed_actions::outline::ToggleOutline)),
-                                    menu_toggle_outline.clone(),
-                                )
-                                .when_some(
-                                    abs_path,
-                                    |menu, abs_path| {
-                                        menu.entry(
-                                            "Copy Full Path",
-                                            Some(Box::new(zed_actions::workspace::CopyPath)),
-                                            move |_, cx| {
-                                                if let Some(path_str) = abs_path.to_str() {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(
-                                                            path_str.to_string(),
-                                                        ),
-                                                    );
-                                                }
-                                            },
-                                        )
-                                    },
-                                )
+                                .into_any_element()
+                        }))
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_, window, cx| {
+                                if let Some((editor, callback)) = editor
+                                    .upgrade()
+                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                                {
+                                    callback(editor.to_any_view(), window, cx);
+                                }
+                            }
+                        })
+                        .when(has_project_path, |this| {
+                            this.on_right_click({
+                                let editor = editor.clone();
+                                move |_, _, cx| {
+                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.target_file_abs_path(cx)
+                                        })
+                                    }) {
+                                        if let Some(path_str) = abs_path.to_str() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                path_str.to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
                             })
-                        }
-                    })
-                    .into_any_element()
-            } else {
-                let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
-                ButtonLike::new("toggle_outline_view")
-                    .child(breadcrumbs)
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
-                                &focus_handle,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click(on_click_toggle_outline)
-                    .into_any_element()
-            };
-
-            element
-                .id("breadcrumb_container")
-                .when(!multibuffer_header, |this| this.overflow_x_scroll())
-                .child(child)
-                .into_any_element()
-        }
+                        })
+                    }),
+            )
+            .into_any_element(),
         None => element
             .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
