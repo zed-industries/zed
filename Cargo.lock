@@ -7099,6 +7099,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "smallvec",
  "smol",
  "sum_tree",
  "tempfile",
@@ -7123,6 +7124,29 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
+]
+
+[[package]]
+name = "git_graph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "db",
+ "git",
+ "git_ui",
+ "gpui",
+ "itertools 0.14.0",
+ "menu",
+ "project",
+ "settings",
+ "smallvec",
+ "theme",
+ "time",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -20743,6 +20767,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git_graph",
  "git_hosting_providers",
  "git_ui",
  "go_to_line",

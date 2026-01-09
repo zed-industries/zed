@@ -13,12 +13,14 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
+use std::str::FromStr;
 use std::{
     cmp::Ordering,
     future,
@@ -36,6 +38,34 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+
+/// Format string used in graph log to get data for the git graph
+/// %H - Full commit hash
+/// %aN - Author name
+/// %aE - Author email
+/// %at - Author timestamp
+/// %ct - Commit timestamp
+/// %s - Commit summary
+/// %P - Parent hashes
+/// %D - Ref names
+/// %x1E - ASCII record separator, used to split up commit data
+static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
+
+/// Number of commits to load per chunk for the git graph.
+pub const GRAPH_CHUNK_SIZE: usize = 1000;
+
+/// Commit data needed for the git graph visualization.
+#[derive(Debug, Clone)]
+pub struct GraphCommitData {
+    pub sha: Oid,
+    /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
+    pub parents: SmallVec<[Oid; 1]>,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+    pub commit_timestamp: i64,
+    pub subject: SharedString,
+    pub ref_names: Vec<SharedString>,
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -420,6 +450,42 @@ impl Drop for GitExcludeOverride {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub enum LogOrder {
+    #[default]
+    DateOrder,
+    TopoOrder,
+    AuthorDateOrder,
+    ReverseChronological,
+}
+
+impl LogOrder {
+    pub fn as_arg(&self) -> &'static str {
+        match self {
+            LogOrder::DateOrder => "--date-order",
+            LogOrder::TopoOrder => "--topo-order",
+            LogOrder::AuthorDateOrder => "--author-date-order",
+            LogOrder::ReverseChronological => "--reverse",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum LogSource {
+    #[default]
+    All,
+    Branch(SharedString),
+}
+
+impl LogSource {
+    fn get_arg(&self) -> &str {
+        match self {
+            LogSource::All => "--all",
+            LogSource::Branch(branch) => branch.as_str(),
+        }
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -650,6 +716,17 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<String>>;
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
+
+    /// Runs `git log` with the specified parameters and returns the raw output.
+    /// this command is used by the git graph view to generate the graph data
+    fn graph_log(
+        &self,
+        chunk_position: usize,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>>;
+
+    fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
 }
 
 pub enum DiffType {
@@ -2394,6 +2471,96 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
+
+    fn graph_log(
+        &self,
+        chunk_position: usize,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+            let skip = chunk_position * GRAPH_CHUNK_SIZE;
+            let skip_arg = format!("--skip={}", skip);
+            let max_count_arg = format!("--max-count={}", GRAPH_CHUNK_SIZE);
+
+            let args = [
+                "log",
+                &GRAPH_COMMIT_FORMAT,
+                log_order.as_arg(),
+                log_source.get_arg(),
+                &skip_arg,
+                &max_count_arg,
+            ];
+
+            let output = git.run(&args).await?;
+            Ok(parse_graph_log_output(&output))
+        }
+        .boxed()
+    }
+
+    fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+            let args = ["rev-list", "--count", source.get_arg()];
+            Ok(git.run(&args).await?.trim().parse::<usize>()?)
+        }
+        .boxed()
+    }
+}
+
+// todo! Move this to the caching layer
+fn parse_graph_log_output(output: &str) -> Vec<GraphCommitData> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\x1E').collect();
+
+            let sha = Oid::from_str(parts.get(0)?).ok()?;
+            let author_name = SharedString::from(parts.get(1)?.to_string());
+            let author_email = SharedString::from(parts.get(2)?.to_string());
+            let commit_timestamp = parts.get(4)?.parse().ok()?;
+            let subject = SharedString::from(parts.get(5)?.to_string());
+            let parents = parts
+                .get(6)?
+                .split_ascii_whitespace()
+                .filter_map(|hash| Oid::from_str(hash).ok())
+                .collect();
+            let ref_names = parts
+                .get(7)
+                .filter(|ref_name| !ref_name.is_empty())
+                .map(|ref_names| {
+                    ref_names
+                        .split(", ")
+                        .map(|s| SharedString::from(s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            Some(GraphCommitData {
+                sha,
+                parents,
+                author_name,
+                author_email,
+                commit_timestamp,
+                subject,
+                ref_names,
+            })
+        })
+        .collect()
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
