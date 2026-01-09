@@ -1074,7 +1074,7 @@ fn process_patch_hunk(
                 // conservative and reject cases that would actually fit within the limit.
                 let syntax_diff = if let (Some(base_syntax_tree), Some(buffer_syntax_tree)) =
                     (base_syntax_tree, buffer_syntax_tree)
-                    && base_syntax_tree.len() * buffer_syntax_tree.len()
+                    && 2 * base_syntax_tree.len() * buffer_syntax_tree.len()
                         <= diff_options.max_syntax_diff_graph_size
                 {
                     syntax_diff::diff_trees(&base_syntax_tree, &buffer_syntax_tree, diff_options)

@@ -324,7 +324,7 @@ pub fn shortest_path<'a>(
     let lhs_cursor = lhs_tree.cursor();
     let rhs_cursor = rhs_tree.cursor();
 
-    let graph_limit = std::cmp::min(lhs_tree.len() * rhs_tree.len(), graph_limit);
+    let graph_limit = std::cmp::min(2 * lhs_tree.len() * rhs_tree.len(), graph_limit);
 
     let mut heap: BinaryHeap<Reverse<SyntaxPath<'a>>> = BinaryHeap::default();
     let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> =
