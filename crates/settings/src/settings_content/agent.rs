@@ -201,6 +201,15 @@ impl AgentSettingsContent {
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
         self.favorite_models.retain(|m| m != model);
     }
+
+    pub fn set_tool_default_mode(&mut self, tool_id: &str, mode: ToolPermissionMode) {
+        let tool_permissions = self.tool_permissions.get_or_insert_default();
+        let tool_rules = tool_permissions
+            .tools
+            .entry(Arc::from(tool_id))
+            .or_default();
+        tool_rules.default_mode = Some(mode);
+    }
 }
 
 #[with_fallible_options]
