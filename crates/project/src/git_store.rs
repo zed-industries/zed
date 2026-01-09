@@ -30,8 +30,9 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, LogOrder, LogSource, PushOptions, Remote,
-        RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        GitRepository, GitRepositoryCheckpoint, GraphCommitData, LogOrder, LogSource, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
+        Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -4187,12 +4188,13 @@ impl Repository {
         })
     }
 
+    // todo! This function should cache the args and futures
     pub fn graph_log(
         &mut self,
         chunk_position: usize,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> oneshot::Receiver<Result<String>> {
+    ) -> oneshot::Receiver<Result<Vec<GraphCommitData>>> {
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {

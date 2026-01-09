@@ -2,7 +2,7 @@ mod graph;
 mod graph_rendering;
 
 use anyhow::Context as _;
-use git::repository::LogSource;
+use git::repository::{LogOrder, LogSource};
 use gpui::{
     AnyElement, App, Context, Corner, DefiniteLength, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
@@ -25,7 +25,7 @@ use workspace::{
 };
 
 use crate::{
-    graph::{AllCommitCount, CHUNK_SIZE},
+    graph::{AllCommitCount, CHUNK_SIZE, format_timestamp},
     graph_rendering::render_graph,
 };
 
@@ -43,6 +43,7 @@ pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<GitGraph>(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
+        // todo!: We should only register this action when project has a repo we can use to generate the graph
         workspace.register_action(|workspace, _: &OpenGitGraph, window, cx| {
             let project = workspace.project().clone();
             let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
@@ -60,8 +61,6 @@ pub struct GitGraph {
     loading: bool,
     error: Option<SharedString>,
     _load_task: Option<Task<()>>,
-    selected_commit: Option<usize>,
-    expanded_commit: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     work_dir: Option<PathBuf>,
     row_height: Pixels,
@@ -101,8 +100,6 @@ impl GitGraph {
             loading: true,
             error: None,
             _load_task: None,
-            selected_commit: None,
-            expanded_commit: None,
             context_menu: None,
             work_dir: None,
             row_height,
@@ -155,21 +152,28 @@ impl GitGraph {
             };
 
             let commit_count = if fetch_chunks && commit_count_loaded {
-                None
+                Ok(None)
             } else {
                 repository
                     .update(cx, |repo, _cx| repo.commit_count(LogSource::All))
                     .await
-                    .ok()
-                    .map(|result| result.ok())
+                    .anyhow()
                     .flatten()
+                    .map(|count| Some(count))
             };
 
-            let result = crate::graph::load_commits(last_loaded_chunk, worktree_path.clone()).await;
+            let commits = repository
+                .update(cx, |repo, _cx| {
+                    repo.graph_log(last_loaded_chunk, LogSource::All, LogOrder::DateOrder)
+                })
+                .await
+                .anyhow()
+                .flatten();
 
             this.update(cx, |this, cx| {
                 this.loading = false;
-                match result.map(|commits| (commits, commit_count)) {
+
+                match commits.and_then(|commits| Ok((commits, commit_count?))) {
                     Ok((commits, commit_count)) => {
                         if !fetch_chunks {
                             this.graph.clear();
@@ -223,7 +227,7 @@ impl GitGraph {
                 let subject = commit.data.subject.clone();
                 let author_name = commit.data.author_name.clone();
                 let short_sha = commit.data.sha.display_short();
-                let formatted_time = commit.data.commit_timestamp.clone();
+                let formatted_time = format_timestamp(commit.data.commit_timestamp);
 
                 vec![
                     div()

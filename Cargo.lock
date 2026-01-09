@@ -7098,6 +7098,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "smallvec",
  "smol",
  "sum_tree",
  "tempfile",

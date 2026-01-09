@@ -1,23 +1,12 @@
-use std::{ops::Range, path::PathBuf, rc::Rc, str::FromStr};
+use std::{ops::Range, rc::Rc};
 
-use anyhow::Result;
 use collections::HashMap;
 use git::{Oid, repository::GRAPH_CHUNK_SIZE};
-use gpui::SharedString;
 use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
-use util::command::new_smol_command;
 
-/// %H - Full commit hash
-/// %aN - Author name
-/// %aE - Author email
-/// %at - Author timestamp
-/// %ct - Commit timestamp
-/// %s - Commit summary
-/// %P - Parent hashes
-/// %D - Ref names
-/// %x1E - ASCII record separator, used to split up commit data
-static COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
+pub use git::repository::GraphCommitData;
+
 pub(crate) const CHUNK_SIZE: usize = GRAPH_CHUNK_SIZE;
 
 pub fn format_timestamp(timestamp: i64) -> String {
@@ -32,79 +21,6 @@ pub fn format_timestamp(timestamp: i64) -> String {
     let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
         .unwrap_or_default();
     local_datetime.format(&format).unwrap_or_default()
-}
-
-// todo: This function should be on a background thread, and it should return a chunk of commits at a time
-// we should also be able to specify the order
-// todo: Make this function work over collab as well
-pub async fn load_commits(
-    chunk_position: usize,
-    worktree_path: PathBuf, //todo! Change to repo path
-) -> Result<Vec<CommitData>> {
-    let start = chunk_position * CHUNK_SIZE;
-
-    let git_log_output = new_smol_command("git")
-        .current_dir(worktree_path)
-        .arg("log")
-        .arg("--all")
-        .arg(COMMIT_FORMAT)
-        .arg("--date-order")
-        .arg(format!("--skip={start}"))
-        .arg(format!("--max-count={}", CHUNK_SIZE))
-        .output()
-        .await?;
-
-    let stdout = String::from_utf8_lossy(&git_log_output.stdout);
-
-    Ok(stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| {
-            // todo! clean this up
-            let parts: Vec<&str> = line.split('\x1E').collect();
-
-            let sha = parts.get(0)?;
-            let author_name = parts.get(1)?;
-            let author_email = parts.get(2)?;
-            // todo! do we use the author or the commit timestamp
-            let _author_timestamp = parts.get(3)?;
-            let commit_timestamp = parts.get(4)?;
-
-            let summary = parts.get(5)?;
-            let parents = parts
-                .get(6)?
-                .split_ascii_whitespace()
-                .filter_map(|hash| Oid::from_str(hash).ok())
-                .collect();
-
-            Some(CommitData {
-                author_name: SharedString::new(*author_name),
-                _author_email: SharedString::new(*author_email),
-                sha: Oid::from_str(sha).ok()?,
-                parents,
-                commit_timestamp: format_timestamp(commit_timestamp.parse().ok()?).into(), //todo!
-                subject: SharedString::new(*summary),                                      // todo!
-                _ref_names: parts
-                    .get(7)
-                    .filter(|ref_name| !ref_name.is_empty())
-                    .map(|ref_names| ref_names.split(", ").map(SharedString::new).collect())
-                    .unwrap_or_default(),
-            })
-        })
-        .collect::<Vec<_>>())
-}
-
-/// Commit data needed for the graph
-#[derive(Debug)]
-pub struct CommitData {
-    pub sha: Oid,
-    /// Most commits have a single parent, so we use a small vec to avoid allocations
-    pub parents: smallvec::SmallVec<[Oid; 1]>,
-    pub author_name: SharedString,
-    pub _author_email: SharedString,
-    pub commit_timestamp: SharedString,
-    pub subject: SharedString,
-    pub _ref_names: Vec<SharedString>,
 }
 
 // todo! On accent colors updating it's len we need to update lane colors to use different indices
@@ -212,7 +128,7 @@ impl LaneState {
 
 #[derive(Debug)]
 pub struct CommitEntry {
-    pub data: CommitData,
+    pub data: GraphCommitData,
     pub lane: usize,
     pub color_idx: usize,
 }
@@ -362,7 +278,7 @@ impl GitGraph {
         })
     }
 
-    pub(crate) fn add_commits(&mut self, commits: Vec<CommitData>) {
+    pub(crate) fn add_commits(&mut self, commits: Vec<GraphCommitData>) {
         for commit in commits.into_iter() {
             let commit_row = self.commits.len();
 

@@ -13,12 +13,14 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
+use std::str::FromStr;
 use std::{
     cmp::Ordering,
     future,
@@ -51,6 +53,19 @@ static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%
 
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
+
+/// Commit data needed for the git graph visualization.
+#[derive(Debug, Clone)]
+pub struct GraphCommitData {
+    pub sha: Oid,
+    /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
+    pub parents: SmallVec<[Oid; 1]>,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+    pub commit_timestamp: i64,
+    pub subject: SharedString,
+    pub ref_names: Vec<SharedString>,
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -709,7 +724,7 @@ pub trait GitRepository: Send + Sync {
         chunk_position: usize,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<String>>;
+    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>>;
 
     fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
 }
@@ -2462,7 +2477,7 @@ impl GitRepository for RealGitRepository {
         chunk_position: usize,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<String>> {
+    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
         let executor = self.executor.clone();
@@ -2484,7 +2499,8 @@ impl GitRepository for RealGitRepository {
                 &max_count_arg,
             ];
 
-            git.run(&args).await
+            let output = git.run(&args).await?;
+            Ok(parse_graph_log_output(&output))
         }
         .boxed()
     }
@@ -2503,6 +2519,48 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
+}
+
+// todo! Move this to the caching layer
+fn parse_graph_log_output(output: &str) -> Vec<GraphCommitData> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\x1E').collect();
+
+            let sha = Oid::from_str(parts.get(0)?).ok()?;
+            let author_name = SharedString::from(parts.get(1)?.to_string());
+            let author_email = SharedString::from(parts.get(2)?.to_string());
+            let commit_timestamp = parts.get(4)?.parse().ok()?;
+            let subject = SharedString::from(parts.get(5)?.to_string());
+            let parents = parts
+                .get(6)?
+                .split_ascii_whitespace()
+                .filter_map(|hash| Oid::from_str(hash).ok())
+                .collect();
+            let ref_names = parts
+                .get(7)
+                .filter(|ref_name| !ref_name.is_empty())
+                .map(|ref_names| {
+                    ref_names
+                        .split(", ")
+                        .map(|s| SharedString::from(s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            Some(GraphCommitData {
+                sha,
+                parents,
+                author_name,
+                author_email,
+                commit_timestamp,
+                subject,
+                ref_names,
+            })
+        })
+        .collect()
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {

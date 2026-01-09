@@ -7,8 +7,8 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, LogOrder, LogSource, PushOptions, Remote, RepoPath, ResetMode,
-        Worktree,
+        GitRepositoryCheckpoint, GraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -744,8 +744,8 @@ impl GitRepository for FakeGitRepository {
         _chunk_position: usize,
         _log_source: LogSource,
         _log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<String>> {
-        async { Ok(String::new()) }.boxed()
+    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>> {
+        async { Ok(Vec::new()) }.boxed()
     }
 
     fn rev_list_count(&self, _source: LogSource) -> BoxFuture<'_, Result<usize>> {
