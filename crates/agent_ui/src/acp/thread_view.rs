@@ -6953,6 +6953,19 @@ impl Render for AcpThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.toggle_category_picker(
+                            acp::SessionConfigOptionCategory::Mode,
+                            window,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
                 } else if let Some(mode_selector) = this.mode_selector() {
@@ -6960,6 +6973,19 @@ impl Render for AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::Mode,
+                            false,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
                     profile_selector.update(cx, |profile_selector, cx| {
                         profile_selector.cycle_profile(cx);
@@ -6971,12 +6997,38 @@ impl Render for AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.toggle_category_picker(
+                            acp::SessionConfigOptionCategory::Model,
+                            window,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::Model,
+                            true,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector.update(cx, |model_selector, cx| {
                         model_selector.cycle_favorite_models(window, cx);
