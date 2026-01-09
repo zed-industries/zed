@@ -26,9 +26,7 @@ use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
-pub use editorconfig_store::{
-    Editorconfig, EditorconfigProperties, EditorconfigStore, WorktreeEditorconfigs,
-};
+pub use editorconfig_store::{Editorconfig, EditorconfigProperties, EditorconfigStore};
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
