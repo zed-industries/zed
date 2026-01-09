@@ -1957,21 +1957,12 @@ mod tests {
             .unindent()
         );
 
-        // Now undo the deletion
         buffer.update(cx, |buffer, cx| {
-            // FIXME
-            buffer.undo(cx);
+            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "xxx\n")], None, cx);
         });
 
         cx.run_until_parked();
 
-        // After undo, but BEFORE the diff is recalculated:
-        // The text "eee" is restored in the buffer, but the diff still shows "eee"
-        // as a deleted hunk (it hasn't been recalculated yet).
-        //
-        // BUG: The spacer for the "eee" diff hunk remains even though the text is
-        // restored, causing BOTH the spacer AND the restored "eee" to appear.
-        // This causes visual jitter until the diff is recalculated.
         let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
         let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
 

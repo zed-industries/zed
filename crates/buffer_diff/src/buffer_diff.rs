@@ -2928,6 +2928,206 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_row_to_base_text_row_after_deleting_added_line(cx: &mut TestAppContext) {
+        let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+            "
+        .unindent();
+
+        let buffer_text = "
+                aaa
+                NEW1
+                NEW2
+                ccc
+                ddd
+            "
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+
+        let initial_results = [
+            (0, 0, 0), // aaa
+            (1, 2, 1), // NEW1 - inside hunk, maps to end/start of base hunk
+            (2, 2, 1), // NEW2 - inside hunk, maps to end/start of base hunk
+            (3, 2, 2), // ccc
+            (4, 3, 3), // ddd
+        ];
+
+        for (buffer_row, expected_right, expected_left) in initial_results {
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer.snapshot()),
+                expected_right,
+                "INITIAL: row_to_base_text_row Bias::Right buffer_row={buffer_row}"
+            );
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer.snapshot()),
+                expected_left,
+                "INITIAL: row_to_base_text_row Bias::Left buffer_row={buffer_row}"
+            );
+        }
+
+        let delete_start = buffer.point_to_offset(Point::new(2, 0));
+        let delete_end = buffer.point_to_offset(Point::new(3, 0));
+        buffer.edit([(delete_start..delete_end, "")]);
+        let buffer_snapshot = buffer.snapshot();
+
+        assert_eq!(buffer_snapshot.max_point().row, 4);
+        assert_eq!(buffer_snapshot.text(), "aaa\nNEW1\nccc\nddd\n");
+
+        let expected_results = [
+            (0, 0, 0), // aaa - unchanged
+            (1, 2, 1), // NEW1 - still inside stale hunk
+            (2, 2, 2), // ccc - should map to base row 2
+            (3, 3, 3), // ddd - should map to base row 3
+        ];
+
+        for (buffer_row, expected_right, expected_left) in expected_results {
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
+                expected_right,
+                "AFTER DELETE: row_to_base_text_row Bias::Right buffer_row={buffer_row}"
+            );
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "AFTER DELETE: row_to_base_text_row Bias::Left buffer_row={buffer_row}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_row_translation_with_insertion_at_deleted_hunk(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        // This setup mirrors the diff scenario in:
+        // `test_split_editor_block_alignment_after_undoing_deleted_unmodified_line`
+        //
+        // Base:
+        //   aaa
+        //   bbb
+        //   ccc
+        //   ddd
+        //   eee
+        //   fff
+        //
+        // Current starts missing "bbb" and "ccc" compared to base.
+        // Then we delete the unmodified line "eee", recompute the diff snapshot,
+        // and finally insert "xxx" near where the deleted hunk appears.
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+
+        let current_text = "
+            aaa
+            ddd
+            eee
+            fff
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(current_text, cx));
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Recompute a fresh diff snapshot after deleting "eee".
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let _diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text.clone(), cx);
+
+        // Insert "xxx" at row 2. This is the same insertion point used in the editor test.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "xxx\n")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
+
+        assert_eq!(buffer_snapshot.text(), "aaa\nddd\nxxx\nfff\n");
+
+        // Assert current behavior of base->buffer row translation for key rows around the
+        // deleted hunks and inserted line.
+        //
+        // Buffer rows:
+        //   0: aaa
+        //   1: ddd
+        //   2: xxx
+        //   3: fff
+        //
+        // Base rows:
+        //   0: aaa
+        //   1: bbb
+        //   2: ccc
+        //   3: ddd
+        //   4: eee
+        //   5: fff
+        //
+        // Note: the expectations below intentionally capture the current behavior.
+        // If you change diff semantics later, update these assertions accordingly.
+
+        // Base -> buffer mapping.
+        let expected_base_to_buffer_results = [
+            // base text row, buffer row (right bias), buffer row (left bias)
+            (0, 0, 0), // aaa
+            (1, 1, 1), // bbb (deleted in buffer) biases currently resolve to ddd row
+            (2, 1, 1), // ccc (deleted in buffer) biases currently resolve to ddd row
+            (3, 1, 1), // ddd
+            (4, 3, 2), // eee (deleted in buffer) resolves past insertion on right bias
+            (5, 3, 3), // fff
+        ];
+
+        for (base_text_row, expected_right, expected_left) in expected_base_to_buffer_results {
+            assert_eq!(
+                diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
+                expected_right,
+                "base_text_row_to_row Bias::Right base_text_row={base_text_row}"
+            );
+            assert_eq!(
+                diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "base_text_row_to_row Bias::Left base_text_row={base_text_row}"
+            );
+        }
+
+        // Buffer -> base mapping.
+        let expected_buffer_to_base_results = [
+            // buffer row, base text row (right bias), base text row (left bias)
+            (0, 0, 0), // aaa
+            (1, 3, 3), // ddd
+            (2, 5, 4), // xxx - inserted near deleted hunk boundary (bias-dependent)
+            (3, 5, 5), // fff
+        ];
+
+        for (buffer_row, expected_right, expected_left) in expected_buffer_to_base_results {
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
+                expected_right,
+                "row_to_base_text_row Bias::Right buffer_row={buffer_row}"
+            );
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "row_to_base_text_row Bias::Left buffer_row={buffer_row}"
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_changed_ranges(cx: &mut gpui::TestAppContext) {
         let base_text = "
             one
@@ -3004,121 +3204,6 @@ mod tests {
                 assert_eq!(*base_text_changed_range, Some(0..base_text.len()));
             }
             _ => panic!("unexpected events: {:?}", events),
-        }
-    }
-
-    #[gpui::test]
-    async fn test_row_to_base_text_row_after_deleting_added_line(cx: &mut TestAppContext) {
-        // Test the behavior of row_to_base_text_row when:
-        // 1. The diff shows one base line deleted and two new lines added (a modification)
-        // 2. Then one of the added lines is deleted from the buffer
-        // 3. The diff is NOT recalculated
-        //
-        // This simulates the scenario in a split editor where the user deletes
-        // text that was added, before the diff debounce timer fires.
-
-        let base_text = "
-            aaa
-            bbb
-            ccc
-            ddd
-        "
-        .unindent();
-
-        // Initial buffer: "bbb" replaced with "NEW1" and "NEW2"
-        // This creates a modification hunk where 1 base line -> 2 buffer lines
-        let buffer_text = "
-            aaa
-            NEW1
-            NEW2
-            ccc
-            ddd
-        "
-        .unindent();
-
-        // Diff structure:
-        //   row 0: aaa      (matches base row 0)
-        //   row 1: NEW1     <- Hunk: "bbb" -> "NEW1\nNEW2" (base row 1)
-        //   row 2: NEW2     <- (part of the same hunk)
-        //   row 3: ccc      (matches base row 2)
-        //   row 4: ddd      (matches base row 3)
-
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
-
-        // Verify the initial state is correct
-        let initial_results = [
-            // (buffer_row, expected_right, expected_left)
-            (0, 0, 0), // aaa
-            (1, 2, 1), // NEW1 - inside hunk, maps to end/start of base hunk
-            (2, 2, 1), // NEW2 - inside hunk, maps to end/start of base hunk
-            (3, 2, 2), // ccc
-            (4, 3, 3), // ddd
-        ];
-
-        for (buffer_row, expected_right, expected_left) in initial_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer.snapshot()),
-                expected_right,
-                "INITIAL: row_to_base_text_row Bias::Right buffer_row={buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer.snapshot()),
-                expected_left,
-                "INITIAL: row_to_base_text_row Bias::Left buffer_row={buffer_row}"
-            );
-        }
-
-        // Now delete "NEW2" (the second added line) without recalculating the diff.
-        // The buffer becomes:
-        //   row 0: aaa
-        //   row 1: NEW1
-        //   row 2: ccc
-        //   row 3: ddd
-        //
-        // The diff still thinks rows 1-2 are the modification hunk, but row 2
-        // is now "ccc" (which should map to base row 2).
-
-        let delete_start = buffer.point_to_offset(Point::new(2, 0));
-        let delete_end = buffer.point_to_offset(Point::new(3, 0));
-        buffer.edit([(delete_start..delete_end, "")]);
-        let buffer_snapshot = buffer.snapshot();
-
-        // Verify the buffer content is as expected
-        assert_eq!(buffer_snapshot.max_point().row, 4);
-        assert_eq!(buffer_snapshot.text(), "aaa\nNEW1\nccc\nddd\n");
-
-        // Test row_to_base_text_row with the stale diff and new buffer snapshot
-        //
-        // The key issue: after deleting NEW2, the rows shift up:
-        //   row 0: aaa      -> should map to base row 0
-        //   row 1: NEW1     -> inside the (stale) hunk, should map reasonably
-        //   row 2: ccc      -> should map to base row 2
-        //   row 3: ddd      -> should map to base row 3
-        //
-        // The bug occurs because the diff's anchors for the hunk end haven't
-        // moved correctly, causing incorrect row translation for rows after
-        // the deleted content.
-
-        let expected_results = [
-            // (buffer_row, expected_right, expected_left)
-            (0, 0, 0), // aaa - unchanged
-            (1, 2, 1), // NEW1 - still inside stale hunk
-            (2, 2, 2), // ccc - should map to base row 2
-            (3, 3, 3), // ddd - should map to base row 3
-        ];
-
-        for (buffer_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "AFTER DELETE: row_to_base_text_row Bias::Right buffer_row={buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "AFTER DELETE: row_to_base_text_row Bias::Left buffer_row={buffer_row}"
-            );
         }
     }
 }

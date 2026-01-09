@@ -581,7 +581,7 @@ impl BlockMap {
                 companion: companion.0,
                 snapshot: companion_wrap_edits.0,
                 entity: companion.1,
-            })
+            }),
         };
         BlockMapWriter {
             block_map: self,
@@ -906,7 +906,8 @@ impl BlockMap {
                 let rows_before_block;
                 match block_placement {
                     BlockPlacement::Above(position) => {
-                        rows_before_block = dbg!(position) - dbg!(new_transforms.summary().input_rows);
+                        rows_before_block =
+                            dbg!(position) - dbg!(new_transforms.summary().input_rows);
                         just_processed_folded_buffer = false;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
@@ -1126,7 +1127,9 @@ impl BlockMap {
 
         new_buffer_range.start.row = new_buffer_range.start.row.saturating_sub(1);
         new_buffer_range.start.column = 0;
-        let our_start_wrap_row = wrap_snapshot.make_wrap_point(new_buffer_range.start, Bias::Left).row();
+        let our_start_wrap_row = wrap_snapshot
+            .make_wrap_point(new_buffer_range.start, Bias::Left)
+            .row();
 
         // Convert our start buffer row to companion's coordinate space
         let companion_start_buffer_row = convert_row_to_companion(
@@ -1172,6 +1175,13 @@ impl BlockMap {
                 .make_wrap_point(Point::new(companion_buffer_row.0, 0), Bias::Left)
                 .row();
             dbg!(our_wrap_row, companion_wrap_row);
+            dbg!(convert_row_to_companion(
+                excerpt_to_companion_excerpt,
+                companion_buffer,
+                our_buffer,
+                MultiBufferRow(checkpoint_row),
+                Bias::Right,
+            ));
 
             // Calculate how many rows each side has advanced since the last checkpoint
             let our_delta = our_wrap_row.0 - our_baseline_wrap_row;
@@ -1444,9 +1454,16 @@ impl BlockMapWriter<'_> {
         }
 
         let default_patch = Patch::default();
-        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
-            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
-        }).unzip();
+        let (companion_snapshot, companion) = self
+            .companion
+            .as_ref()
+            .map(|companion| {
+                (
+                    (companion.snapshot, &default_patch),
+                    (companion.companion, companion.entity),
+                )
+            })
+            .unzip();
         self.block_map
             .sync(wrap_snapshot, edits, companion_snapshot, companion);
         ids
@@ -1505,9 +1522,16 @@ impl BlockMapWriter<'_> {
         }
 
         let default_patch = Patch::default();
-        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
-            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
-        }).unzip();
+        let (companion_snapshot, companion) = self
+            .companion
+            .as_ref()
+            .map(|companion| {
+                (
+                    (companion.snapshot, &default_patch),
+                    (companion.companion, companion.entity),
+                )
+            })
+            .unzip();
         self.block_map
             .sync(wrap_snapshot, edits, companion_snapshot, companion);
     }
@@ -1556,9 +1580,16 @@ impl BlockMapWriter<'_> {
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
         let default_patch = Patch::default();
-        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
-            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
-        }).unzip();
+        let (companion_snapshot, companion) = self
+            .companion
+            .as_ref()
+            .map(|companion| {
+                (
+                    (companion.snapshot, &default_patch),
+                    (companion.companion, companion.entity),
+                )
+            })
+            .unzip();
 
         self.block_map
             .sync(wrap_snapshot, edits, companion_snapshot, companion);
@@ -1642,11 +1673,17 @@ impl BlockMapWriter<'_> {
             });
         }
 
-
         let default_patch = Patch::default();
-        let (companion_snapshot, companion) = self.companion.as_ref().map(|companion| {
-            ((companion.snapshot, &default_patch), (companion.companion, companion.entity))
-        }).unzip();
+        let (companion_snapshot, companion) = self
+            .companion
+            .as_ref()
+            .map(|companion| {
+                (
+                    (companion.snapshot, &default_patch),
+                    (companion.companion, companion.entity),
+                )
+            })
+            .unzip();
         self.block_map
             .sync(&wrap_snapshot, edits, companion_snapshot, companion);
     }
