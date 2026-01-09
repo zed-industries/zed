@@ -3504,15 +3504,11 @@ impl Editor {
                 // end_fp: last min(32, fold_len) bytes of fold content
                 // Clip to character boundaries to handle multibyte UTF-8 characters.
                 let fold_len = end - start;
-                let start_fp_end = snapshot.clip_offset(
-                    start + std::cmp::min(FINGERPRINT_LEN, fold_len),
-                    Bias::Left,
-                );
+                let start_fp_end = snapshot
+                    .clip_offset(start + std::cmp::min(FINGERPRINT_LEN, fold_len), Bias::Left);
                 let start_fp: String = snapshot.text_for_range(start..start_fp_end).collect();
-                let end_fp_start = snapshot.clip_offset(
-                    end.saturating_sub(FINGERPRINT_LEN).max(start),
-                    Bias::Right,
-                );
+                let end_fp_start = snapshot
+                    .clip_offset(end.saturating_sub(FINGERPRINT_LEN).max(start), Bias::Right);
                 let end_fp: String = snapshot.text_for_range(end_fp_start..end).collect();
 
                 (start, end, start_fp, end_fp)
