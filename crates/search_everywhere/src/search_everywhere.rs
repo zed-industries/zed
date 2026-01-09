@@ -17,6 +17,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchQuery, SearchResult};
 use project::{Project, ProjectPath};
+use search::SearchOptions;
 use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
 use ui::Divider;
@@ -550,9 +551,7 @@ pub struct SearchEverywhereDelegate {
     last_confirm_time: Option<std::time::Instant>,
     /// Tracks when set_selected_index was last called (to detect clicks vs Enter)
     last_selection_change: Option<std::time::Instant>,
-    case_sensitive: bool,
-    whole_word: bool,
-    regex: bool,
+    search_options: SearchOptions,
     search_in_progress: bool,
 }
 
@@ -579,9 +578,7 @@ impl SearchEverywhereDelegate {
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_confirm_time: None,
             last_selection_change: None,
-            case_sensitive: false,
-            whole_word: false,
-            regex: false,
+            search_options: SearchOptions::NONE,
             search_in_progress: false,
         }
     }
@@ -698,12 +695,14 @@ impl SearchEverywhereDelegate {
         };
 
         let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
+        let case_sensitive = self.search_options.contains(SearchOptions::CASE_SENSITIVE);
+        let whole_word = self.search_options.contains(SearchOptions::WHOLE_WORD);
 
-        if self.regex {
+        if self.search_options.contains(SearchOptions::REGEX) {
             SearchQuery::regex(
                 query,
-                self.whole_word,
-                self.case_sensitive,
+                whole_word,
+                case_sensitive,
                 false,
                 false,
                 files_to_include,
@@ -715,8 +714,8 @@ impl SearchEverywhereDelegate {
         } else {
             SearchQuery::text(
                 query,
-                self.whole_word,
-                self.case_sensitive,
+                whole_word,
+                case_sensitive,
                 false,
                 files_to_include,
                 files_to_exclude,
@@ -808,9 +807,7 @@ impl PickerDelegate for SearchEverywhereDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
-        let case_sensitive = self.case_sensitive;
-        let whole_word = self.whole_word;
-        let regex = self.regex;
+        let search_options = self.search_options;
 
         v_flex()
             // Search input row with toggle buttons
@@ -828,30 +825,29 @@ impl PickerDelegate for SearchEverywhereDelegate {
                             .child(
                                 IconButton::new("case-sensitive", IconName::CaseSensitive)
                                     .size(ButtonSize::Compact)
-                                    .toggle_state(case_sensitive)
+                                    .toggle_state(search_options.contains(SearchOptions::CASE_SENSITIVE))
                                     .tooltip(Tooltip::text("Match Case"))
                                     .on_click(cx.listener(|picker, _, window, cx| {
-                                        picker.delegate.case_sensitive =
-                                            !picker.delegate.case_sensitive;
+                                        picker.delegate.search_options.toggle(SearchOptions::CASE_SENSITIVE);
                                         picker.refresh(window, cx);
                                     })),
                             )
                             .child(
                                 IconButton::new("whole-word", IconName::WholeWord)
                                     .size(ButtonSize::Compact)
-                                    .toggle_state(whole_word)
+                                    .toggle_state(search_options.contains(SearchOptions::WHOLE_WORD))
                                     .tooltip(Tooltip::text("Match Whole Word"))
                                     .on_click(cx.listener(|picker, _, window, cx| {
-                                        picker.delegate.whole_word = !picker.delegate.whole_word;
+                                        picker.delegate.search_options.toggle(SearchOptions::WHOLE_WORD);
                                         picker.refresh(window, cx);
                                     })),
                             )
                             .child(
                                 IconButton::new("regex", IconName::Regex)
                                     .size(ButtonSize::Compact)
-                                    .toggle_state(regex)
+                                    .toggle_state(search_options.contains(SearchOptions::REGEX))
                                     .on_click(cx.listener(|picker, _, window, cx| {
-                                        picker.delegate.regex = !picker.delegate.regex;
+                                        picker.delegate.search_options.toggle(SearchOptions::REGEX);
                                         picker.refresh(window, cx);
                                     }))
                                     .tooltip(Tooltip::text("Use Regular Expression")),
