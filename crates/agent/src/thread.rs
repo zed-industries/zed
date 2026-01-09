@@ -2798,7 +2798,7 @@ impl ToolCallEventStream {
                                 .get_or_insert_default()
                                 .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
                         });
-                    })?;
+                    });
                 }
                 return Ok(());
             }
