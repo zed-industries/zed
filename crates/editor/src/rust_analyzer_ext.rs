@@ -81,7 +81,7 @@ pub fn go_to_parent_module(
     let upstream_client = lsp_store.read(cx).upstream_client();
     cx.spawn_in(window, async move |editor, cx| {
         let location_links = if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
 
             let request = proto::LspExtGoToParentModule {
                 project_id,
@@ -103,7 +103,7 @@ pub fn go_to_parent_module(
             .collect::<anyhow::Result<_>>()
             .context("go to parent module via collab")?
         } else {
-            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
@@ -113,7 +113,7 @@ pub fn go_to_parent_module(
                         project::lsp_store::lsp_ext_command::GoToParentModule { position },
                         cx,
                     )
-                })?
+                })
                 .await
                 .context("go to parent module")?
         };
@@ -161,7 +161,7 @@ pub fn expand_macro_recursively(
     let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
         let macro_expansion = if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
+            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
             let request = proto::LspExtExpandMacro {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
@@ -176,7 +176,7 @@ pub fn expand_macro_recursively(
                 expansion: response.expansion,
             }
         } else {
-            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
@@ -186,7 +186,7 @@ pub fn expand_macro_recursively(
                         ExpandMacro { position },
                         cx,
                     )
-                })?
+                })
                 .await
                 .context("expand macro")?
         };
@@ -200,7 +200,7 @@ pub fn expand_macro_recursively(
         }
 
         let buffer = project
-            .update(cx, |project, cx| project.create_buffer(false, cx))?
+            .update(cx, |project, cx| project.create_buffer(false, cx))
             .await?;
         workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
@@ -252,7 +252,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
     let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
         let docs_urls = if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
             let request = proto::LspExtOpenDocs {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
@@ -267,7 +267,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
                 local: response.local,
             }
         } else {
-            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
@@ -277,7 +277,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
                         project::lsp_store::lsp_ext_command::OpenDocs { position },
                         cx,
                     )
-                })?
+                })
                 .await
                 .context("open docs")?
         };
@@ -303,7 +303,8 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
             if let Some(web_url) = docs_urls.web {
                 cx.open_url(&web_url);
             }
-        })
+        });
+        anyhow::Ok(())
     })
     .detach_and_log_err(cx);
 }

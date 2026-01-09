@@ -597,6 +597,7 @@ impl GitRepository for FakeGitRepository {
     fn push(
         &self,
         _branch: String,
+        _remote_branch: String,
         _remote: String,
         _options: Option<PushOptions>,
         _askpass: AskPassDelegate,
@@ -719,8 +720,18 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        async { Ok(Some("main".into())) }.boxed()
+    fn default_branch(
+        &self,
+        include_remote_name: bool,
+    ) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        async move {
+            Ok(Some(if include_remote_name {
+                "origin/main".into()
+            } else {
+                "main".into()
+            }))
+        }
+        .boxed()
     }
 
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {

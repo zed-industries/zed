@@ -3,6 +3,7 @@
 use crate::{
     Event,
     git_store::{GitStoreEvent, RepositoryEvent, StatusEntry, pending_op},
+    lsp_store::{DocumentDiagnostics, DocumentDiagnosticsUpdate},
     task_inventory::TaskContexts,
     task_store::TaskSettingsLocation,
     *,
@@ -2875,6 +2876,96 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 warning_count: 0,
             }
         );
+    });
+}
+
+#[gpui::test]
+async fn test_disk_based_diagnostics_not_reused(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "fn a() { A }" }))
+        .await;
+
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Setup an initial disk-based diagnostic, which will later become old, so
+    // we can later assert that it is ignored when merging diagnostic entries.
+    let diagnostic = DiagnosticEntry {
+        range: Unclipped(PointUtf16::new(0, 9))..Unclipped(PointUtf16::new(0, 10)),
+        diagnostic: Diagnostic {
+            is_disk_based: true,
+            ..Diagnostic::default()
+        },
+    };
+    let diagnostic_update = DocumentDiagnosticsUpdate {
+        diagnostics: DocumentDiagnostics::new(
+            vec![diagnostic],
+            PathBuf::from(path!("/dir/a.rs")),
+            None,
+        ),
+        result_id: None,
+        server_id: LanguageServerId(0),
+        disk_based_sources: Cow::Borrowed(&[]),
+        registration_id: None,
+    };
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .merge_diagnostic_entries(vec![diagnostic_update], |_, _, _| false, cx)
+            .unwrap();
+    });
+
+    // Quick sanity check, ensure that the initial diagnostic is part of the
+    // buffer's diagnostics.
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        let diagnostics: Vec<_> = snapshot
+            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+            .collect();
+
+        assert_eq!(diagnostics.len(), 1);
+    });
+
+    // We'll now merge the diagnostic entries with a new diagnostic update, with
+    // no diagnostics. This time around, the `merge` closure will return `true`
+    // to ensure that old diagnostics are retained, ensuring that the first
+    // diagnostic does get added to the full list of diagnostics, even though
+    // it'll later be ignored.
+    let diagnostic_update = lsp_store::DocumentDiagnosticsUpdate {
+        diagnostics: lsp_store::DocumentDiagnostics::new(
+            vec![],
+            PathBuf::from(path!("/dir/a.rs")),
+            None,
+        ),
+        result_id: None,
+        server_id: LanguageServerId(0),
+        disk_based_sources: Cow::Borrowed(&[]),
+        registration_id: None,
+    };
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .merge_diagnostic_entries(vec![diagnostic_update], |_, _, _| true, cx)
+            .unwrap();
+    });
+
+    // We can now assert that the initial, disk-based diagnostic has been
+    // removed from the buffer's diagnostics, even if the `merge` closure
+    // returned `true`, informing that the old diagnostic could be reused.
+    // The old disk-based diagnostic should be gone, NOT retained
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        let diagnostics: Vec<_> = snapshot
+            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+            .collect();
+
+        assert_eq!(diagnostics.len(), 0);
     });
 }
 
@@ -7224,9 +7315,9 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks(&snapshot, cx),
+            unstaged_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &unstaged_diff.base_text_string().unwrap(),
+            &unstaged_diff.base_text_string(cx).unwrap(),
             &[
                 (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
@@ -7252,9 +7343,11 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            unstaged_diff
+                .snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_diff.base_text().text(),
+            &unstaged_diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7334,16 +7427,17 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    diff_1.read_with(cx, |diff, _| {
-        assert_eq!(diff.base_text().language().cloned(), Some(language))
+    diff_1.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text(cx).language().cloned(), Some(language))
     });
     cx.run_until_parked();
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..1,
@@ -7382,9 +7476,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text().text(),
+            &diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7411,9 +7506,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7432,9 +7528,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7503,9 +7600,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7534,14 +7631,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7573,6 +7671,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7585,9 +7684,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7615,6 +7714,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7634,14 +7734,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7671,6 +7772,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7683,9 +7785,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7712,6 +7814,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7725,7 +7828,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Stage two hunks with separate operations.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
         diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
     });
@@ -7733,9 +7836,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // Both staged hunks appear as pending.
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7763,9 +7866,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -7847,9 +7950,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7878,12 +7981,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the first hunk.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).next().unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).next().unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7910,12 +8013,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // Stage the second hunk *before* receiving the FS event for the first hunk.
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(1).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7945,7 +8048,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the third hunk before receiving the second FS event.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(2).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(2).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
     });
 
@@ -7957,9 +8060,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -8043,8 +8146,9 @@ async fn test_staging_random_hunks(
         .await
         .unwrap();
 
-    let mut hunks =
-        uncommitted_diff.update(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>());
+    let mut hunks = uncommitted_diff.update(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+    });
     assert_eq!(hunks.len(), 6);
 
     for _i in 0..operations {
@@ -8095,7 +8199,8 @@ async fn test_staging_random_hunks(
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         let actual_hunks = diff
-            .hunks(&snapshot, cx)
+            .snapshot(cx)
+            .hunks(&snapshot)
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         assert_eq!(actual_hunks, expected_hunks);
@@ -8160,9 +8265,9 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks(&snapshot, cx),
+            uncommitted_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &uncommitted_diff.base_text_string().unwrap(),
+            &uncommitted_diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
@@ -8225,7 +8330,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         .unwrap();
 
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
     });
 
@@ -10342,8 +10447,8 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     cx.run_until_parked();
 
-    unstaged_diff.update(cx, |unstaged_diff, _cx| {
-        let base_text = unstaged_diff.base_text_string().unwrap();
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(base_text, file_1_staged, "Should start with file_1 staged");
     });
 
@@ -10367,13 +10472,13 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     // the `BufferChangedFilePath` event being handled.
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
-        let base_text = unstaged_diff.base_text_string().unwrap();
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_staged,
             "Diff bases should be automatically updated to file_2 staged content"
         );
 
-        let hunks: Vec<_> = unstaged_diff.hunks(&snapshot, cx).collect();
+        let hunks: Vec<_> = unstaged_diff.snapshot(cx).hunks(&snapshot).collect();
         assert!(!hunks.is_empty(), "Should have diff hunks for file_2");
     });
 
@@ -10386,8 +10491,8 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     cx.run_until_parked();
 
-    uncommitted_diff.update(cx, |uncommitted_diff, _cx| {
-        let base_text = uncommitted_diff.base_text_string().unwrap();
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
+        let base_text = uncommitted_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_committed,
             "Uncommitted diff should compare against file_2 committed content"
@@ -10402,7 +10507,7 @@ async fn search(
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
     let search_rx = project.update(cx, |project, cx| project.search(query, cx));
     let mut results = HashMap::default();
-    while let Ok(search_result) = search_rx.recv().await {
+    while let Ok(search_result) = search_rx.rx.recv().await {
         match search_result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
@@ -10975,9 +11080,9 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
     // The hunk is initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -11002,7 +11107,9 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
     for _ in 0..10 {
         cx.executor().tick();
         let [hunk]: [_; 1] = uncommitted_diff
-            .read_with(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>())
+            .read_with(cx, |diff, cx| {
+                diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+            })
             .try_into()
             .unwrap();
         match hunk.secondary_status {
@@ -11014,9 +11121,9 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
     }
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -11033,9 +11140,9 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
     // The hunk is now fully staged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -11058,10 +11165,224 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
     // After committing, there are no more hunks.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[] as &[(Range<u32>, &str, &str, DiffHunkStatus)],
         );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Configure read_only_files setting
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![
+                    "**/generated/**".to_string(),
+                    "**/*.gen.rs".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+                "types.gen.rs": "// Generated file",
+            },
+            "generated": {
+                "schema.rs": "// Auto-generated schema",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // Open a regular file - should be read-write
+    let regular_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    regular_buffer.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "Regular file should not be read-only");
+    });
+
+    // Open a file matching *.gen.rs pattern - should be read-only
+    let gen_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/types.gen.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    gen_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "File matching *.gen.rs pattern should be read-only"
+        );
+    });
+
+    // Open a file in generated directory - should be read-only
+    let generated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/schema.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    generated_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "File in generated directory should be read-only"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Explicitly set read_only_files to empty (default behavior)
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "generated": {
+                "schema.rs": "// Auto-generated schema",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // All files should be read-write when read_only_files is empty
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    main_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "Files should not be read-only when read_only_files is empty"
+        );
+    });
+
+    let generated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/schema.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    generated_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "Generated files should not be read-only when read_only_files is empty"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Configure to make lock files read-only
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![
+                    "**/*.lock".to_string(),
+                    "**/package-lock.json".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "Cargo.lock": "# Lock file",
+            "Cargo.toml": "[package]",
+            "package-lock.json": "{}",
+            "package.json": "{}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // Cargo.lock should be read-only
+    let cargo_lock = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/Cargo.lock"), cx)
+        })
+        .await
+        .unwrap();
+
+    cargo_lock.read_with(cx, |buffer, _| {
+        assert!(buffer.read_only(), "Cargo.lock should be read-only");
+    });
+
+    // Cargo.toml should be read-write
+    let cargo_toml = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/Cargo.toml"), cx)
+        })
+        .await
+        .unwrap();
+
+    cargo_toml.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "Cargo.toml should not be read-only");
+    });
+
+    // package-lock.json should be read-only
+    let package_lock = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/package-lock.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    package_lock.read_with(cx, |buffer, _| {
+        assert!(buffer.read_only(), "package-lock.json should be read-only");
+    });
+
+    // package.json should be read-write
+    let package_json = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    package_json.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "package.json should not be read-only");
     });
 }

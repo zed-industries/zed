@@ -59,6 +59,9 @@ pub struct ProjectSettings {
     /// Settings for context servers used for AI-related features.
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
+    /// Default timeout for context server requests in seconds.
+    pub context_server_timeout: u64,
+
     /// Configuration for Diagnostics-related features.
     pub diagnostics: DiagnosticsSettings,
 
@@ -141,6 +144,8 @@ pub enum ContextServerSettings {
         /// Optional authentication configuration for the remote server.
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
+        /// Timeout for tool calls in milliseconds.
+        timeout: Option<u64>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -167,10 +172,12 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
                 enabled,
                 url,
                 headers,
+                timeout,
             } => ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             },
         }
     }
@@ -188,10 +195,12 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
                 enabled,
                 url,
                 headers,
+                timeout,
             } => settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             },
         }
     }
@@ -560,6 +569,7 @@ impl Settings for ProjectSettings {
                 .into_iter()
                 .map(|(key, value)| (key, value.into()))
                 .collect(),
+            context_server_timeout: project.context_server_timeout.unwrap_or(60),
             lsp: project
                 .lsp
                 .clone()
@@ -853,7 +863,7 @@ impl SettingsObserver {
                 )],
                 cx,
             );
-        })?;
+        });
         Ok(())
     }
 
@@ -868,7 +878,7 @@ impl SettingsObserver {
                 .result()
                 .context("setting new user settings")?;
             anyhow::Ok(())
-        })??;
+        })?;
         Ok(())
     }
 
@@ -1069,7 +1079,7 @@ impl SettingsObserver {
                     if *can_trust_worktree.get_or_init(|| {
                         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.can_trust(worktree_id, cx)
+                                trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
                             })
                         } else {
                             true
@@ -1181,7 +1191,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
                             TaskSettingsLocation::Global(&file_path),
@@ -1189,20 +1199,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_tasks(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {
@@ -1236,7 +1242,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_debug_scenarios(
                             TaskSettingsLocation::Global(&file_path),
@@ -1244,20 +1250,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_debug_scenarios(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {

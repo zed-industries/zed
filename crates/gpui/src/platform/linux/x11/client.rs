@@ -177,7 +177,7 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
-    gpu_context: BladeContext,
+    pub(crate) gpu_context: BladeContext,
 
     pub(crate) scale_factor: f32,
 
@@ -297,10 +297,10 @@ impl X11ClientStatePtr {
 pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
-    pub(crate) fn new() -> anyhow::Result<Self> {
+    pub(crate) fn new(liveness: std::sync::Weak<()>) -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal(), liveness);
 
         let handle = event_loop.handle();
 

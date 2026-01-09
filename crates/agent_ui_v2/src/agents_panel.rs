@@ -1,7 +1,6 @@
-use agent::{HistoryEntry, HistoryEntryId, HistoryStore};
+use agent::{DbThreadMetadata, ThreadStore};
 use agent_settings::AgentSettings;
 use anyhow::Result;
-use assistant_text_thread::TextThreadStore;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
@@ -10,7 +9,7 @@ use gpui::{
     WeakEntity, actions, prelude::*,
 };
 use project::Project;
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
 use std::sync::Arc;
@@ -58,7 +57,7 @@ pub struct AgentsPanel {
     project: Entity<Project>,
     agent_thread_pane: Option<Entity<AgentThreadPane>>,
     history: Entity<AcpThreadHistory>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
@@ -84,23 +83,11 @@ impl AgentsPanel {
                 })
                 .await;
 
-            let (fs, project, prompt_builder) = workspace.update(cx, |workspace, cx| {
+            let (fs, project) = workspace.update(cx, |workspace, _| {
                 let fs = workspace.app_state().fs.clone();
                 let project = workspace.project().clone();
-                let prompt_builder = PromptBuilder::load(fs.clone(), false, cx);
-                (fs, project, prompt_builder)
+                (fs, project)
             })?;
-
-            let text_thread_store = workspace
-                .update(cx, |_, cx| {
-                    TextThreadStore::new(
-                        project.clone(),
-                        prompt_builder.clone(),
-                        Default::default(),
-                        cx,
-                    )
-                })?
-                .await?;
 
             let prompt_store = workspace
                 .update(cx, |_, cx| PromptStore::global(cx))?
@@ -109,15 +96,8 @@ impl AgentsPanel {
 
             workspace.update_in(cx, |_, window, cx| {
                 cx.new(|cx| {
-                    let mut panel = Self::new(
-                        workspace.clone(),
-                        fs,
-                        project,
-                        prompt_store,
-                        text_thread_store,
-                        window,
-                        cx,
-                    );
+                    let mut panel =
+                        Self::new(workspace.clone(), fs, project, prompt_store, window, cx);
                     if let Some(serialized_panel) = serialized_panel {
                         panel.width = serialized_panel.width;
                         if let Some(serialized_pane) = serialized_panel.pane {
@@ -135,14 +115,13 @@ impl AgentsPanel {
         fs: Arc<dyn Fs>,
         project: Entity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
-        text_thread_store: Entity<TextThreadStore>,
         window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
-        let history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let history = cx.new(|cx| AcpThreadHistory::new(thread_store.clone(), window, cx));
 
         let this = cx.weak_entity();
         let subscriptions = vec![
@@ -161,7 +140,7 @@ impl AgentsPanel {
             project,
             agent_thread_pane: None,
             history,
-            history_store,
+            thread_store,
             prompt_store,
             fs,
             width: None,
@@ -181,18 +160,11 @@ impl AgentsPanel {
         };
 
         let entry = self
-            .history_store
+            .thread_store
             .read(cx)
             .entries()
-            .find(|e| match (&e.id(), thread_id) {
-                (
-                    HistoryEntryId::AcpThread(session_id),
-                    SerializedHistoryEntryId::AcpThread(id),
-                ) => session_id.to_string() == *id,
-                (HistoryEntryId::TextThread(path), SerializedHistoryEntryId::TextThread(id)) => {
-                    path.to_string_lossy() == *id
-                }
-                _ => false,
+            .find(|e| match thread_id {
+                SerializedHistoryEntryId::AcpThread(id) => e.id.to_string() == *id,
             });
 
         if let Some(entry) = entry {
@@ -247,13 +219,13 @@ impl AgentsPanel {
 
     fn open_thread(
         &mut self,
-        entry: HistoryEntry,
+        entry: DbThreadMetadata,
         expanded: bool,
         width: Option<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_id = entry.id();
+        let entry_id = entry.id.clone();
 
         if let Some(existing_pane) = &self.agent_thread_pane {
             if existing_pane.read(cx).thread_id() == Some(entry_id) {
@@ -267,7 +239,7 @@ impl AgentsPanel {
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let history_store = self.history_store.clone();
+        let thread_store = self.thread_store.clone();
         let prompt_store = self.prompt_store.clone();
 
         let agent_thread_pane = cx.new(|cx| {
@@ -277,7 +249,7 @@ impl AgentsPanel {
                 fs,
                 workspace.clone(),
                 project,
-                history_store,
+                thread_store,
                 prompt_store,
                 window,
                 cx,

@@ -13,7 +13,7 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-test-support = ["multi_buffer/test-support"]
+test-support = ["multi_buffer/test-support", "recent_projects/test-support"]
 
 [dependencies]
 agent_settings.workspace = true
@@ -80,6 +80,7 @@ settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+recent_projects = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]

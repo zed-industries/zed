@@ -5,6 +5,7 @@ pub struct DiffStat {
     id: ElementId,
     added: usize,
     removed: usize,
+    label_size: LabelSize,
 }
 
 impl DiffStat {
@@ -13,7 +14,13 @@ impl DiffStat {
             id: id.into(),
             added,
             removed,
+            label_size: LabelSize::Small,
         }
+    }
+
+    pub fn label_size(mut self, label_size: LabelSize) -> Self {
+        self.label_size = label_size;
+        self
     }
 }
 
@@ -33,7 +40,7 @@ impl RenderOnce for DiffStat {
                     .child(
                         Label::new(self.added.to_string())
                             .color(Color::Success)
-                            .size(LabelSize::Small),
+                            .size(self.label_size),
                     ),
             )
             .child(
@@ -47,7 +54,7 @@ impl RenderOnce for DiffStat {
                     .child(
                         Label::new(self.removed.to_string())
                             .color(Color::Error)
-                            .size(LabelSize::Small),
+                            .size(self.label_size),
                     ),
             )
     }

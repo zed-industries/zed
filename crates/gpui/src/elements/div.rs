@@ -1425,6 +1425,11 @@ impl Element for Div {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
         let has_prepaint_listener = self.prepaint_listener.is_some();
         let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
             request_layout.child_layout_ids.len()
@@ -1479,15 +1484,17 @@ impl Element for Div {
                     return hitbox;
                 }
 
-                window.with_element_offset(scroll_offset, |window| {
-                    for child in &mut self.children {
-                        child.prepaint(window, cx);
+                window.with_image_cache(image_cache, |window| {
+                    window.with_element_offset(scroll_offset, |window| {
+                        for child in &mut self.children {
+                            child.prepaint(window, cx);
+                        }
+                    });
+
+                    if let Some(listener) = self.prepaint_listener.as_ref() {
+                        listener(children_bounds, window, cx);
                     }
                 });
-
-                if let Some(listener) = self.prepaint_listener.as_ref() {
-                    listener(children_bounds, window, cx);
-                }
 
                 hitbox
             },
@@ -2170,8 +2177,8 @@ impl Interactivity {
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
+                        cx.notify(current_view);
                     }
-                    cx.notify(current_view);
                 }
             });
         }
@@ -2370,7 +2377,7 @@ impl Interactivity {
             if let Some(hover_listener) = self.hover_listener.take() {
                 let hitbox = hitbox.clone();
                 let was_hovered = element_state
-                    .hover_state
+                    .hover_listener_state
                     .get_or_insert_with(Default::default)
                     .clone();
                 let has_mouse_down = element_state
@@ -2387,8 +2394,8 @@ impl Interactivity {
                         && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
 
-                    if is_hovered != was_hovered.element {
-                        was_hovered.element = is_hovered;
+                    if is_hovered != *was_hovered {
+                        *was_hovered = is_hovered;
                         drop(was_hovered);
 
                         hover_listener(&is_hovered, window, cx);
@@ -2720,6 +2727,7 @@ pub struct InteractiveElementState {
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
+    pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,

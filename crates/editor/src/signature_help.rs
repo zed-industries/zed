@@ -94,11 +94,16 @@ impl Editor {
         }
 
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let bracket_range = |position: MultiBufferOffset| match (position, position + 1usize) {
-            (MultiBufferOffset(0), b) if b <= buffer_snapshot.len() => MultiBufferOffset(0)..b,
-            (MultiBufferOffset(0), b) => MultiBufferOffset(0)..b - 1,
-            (a, b) if b <= buffer_snapshot.len() => a - 1..b,
-            (a, b) => a - 1..b - 1,
+        let bracket_range = |position: MultiBufferOffset| {
+            let range = match (position, position + 1usize) {
+                (MultiBufferOffset(0), b) if b <= buffer_snapshot.len() => MultiBufferOffset(0)..b,
+                (MultiBufferOffset(0), b) => MultiBufferOffset(0)..b - 1,
+                (a, b) if b <= buffer_snapshot.len() => a - 1..b,
+                (a, b) => a - 1..b - 1,
+            };
+            let start = buffer_snapshot.clip_offset(range.start, text::Bias::Left);
+            let end = buffer_snapshot.clip_offset(range.end, text::Bias::Right);
+            start..end
         };
         let not_quote_like_brackets =
             |buffer: &BufferSnapshot, start: Range<BufferOffset>, end: Range<BufferOffset>| {

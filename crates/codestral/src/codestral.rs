@@ -283,7 +283,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
             let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
                 vec![(cursor_position..cursor_position, completion_text.into())].into();
             let edit_preview = buffer
-                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
                 .await;
 
             this.update(cx, |this, cx| {
