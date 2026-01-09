@@ -1840,9 +1840,12 @@ fn next_subword_start(
             let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
-            let is_word_start = (left_kind != right_kind) && right != '_';
-            let is_subword_start =
-                left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
+            let is_separator = |c: char| "._-".contains(c);
+            let is_stopping_punct = |c: char| "\"'{}[]()<>".contains(c);
+            let is_word_start = (left_kind != right_kind)
+                && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+            let is_subword_start = (is_separator(left) && !is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
 
             let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
                 || at_newline && crossed_newline
@@ -1886,8 +1889,9 @@ pub(crate) fn next_subword_end(
                 }
 
                 let is_word_end = (left_kind != right_kind) && !right.is_alphanumeric();
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+                let is_separator = |c: char| "._-".contains(c);
+                let is_subword_end = (!is_separator(left) && is_separator(right))
+                    || (left.is_lowercase() && right.is_uppercase());
 
                 let found = !left.is_whitespace() && !at_newline && (is_word_end || is_subword_end);
 
@@ -1934,9 +1938,12 @@ fn previous_subword_start(
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
-                let is_word_start = (left_kind != right_kind) && right != '_';
-                let is_subword_start =
-                    left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
+                let is_separator = |c: char| "._-".contains(c);
+                let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+                let is_word_start = (left_kind != right_kind)
+                    && (is_stopping_punct(right) || !right.is_ascii_punctuation());
+                let is_subword_start = (is_separator(left) && !is_separator(right))
+                    || (left.is_lowercase() && right.is_uppercase());
 
                 let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
                     || at_newline && crossed_newline
@@ -1981,8 +1988,9 @@ fn previous_subword_end(
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+                let is_separator = |c: char| "._-".contains(c);
+                let is_subword_end = (!is_separator(left) && is_separator(right))
+                    || (left.is_lowercase() && right.is_uppercase());
 
                 if is_subword_end {
                     return true;
