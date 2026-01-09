@@ -37,6 +37,21 @@ pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
+/// Format string used in graph log to get data for the git graph
+/// %H - Full commit hash
+/// %aN - Author name
+/// %aE - Author email
+/// %at - Author timestamp
+/// %ct - Commit timestamp
+/// %s - Commit summary
+/// %P - Parent hashes
+/// %D - Ref names
+/// %x1E - ASCII record separator, used to split up commit data
+static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
+
+/// Number of commits to load per chunk for the git graph.
+pub const GRAPH_CHUNK_SIZE: usize = 1000;
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
     pub is_head: bool,
@@ -420,6 +435,42 @@ impl Drop for GitExcludeOverride {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub enum LogOrder {
+    #[default]
+    DateOrder,
+    TopoOrder,
+    AuthorDateOrder,
+    ReverseChronological,
+}
+
+impl LogOrder {
+    pub fn as_arg(&self) -> &'static str {
+        match self {
+            LogOrder::DateOrder => "--date-order",
+            LogOrder::TopoOrder => "--topo-order",
+            LogOrder::AuthorDateOrder => "--author-date-order",
+            LogOrder::ReverseChronological => "--reverse",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum LogSource {
+    #[default]
+    All,
+    Branch(SharedString),
+}
+
+impl LogSource {
+    fn get_arg(&self) -> &str {
+        match self {
+            LogSource::All => "--all",
+            LogSource::Branch(branch) => branch.as_str(),
+        }
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -650,6 +701,17 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<String>>;
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
+
+    /// Runs `git log` with the specified parameters and returns the raw output.
+    /// this command is used by the git graph view to generate the graph data
+    fn graph_log(
+        &self,
+        chunk_position: usize,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> BoxFuture<'_, Result<String>>;
+
+    fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
 }
 
 pub enum DiffType {
@@ -2391,6 +2453,53 @@ impl GitRepository for RealGitRepository {
             git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
                 .await?;
             Ok(())
+        }
+        .boxed()
+    }
+
+    fn graph_log(
+        &self,
+        chunk_position: usize,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> BoxFuture<'_, Result<String>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+            let skip = chunk_position * GRAPH_CHUNK_SIZE;
+            let skip_arg = format!("--skip={}", skip);
+            let max_count_arg = format!("--max-count={}", GRAPH_CHUNK_SIZE);
+
+            let args = [
+                "log",
+                &GRAPH_COMMIT_FORMAT,
+                log_order.as_arg(),
+                log_source.get_arg(),
+                &skip_arg,
+                &max_count_arg,
+            ];
+
+            git.run(&args).await
+        }
+        .boxed()
+    }
+
+    fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+            let args = ["rev-list", "--count", source.get_arg()];
+            Ok(git.run(&args).await?.trim().parse::<usize>()?)
         }
         .boxed()
     }

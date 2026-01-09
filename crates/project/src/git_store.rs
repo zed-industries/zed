@@ -30,8 +30,8 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        GitRepository, GitRepositoryCheckpoint, LogOrder, LogSource, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -4182,6 +4182,39 @@ impl Repository {
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
                     })
+                }
+            }
+        })
+    }
+
+    pub fn graph_log(
+        &mut self,
+        chunk_position: usize,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> oneshot::Receiver<Result<String>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .graph_log(chunk_position, log_source, log_order)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("graph_log is not yet supported for remote repositories")
+                }
+            }
+        })
+    }
+
+    pub fn commit_count(&mut self, source: LogSource) -> oneshot::Receiver<Result<usize>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.rev_list_count(source).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("commit count is not yet supported for remote repositories")
                 }
             }
         })
