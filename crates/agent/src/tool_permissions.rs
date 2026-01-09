@@ -555,6 +555,7 @@ mod tests {
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
+                invalid_patterns: vec![],
             },
         );
         let permissions = ToolPermissions { tools };
@@ -573,6 +574,7 @@ mod tests {
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
+                invalid_patterns: vec![],
             },
         );
         let permissions = ToolPermissions { tools };
@@ -596,6 +598,7 @@ mod tests {
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
+                invalid_patterns: vec![],
             },
         );
         let permissions = ToolPermissions { tools };
@@ -628,6 +631,7 @@ mod tests {
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
+                invalid_patterns: vec![],
             },
         );
         tools.insert(
@@ -637,6 +641,7 @@ mod tests {
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
+                invalid_patterns: vec![],
             },
         );
         let permissions = ToolPermissions { tools };
