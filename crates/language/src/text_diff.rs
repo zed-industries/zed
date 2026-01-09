@@ -16,7 +16,7 @@ pub fn unified_diff(old_text: &str, new_text: &str) -> String {
 }
 
 /// Computes a diff between two strings, returning a unified diff string with
-/// hunk headers adjusted to reflect the given starting line numbers (1-indexed).
+/// hunk headers adjusted to reflect the given starting line numbers (zero-indexed).
 pub fn unified_diff_with_offsets(
     old_text: &str,
     new_text: &str,

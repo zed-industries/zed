@@ -2,11 +2,12 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -1028,6 +1029,10 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+
+        if cx.has_flag::<SubagentsFeatureFlag>() {
+            self.add_tool(SubagentTool::new());
+        }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1119,6 +1124,7 @@ impl Thread {
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
             used_tokens: usage.total_tokens(),
+            output_tokens: usage.output_tokens,
         })
     }
 
@@ -2662,6 +2668,14 @@ impl ToolCallEventStream {
             return Task::ready(Ok(()));
         }
 
+        self.authorize_required(title, cx)
+    }
+
+    /// Like `authorize`, but always prompts for confirmation regardless of
+    /// the `always_allow_tool_actions` setting. Use this when tool-specific
+    /// permission rules (like `always_confirm` patterns) have already determined
+    /// that confirmation is required.
+    pub fn authorize_required(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
             .0

@@ -93,6 +93,25 @@ impl FakeTerminalHandle {
         }
     }
 
+    fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
+        let killed = Arc::new(AtomicBool::new(false));
+        let stopped_by_user = Arc::new(AtomicBool::new(false));
+        let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
+
+        let wait_for_exit = cx
+            .spawn(async move |_cx| acp::TerminalExitStatus::new().exit_code(exit_code))
+            .shared();
+
+        Self {
+            killed,
+            stopped_by_user,
+            exit_sender: std::cell::RefCell::new(Some(exit_sender)),
+            wait_for_exit,
+            output: acp::TerminalOutputResponse::new("command output".to_string(), false),
+            id: acp::TerminalId::new("fake_terminal".to_string()),
+        }
+    }
+
     fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
@@ -2395,6 +2414,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 32_000 + 16_000,
                 max_tokens: 1_000_000,
+                output_tokens: 16_000,
             })
         );
     });
@@ -2454,6 +2474,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                output_tokens: 20_000,
             })
         );
     });
@@ -2502,6 +2523,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
                 Some(acp_thread::TokenUsage {
                     used_tokens: 32_000 + 16_000,
                     max_tokens: 1_000_000,
+                    output_tokens: 16_000,
                 })
             );
         });
@@ -2556,6 +2578,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                output_tokens: 20_000,
             })
         );
     });
@@ -3591,4 +3614,220 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
             "First message still has no tokens before it"
         );
     });
+}
+
+#[gpui::test]
+async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({})).await;
+    let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+    // Test 1: Deny rule blocks command
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Confirm,
+                    always_allow: vec![],
+                    always_deny: vec![
+                        agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap(),
+                    ],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "rm -rf /".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by deny rule"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("blocked"),
+            "error should mention the command was blocked"
+        );
+    }
+
+    // Test 2: Allow rule skips confirmation (and overrides default_mode: Deny)
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = false;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Deny,
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "echo hello".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content (allow rule should skip confirmation and override default deny)"
+        );
+
+        let result = task.await;
+        assert!(
+            result.is_ok(),
+            "expected command to succeed without confirmation"
+        );
+    }
+
+    // Test 3: Confirm rule forces confirmation even with always_allow_tool_actions=true
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Allow,
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![
+                        agent_settings::CompiledRegex::new(r"sudo", false).unwrap(),
+                    ],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let _task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "sudo rm file".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = rx.expect_authorization().await;
+        assert!(
+            auth.tool_call.fields.title.is_some(),
+            "expected authorization request for sudo command despite always_allow_tool_actions=true"
+        );
+    }
+
+    // Test 4: default_mode: Deny blocks commands when no pattern matches
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Deny,
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "echo hello".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by default_mode: Deny"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("disabled"),
+            "error should mention the tool is disabled"
+        );
+    }
 }

@@ -1920,7 +1920,7 @@ pub async fn init_test(
     });
     init_logger();
 
-    let (opts, ssh_server_client) = RemoteClient::fake_server(cx, server_cx);
+    let (opts, ssh_server_client, _) = RemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
@@ -1941,7 +1941,7 @@ pub async fn init_test(
         )
     });
 
-    let ssh = RemoteClient::fake_client(opts, cx).await;
+    let ssh = RemoteClient::connect_mock(opts, cx).await;
     let project = build_project(ssh, cx);
     project
         .update(cx, {

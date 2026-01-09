@@ -8,6 +8,7 @@ mod templates;
 #[cfg(test)]
 mod tests;
 mod thread;
+mod tool_permissions;
 mod tools;
 
 use context_server::ContextServerId;
@@ -16,6 +17,7 @@ pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
 pub use templates::*;
 pub use thread::*;
+pub use tool_permissions::*;
 pub use tools::*;
 
 use acp_thread::{AcpThread, AgentModelSelector, UserMessageId};
