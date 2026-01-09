@@ -325,16 +325,15 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
             );
             invalid_patterns.extend(confirm_errors);
 
-            // Log error-level messages for invalid patterns so users see them prominently
+            // Log invalid patterns for debugging. Users will see an error when they
+            // attempt to use a tool with invalid patterns in their settings.
             for invalid in &invalid_patterns {
                 log::error!(
-                    "Invalid regex pattern in tool_permissions for '{}' tool ({}): '{}' - {}. \
-                     The {} tool will be blocked until this is fixed.",
+                    "Invalid regex pattern in tool_permissions for '{}' tool ({}): '{}' - {}",
                     tool_name,
                     invalid.rule_type,
                     invalid.pattern,
                     invalid.error,
-                    tool_name
                 );
             }
 
