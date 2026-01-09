@@ -4,7 +4,7 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::RequestError;
+use crate::{ReasoningEffort, RequestError, ToolChoice};
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -22,7 +22,7 @@ pub struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<super::ToolChoice>,
+    pub tool_choice: Option<ToolChoice>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,7 +33,7 @@ pub struct Request {
 
 #[derive(Serialize, Debug)]
 pub struct ReasoningConfig {
-    pub effort: super::ReasoningEffort,
+    pub effort: ReasoningEffort,
 }
 
 #[derive(Serialize, Debug)]
