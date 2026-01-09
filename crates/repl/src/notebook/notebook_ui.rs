@@ -561,7 +561,7 @@ impl project::ProjectItem for NotebookItem {
         if path.path.extension().unwrap_or_default() == "ipynb" {
             Some(cx.spawn(async move |cx| {
                 let abs_path = project
-                    .read_with(cx, |project, cx| project.absolute_path(&path, cx))?
+                    .read_with(cx, |project, cx| project.absolute_path(&path, cx))
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
@@ -586,16 +586,16 @@ impl project::ProjectItem for NotebookItem {
                 let id = project
                     .update(cx, |project, cx| {
                         project.entry_for_path(&path, cx).map(|entry| entry.id)
-                    })?
+                    })
                     .context("Entry not found")?;
 
-                cx.new(|_| NotebookItem {
+                Ok(cx.new(|_| NotebookItem {
                     path: abs_path,
                     project_path: path,
                     languages,
                     notebook,
                     id,
-                })
+                }))
             }))
         } else {
             None

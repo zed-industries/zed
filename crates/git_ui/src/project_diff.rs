@@ -41,7 +41,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -156,6 +156,10 @@ impl ProjectDiff {
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
         let project_diff = if let Some(existing) = existing {
+            existing.update(cx, |project_diff, cx| {
+                project_diff.move_to_beginning(window, cx);
+            });
+
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
@@ -365,6 +369,14 @@ impl ProjectDiff {
         })
     }
 
+    fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |editor, cx| {
+                editor.move_to_beginning(&Default::default(), window, cx);
+            });
+        });
+    }
+
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
@@ -411,7 +423,7 @@ impl ProjectDiff {
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-            match hunk.secondary_status {
+            match hunk.status.secondary {
                 DiffHunkSecondaryStatus::HasSecondaryHunk
                 | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
                     has_unstaged_hunks = true;
@@ -480,7 +492,7 @@ impl ProjectDiff {
         if editor.focus_handle(cx).contains_focused(window, cx)
             && self.multibuffer.read(cx).is_empty()
         {
-            self.focus_handle.focus(window)
+            self.focus_handle.focus(window, cx)
         }
     }
 
@@ -513,14 +525,13 @@ impl ProjectDiff {
             .expect("project diff editor should have a conflict addon");
 
         let snapshot = buffer.read(cx).snapshot();
-        let diff_read = diff.read(cx);
+        let diff_snapshot = diff.read(cx).snapshot(cx);
 
         let excerpt_ranges = {
-            let diff_hunk_ranges = diff_read
+            let diff_hunk_ranges = diff_snapshot
                 .hunks_intersecting_range(
-                    Anchor::min_max_range_for_buffer(diff_read.buffer_id),
+                    Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
-                    cx,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
             let conflicts = conflict_addon
@@ -539,18 +550,21 @@ impl ProjectDiff {
             }
         };
 
-        let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
-            let was_empty = multibuffer.is_empty();
-            let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+        let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
+            let was_empty = editor
+                .primary_editor()
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .is_empty();
+            let (_, is_newly_added) = editor.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 excerpt_ranges,
                 multibuffer_context_lines(cx),
+                diff,
                 cx,
             );
-            if self.branch_diff.read(cx).diff_base().is_merge_base() {
-                multibuffer.add_diff(diff.clone(), cx);
-            }
             (was_empty, is_newly_added)
         });
 
@@ -585,10 +599,10 @@ impl ProjectDiff {
                 .focus_handle(cx)
                 .contains_focused(window, cx)
         {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.update(cx, |editor, cx| {
-                editor.focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window, cx);
             });
         }
         if self.pending_scroll.as_ref() == Some(&path_key) {
@@ -627,9 +641,9 @@ impl ProjectDiff {
                 }
             }
 
-            this.multibuffer.update(cx, |multibuffer, cx| {
+            this.editor.update(cx, |editor, cx| {
                 for path in previous_paths {
-                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx) {
+                    if let Some(buffer) = this.multibuffer.read(cx).buffer_for_path(&path, cx) {
                         let skip = match reason {
                             RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                 buffer.read(cx).is_dirty()
@@ -642,7 +656,7 @@ impl ProjectDiff {
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path.clone(), cx);
+                    editor.remove_excerpts_for_path(path, cx);
                 }
             });
             buffers_to_load
@@ -702,8 +716,7 @@ impl ProjectDiff {
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
     let settings = GitPanelSettings::get_global(cx);
 
-    // Tree view can only sort by path
-    if settings.sort_by_path || settings.tree_view {
+    if settings.sort_by_path && !settings.tree_view {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
         CONFLICT_SORT_PREFIX
@@ -898,18 +911,6 @@ impl Item for ProjectDiff {
         }
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor
-            .read(cx)
-            .last_selected_editor()
-            .read(cx)
-            .breadcrumbs(theme, cx)
-    }
-
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
@@ -971,7 +972,7 @@ impl Render for ProjectDiff {
                                         cx,
                                     ))
                                     .on_click(move |_, window, cx| {
-                                        window.focus(&keybinding_focus_handle);
+                                        window.focus(&keybinding_focus_handle, cx);
                                         window.dispatch_action(
                                             Box::new(CloseActiveItem::default()),
                                             cx,
@@ -1141,7 +1142,7 @@ impl ProjectDiffToolbar {
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(project_diff) = self.project_diff(cx) {
-            project_diff.focus_handle(cx).focus(window);
+            project_diff.focus_handle(cx).focus(window, cx);
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {
@@ -1677,12 +1678,6 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
-        cx.run_until_parked();
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
@@ -1693,6 +1688,12 @@ mod tests {
             path!("/project/.git").as_ref(),
             &[("foo.txt", "foo\n".into())],
         );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
@@ -1700,8 +1701,8 @@ mod tests {
             &editor,
             cx,
             &"
-                - foo
-                + ˇFOO
+                - ˇfoo
+                + FOO
             "
             .unindent(),
         );
@@ -1808,6 +1809,12 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo", "original\n".into())],
+            "deadbeef",
+        );
+
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/project/foo"), cx)
@@ -1822,13 +1829,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("foo", "original\n".into())],
-            "deadbeef",
-        );
-        cx.run_until_parked();
-
         let diff_editor =
             diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
 
@@ -1836,8 +1836,8 @@ mod tests {
             &diff_editor,
             cx,
             &"
-                - original
-                + ˇmodified
+                - ˇoriginal
+                + modified
             "
             .unindent(),
         );
@@ -1900,9 +1900,9 @@ mod tests {
             &diff_editor,
             cx,
             &"
-                - original
+                - ˇoriginal
                 + different
-                  ˇ"
+            "
             .unindent(),
         );
     }

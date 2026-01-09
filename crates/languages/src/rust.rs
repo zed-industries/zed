@@ -2,12 +2,13 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use futures::lock::OwnedMutexGuard;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -18,6 +19,7 @@ use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
+use std::process::Stdio;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -66,6 +68,68 @@ enum LibcType {
 }
 
 impl RustLspAdapter {
+    fn convert_rust_analyzer_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
+        let Some(schema_array) = raw_schema.as_array() else {
+            return raw_schema.clone();
+        };
+
+        let mut root_properties = serde_json::Map::new();
+
+        for item in schema_array {
+            if let Some(props) = item.get("properties").and_then(|p| p.as_object()) {
+                for (key, value) in props {
+                    let parts: Vec<&str> = key.split('.').collect();
+
+                    if parts.is_empty() {
+                        continue;
+                    }
+
+                    let parts_to_process = if parts.first() == Some(&"rust-analyzer") {
+                        &parts[1..]
+                    } else {
+                        &parts[..]
+                    };
+
+                    if parts_to_process.is_empty() {
+                        continue;
+                    }
+
+                    let mut current = &mut root_properties;
+
+                    for (i, part) in parts_to_process.iter().enumerate() {
+                        let is_last = i == parts_to_process.len() - 1;
+
+                        if is_last {
+                            current.insert(part.to_string(), value.clone());
+                        } else {
+                            let next_current = current
+                                .entry(part.to_string())
+                                .or_insert_with(|| {
+                                    serde_json::json!({
+                                        "type": "object",
+                                        "properties": {}
+                                    })
+                                })
+                                .as_object_mut()
+                                .expect("should be an object")
+                                .entry("properties")
+                                .or_insert_with(|| serde_json::json!({}))
+                                .as_object_mut()
+                                .expect("properties should be an object");
+
+                            current = next_current;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": root_properties
+        })
+    }
+
     #[cfg(target_os = "linux")]
     async fn determine_libc_type() -> LibcType {
         use futures::pin_mut;
@@ -355,7 +419,7 @@ impl LspAdapter for RustLspAdapter {
                         | lsp::CompletionTextEdit::Edit(lsp::TextEdit { new_text, .. }),
                     ) = completion.text_edit.as_ref()
                     && let Ok(mut snippet) = snippet::Snippet::parse(new_text)
-                    && !snippet.tabstops.is_empty()
+                    && snippet.tabstops.len() > 1
                 {
                     label = String::new();
 
@@ -375,16 +439,20 @@ impl LspAdapter for RustLspAdapter {
                         let start_pos = range.start as usize;
                         let end_pos = range.end as usize;
 
-                        label.push_str(&snippet.text[text_pos..end_pos]);
-                        text_pos = end_pos;
+                        label.push_str(&snippet.text[text_pos..start_pos]);
 
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
                             runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
                         } else {
-                            runs.push((start_pos..end_pos, HighlightId::TABSTOP_REPLACE_ID));
+                            let label_start = label.len();
+                            label.push_str(&snippet.text[start_pos..end_pos]);
+                            let label_end = label.len();
+                            runs.push((label_start..label_end, HighlightId::TABSTOP_REPLACE_ID));
                         }
+
+                        text_pos = end_pos;
                     }
 
                     label.push_str(&snippet.text[text_pos..]);
@@ -417,7 +485,9 @@ impl LspAdapter for RustLspAdapter {
                             0..label.rfind('(').unwrap_or(completion.label.len()),
                             highlight_id,
                         ));
-                    } else if detail_left.is_none() {
+                    } else if detail_left.is_none()
+                        && kind != Some(lsp::CompletionItemKind::SNIPPET)
+                    {
                         return None;
                     }
                 }
@@ -440,6 +510,55 @@ impl LspAdapter for RustLspAdapter {
         }
 
         Some(label)
+    }
+
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let binary = self
+            .get_language_server_command(
+                delegate.clone(),
+                None,
+                LanguageServerBinaryOptions {
+                    allow_path_lookup: true,
+                    allow_binary_download: false,
+                    pre_release: false,
+                },
+                cached_binary,
+                cx.clone(),
+            )
+            .await
+            .0
+            .ok()?;
+
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
+            .arg("--print-config-schema")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let cmd = command
+            .spawn()
+            .map_err(|e| log::debug!("failed to spawn command {command:?}: {e}"))
+            .ok()?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| log::debug!("failed to execute command {command:?}: {e}"))
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let raw_schema: serde_json::Value = serde_json::from_slice(output.stdout.as_slice())
+            .map_err(|e| log::debug!("failed to parse rust-analyzer's JSON schema output: {e}"))
+            .ok()?;
+
+        // Convert rust-analyzer's array-based schema format to nested JSON Schema
+        let converted_schema = Self::convert_rust_analyzer_schema(&raw_schema);
+        Some(converted_schema)
     }
 
     async fn label_for_symbol(
@@ -1126,9 +1245,11 @@ fn package_name_from_pkgid(pkgid: &str) -> Option<&str> {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    maybe!(async {
+    let binary_result = maybe!(async {
         let mut last = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
+        let mut entries = fs::read_dir(&container_dir)
+            .await
+            .with_context(|| format!("listing {container_dir:?}"))?;
         while let Some(entry) = entries.next().await {
             let path = entry?.path();
             if path.extension().is_some_and(|ext| ext == "metadata") {
@@ -1137,20 +1258,34 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             last = Some(path);
         }
 
-        let path = last.context("no cached binary")?;
+        let path = match last {
+            Some(last) => last,
+            None => return Ok(None),
+        };
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
             AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
         };
 
-        anyhow::Ok(LanguageServerBinary {
+        anyhow::Ok(Some(LanguageServerBinary {
             path,
             env: None,
-            arguments: Default::default(),
-        })
+            arguments: Vec::new(),
+        }))
     })
-    .await
-    .log_err()
+    .await;
+
+    match binary_result {
+        Ok(Some(binary)) => Some(binary),
+        Ok(None) => {
+            log::info!("No cached rust-analyzer binary found");
+            None
+        }
+        Err(e) => {
+            log::error!("Failed to look up cached rust-analyzer binary: {e:#}");
+            None
+        }
+    }
 }
 
 fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
@@ -1576,6 +1711,78 @@ mod tests {
                 ],
             ))
         );
+
+        // Postfix completion without actual tabstops (only implicit final $0)
+        // The label should use completion.label so it can be filtered by "ref"
+        let ref_completion = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::SNIPPET),
+                    label: "ref".to_string(),
+                    filter_text: Some("ref".to_string()),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("&expr".to_string()),
+                    }),
+                    detail: Some("&expr".to_string()),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::default(),
+                        new_text: "&String::new()".to_string(),
+                    })),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+        assert!(
+            ref_completion.is_some(),
+            "ref postfix completion should have a label"
+        );
+        let ref_label = ref_completion.unwrap();
+        let filter_text = &ref_label.text[ref_label.filter_range.clone()];
+        assert!(
+            filter_text.contains("ref"),
+            "filter range text '{filter_text}' should contain 'ref' for filtering to work",
+        );
+
+        // Test for correct range calculation with mixed empty and non-empty tabstops.(See https://github.com/zed-industries/zed/issues/44825)
+        let res = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::STRUCT),
+                    label: "Particles".to_string(),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::default(),
+                        new_text: "Particles { pos_x: $1, pos_y: $2, vel_x: $3, vel_y: $4, acc_x: ${5:()}, acc_y: ${6:()}, mass: $7 }$0".to_string(),
+                    })),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            res,
+            CodeLabel::new(
+                "Particles { pos_x: …, pos_y: …, vel_x: …, vel_y: …, acc_x: (), acc_y: (), mass: … }".to_string(),
+                0..9,
+                vec![
+                    (19..22, HighlightId::TABSTOP_INSERT_ID),
+                    (31..34, HighlightId::TABSTOP_INSERT_ID),
+                    (43..46, HighlightId::TABSTOP_INSERT_ID),
+                    (55..58, HighlightId::TABSTOP_INSERT_ID),
+                    (67..69, HighlightId::TABSTOP_REPLACE_ID),
+                    (78..80, HighlightId::TABSTOP_REPLACE_ID),
+                    (88..91, HighlightId::TABSTOP_INSERT_ID),
+                    (0..9, highlight_type),
+                    (60..65, highlight_field),
+                    (71..76, highlight_field),
+                ],
+            )
+        );
     }
 
     #[gpui::test]
@@ -1817,5 +2024,91 @@ mod tests {
             "--bin=x",
         );
         check([], "/project/src/main.rs", "--");
+    }
+
+    #[test]
+    fn test_convert_rust_analyzer_schema() {
+        let raw_schema = serde_json::json!([
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.emitMustUse": {
+                        "markdownDescription": "Insert #[must_use] when generating `as_` methods for enum variants.",
+                        "default": false,
+                        "type": "boolean"
+                    }
+                }
+            },
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.expressionFillDefault": {
+                        "markdownDescription": "Placeholder expression to use for missing expressions in assists.",
+                        "default": "todo",
+                        "type": "string"
+                    }
+                }
+            },
+            {
+                "title": "Cache Priming",
+                "properties": {
+                    "rust-analyzer.cachePriming.enable": {
+                        "markdownDescription": "Warm up caches on project load.",
+                        "default": true,
+                        "type": "boolean"
+                    }
+                }
+            }
+        ]);
+
+        let converted = RustLspAdapter::convert_rust_analyzer_schema(&raw_schema);
+
+        assert_eq!(
+            converted.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        let properties = converted
+            .pointer("/properties")
+            .expect("should have properties")
+            .as_object()
+            .expect("properties should be object");
+
+        assert!(properties.contains_key("assist"));
+        assert!(properties.contains_key("cachePriming"));
+        assert!(!properties.contains_key("rust-analyzer"));
+
+        let assist_props = properties
+            .get("assist")
+            .expect("should have assist")
+            .pointer("/properties")
+            .expect("assist should have properties")
+            .as_object()
+            .expect("assist properties should be object");
+
+        assert!(assist_props.contains_key("emitMustUse"));
+        assert!(assist_props.contains_key("expressionFillDefault"));
+
+        let emit_must_use = assist_props
+            .get("emitMustUse")
+            .expect("should have emitMustUse");
+        assert_eq!(
+            emit_must_use.get("type").and_then(|v| v.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            emit_must_use.get("default").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let cache_priming_props = properties
+            .get("cachePriming")
+            .expect("should have cachePriming")
+            .pointer("/properties")
+            .expect("cachePriming should have properties")
+            .as_object()
+            .expect("cachePriming properties should be object");
+
+        assert!(cache_priming_props.contains_key("enable"));
     }
 }

@@ -502,6 +502,11 @@
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem", // not a helix default
       "g .": "vim::HelixGotoLastModification",
+      "g o": "editor::ToggleSelectedDiffHunks", // Zed specific
+      "g shift-o": "git::ToggleStaged", // Zed specific
+      "g shift-r": "git::Restore", // Zed specific
+      "g u": "git::StageAndNext", // Zed specific
+      "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
       "space w v": "pane::SplitDown",
@@ -638,6 +643,9 @@
     "context": "vim_operator == helix_m",
     "bindings": {
       "m": "vim::Matching",
+      "s": "vim::PushHelixSurroundAdd",
+      "r": "vim::PushHelixSurroundReplace",
+      "d": "vim::PushHelixSurroundDelete",
     },
   },
   {
@@ -970,10 +978,38 @@
   {
     "context": "OutlinePanel && not_editing",
     "bindings": {
-      "j": "menu::SelectNext",
-      "k": "menu::SelectPrevious",
+      "h": "outline_panel::CollapseSelectedEntry",
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
+      "down": "vim::MenuSelectNext",
+      "up": "vim::MenuSelectPrevious",
+      "l": "outline_panel::ExpandSelectedEntry",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
+      "-": "outline_panel::SelectParent",
+      "enter": "editor::ToggleFocus",
+      "/": "menu::Cancel",
+      "ctrl-u": "outline_panel::ScrollUp",
+      "ctrl-d": "outline_panel::ScrollDown",
+      "z t": "outline_panel::ScrollCursorTop",
+      "z z": "outline_panel::ScrollCursorCenter",
+      "z b": "outline_panel::ScrollCursorBottom",
+      "0": ["vim::Number", 0],
+      "1": ["vim::Number", 1],
+      "2": ["vim::Number", 2],
+      "3": ["vim::Number", 3],
+      "4": ["vim::Number", 4],
+      "5": ["vim::Number", 5],
+      "6": ["vim::Number", 6],
+      "7": ["vim::Number", 7],
+      "8": ["vim::Number", 8],
+      "9": ["vim::Number", 9],
+    },
+  },
+  {
+    "context": "OutlinePanel && editing",
+    "bindings": {
+      "enter": "menu::Cancel",
     },
   },
   {
@@ -1062,6 +1098,15 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+    },
+  },
+  {
+    "context": "FileHistoryView",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
     },
   },
 ]

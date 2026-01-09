@@ -1,5 +1,5 @@
 use collections::{HashMap, IndexMap};
-use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight, SharedString};
+use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, SharedString};
 use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -15,8 +15,7 @@ use crate::serialize_f32_with_two_decimal_places;
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub ui_font_size: Option<f32>,
+    pub ui_font_size: Option<FontSize>,
     /// The name of a font to use for rendering in the UI.
     pub ui_font_family: Option<FontFamilyName>,
     /// The font fallbacks to use for rendering in the UI.
@@ -35,8 +34,7 @@ pub struct ThemeSettingsContent {
     #[schemars(extend("uniqueItems" = true))]
     pub buffer_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The default font size for rendering in text buffers.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub buffer_font_size: Option<f32>,
+    pub buffer_font_size: Option<FontSize>,
     /// The weight of the editor font in CSS units from 100 to 900.
     #[schemars(default = "default_buffer_font_weight")]
     pub buffer_font_weight: Option<FontWeight>,
@@ -46,11 +44,9 @@ pub struct ThemeSettingsContent {
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub agent_ui_font_size: Option<f32>,
+    pub agent_ui_font_size: Option<FontSize>,
     /// The font size for user messages in the agent panel.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub agent_buffer_font_size: Option<f32>,
+    pub agent_buffer_font_size: Option<FontSize>,
     /// The name of the Zed theme to use.
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
@@ -77,6 +73,46 @@ pub struct ThemeSettingsContent {
     /// These values will override the ones on the specified theme
     #[serde(default)]
     pub theme_overrides: HashMap<String, ThemeStyleContent>,
+}
+
+/// A font size value in pixels, wrapping around `f32` for custom settings UI rendering.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct FontSize(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32);
+
+impl Display for FontSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for FontSize {
+    fn from(value: f32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<FontSize> for Pixels {
+    fn from(value: FontSize) -> Self {
+        value.0.into()
+    }
+}
+
+impl From<Pixels> for FontSize {
+    fn from(value: Pixels) -> Self {
+        Self(value.into())
+    }
 }
 
 #[derive(
@@ -145,6 +181,19 @@ pub enum ThemeSelection {
         /// The theme to use for dark mode.
         dark: ThemeName,
     },
+}
+
+pub const DEFAULT_LIGHT_THEME: &'static str = "One Light";
+pub const DEFAULT_DARK_THEME: &'static str = "One Dark";
+
+impl Default for ThemeSelection {
+    fn default() -> Self {
+        Self::Dynamic {
+            mode: ThemeAppearanceMode::default(),
+            light: ThemeName(DEFAULT_LIGHT_THEME.into()),
+            dark: ThemeName(DEFAULT_DARK_THEME.into()),
+        }
+    }
 }
 
 /// Represents the selection of an icon theme, which can be either static or dynamic.

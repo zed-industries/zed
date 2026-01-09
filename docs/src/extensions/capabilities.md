@@ -62,7 +62,7 @@ The `download_file` capability grants extensions the ability to download files u
 To allow any file to be downloaded:
 
 ```toml
-{ kind = "download_file", host = "github.com", path = ["**"] }
+{ kind = "download_file", host = "*", path = ["**"] }
 ```
 
 To allow any file to be downloaded from `github.com`:

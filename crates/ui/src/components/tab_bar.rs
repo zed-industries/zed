@@ -162,6 +162,7 @@ impl RenderOnce for TabBar {
                             .when(!self.end_children.is_empty(), |div| {
                                 div.child(
                                     h_flex()
+                                        .h_full()
                                         .flex_none()
                                         .pl(DynamicSpacing::Base04.rems(cx))
                                         .gap(DynamicSpacing::Base04.rems(cx))

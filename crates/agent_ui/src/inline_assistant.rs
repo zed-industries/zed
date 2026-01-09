@@ -300,7 +300,7 @@ impl InlineAssistant {
         if let Some(error) = configuration_error() {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
-                    cx.update(|cx| provider.authenticate(cx))?.await?;
+                    cx.update(|cx| provider.authenticate(cx)).await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -1197,7 +1197,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
+            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
             .ok();
     }
 
@@ -1209,7 +1209,7 @@ impl InlineAssistant {
         if let Some(decorations) = assist.decorations.as_ref() {
             decorations.prompt_editor.update(cx, |prompt_editor, cx| {
                 prompt_editor.editor.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.select_all(&SelectAll, window, cx);
                 })
             });
@@ -1259,28 +1259,26 @@ impl InlineAssistant {
                 let bottom = top + 1.0;
                 (top, bottom)
             });
-            let mut scroll_target_top = scroll_target_range.0;
-            let mut scroll_target_bottom = scroll_target_range.1;
-
-            scroll_target_top -= editor.vertical_scroll_margin() as ScrollOffset;
-            scroll_target_bottom += editor.vertical_scroll_margin() as ScrollOffset;
-
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
+            let vertical_scroll_margin = editor.vertical_scroll_margin() as ScrollOffset;
+            let scroll_target_top = (scroll_target_range.0 - vertical_scroll_margin)
+                // Don't scroll up too far in the case of a large vertical_scroll_margin.
+                .max(scroll_target_range.0 - height_in_lines / 2.0);
+            let scroll_target_bottom = (scroll_target_range.1 + vertical_scroll_margin)
+                // Don't scroll down past where the top would still be visible.
+                .min(scroll_target_top + height_in_lines);
+
             let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
 
             if scroll_target_top < scroll_top {
                 editor.set_scroll_position(point(0., scroll_target_top), window, cx);
             } else if scroll_target_bottom > scroll_bottom {
-                if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
-                    editor.set_scroll_position(
-                        point(0., scroll_target_bottom - height_in_lines),
-                        window,
-                        cx,
-                    );
-                } else {
-                    editor.set_scroll_position(point(0., scroll_target_top), window, cx);
-                }
+                editor.set_scroll_position(
+                    point(0., scroll_target_bottom - height_in_lines),
+                    window,
+                    cx,
+                );
             }
         });
     }
@@ -1635,7 +1633,7 @@ impl EditorInlineAssists {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
                             assistant.update_editor_highlights(&editor, cx);
-                        })?;
+                        });
                     }
                     Ok(())
                 }
@@ -1980,7 +1978,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                         let multibuffer_snapshot = multibuffer.read(cx);
                         multibuffer_snapshot.anchor_range_in_excerpt(excerpt_id, action.range)
                     })
-                })?
+                })
                 .context("invalid range")?;
 
             let prompt_store = prompt_store.await.ok();
@@ -2268,6 +2266,36 @@ pub mod evals {
                 }
             "},
             uncertain_output,
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_empty_buffer() {
+        run_eval(
+            20,
+            1.0,
+            "Write a Python hello, world program".to_string(),
+            "ˇ".to_string(),
+            |output| match output {
+                InlineAssistantOutput::Success {
+                    full_buffer_text, ..
+                } => {
+                    if full_buffer_text.is_empty() {
+                        EvalOutput::failed("expected some output".to_string())
+                    } else {
+                        EvalOutput::passed(format!("Produced {full_buffer_text}"))
+                    }
+                }
+                o @ InlineAssistantOutput::Failure { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+                o @ InlineAssistantOutput::Malformed { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+            },
         );
     }
 

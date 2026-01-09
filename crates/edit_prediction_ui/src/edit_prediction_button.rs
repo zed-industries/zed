@@ -36,8 +36,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
-    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
+    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -487,6 +487,21 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
+        cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
+            .detach();
+
+        let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
+        let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
+
+        cx.spawn(async move |this, cx| {
+            _ = futures::join!(sweep_api_token_task, mercury_api_token_task);
+            this.update(cx, |_, cx| {
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
         CodestralEditPredictionDelegate::ensure_api_key_loaded(client.http_client(), cx);
 
         Self {
@@ -503,7 +518,7 @@ impl EditPredictionButton {
         }
     }
 
-    fn get_available_providers(&self, cx: &App) -> Vec<EditPredictionProvider> {
+    fn get_available_providers(&self, cx: &mut App) -> Vec<EditPredictionProvider> {
         let mut providers = Vec::new();
 
         providers.push(EditPredictionProvider::Zed);
@@ -532,12 +547,10 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
-        let ep_store = EditPredictionStore::try_global(cx);
-
         if cx.has_flag::<SweepFeatureFlag>()
-            && ep_store
-                .as_ref()
-                .is_some_and(|ep_store| ep_store.read(cx).has_sweep_api_token(cx))
+            && edit_prediction::sweep_ai::sweep_api_token(cx)
+                .read(cx)
+                .has_key()
         {
             providers.push(EditPredictionProvider::Experimental(
                 EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
@@ -545,9 +558,9 @@ impl EditPredictionButton {
         }
 
         if cx.has_flag::<MercuryFeatureFlag>()
-            && ep_store
-                .as_ref()
-                .is_some_and(|ep_store| ep_store.read(cx).has_mercury_api_token(cx))
+            && edit_prediction::mercury::mercury_api_token(cx)
+                .read(cx)
+                .has_key()
         {
             providers.push(EditPredictionProvider::Experimental(
                 EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
@@ -667,7 +680,7 @@ impl EditPredictionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -713,7 +726,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -726,7 +739,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -765,7 +778,8 @@ impl EditPredictionButton {
                             .toggleable(IconPosition::Start, data_collection.is_enabled())
                             .icon(icon_name)
                             .icon_color(icon_color)
-                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |cx| {
+                            .disabled(cx.is_staff())
+                            .documentation_aside(DocumentationSide::Left, move |cx| {
                                 let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                     (true, true) => (
                                         "Project identified as open source, and you're sharing data.",
@@ -849,7 +863,7 @@ impl EditPredictionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_| {
+                .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })
@@ -902,11 +916,8 @@ impl EditPredictionButton {
                 .when(
                     cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
                     |this| {
-                        this.action(
-                            "Capture Edit Prediction Example",
-                            CaptureExample.boxed_clone(),
-                        )
-                        .action("Rate Predictions", RatePredictions.boxed_clone())
+                        this.action("Capture Prediction Example", CaptureExample.boxed_clone())
+                            .action("Rate Predictions", RatePredictions.boxed_clone())
                     },
                 );
         }

@@ -1,9 +1,8 @@
 use crate::{
     dev_container::start_dev_container,
     remote_connections::{
-        Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
-        SshConnectionHeader, SshSettings, connect, determine_paths_with_positions,
-        open_remote_project,
+        Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettings, SshConnection,
+        SshConnectionHeader, connect, determine_paths_with_positions, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -76,7 +75,7 @@ impl CreateRemoteServer {
     fn new(window: &mut Window, cx: &mut App) -> Self {
         let address_editor = cx.new(|cx| Editor::single_line(window, cx));
         address_editor.update(cx, |this, cx| {
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
         });
         Self {
             address_editor,
@@ -107,7 +106,7 @@ struct CreateRemoteDevContainer {
 impl CreateRemoteDevContainer {
     fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
         let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
-        entries[0].focus_handle.focus(window);
+        entries[0].focus_handle.focus(window, cx);
         Self {
             entries,
             progress: DevContainerCreationProgress::Initial,
@@ -188,7 +187,7 @@ impl EditNicknameState {
             index,
             editor: cx.new(|cx| Editor::single_line(window, cx)),
         };
-        let starting_text = SshSettings::get_global(cx)
+        let starting_text = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(index.0)
             .and_then(|state| state.nickname)
@@ -199,7 +198,7 @@ impl EditNicknameState {
                 this.set_text(starting_text, window, cx);
             }
         });
-        this.editor.focus_handle(cx).focus(window);
+        this.editor.focus_handle(cx).focus(window, cx);
         this
     }
 }
@@ -217,14 +216,13 @@ impl ProjectPicker {
         connection: RemoteConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
-        path_style: PathStyle,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<RemoteServerProjects>,
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, path_style);
+        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, cx);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
@@ -245,6 +243,11 @@ impl ProjectPicker {
             RemoteConnectionOptions::Docker(_) => ProjectPickerData::Ssh {
                 // Not implemented as a project picker at this time
                 connection_string: "".into(),
+                nickname: None,
+            },
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => ProjectPickerData::Ssh {
+                connection_string: format!("mock-{}", options.id).into(),
                 nickname: None,
             },
         };
@@ -275,11 +278,9 @@ impl ProjectPicker {
                         .read_with(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
 
-                    let remote_connection = project
-                        .read_with(cx, |project, cx| {
-                            project.remote_client()?.read(cx).connection()
-                        })
-                        .ok()??;
+                    let remote_connection = project.read_with(cx, |project, cx| {
+                        project.remote_client()?.read(cx).connection()
+                    })?;
 
                     let (paths, paths_with_positions) =
                         determine_paths_with_positions(&remote_connection, paths).await;
@@ -494,7 +495,7 @@ impl DefaultState {
         let add_new_devcontainer = NavigableEntry::new(&handle, cx);
         let add_new_wsl = NavigableEntry::new(&handle, cx);
 
-        let ssh_settings = SshSettings::get_global(cx);
+        let ssh_settings = RemoteSettings::get_global(cx);
         let read_ssh_config = ssh_settings.read_ssh_config;
 
         let ssh_servers = ssh_settings
@@ -665,6 +666,20 @@ impl RemoteServerProjects {
         )
     }
 
+    pub fn popover(
+        fs: Arc<dyn Fs>,
+        workspace: WeakEntity<Workspace>,
+        create_new_window: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let server = Self::new(create_new_window, fs, window, workspace, cx);
+            server.focus_handle(cx).focus(window, cx);
+            server
+        })
+    }
+
     fn new_inner(
         mode: Mode,
         create_new_window: bool,
@@ -674,7 +689,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let mut read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
+        let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
             spawn_ssh_config_watch(fs.clone(), cx)
         } else {
@@ -689,7 +704,7 @@ impl RemoteServerProjects {
 
         let _subscription =
             cx.observe_global_in::<SettingsStore>(window, move |recent_projects, _, cx| {
-                let new_read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
+                let new_read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
                 if read_ssh_config != new_read_ssh_config {
                     read_ssh_config = new_read_ssh_config;
                     if read_ssh_config {
@@ -719,7 +734,6 @@ impl RemoteServerProjects {
         connection_options: remote::RemoteConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
-        path_style: PathStyle,
         window: &mut Window,
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
@@ -732,7 +746,6 @@ impl RemoteServerProjects {
             connection_options,
             project,
             home_dir,
-            path_style,
             workspace,
             window,
             cx,
@@ -795,7 +808,7 @@ impl RemoteServerProjects {
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                        this.focus_handle(cx).focus(window);
+                        this.focus_handle(cx).focus(window, cx);
                         cx.notify()
                     })
                     .log_err(),
@@ -878,7 +891,7 @@ impl RemoteServerProjects {
 
                     crate::add_wsl_distro(fs, &connection_options, cx);
                     this.mode = Mode::default_mode(&BTreeSet::new(), cx);
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                     cx.notify();
                 }),
                 _ => this.update(cx, |this, cx| {
@@ -927,7 +940,7 @@ impl RemoteServerProjects {
                 return;
             }
         });
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -936,7 +949,7 @@ impl RemoteServerProjects {
             CreateRemoteDevContainer::new(window, cx)
                 .progress(DevContainerCreationProgress::Creating),
         );
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -1003,13 +1016,14 @@ impl RemoteServerProjects {
                                 app_state.user_store.clone(),
                                 app_state.languages.clone(),
                                 app_state.fs.clone(),
+                                true,
                                 cx,
                             ),
                         )
                     })?;
 
                     let home_dir = project
-                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))?
+                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))
                         .await
                         .and_then(|path| path.into_abs_path())
                         .map(|path| RemotePathBuf::new(path, path_style))
@@ -1030,7 +1044,6 @@ impl RemoteServerProjects {
                                     connection_options,
                                     project,
                                     home_dir,
-                                    path_style,
                                     window,
                                     cx,
                                     weak,
@@ -1071,7 +1084,7 @@ impl RemoteServerProjects {
                     }
                 });
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             }
             #[cfg(target_os = "windows")]
             Mode::AddWslDistro(state) => {
@@ -1097,7 +1110,7 @@ impl RemoteServerProjects {
             }
             _ => {
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
-                self.focus_handle(cx).focus(window);
+                self.focus_handle(cx).focus(window, cx);
                 cx.notify();
             }
         }
@@ -1401,11 +1414,12 @@ impl RemoteServerProjects {
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(project.paths.join(", ")))
+                    .child(Label::new(project.paths.join(", ")).truncate_start())
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
+                    .tooltip(Tooltip::text(project.paths.join("\n")))
                     .when(is_from_zed, |server_list_item| {
                         server_list_item.end_hover_slot::<AnyElement>(Some(
                             div()
@@ -1521,7 +1535,7 @@ impl RemoteServerProjects {
                 .ssh_connections
                 .get_or_insert(Default::default())
                 .push(SshConnection {
-                    host: SharedString::from(connection_options.host),
+                    host: SharedString::from(connection_options.host.to_string()),
                     username: connection_options.username,
                     port: connection_options.port,
                     projects: BTreeSet::new(),
@@ -1529,6 +1543,7 @@ impl RemoteServerProjects {
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
                     port_forwards: connection_options.port_forwards,
+                    connection_timeout: connection_options.connection_timeout,
                 })
         });
     }
@@ -1642,7 +1657,7 @@ impl RemoteServerProjects {
     ) -> impl IntoElement {
         match &state.progress {
             DevContainerCreationProgress::Error(message) => {
-                self.focus_handle(cx).focus(window);
+                self.focus_handle(cx).focus(window, cx);
                 return div()
                     .track_focus(&self.focus_handle(cx))
                     .size_full()
@@ -1954,7 +1969,7 @@ impl RemoteServerProjects {
         let connection_prompt = state.connection_prompt.clone();
 
         state.picker.update(cx, |picker, cx| {
-            picker.focus_handle(cx).focus(window);
+            picker.focus_handle(cx).focus(window, cx);
         });
 
         v_flex()
@@ -1985,7 +2000,7 @@ impl RemoteServerProjects {
                 .size_full()
                 .child(match &options {
                     ViewServerOptionsState::Ssh { connection, .. } => SshConnectionHeader {
-                        connection_string: connection.host.clone().into(),
+                        connection_string: connection.host.to_string().into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
                         is_wsl: false,
@@ -2101,17 +2116,13 @@ impl RemoteServerProjects {
 
                 cx.spawn(async move |cx| {
                     if confirmation.await.ok() == Some(0) {
-                        remote_servers
-                            .update(cx, |this, cx| {
-                                this.delete_wsl_distro(index, cx);
-                            })
-                            .ok();
-                        remote_servers
-                            .update(cx, |this, cx| {
-                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                cx.notify();
-                            })
-                            .ok();
+                        remote_servers.update(cx, |this, cx| {
+                            this.delete_wsl_distro(index, cx);
+                        });
+                        remote_servers.update(cx, |this, cx| {
+                            this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                            cx.notify();
+                        });
                     }
                     anyhow::Ok(())
                 })
@@ -2150,7 +2161,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection_string = SharedString::new(connection.host.clone());
+        let connection_string = SharedString::new(connection.host.to_string());
 
         v_flex()
             .child({
@@ -2257,17 +2268,13 @@ impl RemoteServerProjects {
 
                     cx.spawn(async move |cx| {
                         if confirmation.await.ok() == Some(0) {
-                            remote_servers
-                                .update(cx, |this, cx| {
-                                    this.delete_ssh_server(index, cx);
-                                })
-                                .ok();
-                            remote_servers
-                                .update(cx, |this, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                    cx.notify();
-                                })
-                                .ok();
+                            remote_servers.update(cx, |this, cx| {
+                                this.delete_ssh_server(index, cx);
+                            });
+                            remote_servers.update(cx, |this, cx| {
+                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                cx.notify();
+                            });
                         }
                         anyhow::Ok(())
                     })
@@ -2316,7 +2323,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(connection) = SshSettings::get_global(cx)
+        let Some(connection) = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(state.index.0)
         else {
@@ -2356,7 +2363,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let ssh_settings = SshSettings::get_global(cx);
+        let ssh_settings = RemoteSettings::get_global(cx);
         let mut should_rebuild = false;
 
         let ssh_connections_changed = ssh_settings.ssh_connections.0.iter().ne(state
@@ -2661,7 +2668,7 @@ impl RemoteServerProjects {
 
         self.add_ssh_server(
             SshConnectionOptions {
-                host: ssh_config_host.to_string(),
+                host: ssh_config_host.to_string().into(),
                 ..SshConnectionOptions::default()
             },
             cx,
@@ -2754,7 +2761,7 @@ impl Render for RemoteServerProjects {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             }))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if matches!(this.mode, Mode::Default(_)) {

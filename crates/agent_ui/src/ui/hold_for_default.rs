@@ -27,7 +27,7 @@ impl RenderOnce for HoldForDefault {
                 PlatformStyle::platform(),
                 None,
                 Some(TextSize::Default.rems(cx).into()),
-                true,
+                false,
             )))
             .child(div().map(|this| {
                 if self.is_default {

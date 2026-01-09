@@ -1,5 +1,5 @@
 use editor::{
-    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -10,7 +10,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::ops::Range;
+use std::{f64, ops::Range};
 use workspace::searchable::Direction;
 
 use crate::{
@@ -1032,7 +1032,7 @@ impl Motion {
             ),
             EndOfLine { display_lines } => (
                 end_of_line(map, *display_lines, point, times),
-                SelectionGoal::None,
+                SelectionGoal::HorizontalPosition(f64::INFINITY),
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
@@ -2276,7 +2276,6 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             .offset_to_point(excerpt.map_offset_from_buffer(BufferOffset(offset)));
         return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
     }
-    let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot().excerpts() {
         let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
             ..language::ToOffset::to_offset(&range.context.end, buffer);
@@ -2287,13 +2286,8 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
         } else if offset <= excerpt_range.start {
             let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
-        } else {
-            last_position = Some(Anchor::in_buffer(excerpt, range.context.end));
         }
     }
-
-    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot());
-    last_point.column = point.column;
 
     map.clip_point(
         map.point_to_display_point(
@@ -2372,6 +2366,61 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
     None
 }
 
+const BRACKET_PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+
+fn get_bracket_pair(ch: char) -> Option<(char, char, bool)> {
+    for (open, close) in BRACKET_PAIRS {
+        if ch == open {
+            return Some((open, close, true));
+        }
+        if ch == close {
+            return Some((open, close, false));
+        }
+    }
+    None
+}
+
+fn find_matching_bracket_text_based(
+    map: &DisplaySnapshot,
+    offset: MultiBufferOffset,
+    line_range: Range<MultiBufferOffset>,
+) -> Option<MultiBufferOffset> {
+    let bracket_info = map
+        .buffer_chars_at(offset)
+        .take_while(|(_, char_offset)| *char_offset < line_range.end)
+        .find_map(|(ch, char_offset)| get_bracket_pair(ch).map(|info| (info, char_offset)));
+
+    let (open, close, is_opening) = bracket_info?.0;
+    let bracket_offset = bracket_info?.1;
+
+    let mut depth = 0i32;
+    if is_opening {
+        for (ch, char_offset) in map.buffer_chars_at(bracket_offset) {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(char_offset);
+                }
+            }
+        }
+    } else {
+        for (ch, char_offset) in map.reverse_buffer_chars_at(bracket_offset + close.len_utf8()) {
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(char_offset);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn matching(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -2442,10 +2491,10 @@ fn matching(
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
+    let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+        ..line_range.end.to_offset(&map.buffer_snapshot());
     let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
-        let line_range = line_range.start.to_offset(&map.buffer_snapshot())
-            ..line_range.end.to_offset(&map.buffer_snapshot());
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
 
@@ -2501,9 +2550,15 @@ fn matching(
 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
-            .unwrap_or(display_point)
+            .unwrap_or_else(|| {
+                find_matching_bracket_text_based(map, offset, line_range.clone())
+                    .map(|o| o.to_display_point(map))
+                    .unwrap_or(display_point)
+            })
     } else {
-        display_point
+        find_matching_bracket_text_based(map, offset, line_range)
+            .map(|o| o.to_display_point(map))
+            .unwrap_or(display_point)
     }
 }
 
@@ -3749,6 +3804,60 @@ mod test {
         cx.shared_state().await.assert_eq(" onˇe \n two \nthree");
         cx.simulate_shared_keystrokes("2 g _").await;
         cx.shared_state().await.assert_eq(" one \n twˇo \nthree");
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_with_vertical_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // test $ followed by k maintains end-of-line position
+        cx.set_shared_state(indoc! {"
+            The quick brown
+            fˇox
+            jumps over the
+            lazy dog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick browˇn
+            fox
+            jumps over the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("j j").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox
+            jumps over thˇe
+            lazy dog
+            "});
+
+        // test horizontal movement resets the end-of-line behavior
+        cx.set_shared_state(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy ˇdog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over thˇe
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("b b").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps ˇover the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quˇick brown fox
+            jumps over the
+            lazy dog
+            "});
     }
 
     #[gpui::test]

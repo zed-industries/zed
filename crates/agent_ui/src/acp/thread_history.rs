@@ -1,7 +1,7 @@
 use crate::acp::AcpThreadView;
 use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use agent::{HistoryEntry, HistoryStore};
-use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
+use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -402,7 +402,22 @@ impl AcpThreadHistory {
         let selected = ix == self.selected_index;
         let hovered = Some(ix) == self.hovered_index;
         let timestamp = entry.updated_at().timestamp();
-        let thread_timestamp = format.format_timestamp(timestamp, self.local_timezone);
+
+        let display_text = match format {
+            EntryTimeFormat::DateAndTime => {
+                let entry_time = entry.updated_at();
+                let now = Utc::now();
+                let duration = now.signed_duration_since(entry_time);
+                let days = duration.num_days();
+
+                format!("{}d", days)
+            }
+            EntryTimeFormat::TimeOnly => format.format_timestamp(timestamp, self.local_timezone),
+        };
+
+        let title = entry.title().clone();
+        let full_date =
+            EntryTimeFormat::DateAndTime.format_timestamp(timestamp, self.local_timezone);
 
         h_flex()
             .w_full()
@@ -423,11 +438,14 @@ impl AcpThreadHistory {
                                     .truncate(),
                             )
                             .child(
-                                Label::new(thread_timestamp)
+                                Label::new(display_text)
                                     .color(Color::Muted)
                                     .size(LabelSize::XSmall),
                             ),
                     )
+                    .tooltip(move |_, cx| {
+                        Tooltip::with_meta(title.clone(), None, full_date.clone(), cx)
+                    })
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         if *is_hovered {
                             this.hovered_index = Some(ix);

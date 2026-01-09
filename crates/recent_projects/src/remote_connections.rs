@@ -16,6 +16,7 @@ use gpui::{
 
 use language::{CursorShape, Point};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use project::trusted_worktrees;
 use release_channel::ReleaseChannel;
 use remote::{
     ConnectionIdentifier, DockerConnectionOptions, RemoteClient, RemoteConnection,
@@ -33,14 +34,14 @@ use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(RegisterSetting)]
-pub struct SshSettings {
+pub struct RemoteSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
 
-impl SshSettings {
+impl RemoteSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().0.into_iter()
     }
@@ -51,7 +52,7 @@ impl SshSettings {
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
         for conn in self.ssh_connections() {
-            if conn.host == options.host
+            if conn.host == options.host.to_string()
                 && conn.username == options.username
                 && conn.port == options.port
             {
@@ -71,7 +72,7 @@ impl SshSettings {
         username: Option<String>,
     ) -> SshConnectionOptions {
         let mut options = SshConnectionOptions {
-            host,
+            host: host.into(),
             port,
             username,
             ..Default::default()
@@ -116,7 +117,7 @@ impl From<WslConnection> for Connection {
     }
 }
 
-impl Settings for SshSettings {
+impl Settings for RemoteSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let remote = &content.remote;
         Self {
@@ -208,7 +209,7 @@ impl RemoteConnectionPrompt {
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
-        window.focus(&self.editor.focus_handle(cx));
+        window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -308,6 +309,10 @@ impl RemoteConnectionModal {
                 (options.distro_name.clone(), None, true, false)
             }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => {
+                (format!("mock-{}", options.id), None, false, false)
+            }
         };
         Self {
             prompt: cx.new(|cx| {
@@ -532,8 +537,8 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             AutoUpdater::download_remote_server_release(
                 release_channel,
                 version.clone(),
-                platform.os,
-                platform.arch,
+                platform.os.as_str(),
+                platform.arch.as_str(),
                 move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
@@ -563,8 +568,8 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             AutoUpdater::get_remote_server_release_url(
                 release_channel,
                 version,
-                platform.os,
-                platform.arch,
+                platform.os.as_str(),
+                platform.arch.as_str(),
                 cx,
             )
             .await
@@ -610,7 +615,7 @@ pub fn connect(
 
     cx.spawn(async move |cx| {
         let connection = remote::connect(connection_options, delegate.clone(), cx).await?;
-        cx.update(|cx| remote::RemoteClient::new(unique_identifier, connection, rx, delegate, cx))?
+        cx.update(|cx| remote::RemoteClient::new(unique_identifier, connection, rx, delegate, cx))
             .await
     })
 }
@@ -630,12 +635,12 @@ pub async fn open_remote_project(
             .update(|cx| {
                 // todo: These paths are wrong they may have column and line information
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })?
+            })
             .await
-            .context("fetching ssh workspace position from db")?;
+            .context("fetching remote workspace position from db")?;
 
         let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {
@@ -646,6 +651,7 @@ pub async fn open_remote_project(
                 app_state.languages.clone(),
                 app_state.fs.clone(),
                 None,
+                false,
                 cx,
             );
             cx.new(|cx| {
@@ -718,6 +724,10 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Docker(_) => {
                                         "Failed to connect to Dev Container"
                                     }
+                                    #[cfg(any(test, feature = "test-support"))]
+                                    RemoteConnectionOptions::Mock(_) => {
+                                        "Failed to connect to mock server"
+                                    }
                                 },
                                 Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
@@ -753,7 +763,7 @@ pub async fn open_remote_project(
                     paths.clone(),
                     cx,
                 )
-            })?
+            })
             .await;
 
         window
@@ -777,6 +787,10 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
+                                #[cfg(any(test, feature = "test-support"))]
+                                RemoteConnectionOptions::Mock(_) => {
+                                    "Failed to connect to mock server"
+                                }
                             },
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
@@ -788,11 +802,20 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                if created_new_window {
-                    window
-                        .update(cx, |_, window, _| window.remove_window())
-                        .ok();
-                }
+                window
+                    .update(cx, |workspace, window, cx| {
+                        if created_new_window {
+                            window.remove_window();
+                        }
+                        trusted_worktrees::track_worktree_trust(
+                            workspace.project().read(cx).worktree_store(),
+                            None,
+                            None,
+                            None,
+                            cx,
+                        );
+                    })
+                    .ok();
             }
 
             Ok(items) => {

@@ -30,11 +30,3 @@ snippet_provider.workspace = true
 task.workspace = true
 theme.workspace = true
 util.workspace = true
-
-
-
-# Uncomment other workspace dependencies as needed
-# assistant.workspace = true
-# client.workspace = true
-# project.workspace = true
-# settings.workspace = true
