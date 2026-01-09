@@ -451,7 +451,11 @@ message Envelope {
         
         ShareAgentThread share_agent_thread = 406;
         GetSharedAgentThread get_shared_agent_thread = 407;
-        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; // current max
+        GetSharedAgentThreadResponse get_shared_agent_thread_response = 408; 
+        
+        SemanticTokens semantic_tokens = 409;
+        SemanticTokensResponse semantic_tokens_response = 410;
+        RefreshSemanticTokens refresh_semantic_tokens = 411; // current max
     }
 
     reserved 87 to 88;

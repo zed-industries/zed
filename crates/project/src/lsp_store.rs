@@ -14,6 +14,7 @@ pub mod json_language_server_ext;
 pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
+mod semantic_tokens;
 pub mod vue_language_server_ext;
 
 mod inlay_hint_cache;
@@ -30,6 +31,7 @@ use crate::{
     lsp_store::{
         self,
         log_store::{GlobalLogStore, LanguageServerKind},
+        semantic_tokens::SemanticTokensData,
     },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
@@ -137,6 +139,7 @@ pub use language::Location;
 pub use lsp_store::inlay_hint_cache::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+pub use semantic_tokens::{BufferSemanticTokens, RefreshForServer};
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -1036,6 +1039,41 @@ impl LocalLspStore {
                             })
                         })?
                         .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::SemanticTokensRefresh, _, _>({
+                let lsp_store = lsp_store.clone();
+                let request_id = Arc::new(AtomicUsize::new(0));
+                move |(), cx| {
+                    let lsp_store = lsp_store.clone();
+                    let request_id = request_id.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        lsp_store
+                            .update(&mut cx, |lsp_store, cx| {
+                                let request_id =
+                                    Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
+                                cx.emit(LspStoreEvent::RefreshSemanticTokens {
+                                    server_id,
+                                    request_id,
+                                });
+                                lsp_store
+                                    .downstream_client
+                                    .as_ref()
+                                    .map(|(client, project_id)| {
+                                        client.send(proto::RefreshSemanticTokens {
+                                            project_id: *project_id,
+                                            server_id: server_id.to_proto(),
+                                            request_id: request_id.map(|id| id as u64),
+                                        })
+                                    })
+                            })?
+                            .transpose()?;
                         Ok(())
                     }
                 }
@@ -3772,6 +3810,7 @@ pub struct BufferLspData {
     buffer_version: Global,
     document_colors: Option<DocumentColorData>,
     code_lens: Option<CodeLensData>,
+    semantic_tokens: Option<SemanticTokensData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<LspKey, HashMap<RowChunk, LspRequestId>>,
@@ -3789,6 +3828,7 @@ impl BufferLspData {
             buffer_version: buffer.read(cx).version(),
             document_colors: None,
             code_lens: None,
+            semantic_tokens: None,
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
@@ -3806,6 +3846,13 @@ impl BufferLspData {
         }
 
         self.inlay_hints.remove_server_data(for_server);
+
+        if let Some(semantic_tokens) = &mut self.semantic_tokens {
+            semantic_tokens.buffer_tokens.servers.remove(&for_server);
+            semantic_tokens
+                .latest_invalidation_requests
+                .remove(&for_server);
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3853,6 +3900,10 @@ pub enum LspStoreEvent {
     },
     Notification(String),
     RefreshInlayHints {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
+    RefreshSemanticTokens {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
@@ -3937,6 +3988,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_get_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_refresh_semantic_tokens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
@@ -7365,7 +7417,7 @@ impl LspStore {
                                         diagnostics,
                                         version: None,
                                     },
-                                    result_id,
+                                    result_id: result_id.map(SharedString::new),
                                     disk_based_sources,
                                     registration_id: new_registration_id,
                                 });
@@ -8806,6 +8858,33 @@ impl LspStore {
         })
     }
 
+    fn local_lsp_servers_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Vec<LanguageServerId> {
+        let Some(local) = self.as_local() else {
+            return Vec::new();
+        };
+
+        let snapshot = buffer.read(cx).snapshot();
+
+        buffer.update(cx, |buffer, cx| {
+            local
+                .language_servers_for_buffer(buffer, cx)
+                .map(|(_, server)| server.server_id())
+                .filter(|server_id| {
+                    self.as_local().is_none_or(|local| {
+                        local
+                            .buffers_opened_in_servers
+                            .get(&snapshot.remote_id())
+                            .is_some_and(|servers| servers.contains(server_id))
+                    })
+                })
+                .collect()
+        })
+    }
+
     fn request_multiple_lsp_locally<P, R>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -9106,47 +9185,6 @@ impl LspStore {
                 )
                 .await?;
             }
-            Request::GetDocumentDiagnostics(get_document_diagnostics) => {
-                let buffer_id = BufferId::new(get_document_diagnostics.buffer_id())?;
-                let version = deserialize_version(get_document_diagnostics.buffer_version());
-                let buffer = lsp_store.update(&mut cx, |this, cx| {
-                    this.buffer_store.read(cx).get_existing(buffer_id)
-                })?;
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(version.clone())
-                    })
-                    .await?;
-                lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                    let key = LspKey {
-                        request_type: TypeId::of::<GetDocumentDiagnostics>(),
-                        server_queried: server_id,
-                    };
-                    if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
-                    ) {
-                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
-                            lsp_requests.clear();
-                        };
-                    }
-
-                    let existing_queries = lsp_data.lsp_requests.entry(key).or_default();
-                    existing_queries.insert(
-                        lsp_request_id,
-                        cx.spawn(async move |lsp_store, cx| {
-                            let diagnostics_pull = lsp_store.update(cx, |lsp_store, cx| {
-                                lsp_store.pull_diagnostics_for_buffer(buffer, cx)
-                            });
-                            if let Ok(diagnostics_pull) = diagnostics_pull {
-                                match diagnostics_pull.await {
-                                    Ok(()) => {}
-                                    Err(e) => log::error!("Failed to pull diagnostics: {e:#}"),
-                                };
-                            }
-                        }),
-                    );
-                });
-            }
             Request::InlayHints(inlay_hints) => {
                 let query_start = inlay_hints
                     .start
@@ -9179,6 +9217,118 @@ impl LspStore {
                 )
                 .await
                 .context("querying for inlay hints")?
+            }
+            //////////////////////////////
+            // Below are LSP queries that need to fetch more data,
+            // hence cannot just proxy the request to language server with `query_lsp_locally`.
+            Request::GetDocumentDiagnostics(get_document_diagnostics) => {
+                let (_, buffer) = Self::wait_for_buffer_version::<GetDocumentDiagnostics>(
+                    &lsp_store,
+                    &get_document_diagnostics,
+                    &mut cx,
+                )
+                .await?;
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
+                    let key = LspKey {
+                        request_type: TypeId::of::<GetDocumentDiagnostics>(),
+                        server_queried: server_id,
+                    };
+                    if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
+                    ) {
+                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
+                            lsp_requests.clear();
+                        };
+                    }
+
+                    lsp_data.lsp_requests.entry(key).or_default().insert(
+                        lsp_request_id,
+                        cx.spawn(async move |lsp_store, cx| {
+                            let diagnostics_pull = lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                                })
+                                .ok();
+                            if let Some(diagnostics_pull) = diagnostics_pull {
+                                match diagnostics_pull.await {
+                                    Ok(()) => {}
+                                    Err(e) => log::error!("Failed to pull diagnostics: {e:#}"),
+                                };
+                            }
+                        }),
+                    );
+                });
+            }
+            Request::SemanticTokens(semantic_tokens) => {
+                let (buffer_version, buffer) = Self::wait_for_buffer_version::<SemanticTokensFull>(
+                    &lsp_store,
+                    &semantic_tokens,
+                    &mut cx,
+                )
+                .await?;
+                let for_server = semantic_tokens.for_server.map(LanguageServerId::from_proto);
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
+                    let key = LspKey {
+                        request_type: TypeId::of::<SemanticTokensFull>(),
+                        server_queried: server_id,
+                    };
+                    if <SemanticTokensFull as LspCommand>::ProtoRequest::stop_previous_requests() {
+                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
+                            lsp_requests.clear();
+                        };
+                    }
+
+                    lsp_data.lsp_requests.entry(key).or_default().insert(
+                        lsp_request_id,
+                        cx.spawn(async move |lsp_store, cx| {
+                            let tokens_fetch = lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    lsp_store
+                                        .fetch_semantic_tokens_for_buffer(&buffer, for_server, cx)
+                                })
+                                .ok();
+                            if let Some(tokens_fetch) = tokens_fetch {
+                                let new_tokens = tokens_fetch.await.unwrap_or_default();
+                                lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        if let Some((client, project_id)) =
+                                            lsp_store.downstream_client.clone()
+                                        {
+                                            let response = new_tokens
+                                                .into_iter()
+                                                .map(|(server_id, response)| {
+                                                    (
+                                                        server_id.to_proto(),
+                                                        SemanticTokensFull::response_to_proto(
+                                                            response,
+                                                            lsp_store,
+                                                            sender_id,
+                                                            &buffer_version,
+                                                            cx,
+                                                        ),
+                                                    )
+                                                })
+                                                .collect::<HashMap<_, _>>();
+                                            match client.send_lsp_response::<<SemanticTokensFull as LspCommand>::ProtoRequest>(
+                                                project_id,
+                                                lsp_request_id,
+                                                response,
+                                            ) {
+                                                Ok(()) => {}
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "Failed to send semantic tokens LSP response: {e:#}",
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    })
+                                    .ok();
+                            }
+                        }),
+                    );
+                });
             }
         }
         Ok(proto::Ack {})
@@ -12332,7 +12482,7 @@ impl LspStore {
                                     diagnostics,
                                     version,
                                 },
-                                result_id,
+                                result_id: result_id.map(SharedString::new),
                                 disk_based_sources,
                                 registration_id: new_registration_id,
                             });
@@ -13045,15 +13195,8 @@ impl LspStore {
         <T::ProtoRequest as proto::RequestMessage>::Response:
             Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
     {
-        let buffer_id = BufferId::new(proto_request.buffer_id())?;
-        let version = deserialize_version(proto_request.buffer_version());
-        let buffer = lsp_store.update(cx, |this, cx| {
-            this.buffer_store.read(cx).get_existing(buffer_id)
-        })?;
-        buffer
-            .update(cx, |buffer, _| buffer.wait_for_version(version.clone()))
-            .await?;
-        let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version());
+        let (buffer_version, buffer) =
+            Self::wait_for_buffer_version::<T>(&lsp_store, &proto_request, cx).await?;
         let request =
             T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
         let key = LspKey {
@@ -13133,6 +13276,27 @@ impl LspStore {
         Ok(())
     }
 
+    async fn wait_for_buffer_version<T>(
+        lsp_store: &Entity<Self>,
+        proto_request: &T::ProtoRequest,
+        cx: &mut AsyncApp,
+    ) -> Result<(Global, Entity<Buffer>)>
+    where
+        T: LspCommand,
+        T::ProtoRequest: proto::LspRequestMessage,
+    {
+        let buffer_id = BufferId::new(proto_request.buffer_id())?;
+        let version = deserialize_version(proto_request.buffer_version());
+        let buffer = lsp_store.update(cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })?;
+        buffer
+            .update(cx, |buffer, _| buffer.wait_for_version(version.clone()))
+            .await?;
+        let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version());
+        Ok((buffer_version, buffer))
+    }
+
     fn take_text_document_sync_options(
         capabilities: &mut lsp::ServerCapabilities,
     ) -> lsp::TextDocumentSyncOptions {
@@ -13183,7 +13347,11 @@ impl LspStore {
             .entry(buffer_id)
             .or_insert_with(|| BufferLspData::new(buffer, cx));
         if buffer_version.changed_since(&lsp_data.buffer_version) {
+            // To send delta requests for semantic tokens, the previous tokens
+            // need to be kept between buffer changes.
+            let semantic_tokens = lsp_data.semantic_tokens.take();
             *lsp_data = BufferLspData::new(buffer, cx);
+            lsp_data.semantic_tokens = semantic_tokens;
         }
         lsp_data
     }
@@ -13374,14 +13542,18 @@ fn lsp_workspace_diagnostics_refresh(
     })
 }
 
-fn buffer_diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<String> {
+fn buffer_diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<SharedString> {
     match &options {
-        lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
-            diagnostic_options.identifier.clone()
-        }
+        lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => diagnostic_options
+            .identifier
+            .as_deref()
+            .map(SharedString::new),
         lsp::DiagnosticServerCapabilities::RegistrationOptions(registration_options) => {
             let diagnostic_options = &registration_options.diagnostic_options;
-            diagnostic_options.identifier.clone()
+            diagnostic_options
+                .identifier
+                .as_deref()
+                .map(SharedString::new)
         }
     }
 }
