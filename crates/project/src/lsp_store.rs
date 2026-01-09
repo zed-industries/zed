@@ -2460,7 +2460,10 @@ impl LocalLspStore {
         for (new_diagnostic, entry) in diagnostics {
             let start;
             let end;
-            if new_diagnostic && entry.diagnostic.is_disk_based {
+            if entry.diagnostic.is_disk_based {
+                if !new_diagnostic {
+                    continue;
+                }
                 // Some diagnostics are based on files on disk instead of buffers'
                 // current contents. Adjust these diagnostics' ranges to reflect
                 // any unsaved edits.
