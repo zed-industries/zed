@@ -6,7 +6,9 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
+use gpui::{
+    App, AppContext, AsyncApp, BorrowAppContext, Entity, Global, SharedString, Task, UpdateGlobal,
+};
 
 use paths::{local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -150,7 +152,7 @@ pub struct SettingsStore {
     merged_settings: Rc<SettingsContent>,
 
     local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
-    pub editorconfig_settings: EditorconfigStore,
+    pub editorconfig_store: Entity<EditorconfigStore>,
 
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
@@ -240,7 +242,7 @@ pub struct SettingsJsonSchemaParams<'a> {
 }
 
 impl SettingsStore {
-    pub fn new(cx: &App, default_settings: &str) -> Self {
+    pub fn new(cx: &mut App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let default_settings: Rc<SettingsContent> =
             parse_json_with_comments(default_settings).unwrap();
@@ -254,7 +256,7 @@ impl SettingsStore {
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
-            editorconfig_settings: EditorconfigStore::default(),
+            editorconfig_store: cx.new(|_| EditorconfigStore::default()),
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
@@ -848,11 +850,9 @@ impl SettingsStore {
                     .remove(&SettingsFile::Project((root_id, directory_path.clone())));
             }
             (LocalSettingsKind::Editorconfig, None) => {
-                self.editorconfig_settings.set_local_internal_configs(
-                    root_id,
-                    directory_path.clone(),
-                    None,
-                )?;
+                self.editorconfig_store.update(cx, |store, _cx| {
+                    store.set_local_internal_configs(root_id, directory_path.clone(), None)
+                })?;
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
                 let (new_settings, parse_result) = self
@@ -889,11 +889,13 @@ impl SettingsStore {
                 }
             }
             (LocalSettingsKind::Editorconfig, Some(editorconfig_contents)) => {
-                self.editorconfig_settings.set_local_internal_configs(
-                    root_id,
-                    directory_path.clone(),
-                    Some(editorconfig_contents),
-                )?;
+                self.editorconfig_store.update(cx, |store, _cx| {
+                    store.set_local_internal_configs(
+                        root_id,
+                        directory_path.clone(),
+                        Some(editorconfig_contents),
+                    )
+                })?;
             }
         };
 
@@ -924,10 +926,8 @@ impl SettingsStore {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
 
-        if let Some(removed) = self.editorconfig_settings.clear_worktree(root_id) {
-            self.editorconfig_settings
-                .clear_orphaned_external_configs(&removed);
-        }
+        self.editorconfig_store
+            .update(cx, |store, _cx| store.remove_worktree(root_id));
 
         for setting_value in self.setting_values.values_mut() {
             setting_value.clear_local_values(root_id);
