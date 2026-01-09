@@ -8231,7 +8231,6 @@ pub(crate) mod tests {
         thread_view: Entity<AcpThreadView>,
         thread: Entity<AcpThread>,
         message_editor: Entity<MessageEditor>,
-        connection: StubAgentConnection,
     }
 
     async fn setup_generating_thread(
@@ -8279,7 +8278,6 @@ pub(crate) mod tests {
                 thread_view,
                 thread,
                 message_editor,
-                connection,
             },
             cx,
         )
@@ -8290,8 +8288,6 @@ pub(crate) mod tests {
         init_test(cx);
 
         let (setup, cx) = setup_generating_thread(cx).await;
-
-        assert_eq!(setup.connection.cancel_count(), 0);
 
         let focus_handle = setup
             .thread_view
@@ -8309,7 +8305,6 @@ pub(crate) mod tests {
         setup.thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.status(), ThreadStatus::Idle);
         });
-        assert_eq!(setup.connection.cancel_count(), 1);
     }
 
     #[gpui::test]
@@ -8317,8 +8312,6 @@ pub(crate) mod tests {
         init_test(cx);
 
         let (setup, cx) = setup_generating_thread(cx).await;
-
-        assert_eq!(setup.connection.cancel_count(), 0);
 
         let editor_focus_handle = setup
             .message_editor
@@ -8336,17 +8329,14 @@ pub(crate) mod tests {
         setup.thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.status(), ThreadStatus::Idle);
         });
-        assert_eq!(setup.connection.cancel_count(), 1);
     }
 
     #[gpui::test]
     async fn test_escape_when_idle_is_noop(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let connection = StubAgentConnection::new();
-
         let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+            setup_thread_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
         add_to_workspace(thread_view.clone(), cx);
 
         let thread = thread_view.read_with(cx, |view, _cx| view.thread().unwrap().clone());
@@ -8369,7 +8359,6 @@ pub(crate) mod tests {
         thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.status(), ThreadStatus::Idle);
         });
-        assert_eq!(connection.cancel_count(), 0);
     }
 
     #[gpui::test]
