@@ -2,7 +2,7 @@ use collections::HashSet;
 use futures::StreamExt;
 use std::ops::Range;
 use std::pin::pin;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use editor::{Editor, EditorEvent};
 use gpui::{
@@ -28,37 +28,29 @@ use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, Workspace};
 pub use zed_actions::search_everywhere::Toggle;
 
-actions!(search_everywhere, [ReplaceNext, ReplaceAll, ToggleFilters,]);
+actions!(search_everywhere, [ReplaceNext, ReplaceAll, ToggleFilters]);
 
 /// Global state for storing the recent search query.
 struct RecentSearchState {
-    last_query: RwLock<String>,
+    last_query: String,
 }
 
 impl Global for RecentSearchState {}
 
 fn get_recent_query(cx: &App) -> Option<String> {
     cx.try_global::<RecentSearchState>().and_then(|state| {
-        let query = state.last_query.read().ok()?;
-        if query.is_empty() {
+        if state.last_query.is_empty() {
             None
         } else {
-            Some(query.clone())
+            Some(state.last_query.clone())
         }
     })
 }
 
 fn save_recent_query(query: &str, cx: &mut App) {
-    if !cx.has_global::<RecentSearchState>() {
-        cx.set_global(RecentSearchState {
-            last_query: RwLock::new(String::new()),
-        });
-    }
-    if let Some(state) = cx.try_global::<RecentSearchState>() {
-        if let Ok(mut last_query) = state.last_query.write() {
-            *last_query = query.to_string();
-        }
-    }
+    cx.set_global(RecentSearchState {
+        last_query: query.to_string(),
+    });
 }
 
 /// Initialize the search_everywhere crate.
