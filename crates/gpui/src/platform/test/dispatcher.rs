@@ -111,10 +111,6 @@ impl PlatformDispatcher for TestDispatcher {
         );
     }
 
-    fn close(&self) {
-        self.scheduler.close();
-    }
-
     fn as_test(&self) -> Option<&TestDispatcher> {
         Some(self)
     }

@@ -215,8 +215,6 @@ impl PlatformDispatcher for LinuxDispatcher {
             f();
         });
     }
-
-    fn close(&self) {}
 }
 
 pub struct PriorityQueueCalloopSender<T> {

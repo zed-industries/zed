@@ -106,7 +106,6 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn close(&self) {}
 }
 
 extern "C" fn trampoline(context: *mut c_void) {

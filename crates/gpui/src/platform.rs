@@ -600,9 +600,6 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
-    /// Close the dispatcher. Tasks will not be executed after this is called.
-    fn close(&self);
-
     fn now(&self) -> Instant {
         Instant::now()
     }

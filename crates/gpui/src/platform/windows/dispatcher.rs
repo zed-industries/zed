@@ -166,6 +166,4 @@ impl PlatformDispatcher for WindowsDispatcher {
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
     }
-
-    fn close(&self) {}
 }

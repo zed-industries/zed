@@ -531,14 +531,6 @@ impl Scheduler for TestScheduler {
         self.clock.clone()
     }
 
-    fn close(&self) {
-        // Take runnables out while holding the lock, then drop them after releasing.
-        // This avoids deadlock: dropping a runnable can wake awaitors, whose wakers
-        // call schedule_foreground, which tries to acquire the same lock.
-        let runnables = std::mem::take(&mut self.state.lock().runnables);
-        drop(runnables);
-    }
-
     fn as_test(&self) -> Option<&TestScheduler> {
         Some(self)
     }

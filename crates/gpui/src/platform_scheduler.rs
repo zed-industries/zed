@@ -113,10 +113,6 @@ impl Scheduler for PlatformScheduler {
         self.clock.clone()
     }
 
-    fn close(&self) {
-        self.dispatcher.close();
-    }
-
     fn as_test(&self) -> Option<&TestScheduler> {
         None
     }
