@@ -2716,12 +2716,16 @@ impl Pane {
                     pane.activate_item(ix, true, true, window, cx);
                 }),
             )
-            .on_middle_click(cx.listener(
-                move |pane: &mut Self, _event: &ClickEvent, window, cx| {
+            .on_aux_click(
+                cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                    if !event.is_middle_click() {
+                        return;
+                    }
+
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
-                },
-            ))
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |pane, event: &MouseDownEvent, _, _| {
