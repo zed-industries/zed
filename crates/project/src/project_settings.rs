@@ -23,13 +23,7 @@ use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
     SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
 };
-use std::{
-    cell::OnceCell,
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
