@@ -166,4 +166,23 @@ impl PlatformDispatcher for WindowsDispatcher {
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
     }
+
+    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            // SAFETY: always safe to call
+            let thread_handle = unsafe { GetCurrentThread() };
+
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
+                .context("thread priority class")
+                .log_err();
+
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
+                .context("thread priority")
+                .log_err();
+
+            f();
+        });
+    }
 }

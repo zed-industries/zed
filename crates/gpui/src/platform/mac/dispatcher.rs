@@ -106,12 +106,103 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            set_audio_thread_priority().log_err();
+            f();
+        });
+    }
+
+    fn set_audio_thread_priority() -> anyhow::Result<()> {
+        // https://chromium.googlesource.com/chromium/chromium/+/master/base/threading/platform_thread_mac.mm#93
+
+        // SAFETY: always safe to call
+        let thread_id = unsafe { libc::pthread_self() };
+
+        // SAFETY: thread_id is a valid thread id
+        let thread_id = unsafe { libc::pthread_mach_thread_np(thread_id) };
+
+        // Fixed priority thread
+        let mut policy = thread_extended_policy_data_t { timeshare: 0 };
+
+        // SAFETY: thread_id is a valid thread id
+        // SAFETY: thread_extended_policy_data_t is passed as THREAD_EXTENDED_POLICY
+        let result = unsafe {
+            mach2::thread_policy::thread_policy_set(
+                thread_id,
+                THREAD_EXTENDED_POLICY,
+                &mut policy as *mut _ as *mut _,
+                THREAD_EXTENDED_POLICY_COUNT,
+            )
+        };
+
+        if result != KERN_SUCCESS {
+            anyhow::bail!("failed to set thread extended policy");
+        }
+
+        // relatively high priority
+        let mut precedence = thread_precedence_policy_data_t { importance: 63 };
+
+        // SAFETY: thread_id is a valid thread id
+        // SAFETY: thread_precedence_policy_data_t is passed as THREAD_PRECEDENCE_POLICY
+        let result = unsafe {
+            mach2::thread_policy::thread_policy_set(
+                thread_id,
+                THREAD_PRECEDENCE_POLICY,
+                &mut precedence as *mut _ as *mut _,
+                THREAD_PRECEDENCE_POLICY_COUNT,
+            )
+        };
+
+        if result != KERN_SUCCESS {
+            anyhow::bail!("failed to set thread precedence policy");
+        }
+
+        const GUARANTEED_AUDIO_DUTY_CYCLE: f32 = 0.75;
+        const MAX_AUDIO_DUTY_CYCLE: f32 = 0.85;
+
+        // ~128 frames @ 44.1KHz
+        const TIME_QUANTUM: f32 = 2.9;
+
+        const AUDIO_TIME_NEEDED: f32 = GUARANTEED_AUDIO_DUTY_CYCLE * TIME_QUANTUM;
+        const MAX_TIME_ALLOWED: f32 = MAX_AUDIO_DUTY_CYCLE * TIME_QUANTUM;
+
+        let mut timebase_info = mach_timebase_info_data_t { numer: 0, denom: 0 };
+        // SAFETY: timebase_info is a valid pointer to a mach_timebase_info_data_t struct
+        unsafe { mach2::mach_time::mach_timebase_info(&mut timebase_info) };
+
+        let ms_to_abs_time =
+            ((timebase_info.denom as f32) / (timebase_info.numer as f32)) * 1000000f32;
+
+        let mut time_constraints = thread_time_constraint_policy_data_t {
+            period: (TIME_QUANTUM * ms_to_abs_time) as u32,
+            computation: (AUDIO_TIME_NEEDED * ms_to_abs_time) as u32,
+            constraint: (MAX_TIME_ALLOWED * ms_to_abs_time) as u32,
+            preemptible: 0,
+        };
+
+        // SAFETY: thread_id is a valid thread id
+        // SAFETY: thread_precedence_pthread_time_constraint_policy_data_t is passed as THREAD_TIME_CONSTRAINT_POLICY
+        let result = unsafe {
+            mach2::thread_policy::thread_policy_set(
+                thread_id,
+                THREAD_TIME_CONSTRAINT_POLICY,
+                &mut time_constraints as *mut _ as *mut _,
+                THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+            )
+        };
+
+        if result != KERN_SUCCESS {
+            anyhow::bail!("failed to set thread time constraint policy");
+        }
+
+        Ok(())
+    }
 }
 
 extern "C" fn trampoline(context: *mut c_void) {
-    let runnable = unsafe {
-        Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ()))
-    };
+    let runnable =
+        unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
     let metadata = runnable.metadata();
 

@@ -42,6 +42,9 @@ impl<T> PriorityQueueState<T> {
 
         let mut queues = self.queues.lock();
         match priority {
+            Priority::RealtimeAudio => unreachable!(
+                "Realtime audio priority runs on a dedicated thread and is never queued"
+            ),
             Priority::High => queues.high_priority.push_back(item),
             Priority::Medium => queues.medium_priority.push_back(item),
             Priority::Low => queues.low_priority.push_back(item),

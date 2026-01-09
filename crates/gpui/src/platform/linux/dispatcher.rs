@@ -5,12 +5,15 @@ use calloop::{
 };
 use util::ResultExt;
 
-use std::{mem::MaybeUninit, thread, time::{Duration, Instant}};
+use std::{
+    mem::MaybeUninit,
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming,
-    ThreadTaskTimings, profiler,
+    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, profiler,
 };
 
 struct TimerAfter {
@@ -188,19 +191,13 @@ impl PlatformDispatcher for LinuxDispatcher {
             .ok();
     }
 
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
             // SAFETY: always safe to call
             let thread_id = unsafe { libc::pthread_self() };
 
-            let policy = match priority {
-                RealtimePriority::Audio => libc::SCHED_FIFO,
-                RealtimePriority::Other => libc::SCHED_RR,
-            };
-            let sched_priority = match priority {
-                RealtimePriority::Audio => 65,
-                RealtimePriority::Other => 45,
-            };
+            let policy = libc::SCHED_FIFO;
+            let sched_priority = 65;
 
             // SAFETY: all sched_param members are valid when initialized to zero.
             let mut sched_param =
@@ -209,7 +206,7 @@ impl PlatformDispatcher for LinuxDispatcher {
             // SAFETY: sched_param is a valid initialized structure
             let result = unsafe { libc::pthread_setschedparam(thread_id, policy, &sched_param) };
             if result != 0 {
-                log::warn!("failed to set realtime thread priority to {:?}", priority);
+                log::warn!("failed to set realtime thread priority");
             }
 
             f();
