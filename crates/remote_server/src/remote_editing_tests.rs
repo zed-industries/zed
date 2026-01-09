@@ -237,11 +237,12 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         assert!(headless.buffer_store.read(cx).has_shared_buffers())
     });
     do_search(&project, cx.clone()).await;
-
+    server_cx.run_until_parked();
     cx.update(|_| {
         drop(buffer);
     });
     cx.run_until_parked();
+    server_cx.run_until_parked();
     headless.update(server_cx, |headless, cx| {
         assert!(!headless.buffer_store.read(cx).has_shared_buffers())
     });
