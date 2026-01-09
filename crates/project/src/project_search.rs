@@ -12,16 +12,14 @@ use std::{
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
-use futures::{SinkExt, StreamExt, select, select_biased, stream::FuturesOrdered};
+use futures::FutureExt as _;
+use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
-use smol::{
-    channel::{Receiver, Sender, bounded, unbounded},
-    future::FutureExt,
-};
+use smol::channel::{Receiver, Sender, bounded, unbounded};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
@@ -949,44 +947,63 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
         let _batch_task = cx.spawn_with_priority(gpui::Priority::High, async move {
             let mut current_batch = vec![];
             let mut items_produced_so_far = 0_u64;
-            let mut get_next_item = Box::pin(rx.fuse());
 
-            let mut _schedule_flush_after_delay;
+            let mut _schedule_flush_after_delay: Option<Task<()>> = None;
             let _time_elapsed_since_start_of_search = std::time::Instant::now();
-            let mut flush  = pin!(flush_batch_rx);
+            let mut flush = pin!(flush_batch_rx);
+            let mut terminating = false;
             loop {
-                select! {
+                select_biased! {
+                    item = rx.recv().fuse() => {
+                        match item {
+                            Ok(new_item) => {
+                                let is_fresh_batch = current_batch.is_empty();
+                                items_produced_so_far += 1;
+                                current_batch.push(new_item);
+                                if is_fresh_batch {
+                                    // Chosen arbitrarily based on some experimentation with plots.
+                                    let desired_duration_ms = (20 * (items_produced_so_far + 2).ilog2() as u64).min(300);
+                                    let desired_duration = Duration::from_millis(desired_duration_ms);
+                                    let _executor = executor.clone();
+                                    let _flush = flush_batch_tx.clone();
+                                    let new_timer = executor.spawn_with_priority(Priority::High, async move {
+                                        _executor.timer(desired_duration).await;
+                                        _ = _flush.send(false).await;
+                                    });
+                                    _schedule_flush_after_delay = Some(new_timer);
+                                }
+                            }
+                            Err(_) => {
+                                // Items channel closed - send any remaining batch before exiting
+                                if !current_batch.is_empty() {
+                                    _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                                }
+                                break;
+                            }
+                        }
+                    }
                     should_break_afterwards = flush.next() => {
                         if !current_batch.is_empty() {
                             _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
                             _schedule_flush_after_delay = None;
                         }
                         if should_break_afterwards.unwrap_or_default() {
-                            break;
+                            terminating = true;
                         }
                     }
-                    items_batch = get_next_item.next() => {
-                        if let Some(new_item) = items_batch {
-                            let is_fresh_batch = current_batch.is_empty();
-                            items_produced_so_far += 1;
-                            current_batch.push(new_item);
-                            if is_fresh_batch {
-                                // Chosen arbitrarily based on some experimentation with plots.
-                                let desired_duration_ms = (20 * (items_produced_so_far + 2).ilog2() as u64 ).min(300);
-                                let desired_duration = Duration::from_millis(desired_duration_ms);
-                                let _executor = executor.clone();
-                                let _flush = flush_batch_tx.clone();
-                                let new_timer = executor.spawn_with_priority(Priority::High, async move {
-                                    _executor.timer(desired_duration).await;
-                                    _ = _flush.send(false).await;
-                                });
-                                _schedule_flush_after_delay = Some(new_timer);
-                            }
-                        } else {
-                            break;
-                        }
+                    complete => {
+                        break;
                     }
-
+                }
+                if terminating {
+                    // Drain any remaining items before exiting
+                    while let Ok(new_item) = rx.try_recv() {
+                        current_batch.push(new_item);
+                    }
+                    if !current_batch.is_empty() {
+                        _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                    }
+                    break;
                 }
             }
         });
