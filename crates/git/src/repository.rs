@@ -67,6 +67,13 @@ pub struct GraphCommitData {
     pub ref_names: Vec<SharedString>,
 }
 
+// todo! Should we wrap the small vec with a rc to make this cheaply clonable?
+#[derive(Clone)]
+pub struct InitialGraphCommitData {
+    pub sha: Oid,
+    pub parents: SmallVec<[Oid; 1]>,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
     pub is_head: bool,
@@ -450,7 +457,7 @@ impl Drop for GitExcludeOverride {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum LogOrder {
     #[default]
     DateOrder,
@@ -470,7 +477,7 @@ impl LogOrder {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum LogSource {
     #[default]
     All,
@@ -717,14 +724,13 @@ pub trait GitRepository: Send + Sync {
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
 
-    /// Runs `git log` with the specified parameters and returns the raw output.
-    /// this command is used by the git graph view to generate the graph data
-    fn graph_log(
+    /// Runs `git rev-list --parents` to get the commit graph structure.
+    /// Returns commit SHAs and their parent SHAs for building the graph visualization.
+    fn initial_graph_data(
         &self,
-        chunk_position: usize,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>>;
+    ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>>;
 
     fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
 }
@@ -2472,12 +2478,11 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn graph_log(
+    fn initial_graph_data(
         &self,
-        chunk_position: usize,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>> {
+    ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
         let executor = self.executor.clone();
@@ -2486,21 +2491,17 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let git = GitBinary::new(git_binary_path, working_directory, executor);
 
-            let skip = chunk_position * GRAPH_CHUNK_SIZE;
-            let skip_arg = format!("--skip={}", skip);
-            let max_count_arg = format!("--max-count={}", GRAPH_CHUNK_SIZE);
-
             let args = [
-                "log",
-                &GRAPH_COMMIT_FORMAT,
+                "rev-list",
+                "--parents",
                 log_order.as_arg(),
                 log_source.get_arg(),
-                &skip_arg,
-                &max_count_arg,
             ];
 
+            let now = std::time::Instant::now();
             let output = git.run(&args).await?;
-            Ok(parse_graph_log_output(&output))
+            dbg!(now.elapsed());
+            Ok(parse_rev_list_output(&output))
         }
         .boxed()
     }
@@ -2519,6 +2520,19 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
+}
+
+fn parse_rev_list_output(output: &str) -> Vec<InitialGraphCommitData> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let sha = Oid::from_str(parts.next()?).ok()?;
+            let parents = parts.filter_map(|p| Oid::from_str(p).ok()).collect();
+            Some(InitialGraphCommitData { sha, parents })
+        })
+        .collect()
 }
 
 // todo! Move this to the caching layer

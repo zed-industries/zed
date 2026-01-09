@@ -7,7 +7,7 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, GraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
         RepoPath, ResetMode, Worktree,
     },
     status::{
@@ -739,12 +739,11 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn graph_log(
+    fn initial_graph_data(
         &self,
-        _chunk_position: usize,
         _log_source: LogSource,
         _log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<GraphCommitData>>> {
+    ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>> {
         async { Ok(Vec::new()) }.boxed()
     }
 

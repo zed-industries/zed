@@ -1,7 +1,10 @@
-use std::{ops::Range, rc::Rc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use collections::HashMap;
-use git::{Oid, repository::GRAPH_CHUNK_SIZE};
+use git::{
+    Oid,
+    repository::{GRAPH_CHUNK_SIZE, InitialGraphCommitData},
+};
 use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -126,9 +129,8 @@ impl LaneState {
     }
 }
 
-#[derive(Debug)]
 pub struct CommitEntry {
-    pub data: GraphCommitData,
+    pub data: InitialGraphCommitData,
     pub lane: usize,
     pub color_idx: usize,
 }
@@ -278,8 +280,8 @@ impl GitGraph {
         })
     }
 
-    pub(crate) fn add_commits(&mut self, commits: Vec<GraphCommitData>) {
-        for commit in commits.into_iter() {
+    pub(crate) fn add_commits(&mut self, commits: Arc<Vec<InitialGraphCommitData>>) {
+        for commit in commits.as_ref().into_iter() {
             let commit_row = self.commits.len();
 
             let commit_lane = self
@@ -371,7 +373,7 @@ impl GitGraph {
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
             self.commits.push(Rc::new(CommitEntry {
-                data: commit,
+                data: commit.clone(),
                 lane: commit_lane,
                 color_idx: commit_color.0 as usize,
             }));

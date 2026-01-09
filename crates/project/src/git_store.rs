@@ -30,8 +30,8 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, GraphCommitData, LogOrder, LogSource, PushOptions,
-        Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
         Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
@@ -41,8 +41,8 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -253,6 +253,11 @@ pub struct MergeDetails {
     pub heads: Vec<Option<SharedString>>,
 }
 
+enum GraphDataState {
+    Loading(Task<()>),
+    Loaded(Vec<InitialGraphCommitData>),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
@@ -291,6 +296,10 @@ pub struct Repository {
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
+    pub initial_graph_data: HashMap<
+        (LogOrder, LogSource),
+        Shared<Task<Result<Arc<Vec<InitialGraphCommitData>>, SharedString>>>,
+    >,
 }
 
 impl std::ops::Deref for Repository {
@@ -3597,6 +3606,7 @@ impl Repository {
             job_sender,
             job_id: 0,
             active_jobs: Default::default(),
+            initial_graph_data: Default::default(),
         }
     }
 
@@ -3626,6 +3636,7 @@ impl Repository {
             latest_askpass_id: 0,
             active_jobs: Default::default(),
             job_id: 0,
+            initial_graph_data: Default::default(),
         }
     }
 
@@ -4189,24 +4200,37 @@ impl Repository {
     }
 
     // todo! This function should cache the args and futures
-    pub fn graph_log(
+    pub fn initial_graph_data(
         &mut self,
-        chunk_position: usize,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> oneshot::Receiver<Result<Vec<GraphCommitData>>> {
-        self.send_job(None, move |git_repo, _cx| async move {
-            match git_repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend
-                        .graph_log(chunk_position, log_source, log_order)
-                        .await
-                }
-                RepositoryState::Remote(_) => {
-                    bail!("graph_log is not yet supported for remote repositories")
-                }
-            }
-        })
+        cx: &mut App,
+    ) -> Shared<Task<Result<Arc<Vec<InitialGraphCommitData>>, SharedString>>> {
+        self.initial_graph_data
+            .entry((log_order.clone(), log_source.clone()))
+            .or_insert_with(|| {
+                let state = self.repository_state.clone();
+                cx.spawn(async move |cx| match state.await {
+                    Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                        cx.background_executor()
+                            .spawn(async move {
+                                Ok(Arc::new(
+                                    backend
+                                        .initial_graph_data(log_source, log_order)
+                                        .await
+                                        .map_err(|err| SharedString::from(err.to_string()))?,
+                                ))
+                            })
+                            .await
+                    }
+                    Ok(RepositoryState::Remote(_)) => {
+                        Err("Git graph is not supported for collab yet".into())
+                    }
+                    Err(e) => Err(SharedString::from(e)),
+                })
+                .shared()
+            })
+            .clone()
     }
 
     pub fn commit_count(&mut self, source: LogSource) -> oneshot::Receiver<Result<usize>> {

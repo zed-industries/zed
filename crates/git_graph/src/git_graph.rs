@@ -24,10 +24,7 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-use crate::{
-    graph::{AllCommitCount, CHUNK_SIZE, format_timestamp},
-    graph_rendering::render_graph,
-};
+use crate::{graph::AllCommitCount, graph_rendering::render_graph};
 
 actions!(
     git_graph,
@@ -80,7 +77,7 @@ impl GitGraph {
             | GitStoreEvent::ActiveRepositoryChanged(_) => {
                 // todo! only call load data from render, we should set a bool here
                 // todo! We should check that the repo actually has a change that would affect the graph
-                this.load_data(false, cx);
+                this.load_data(cx);
             }
             _ => {}
         });
@@ -108,31 +105,24 @@ impl GitGraph {
             _subscriptions: vec![git_store_subscription],
         };
 
-        this.load_data(true, cx);
+        this.load_data(cx);
         this
     }
 
-    fn load_data(&mut self, fetch_chunks: bool, cx: &mut Context<Self>) {
+    fn load_data(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
         self.loading = true;
         self.error = None;
-        let commit_count_loaded = !matches!(self.graph.max_commit_count, AllCommitCount::NotLoaded);
 
         if self._load_task.is_some() {
             return;
         }
 
+        let now = std::time::Instant::now();
+
         let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx))
         else {
             return;
-        };
-
-        let last_loaded_chunk = if !fetch_chunks {
-            // When we're refreshing the graph we need to start from the beginning
-            // so the cached commits don't matter
-            0
-        } else {
-            self.graph.commits.len() / CHUNK_SIZE
         };
 
         let first_visible_worktree = project.read_with(cx, |project, cx| {
@@ -151,47 +141,30 @@ impl GitGraph {
                 return;
             };
 
-            let commit_count = if fetch_chunks && commit_count_loaded {
-                Ok(None)
-            } else {
-                repository
-                    .update(cx, |repo, _cx| repo.commit_count(LogSource::All))
-                    .await
-                    .anyhow()
-                    .flatten()
-                    .map(|count| Some(count))
-            };
-
             let commits = repository
-                .update(cx, |repo, _cx| {
-                    repo.graph_log(last_loaded_chunk, LogSource::All, LogOrder::DateOrder)
+                .update(cx, |repo, cx| {
+                    repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, cx)
                 })
-                .await
-                .anyhow()
-                .flatten();
+                .await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
 
-                match commits.and_then(|commits| Ok((commits, commit_count?))) {
-                    Ok((commits, commit_count)) => {
-                        if !fetch_chunks {
-                            this.graph.clear();
-                        }
-
+                match commits {
+                    Ok(commits) => {
+                        this.graph.clear();
+                        let commit_count = commits.len();
                         this.graph.add_commits(commits);
                         this.max_lanes = this.graph.max_lanes;
                         this.work_dir = Some(worktree_path);
-
-                        if let Some(commit_count) = commit_count {
-                            this.graph.max_commit_count = AllCommitCount::Loaded(commit_count);
-                        }
+                        this.graph.max_commit_count = AllCommitCount::Loaded(commit_count);
                     }
                     Err(e) => {
                         this.error = Some(format!("{:?}", e).into());
                     }
                 };
 
+                dbg!(now.elapsed());
                 this._load_task.take();
                 cx.notify();
             })
@@ -203,18 +176,12 @@ impl GitGraph {
         &mut self,
         range: Range<usize>,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Vec<Vec<AnyElement>> {
         let row_height = self.row_height;
 
         range
             .map(|idx| {
-                if (idx + CHUNK_SIZE).min(self.graph.max_commit_count.count())
-                    > self.graph.commits.len()
-                {
-                    self.load_data(true, cx);
-                }
-
                 let Some(commit) = self.graph.commits.get(idx) else {
                     return vec![
                         div().h(row_height).into_any_element(),
@@ -224,10 +191,10 @@ impl GitGraph {
                     ];
                 };
 
-                let subject = commit.data.subject.clone();
-                let author_name = commit.data.author_name.clone();
                 let short_sha = commit.data.sha.display_short();
-                let formatted_time = format_timestamp(commit.data.commit_timestamp);
+                let subject: SharedString = "Loading...".into();
+                let author_name: SharedString = "".into();
+                let formatted_time = String::new();
 
                 vec![
                     div()
