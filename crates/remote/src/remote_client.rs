@@ -491,7 +491,7 @@ impl RemoteClient {
         executor: BackgroundExecutor,
     ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.take()?;
-        log::info!("shutting down ssh processes");
+        log::info!("shutting down remote processes");
 
         let State::Connected {
             multiplex_task,
