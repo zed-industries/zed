@@ -716,10 +716,9 @@ impl SearchEverywhereDelegate {
             }
         };
 
-        let search_results = self.project.update(cx, |project, cx| {
-            eprintln!("Search Everywhere: Calling project.search for '{}'", query);
-            project.search(search_query, cx)
-        });
+        let search_results = self
+            .project
+            .update(cx, |project, cx| project.search(search_query, cx));
 
         let cancel_flag = self.cancel_flag.clone();
 
@@ -793,16 +792,10 @@ impl SearchEverywhereDelegate {
                         }
                     }
                     SearchResult::LimitReached => {
-                        eprintln!("Search Everywhere: Search limit reached");
                         break;
                     }
                 }
             }
-
-            eprintln!(
-                "Search Everywhere: project.search returned {} results",
-                matches.len()
-            );
             matches
         })
     }
