@@ -35,7 +35,7 @@ use crate::distill::run_distill;
 use crate::example::{Example, group_examples_by_repo, read_example_files};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
-use crate::paths::FAILED_EXAMPLES_DIR;
+use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
@@ -69,6 +69,21 @@ struct EpArgs {
     in_place: bool,
     #[arg(long, short, global = true)]
     failfast: bool,
+    /// How to handle failed examples in output: keep them or skip them.
+    /// Failed examples are always logged to the run's failed directory.
+    #[arg(long, global = true, default_value = "keep")]
+    failed: FailedHandling,
+}
+
+/// Controls whether failed examples are included in the main output.
+/// Failed examples are always logged to the run's failed/ directory regardless of this setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum FailedHandling {
+    /// Include failed examples in the main output (default)
+    #[default]
+    Keep,
+    /// Exclude failed examples from the main output
+    Skip,
 }
 
 const INPUTS_HELP: &str = r#"
@@ -533,7 +548,7 @@ fn main() {
                             }
                             .await;
 
-                            if let Err(error) = result {
+                            let failed = if let Err(error) = result {
                                 handle_error(
                                     error,
                                     &args,
@@ -543,18 +558,25 @@ fn main() {
                                     example,
                                 )
                                 .await;
-                            }
+                                true
+                            } else {
+                                false
+                            };
 
-                            if let Some(ref mut sender) = output_sender.clone() {
-                                let line = serde_json::to_string(example).unwrap();
-                                sender
-                                    .send(line)
-                                    .await
-                                    .expect("Failed to send to output writer");
-                            } else if args.output.is_none() && !matches!(command, Command::Eval(_))
-                            {
-                                let line = serde_json::to_string(example).unwrap();
-                                println!("{}", line);
+                            let should_write = !failed || args.failed == FailedHandling::Keep;
+                            if should_write {
+                                if let Some(ref mut sender) = output_sender.clone() {
+                                    let line = serde_json::to_string(example).unwrap();
+                                    sender
+                                        .send(line)
+                                        .await
+                                        .expect("Failed to send to output writer");
+                                } else if args.output.is_none()
+                                    && !matches!(command, Command::Eval(_))
+                                {
+                                    let line = serde_json::to_string(example).unwrap();
+                                    println!("{}", line);
+                                }
                             }
                         }
                     });
@@ -614,6 +636,15 @@ async fn handle_error(
         .write(&err_path, format!("{error:?}").as_bytes())
         .await
         .unwrap();
+
+    let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&failed_jsonl_path)
+        .expect("Failed to open failed.jsonl");
+    writeln!(file, "{}", serde_json::to_string(example).unwrap())
+        .expect("Failed to write to failed.jsonl");
 
     let cursor_path = example
         .repo_name()
