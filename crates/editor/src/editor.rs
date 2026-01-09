@@ -14578,6 +14578,15 @@ impl Editor {
         self.nav_history.as_ref()
     }
 
+    pub fn save_location(
+        &mut self,
+        _: &SaveLocation,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_nav_history_entry(cx);
+    }
+
     pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
         self.push_to_nav_history(
             self.selections.newest_anchor().head(),
