@@ -296,6 +296,18 @@ pub mod command_palette {
     );
 }
 
+pub mod search_everywhere {
+    use gpui::actions;
+
+    actions!(
+        search_everywhere,
+        [
+            /// Opens the Search Everywhere popup.
+            Toggle,
+        ]
+    );
+}
+
 pub mod project_panel {
     use gpui::actions;
 
