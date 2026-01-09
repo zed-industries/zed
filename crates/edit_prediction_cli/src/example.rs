@@ -1,3 +1,4 @@
+use crate::paths::WORKTREES_DIR;
 use crate::{PredictionProvider, PromptFormat};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -8,10 +9,11 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use std::sync::Arc;
 use std::{
     borrow::Cow,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 use zeta_prompt::RelatedFile;
@@ -68,6 +70,8 @@ pub struct ExampleBuffer {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    pub context_range: Range<usize>,
+    pub editable_range: Range<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -90,7 +94,7 @@ pub struct ExampleScore {
 }
 
 impl Example {
-    pub fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
+    pub fn repo_name(&self) -> Result<RepoName<'_>> {
         // git@github.com:owner/repo.git
         if self.spec.repository_url.contains('@') {
             let (owner, repo) = self
@@ -101,10 +105,10 @@ impl Example {
                 .1
                 .split_once('/')
                 .context("expected / in git url")?;
-            Ok((
-                Cow::Borrowed(owner),
-                Cow::Borrowed(repo.trim_end_matches(".git")),
-            ))
+            Ok(RepoName {
+                owner: Cow::Borrowed(owner),
+                name: Cow::Borrowed(repo.trim_end_matches(".git")),
+            })
         // http://github.com/owner/repo.git
         } else {
             let url = Url::parse(&self.spec.repository_url)?;
@@ -120,8 +124,24 @@ impl Example {
                 .to_string();
             assert!(segments.next().is_none());
 
-            Ok((owner.into(), repo.into()))
+            Ok(RepoName {
+                owner: Cow::Owned(owner),
+                name: Cow::Owned(repo),
+            })
         }
+    }
+}
+
+pub struct RepoName<'a> {
+    pub owner: Cow<'a, str>,
+    pub name: Cow<'a, str>,
+}
+
+impl RepoName<'_> {
+    pub fn worktree_path(&self) -> PathBuf {
+        WORKTREES_DIR
+            .join(self.owner.as_ref())
+            .join(self.name.as_ref())
     }
 }
 
@@ -194,20 +214,6 @@ pub fn read_example_files(inputs: &[PathBuf]) -> Vec<Example> {
     }
 
     examples
-}
-
-pub fn write_examples(examples: &[Example], output_path: Option<&PathBuf>) {
-    let mut content = String::new();
-    for example in examples {
-        let line = serde_json::to_string(example).unwrap();
-        content.push_str(&line);
-        content.push('\n');
-    }
-    if let Some(output_path) = output_path {
-        std::fs::write(output_path, content).expect("Failed to write examples");
-    } else {
-        std::io::stdout().write_all(&content.as_bytes()).unwrap();
-    }
 }
 
 pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {

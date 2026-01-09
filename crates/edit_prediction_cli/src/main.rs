@@ -16,15 +16,22 @@ mod score;
 mod split_commit;
 mod synthesize;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use collections::HashSet;
 use edit_prediction::EditPredictionStore;
-use gpui::Application;
+use futures::channel::mpsc;
+use futures::{SinkExt as _, StreamExt as _};
+use gpui::{AppContext as _, Application};
+
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use std::fs::{File, OpenOptions};
+use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
-use crate::example::{Example, group_examples_by_repo, read_example_files, write_examples};
+use crate::example::{Example, group_examples_by_repo, read_example_files};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::paths::FAILED_EXAMPLES_DIR;
@@ -44,6 +51,12 @@ struct EpArgs {
     max_parallelism: usize,
     #[clap(long, global = true)]
     limit: Option<usize>,
+    /// Filter examples by name
+    #[clap(long, global = true)]
+    name: Option<String>,
+    /// Filter examples by repository
+    #[clap(long, global = true)]
+    repo: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
     #[clap(global = true, help = INPUTS_HELP)]
@@ -235,6 +248,7 @@ impl EpArgs {
 async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
+    output_path: Option<&PathBuf>,
 ) -> anyhow::Result<Vec<Example>> {
     let mut captured_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
@@ -249,8 +263,8 @@ async fn load_examples(
     }
 
     let mut examples = read_example_files(&file_inputs);
-    let total_steps = examples.len() + captured_after_timestamps.len();
-    Progress::global().set_total_steps(total_steps);
+
+    Progress::global().set_total_examples(examples.len());
 
     let remaining_limit_for_snowflake =
         args.limit.map(|limit| limit.saturating_sub(examples.len()));
@@ -275,15 +289,81 @@ async fn load_examples(
 
     crate::example::sort_examples_by_repo_and_rev(&mut examples);
 
+    if let Some(name_filter) = &args.name {
+        examples.retain(|example| example.spec.name.contains(name_filter));
+    }
+    if let Some(repo_filter) = &args.repo {
+        examples.retain(|example| example.spec.repository_url.contains(repo_filter));
+    }
+
     if let Some(limit) = args.limit {
         if examples.len() > limit {
             examples.truncate(limit);
         }
     }
 
-    Progress::global().set_total_steps(examples.len() + captured_after_timestamps.len());
+    if let Some(path) = output_path {
+        resume_from_output(path, &mut examples);
+    }
+
+    Progress::global().set_total_examples(examples.len());
 
     Ok(examples)
+}
+
+fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
+    let mut hasher = collections::FxHasher::default();
+    spec.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    let input_hashes: HashSet<u64> = examples.iter().map(|e| spec_hash(&e.spec)).collect();
+
+    let reader = BufReader::new(file);
+    let mut kept_lines = Vec::new();
+    let mut kept_hashes = HashSet::default();
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+
+        if let Ok(output_example) = serde_json::from_str::<Example>(&line) {
+            let hash = spec_hash(&output_example.spec);
+            if input_hashes.contains(&hash) && !kept_hashes.contains(&hash) {
+                kept_hashes.insert(hash);
+                kept_lines.push(line);
+            }
+        }
+    }
+
+    let total = examples.len();
+    let already_processed = kept_hashes.len();
+
+    eprintln!(
+        "Resuming: {}/{} examples already processed",
+        already_processed, total
+    );
+
+    let file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .expect("Failed to open output file for rewriting");
+    let mut writer = BufWriter::new(file);
+    for line in &kept_lines {
+        writeln!(writer, "{}", line).expect("Failed to write to output file");
+    }
+    writer.flush().expect("Failed to flush output file");
+
+    examples.retain(|e| !kept_hashes.contains(&spec_hash(&e.spec)));
 }
 
 fn main() {
@@ -328,7 +408,9 @@ fn main() {
             return;
         }
         Command::SplitCommit(split_commit_args) => {
-            if let Err(error) = split_commit::run_split_commit(split_commit_args) {
+            if let Err(error) =
+                split_commit::run_split_commit(split_commit_args, &args.inputs, output.as_ref())
+            {
                 eprintln!("{error:#}");
                 std::process::exit(1);
             }
@@ -346,13 +428,37 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let result = async {
-                let mut examples = load_examples(app_state.client.http_client(), &args).await?;
+                let mut examples =
+                    load_examples(app_state.client.http_client(), &args, output.as_ref()).await?;
 
                 if let Command::Predict(args) = &command {
                     predict::sync_batches(&args.provider).await?;
                 }
 
                 let failfast_on_single_example = examples.len() == 1;
+
+                let output_sender: Option<mpsc::UnboundedSender<String>> =
+                    if args.output.is_some() || !matches!(command, Command::Eval(_)) {
+                        output.as_ref().map(|path| {
+                            let file = OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(path)
+                                .expect("Failed to open output file");
+                            let mut writer = BufWriter::new(file);
+                            let (sender, mut receiver) = mpsc::unbounded::<String>();
+                            cx.background_spawn(async move {
+                                while let Some(line) = receiver.next().await {
+                                    writeln!(writer, "{}", line).expect("Failed to write example");
+                                    writer.flush().expect("Failed to flush output");
+                                }
+                            })
+                            .detach();
+                            sender
+                        })
+                    } else {
+                        None
+                    };
 
                 let mut grouped_examples = group_examples_by_repo(&mut examples);
                 let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
@@ -411,63 +517,35 @@ fn main() {
                             }
                             .await;
 
-                            if let Err(e) = result {
-                                Progress::global().increment_failed();
-                                let failed_example_path =
-                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example.spec.name));
-                                app_state
-                                    .fs
-                                    .write(
-                                        &failed_example_path,
-                                        &serde_json::to_vec_pretty(&example).unwrap(),
-                                    )
+                            if let Err(error) = result {
+                                handle_error(
+                                    error,
+                                    &args,
+                                    &command,
+                                    &app_state,
+                                    failfast_on_single_example,
+                                    example,
+                                )
+                                .await;
+                            }
+
+                            if let Some(ref mut sender) = output_sender.clone() {
+                                let line = serde_json::to_string(example).unwrap();
+                                sender
+                                    .send(line)
                                     .await
-                                    .unwrap();
-                                let err_path = FAILED_EXAMPLES_DIR
-                                    .join(format!("{}_err.txt", example.spec.name));
-                                app_state
-                                    .fs
-                                    .write(&err_path, e.to_string().as_bytes())
-                                    .await
-                                    .unwrap();
-
-                                let msg = format!(
-                                    indoc::indoc! {"
-                                        While processing \"{}\":
-
-                                        {:?}
-
-                                        Written to: \x1b[36m{}\x1b[0m
-
-                                        Explore this example data with:
-                                            fx \x1b[36m{}\x1b[0m
-
-                                        Re-run this example with:
-                                            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
-                                    "},
-                                    example.spec.name,
-                                    e,
-                                    err_path.display(),
-                                    failed_example_path.display(),
-                                    command,
-                                    failed_example_path.display(),
-                                );
-                                if args.failfast || failfast_on_single_example {
-                                    Progress::global().finalize();
-                                    panic!("{}", msg);
-                                } else {
-                                    log::error!("{}", msg);
-                                }
+                                    .expect("Failed to send to output writer");
+                            } else if args.output.is_none() && !matches!(command, Command::Eval(_))
+                            {
+                                let line = serde_json::to_string(example).unwrap();
+                                println!("{}", line);
                             }
                         }
                     });
                     futures::future::join_all(futures).await;
                 }
-                Progress::global().finalize();
 
-                if args.output.is_some() || !matches!(command, Command::Eval(_)) {
-                    write_examples(&examples, output.as_ref());
-                }
+                Progress::global().finalize();
 
                 match &command {
                     Command::Predict(args) => predict::sync_batches(&args.provider).await?,
@@ -487,4 +565,68 @@ fn main() {
         })
         .detach();
     });
+}
+
+async fn handle_error(
+    error: anyhow::Error,
+    args: &EpArgs,
+    command: &Command,
+    app_state: &Arc<headless::EpAppState>,
+    failfast_on_single_example: bool,
+    example: &Example,
+) {
+    Progress::global().increment_failed();
+    let example_name = example.spec.filename();
+    let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
+    app_state
+        .fs
+        .write(
+            &failed_example_path,
+            &serde_json::to_vec_pretty(&example).unwrap(),
+        )
+        .await
+        .unwrap();
+    let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
+    app_state
+        .fs
+        .write(&err_path, format!("{error:?}").as_bytes())
+        .await
+        .unwrap();
+
+    let file_path = example
+        .repo_name()
+        .unwrap()
+        .worktree_path()
+        .join(&example.spec.cursor_path);
+
+    let msg = format!(
+        indoc::indoc! {"
+            While processing \"{}\":
+
+            {:?}
+
+            Written to: \x1b[36m{}\x1b[0m
+
+            Cursor File: \x1b[36m{}\x1b[0m
+
+            Explore this example data with:
+            fx \x1b[36m{}\x1b[0m
+
+            Re-run this example with:
+            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+        "},
+        example.spec.name,
+        error,
+        err_path.display(),
+        file_path.display(),
+        failed_example_path.display(),
+        command,
+        failed_example_path.display(),
+    );
+    if args.failfast || failfast_on_single_example {
+        Progress::global().finalize();
+        panic!("{}", msg);
+    } else {
+        log::error!("{}", msg);
+    }
 }

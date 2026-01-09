@@ -1562,6 +1562,8 @@ impl Pane {
             None => self.active_item_id(),
         };
 
+        self.unpreview_item_if_preview(active_item_id);
+
         let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(
@@ -2099,7 +2101,7 @@ impl Pane {
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
-        let path_style = project.read_with(cx, |project, cx| project.path_style(cx))?;
+        let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         };
@@ -2314,7 +2316,7 @@ impl Pane {
                     .flatten();
                 let save_task = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
-                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
                     let new_path = ProjectPath { worktree_id, path };
 
                     pane.update_in(cx, |pane, window, cx| {
@@ -6520,6 +6522,45 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_other_items_unpreviews_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.set_preview_item_id(Some(item_c.item_id()), cx);
+        });
+        assert!(pane.read_with(cx, |pane, _| pane.preview_item_id()
+            == Some(item_c.item_id())));
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_other_items(
+                &CloseOtherItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                Some(item_c.item_id()),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert!(pane.read_with(cx, |pane, _| pane.preview_item_id().is_none()));
+        assert_item_labels(&pane, ["C*"], cx);
     }
 
     #[gpui::test]

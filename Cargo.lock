@@ -10,6 +10,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_settings",
  "anyhow",
+ "base64 0.22.1",
  "buffer_diff",
  "collections",
  "editor",
@@ -17,6 +18,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.31",
  "gpui",
+ "image",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -338,6 +340,7 @@ dependencies = [
  "assistant_text_thread",
  "async-fs",
  "audio",
+ "base64 0.22.1",
  "buffer_diff",
  "chrono",
  "client",
@@ -1400,7 +1403,6 @@ dependencies = [
  "client",
  "editor",
  "gpui",
- "http_client",
  "markdown_preview",
  "release_channel",
  "semver",
@@ -3281,7 +3283,10 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "agent",
+ "agent-client-protocol",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "assistant_slash_command",
  "assistant_text_thread",
@@ -5233,7 +5238,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -5576,6 +5581,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "encoding_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "encoding_rs",
+ "gpui",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -9440,6 +9456,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "audio",
+ "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -9704,7 +9721,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "settings",
  "sum_tree",
  "theme",
@@ -9728,7 +9745,7 @@ dependencies = [
  "log",
  "markup5ever_rcdom",
  "pretty_assertions",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "settings",
  "theme",
  "ui",
@@ -12870,9 +12887,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.12.2"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86ba2052aebccc42cbbb3ed234b8b13ce76f75c3551a303cb2bcffcff12bb14"
+checksum = "1e8bbe1a966bd2f362681a44f6edce3c2310ac21e4d5067a6e7ec396297a6ea0"
 dependencies = [
  "bitflags 2.9.4",
  "memchr",
@@ -13745,7 +13762,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "theme",
  "ui",
  "util",
@@ -13881,9 +13898,9 @@ dependencies = [
 
 [[package]]
 name = "rsa"
-version = "0.9.9"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40a0376c50d0358279d9d643e4bf7b7be212f1f4ff1da9070a7b54d22ef75c88"
+checksum = "b8573f03f5883dcaebdfcf4725caa1ecb9c15b2ef50c43a07b816e06799bb12d"
 dependencies = [
  "const-oid",
  "digest",
@@ -20658,10 +20675,15 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.219.0"
+version = "0.220.0"
 dependencies = [
+ "acp_thread",
  "acp_tools",
+ "action_log",
  "activity_indicator",
+ "agent",
+ "agent-client-protocol",
+ "agent_servers",
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",
@@ -20699,6 +20721,7 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
+ "encoding_selector",
  "env_logger 0.11.8",
  "extension",
  "extension_host",

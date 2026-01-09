@@ -1319,6 +1319,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
     "**/.repo",
     "**/CVS",
     "**/.DS_Store",
@@ -1472,6 +1473,8 @@
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
+    // Control when to show the active encoding in the status bar.
+    "active_encoding_button": "non_utf8",
   },
   // Settings specific to the terminal
   "terminal": {

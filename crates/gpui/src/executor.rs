@@ -1,9 +1,10 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
+use crate::{App, GpuiRunnable, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use parking_lot::{Condvar, Mutex};
 use smol::prelude::*;
 use std::{
+    cell::Cell,
     fmt::Debug,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
@@ -19,7 +20,7 @@ use std::{
     thread::{self, ThreadId},
     time::{Duration, Instant},
 };
-use util::TryFutureExt;
+use util::TryFutureExt as _;
 use waker_fn::waker_fn;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -44,6 +45,7 @@ pub struct BackgroundExecutor {
 pub struct ForegroundExecutor {
     #[doc(hidden)]
     pub dispatcher: Arc<dyn PlatformDispatcher>,
+    liveness: std::sync::Weak<()>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -80,7 +82,21 @@ pub enum Priority {
     Low,
 }
 
+thread_local! {
+static CURRENT_TASKS_PRIORITY: Cell<Priority> = const { Cell::new(Priority::Medium) }; }
+
 impl Priority {
+    /// Sets the priority any spawn call from the runnable about
+    /// to be run will use
+    pub(crate) fn set_as_default_for_spawns(&self) {
+        CURRENT_TASKS_PRIORITY.set(*self);
+    }
+
+    /// Returns the priority from the currently running task
+    pub fn inherit() -> Self {
+        CURRENT_TASKS_PRIORITY.get()
+    }
+
     #[allow(dead_code)]
     pub(crate) const fn probability(&self) -> u32 {
         match self {
@@ -328,19 +344,14 @@ impl BackgroundExecutor {
                 .metadata(RunnableMeta {
                     location,
                     app: None,
+                    priority: Priority::inherit(),
                 })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
                         future.await
                     },
-                    move |runnable| {
-                        dispatcher.dispatch(
-                            RunnableVariant::Meta(runnable),
-                            None,
-                            Priority::default(),
-                        )
-                    },
+                    move |runnable| dispatcher.dispatch(GpuiRunnable::GpuiSpawned(runnable), None),
                 )
         };
         runnable.schedule();
@@ -386,6 +397,7 @@ impl BackgroundExecutor {
                         };
                         profiler::add_task_timing(timing);
 
+                        Priority::Realtime(realtime).set_as_default_for_spawns();
                         runnable.run();
 
                         let end = Instant::now();
@@ -398,6 +410,7 @@ impl BackgroundExecutor {
             async_task::Builder::new()
                 .metadata(RunnableMeta {
                     location,
+                    priority,
                     app: None,
                 })
                 .spawn(
@@ -411,13 +424,12 @@ impl BackgroundExecutor {
             async_task::Builder::new()
                 .metadata(RunnableMeta {
                     location,
+                    priority,
                     app: None,
                 })
                 .spawn(
                     move |_| future,
-                    move |runnable| {
-                        dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
-                    },
+                    move |runnable| dispatcher.dispatch(GpuiRunnable::GpuiSpawned(runnable), label),
                 )
         };
 
@@ -673,11 +685,14 @@ impl BackgroundExecutor {
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
+                priority: Priority::inherit(),
                 app: None,
             })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+                move |runnable| {
+                    dispatcher.dispatch_after(duration, GpuiRunnable::GpuiSpawned(runnable))
+                }
             });
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -776,20 +791,24 @@ impl BackgroundExecutor {
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
     /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
-    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
+    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>, liveness: std::sync::Weak<()>) -> Self {
         Self {
             dispatcher,
+            liveness,
             not_send: PhantomData,
         }
     }
 
-    /// Enqueues the given Task to run on the main thread at some point in the future.
+    /// Enqueues the given Task to run on the main thread at some point in the
+    /// future. This inherits the priority of the caller. Use
+    /// [`spawn_with_priority`](Self::spawn_with_priority) if you want to
+    /// overwrite that.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,
     {
-        self.inner_spawn(None, Priority::default(), future)
+        self.inner_spawn(self.liveness.clone(), Priority::default(), future)
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
@@ -802,25 +821,13 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        self.inner_spawn(None, priority, future)
-    }
-
-    #[track_caller]
-    pub(crate) fn spawn_context<R>(
-        &self,
-        app: std::sync::Weak<()>,
-        future: impl Future<Output = R> + 'static,
-    ) -> Task<R>
-    where
-        R: 'static,
-    {
-        self.inner_spawn(Some(app), Priority::default(), future)
+        self.inner_spawn(self.liveness.clone(), priority, future)
     }
 
     #[track_caller]
     pub(crate) fn inner_spawn<R>(
         &self,
-        app: Option<std::sync::Weak<()>>,
+        app: std::sync::Weak<()>,
         priority: Priority,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
@@ -835,15 +842,19 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
-            app: Option<std::sync::Weak<()>>,
+            app: std::sync::Weak<()>,
             priority: Priority,
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
                 move |runnable| {
-                    dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
+                    dispatcher.dispatch_on_main_thread(GpuiRunnable::GpuiSpawned(runnable))
                 },
-                RunnableMeta { location, app },
+                RunnableMeta {
+                    location,
+                    priority,
+                    app: Some(app),
+                },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
@@ -989,24 +1000,34 @@ mod test {
     use rand::SeedableRng;
     use std::cell::RefCell;
 
-    #[test]
-    fn sanity_test_tasks_run() {
+    /// Helper to create test infrastructure.
+    /// Returns (dispatcher, background_executor, app) where app's foreground_executor has liveness.
+    fn create_test_app() -> (TestDispatcher, BackgroundExecutor, Rc<crate::AppCell>) {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let arc_dispatcher = Arc::new(dispatcher.clone());
+        // Create liveness for task cancellation
+        let liveness = std::sync::Arc::new(());
+        let liveness_weak = std::sync::Arc::downgrade(&liveness);
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher, liveness_weak);
 
-        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor);
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let app = App::new_app(platform, liveness, asset_source, http_client);
+        (dispatcher, background_executor, app)
+    }
+
+    #[test]
+    fn sanity_test_tasks_run() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
 
         let task_ran = Rc::new(RefCell::new(false));
 
         foreground_executor
-            .spawn_context(liveness_token, {
+            .spawn({
                 let task_ran = Rc::clone(&task_ran);
                 async move {
                     *task_ran.borrow_mut() = true;
@@ -1026,24 +1047,15 @@ mod test {
 
     #[test]
     fn test_task_cancelled_when_app_dropped() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-
-        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
-        let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-
-        let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
         let app_weak = Rc::downgrade(&app);
 
         let task_ran = Rc::new(RefCell::new(false));
         let task_ran_clone = Rc::clone(&task_ran);
 
         foreground_executor
-            .spawn_context(liveness_token, async move {
+            .spawn(async move {
                 *task_ran_clone.borrow_mut() = true;
             })
             .detach();
@@ -1063,17 +1075,8 @@ mod test {
 
     #[test]
     fn test_nested_tasks_both_cancel() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-
-        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
-        let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-
-        let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
         let app_weak = Rc::downgrade(&app);
 
         let outer_completed = Rc::new(RefCell::new(false));
@@ -1087,13 +1090,11 @@ mod test {
         // Channel to block the inner task until we're ready
         let (tx, rx) = futures::channel::oneshot::channel::<()>();
 
-        // We need clones of executor and liveness_token for the inner spawn
         let inner_executor = foreground_executor.clone();
-        let inner_liveness_token = liveness_token.clone();
 
         foreground_executor
-            .spawn_context(liveness_token, async move {
-                let inner_task = inner_executor.spawn_context(inner_liveness_token, {
+            .spawn(async move {
+                let inner_task = inner_executor.spawn({
                     let inner_flag = Rc::clone(&inner_flag);
                     async move {
                         rx.await.ok();
@@ -1149,55 +1150,13 @@ mod test {
     }
 
     #[test]
-    fn test_task_without_app_tracking_still_runs() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-
-        let platform = TestPlatform::new(background_executor, foreground_executor.clone());
-        let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-
-        let app = App::new_app(platform, asset_source, http_client);
-        let app_weak = Rc::downgrade(&app);
-
-        let task_ran = Rc::new(RefCell::new(false));
-        let task_ran_clone = Rc::clone(&task_ran);
-
-        let _task = foreground_executor.spawn(async move {
-            *task_ran_clone.borrow_mut() = true;
-        });
-
-        drop(app);
-
-        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
-
-        dispatcher.run_until_parked();
-
-        assert!(
-            *task_ran.borrow(),
-            "Task without app tracking should still run after app is dropped"
-        );
-    }
-
-    #[test]
     #[should_panic]
     fn test_polling_cancelled_task_panics() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-
-        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
-        let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-
-        let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let (dispatcher, background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
         let app_weak = Rc::downgrade(&app);
 
-        let task = foreground_executor.spawn_context(liveness_token, async move { 42 });
+        let task = foreground_executor.spawn(async move { 42 });
 
         drop(app);
 
@@ -1210,22 +1169,11 @@ mod test {
 
     #[test]
     fn test_polling_cancelled_task_returns_none_with_fallible() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-
-        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
-        let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-
-        let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
+        let (dispatcher, background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
         let app_weak = Rc::downgrade(&app);
 
-        let task = foreground_executor
-            .spawn_context(liveness_token, async move { 42 })
-            .fallible();
+        let task = foreground_executor.spawn(async move { 42 }).fallible();
 
         drop(app);
 

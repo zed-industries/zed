@@ -138,7 +138,7 @@ impl ImageItem {
                 .abs_path(cx)
                 .context("absolutizing image file path")?;
             anyhow::Ok((fs, image_path))
-        })??;
+        })?;
 
         let image_bytes = fs.load_bytes(&image_path).await?;
         Self::compute_metadata_from_bytes(&image_bytes)
@@ -234,7 +234,7 @@ impl ProjectItem for ImageItem {
                 let project = project.clone();
                 async move |cx| {
                     project
-                        .update(cx, |project, cx| project.open_image(path, cx))?
+                        .update(cx, |project, cx| project.open_image(path, cx))
                         .await
                 }
             }))
@@ -628,9 +628,9 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 image,
                 image_metadata: None,
                 reload_task: None,
-            })?;
+            });
 
-            let image_id = cx.read_entity(&entity, |model, _| model.id)?;
+            let image_id = cx.read_entity(&entity, |model, _| model.id);
 
             this.update(cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {
@@ -649,7 +649,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 }
 
                 anyhow::Ok(())
-            })??;
+            })?;
 
             Ok(entity)
         })
@@ -662,7 +662,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
     ) -> Task<Result<()>> {
         cx.spawn(async move |_, cx| {
             for image in images {
-                if let Some(rec) = image.update(cx, |image, cx| image.reload(cx))? {
+                if let Some(rec) = image.update(cx, |image, cx| image.reload(cx)) {
                     rec.await?
                 }
             }
@@ -709,7 +709,7 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
             remote_store
                 .update(cx, |remote_store, cx| {
                     remote_store.wait_for_remote_image(image_id, cx)
-                })?
+                })
                 .await
         })
     }

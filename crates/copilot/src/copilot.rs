@@ -546,7 +546,7 @@ impl Copilot {
                     let mut params = server.default_initialize_params(false, cx);
                     params.initialization_options = Some(editor_info_json);
                     server.initialize(params, configuration.into(), cx)
-                })?
+                })
                 .await?;
 
             this.update(cx, |_, cx| notify_did_change_config_to_server(&server, cx))?

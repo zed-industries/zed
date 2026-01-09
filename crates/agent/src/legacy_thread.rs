@@ -44,7 +44,7 @@ pub struct SerializedThread {
     pub profile: Option<AgentProfileId>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct SerializedLanguageModel {
     pub provider: String,
     pub model: String,

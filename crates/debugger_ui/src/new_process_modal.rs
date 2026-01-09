@@ -185,7 +185,7 @@ impl NewProcessModal {
                                 .collect::<Vec<_>>();
 
                             let Some(task_inventory) = task_store
-                                .update(cx, |task_store, _| task_store.task_inventory().cloned())?
+                                .update(cx, |task_store, _| task_store.task_inventory().cloned())
                             else {
                                 return Ok(());
                             };
@@ -194,7 +194,7 @@ impl NewProcessModal {
                                 .update(cx, |task_inventory, cx| {
                                     task_inventory
                                         .used_and_current_resolved_tasks(task_contexts.clone(), cx)
-                                })?
+                                })
                                 .await;
 
                             if let Ok(task) = debug_picker.update(cx, |picker, cx| {

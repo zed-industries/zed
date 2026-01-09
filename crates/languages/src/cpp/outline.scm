@@ -28,6 +28,14 @@
 
 (enum_specifier
     "enum" @context
+    [
+        "class"
+        "struct"
+    ]? @context
+    name: (_) @name) @item
+
+(union_specifier
+    "union" @context
     name: (_) @name) @item
 
 (enumerator
@@ -38,8 +46,10 @@
     name: (_) @name) @item
 
 (declaration
-    (storage_class_specifier) @context
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_) @context
     declarator: (init_declarator
       ; The declaration may define multiple variables, using @item on the
@@ -121,7 +131,10 @@
     (type_qualifier)? @context) @item
 
 (field_declaration
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_) @context
     declarator: [
         (field_identifier) @name
