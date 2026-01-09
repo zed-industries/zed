@@ -14,7 +14,7 @@ doctest = false
 
 [features]
 default = []
-test-support = ["remote/test-support"]
+test-support = ["remote/test-support", "project/test-support", "workspace/test-support"]
 
 [dependencies]
 anyhow.workspace = true
