@@ -24,7 +24,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-pub use remote_connections::SshSettings;
+pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
 use std::{path::Path, sync::Arc};
@@ -585,7 +585,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         };
 
                         if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(connection);
                         };
 
@@ -719,6 +719,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         RemoteConnectionOptions::Ssh { .. } => IconName::Server,
                                         RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
                                         RemoteConnectionOptions::Docker(_) => IconName::Box,
+                                        #[cfg(any(test, feature = "test-support"))]
+                                        RemoteConnectionOptions::Mock(_) => IconName::Server,
                                     })
                                     .color(Color::Muted)
                                     .into_any_element()

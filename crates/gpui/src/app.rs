@@ -1,6 +1,6 @@
 use std::{
     any::{TypeId, type_name},
-    cell::{BorrowMutError, Ref, RefCell, RefMut},
+    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -43,8 +43,8 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -138,8 +138,10 @@ impl Application {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
+        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(false),
+            current_platform(false, Arc::downgrade(&liveness)),
+            liveness,
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -149,8 +151,10 @@ impl Application {
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
     pub fn headless() -> Self {
+        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(true),
+            current_platform(true, Arc::downgrade(&liveness)),
+            liveness,
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -584,7 +588,7 @@ impl GpuiMode {
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
-    pub(crate) liveness: std::sync::Arc<()>,
+    pub(crate) _liveness: Arc<()>,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
@@ -637,6 +641,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     quit_mode: QuitMode,
     quitting: bool,
 }
@@ -645,13 +650,14 @@ impl App {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
+        liveness: Arc<()>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
-        let executor = platform.background_executor();
+        let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         assert!(
-            executor.is_main_thread(),
+            background_executor.is_main_thread(),
             "must construct App on main thread"
         );
 
@@ -663,15 +669,16 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
-                liveness: std::sync::Arc::new(()),
+                _liveness: liveness,
                 platform: platform.clone(),
                 text_system,
+                text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                background_executor: executor,
+                background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
@@ -1088,6 +1095,16 @@ impl App {
         self.platform.read_from_clipboard()
     }
 
+    /// Sets the text rendering mode for the application.
+    pub fn set_text_rendering_mode(&mut self, mode: TextRenderingMode) {
+        self.text_rendering_mode.set(mode);
+    }
+
+    /// Returns the current text rendering mode for the application.
+    pub fn text_rendering_mode(&self) -> TextRenderingMode {
+        self.text_rendering_mode.get()
+    }
+
     /// Writes data to the platform clipboard.
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.platform.write_to_clipboard(item)
@@ -1482,7 +1499,6 @@ impl App {
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
             app: self.this.clone(),
-            liveness_token: std::sync::Arc::downgrade(&self.liveness),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
@@ -2219,8 +2235,6 @@ impl App {
 }
 
 impl AppContext for App {
-    type Result<T> = T;
-
     /// Builds an entity that is owned by the application.
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
@@ -2242,7 +2256,7 @@ impl AppContext for App {
         })
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
         Reservation(self.entities.reserve())
     }
 
@@ -2250,7 +2264,7 @@ impl AppContext for App {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.update(|cx| {
             let slot = reservation.0;
             let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
@@ -2283,11 +2297,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -2332,7 +2342,7 @@ impl AppContext for App {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {

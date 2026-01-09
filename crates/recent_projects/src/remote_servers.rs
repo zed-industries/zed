@@ -1,9 +1,8 @@
 use crate::{
     dev_container::start_dev_container,
     remote_connections::{
-        Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
-        SshConnectionHeader, SshSettings, connect, determine_paths_with_positions,
-        open_remote_project,
+        Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettings, SshConnection,
+        SshConnectionHeader, connect, determine_paths_with_positions, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -295,7 +294,7 @@ impl EditNicknameState {
             index,
             editor: cx.new(|cx| Editor::single_line(window, cx)),
         };
-        let starting_text = SshSettings::get_global(cx)
+        let starting_text = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(index.0)
             .and_then(|state| state.nickname)
@@ -353,6 +352,11 @@ impl ProjectPicker {
                 connection_string: "".into(),
                 nickname: None,
             },
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => ProjectPickerData::Ssh {
+                connection_string: format!("mock-{}", options.id).into(),
+                nickname: None,
+            },
         };
         let _path_task = cx
             .spawn_in(window, {
@@ -381,11 +385,9 @@ impl ProjectPicker {
                         .read_with(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
 
-                    let remote_connection = project
-                        .read_with(cx, |project, cx| {
-                            project.remote_client()?.read(cx).connection()
-                        })
-                        .ok()??;
+                    let remote_connection = project.read_with(cx, |project, cx| {
+                        project.remote_client()?.read(cx).connection()
+                    })?;
 
                     let (paths, paths_with_positions) =
                         determine_paths_with_positions(&remote_connection, paths).await;
@@ -600,7 +602,7 @@ impl DefaultState {
         let add_new_devcontainer = NavigableEntry::new(&handle, cx);
         let add_new_wsl = NavigableEntry::new(&handle, cx);
 
-        let ssh_settings = SshSettings::get_global(cx);
+        let ssh_settings = RemoteSettings::get_global(cx);
         let read_ssh_config = ssh_settings.read_ssh_config;
 
         let ssh_servers = ssh_settings
@@ -797,7 +799,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let mut read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
+        let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
             spawn_ssh_config_watch(fs.clone(), cx)
         } else {
@@ -812,7 +814,7 @@ impl RemoteServerProjects {
 
         let _subscription =
             cx.observe_global_in::<SettingsStore>(window, move |recent_projects, _, cx| {
-                let new_read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
+                let new_read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
                 if read_ssh_config != new_read_ssh_config {
                     read_ssh_config = new_read_ssh_config;
                     if read_ssh_config {
@@ -1131,7 +1133,7 @@ impl RemoteServerProjects {
                     })?;
 
                     let home_dir = project
-                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))?
+                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))
                         .await
                         .and_then(|path| path.into_abs_path())
                         .map(|path| RemotePathBuf::new(path, path_style))
@@ -1715,11 +1717,12 @@ impl RemoteServerProjects {
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(project.paths.join(", ")))
+                    .child(Label::new(project.paths.join(", ")).truncate_start())
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
+                    .tooltip(Tooltip::text(project.paths.join("\n")))
                     .when(is_from_zed, |server_list_item| {
                         server_list_item.end_hover_slot::<AnyElement>(Some(
                             div()
@@ -2436,17 +2439,13 @@ impl RemoteServerProjects {
 
                 cx.spawn(async move |cx| {
                     if confirmation.await.ok() == Some(0) {
-                        remote_servers
-                            .update(cx, |this, cx| {
-                                this.delete_wsl_distro(index, cx);
-                            })
-                            .ok();
-                        remote_servers
-                            .update(cx, |this, cx| {
-                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                cx.notify();
-                            })
-                            .ok();
+                        remote_servers.update(cx, |this, cx| {
+                            this.delete_wsl_distro(index, cx);
+                        });
+                        remote_servers.update(cx, |this, cx| {
+                            this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                            cx.notify();
+                        });
                     }
                     anyhow::Ok(())
                 })
@@ -2618,17 +2617,13 @@ impl RemoteServerProjects {
 
                     cx.spawn(async move |cx| {
                         if confirmation.await.ok() == Some(0) {
-                            remote_servers
-                                .update(cx, |this, cx| {
-                                    this.delete_ssh_server(index, cx);
-                                })
-                                .ok();
-                            remote_servers
-                                .update(cx, |this, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                    cx.notify();
-                                })
-                                .ok();
+                            remote_servers.update(cx, |this, cx| {
+                                this.delete_ssh_server(index, cx);
+                            });
+                            remote_servers.update(cx, |this, cx| {
+                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                cx.notify();
+                            });
                         }
                         anyhow::Ok(())
                     })
@@ -2677,7 +2672,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(connection) = SshSettings::get_global(cx)
+        let Some(connection) = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(state.index.0)
         else {
@@ -3162,7 +3157,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let ssh_settings = SshSettings::get_global(cx);
+        let ssh_settings = RemoteSettings::get_global(cx);
         let mut should_rebuild = false;
 
         let ssh_connections_changed = ssh_settings.ssh_connections.0.iter().ne(state

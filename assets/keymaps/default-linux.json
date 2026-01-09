@@ -203,8 +203,8 @@
   {
     "context": "Editor && editor_agent_diff",
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
       "shift-ctrl-r": "agent::OpenAgentDiff",
@@ -213,8 +213,8 @@
   {
     "context": "AgentDiff",
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
     },
@@ -261,12 +261,6 @@
       "ctrl-y": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
       "ctrl-alt-z": "agent::RejectOnce",
-    },
-  },
-  {
-    "context": "AgentPanel > NavigationMenu",
-    "bindings": {
-      "shift-backspace": "agent::DeleteRecentlyOpenThread",
     },
   },
   {
@@ -360,6 +354,7 @@
       "tab": "buffer_search::FocusEditor",
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPreviousMatch",
+      "ctrl-shift-enter": "editor::ToggleFoldAll",
       "alt-enter": "search::SelectAllMatches",
       "find": "search::FocusSearch",
       "ctrl-f": "search::FocusSearch",
@@ -386,7 +381,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "shift-find": "search::FocusSearch",
-      "shift-enter": "project_search::ToggleAllSearchResults",
+      "ctrl-shift-enter": "project_search::ToggleAllSearchResults",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ToggleRegex",
@@ -459,7 +454,7 @@
       "alt-w": "search::ToggleWholeWord",
       "alt-find": "project_search::ToggleFilters",
       "alt-ctrl-f": "project_search::ToggleFilters",
-      "shift-enter": "project_search::ToggleAllSearchResults",
+      "ctrl-shift-enter": "project_search::ToggleAllSearchResults",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
