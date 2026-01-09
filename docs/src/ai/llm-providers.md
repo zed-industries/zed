@@ -537,11 +537,59 @@ By default, OpenAI-compatible models inherit the following capabilities:
 - `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 - `chat_completions`: true (calls the `/chat/completions` endpoint)
+- `thinking_mode`: `openai` (treats thinking content as regular text)
 
 If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
+#### Thinking Mode {#thinking-mode}
+
+Some models (like DeepSeek R1 or GLM-4.7) provide thinking or reasoning content alongside their responses. The `thinking_mode` capability controls how this thinking content is preserved in the conversation history and sent back to the model.
+
+> **Note:** This setting is specific to the OpenAI Compatible provider only. Other providers handle thinking content differently:
+>
+> - **Ollama** and **Mistral** use their own API formats with dedicated thinking fields and are not affected by this setting
+> - **OpenAI**, **Vercel**, **xAi**, and Zed's hosted **Cloud** models use a fixed default mode and do not expose this configuration option
+
+Available modes are for OpenAI Compatible provider:
+
+- `openai` (default): Treats thinking content as regular text, including it in the conversation alongside other messages. This is compatible with OpenAI's behavior.
+- `interleave`: Only preserves thinking content from the most recent turn (messages after the last user message). Older thinking is discarded to save tokens while maintaining context.
+- `preserved`: Preserves all thinking content across the entire conversation history.
+
+Choose the mode based on your model's requirements and token usage preferences. The `interleave` mode is recommended for cost-conscious usage with reasoning-capable models, while `preserved` mode is useful when you need complete thinking history for debugging or continuity.
+
+Example configuration for DeepSeek R1:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "DeepSeek": {
+        "api_url": "https://api.deepseek.com/v1",
+        "available_models": [
+          {
+            "name": "deepseek-r1",
+            "display_name": "DeepSeek R1",
+            "max_tokens": 128000,
+            "max_output_tokens": 8192,
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": true,
+              "thinking_mode": "interleave"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
 Note that LLM API keys aren't stored in your settings file.
-So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
+So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the DeepSeek example above, it would be `DEEPSEEK_API_KEY=<your api key>`.
 
 ### OpenRouter {#openrouter}
 
