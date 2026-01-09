@@ -5,22 +5,27 @@ use calloop::{
 };
 use util::ResultExt;
 
-use std::{mem::MaybeUninit, thread, time::Duration};
+use std::{
+    mem::MaybeUninit,
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, GpuiRunnable, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RealtimePriority, THREAD_TIMINGS, TaskLabel, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
+    PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming,
+    ThreadTaskTimings, profiler,
 };
 
 struct TimerAfter {
     duration: Duration,
-    runnable: GpuiRunnable,
+    runnable: RunnableVariant,
 }
 
 pub(crate) struct LinuxDispatcher {
-    main_sender: PriorityQueueCalloopSender<GpuiRunnable>,
+    main_sender: PriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
-    background_sender: PriorityQueueSender<GpuiRunnable>,
+    background_sender: PriorityQueueSender<RunnableVariant>,
     _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
@@ -28,7 +33,7 @@ pub(crate) struct LinuxDispatcher {
 const MIN_THREADS: usize = 2;
 
 impl LinuxDispatcher {
-    pub fn new(main_sender: PriorityQueueCalloopSender<GpuiRunnable>) -> Self {
+    pub fn new(main_sender: PriorityQueueCalloopSender<RunnableVariant>) -> Self {
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         let thread_count =
             std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
@@ -37,16 +42,48 @@ impl LinuxDispatcher {
         // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
-                let mut receiver: PriorityQueueReceiver<GpuiRunnable> = background_receiver.clone();
+                let mut receiver = background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let started = runnable.run_and_profile();
+                            let start = Instant::now();
+
+                            let mut location = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                            };
+
+                            let end = Instant::now();
+                            location.end = Some(end);
+                            profiler::add_task_timing(location);
+
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
                                 i,
-                                started.elapsed()
+                                start.elapsed()
                             );
                         }
                     })
@@ -73,7 +110,36 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            runnable.run_and_profile();
+                                            let start = Instant::now();
+                                            let mut timing = match runnable {
+                                                RunnableVariant::Meta(runnable) => {
+                                                    let location = runnable.metadata().location;
+                                                    let timing = TaskTiming {
+                                                        location,
+                                                        start,
+                                                        end: None,
+                                                    };
+                                                    profiler::add_task_timing(timing);
+
+                                                    runnable.run();
+                                                    timing
+                                                }
+                                                RunnableVariant::Compat(runnable) => {
+                                                    let timing = TaskTiming {
+                                                        location: core::panic::Location::caller(),
+                                                        start,
+                                                        end: None,
+                                                    };
+                                                    profiler::add_task_timing(timing);
+
+                                                    runnable.run();
+                                                    timing
+                                                }
+                                            };
+                                            let end = Instant::now();
+
+                                            timing.end = Some(end);
+                                            profiler::add_task_timing(timing);
                                         }
                                         TimeoutAction::Drop
                                     },
@@ -123,15 +189,15 @@ impl PlatformDispatcher for LinuxDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: GpuiRunnable, _: Option<TaskLabel>) {
+    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
         self.background_sender
-            .send(runnable.priority(), runnable)
+            .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
     }
 
-    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         self.main_sender
-            .send(runnable.priority(), runnable)
+            .send(priority, runnable)
             .unwrap_or_else(|runnable| {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
@@ -145,7 +211,7 @@ impl PlatformDispatcher for LinuxDispatcher {
             });
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: GpuiRunnable) {
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.timer_sender
             .send(TimerAfter { duration, runnable })
             .ok();

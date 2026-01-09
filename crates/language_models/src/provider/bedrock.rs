@@ -24,8 +24,7 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, FontWeight, Subscription, Task, Window,
-    actions,
+    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -44,7 +43,7 @@ use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore}
 use smol::lock::OnceCell;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
@@ -1386,95 +1385,118 @@ impl Render for ConfigurationView {
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
-            .child(Label::new("But, to access models on AWS, you need to:").mt_1())
+            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials."))
+            .child(Label::new("But first, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Grant permissions to the strategy you'll use according to the:"))
-                            .child(ButtonLink::new("Prerequisites", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
+                            .child(Label::new(
+                                "Grant permissions to the strategy you'll use according to the:",
+                            ))
+                            .child(ButtonLink::new(
+                                "Prerequisites",
+                                "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
+                            )),
                     )
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Select the models you would like access to:"))
-                            .child(ButtonLink::new("Bedrock Model Catalog", "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"))
-                    )
+                            .child(ButtonLink::new(
+                                "Bedrock Model Catalog",
+                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess",
+                            )),
+                    ),
             )
             .child(self.render_static_credentials_ui())
-            .child(
-                Label::new(
-                    format!("You can also set the {}, {} AND {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .my_1(),
-            )
-            .child(
-                Label::new(
-                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.", ZED_AWS_PROFILE_VAR.name, ZED_AWS_ENDPOINT_VAR.name, ZED_BEDROCK_SESSION_TOKEN_VAR.name),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
             .into_any()
     }
 }
 
 impl ConfigurationView {
     fn render_static_credentials_ui(&self) -> impl IntoElement {
+        let section_header = |title: SharedString| {
+            h_flex()
+                .gap_2()
+                .child(Label::new(title).size(LabelSize::Default))
+                .child(Divider::horizontal())
+        };
+
+        let list_item = List::new()
+            .child(
+                ListBulletItem::new("")
+                    .child(Label::new(
+                        "For access keys: Create an IAM user in the AWS console with programmatic access",
+                    ))
+                    .child(ButtonLink::new(
+                        "IAM Console",
+                        "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users",
+                    )),
+            )
+            .child(
+                ListBulletItem::new("")
+                    .child(Label::new("For Bedrock API Keys: Generate an API key from the"))
+                    .child(ButtonLink::new(
+                        "Bedrock Console",
+                        "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html",
+                    )),
+            )
+            .child(
+                ListBulletItem::new("")
+                    .child(Label::new("Attach the necessary Bedrock permissions to"))
+                    .child(ButtonLink::new(
+                        "this user",
+                        "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
+                    )),
+            )
+            .child(ListBulletItem::new(
+                "Enter either access keys OR a Bedrock API Key below (not both)",
+            ));
+
         v_flex()
             .my_2()
             .tab_group()
             .gap_1p5()
-            .child(
-                Label::new("Static Keys")
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::BOLD),
-            )
-            .child(
-                Label::new(
-                    "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
-                )
-            )
-            .child(
-                List::new()
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("For access keys: Create an IAM user in the AWS console with programmatic access"))
-                            .child(ButtonLink::new("IAM Console", "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"))
-                    )
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("For Bedrock API Keys: Generate an API key from the"))
-                            .child(ButtonLink::new("Bedrock Console", "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html"))
-                    )
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("Attach the necessary Bedrock permissions to this"))
-                            .child(ButtonLink::new("user", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
-                    )
-                    .child(
-                        ListBulletItem::new("Enter either access keys OR a Bedrock API Key below (not both)")
-                    ),
-            )
+            .child(section_header("Static Credentials".into()))
+            .child(Label::new(
+                "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
+            ))
+            .child(list_item)
             .child(self.access_key_id_editor.clone())
             .child(self.secret_access_key_editor.clone())
             .child(self.session_token_editor.clone())
             .child(
-                Label::new("OR")
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::BOLD)
-                    .my_1(),
+                Label::new(format!(
+                    "You can also set the {}, {} and {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.",
+                    ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                    ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
+                    ZED_BEDROCK_REGION_VAR.name,
+                    ZED_BEDROCK_BEARER_TOKEN_VAR.name
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
             )
+            .child(
+                Label::new(format!(
+                    "Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.",
+                    ZED_AWS_PROFILE_VAR.name,
+                    ZED_AWS_ENDPOINT_VAR.name,
+                    ZED_BEDROCK_SESSION_TOKEN_VAR.name
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .mt_1()
+                .mb_2p5(),
+            )
+            .child(section_header("Using the an API key".into()))
             .child(self.bearer_token_editor.clone())
             .child(
-                Label::new(
-                    format!("Region is configured via {} environment variable or settings.json (defaults to us-east-1).", ZED_BEDROCK_REGION_VAR.name),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .mt_2(),
+                Label::new(format!(
+                    "Region is configured via {} environment variable or settings.json (defaults to us-east-1).",
+                    ZED_BEDROCK_REGION_VAR.name
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
             )
     }
 }

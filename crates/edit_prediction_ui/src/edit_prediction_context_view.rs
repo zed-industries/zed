@@ -243,11 +243,14 @@ impl EditPredictionContextView {
             .gap_2()
             .child(v_flex().h_full().flex_1().child({
                 let t0 = run.started_at;
-                let mut table = ui::Table::<2>::new().width(ui::px(300.)).no_ui_font();
+                let mut table = ui::Table::new(2).width(ui::px(300.)).no_ui_font();
                 for (key, value) in &run.metadata {
-                    table = table.row([key.into_any_element(), value.clone().into_any_element()])
+                    table = table.row(vec![
+                        key.into_any_element(),
+                        value.clone().into_any_element(),
+                    ])
                 }
-                table = table.row([
+                table = table.row(vec![
                     "Total Time".into_any_element(),
                     format!("{} ms", (run.finished_at.unwrap_or(t0) - t0).as_millis())
                         .into_any_element(),

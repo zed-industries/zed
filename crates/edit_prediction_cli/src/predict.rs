@@ -21,6 +21,8 @@ use std::{
     },
 };
 
+static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
+
 pub async fn run_prediction(
     example: &mut Example,
     provider: Option<PredictionProvider>,
@@ -46,9 +48,7 @@ pub async fn run_prediction(
     ) {
         let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
-        if example.prompt.is_none() {
-            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
-        }
+        run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
 
         let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
@@ -235,12 +235,14 @@ async fn predict_anthropic(
 ) -> anyhow::Result<()> {
     let llm_model_name = "claude-sonnet-4-5";
     let max_tokens = 16384;
-    let llm_client = if batched {
-        AnthropicClient::batch(&crate::paths::LLM_CACHE_DB.as_ref())
-    } else {
-        AnthropicClient::plain()
-    };
-    let llm_client = llm_client.context("Failed to create LLM client")?;
+    let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+        let client = if batched {
+            AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+        } else {
+            AnthropicClient::plain()
+        };
+        client.expect("Failed to create Anthropic client")
+    });
 
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
@@ -285,9 +287,10 @@ async fn predict_anthropic(
 pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
     match provider {
         PredictionProvider::Teacher => {
-            let cache_path = crate::paths::LLM_CACHE_DB.as_ref();
-            let llm_client =
-                AnthropicClient::batch(cache_path).context("Failed to create LLM client")?;
+            let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+                AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+                    .expect("Failed to create Anthropic client")
+            });
             llm_client
                 .sync_batches()
                 .await

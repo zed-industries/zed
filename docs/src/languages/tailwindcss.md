@@ -39,6 +39,27 @@ If by default the language server isn't enough to make Tailwind work for a given
 
 Refer to [the Tailwind CSS language server settings docs](https://github.com/tailwindlabs/tailwindcss-intellisense?tab=readme-ov-file#extension-settings) for more information.
 
+### Using Tailwind CSS Mode in CSS Files (Preview)
+
+Zed includes support for the Tailwind CSS language mode, which provides full CSS IntelliSense support even when using Tailwind-specific at-rules like `@apply`, `@layer`, and `@theme`.
+To use the Tailwind CSS language mode for CSS files, add the following to `languages` section of your `settings.json`:
+
+```json [settings]
+{
+  "languages": {
+    "CSS": {
+      "language_servers": [
+        "tailwindcss-intellisense-css",
+        "!vscode-css-language-server",
+        "..."
+      ]
+    }
+  }
+}
+```
+
+The `tailwindcss-intellisense-css` language server serves as an alternative to the default CSS language server, maintaining all standard CSS IntelliSense features while adding support for Tailwind-specific syntax.
+
 ### Prettier Plugin
 
 Zed supports Prettier out of the box, which means that if you have the [Tailwind CSS Prettier plugin](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) installed, adding it to your Prettier configuration will make it work automatically:

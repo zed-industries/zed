@@ -32,6 +32,7 @@ collections.workspace = true
 context_server.workspace = true
 db.workspace = true
 derive_more.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true

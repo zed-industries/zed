@@ -221,10 +221,7 @@ impl TransportDelegate {
             }));
         }
 
-        {
-            let mut lock = self.server_tx.lock().await;
-            *lock = Some(server_tx.clone());
-        }
+        *self.server_tx.lock().await = Some(server_tx.clone());
 
         Ok(())
     }

@@ -3913,7 +3913,7 @@ impl EditorElement {
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
         let file = for_excerpt.buffer.file();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let can_open_excerpts = file.is_none_or(|file| file.can_open());
         let path_style = file.map(|file| file.path_style(cx));
         let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
         let (parent_path, filename) = if let Some(path) = &relative_path {
@@ -5790,6 +5790,10 @@ impl EditorElement {
                         element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
 
                     let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
+
+                    if x < text_hitbox.bounds.left() {
+                        continue;
+                    }
 
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));
