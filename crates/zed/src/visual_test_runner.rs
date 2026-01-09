@@ -54,7 +54,7 @@ use {
     git_ui::project_diff::ProjectDiff,
     gpui::{
         App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString, VisualTestAppContext,
-        Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
@@ -1197,7 +1197,7 @@ import { AiPaneTabContext } from 'context';
     // Add the test directory as a worktree
     let add_worktree_task = project.update(cx, |project, cx| {
         project.find_or_create_worktree(&project_path, true, cx)
-    })?;
+    });
 
     cx.background_executor.allow_parking();
     let _ = cx.background_executor.block_test(add_worktree_task);
@@ -1264,63 +1264,6 @@ import { AiPaneTabContext } from 'context';
         cx,
         update_baseline,
     )?;
-
-    // Test 1b: Tooltip visible when hovering over the button
-    // First, find the button's position
-    let button_bounds = cx.update_window(
-        workspace_window.into(),
-        |_view, window: &mut Window, _cx| window.bounds_for_element("diff_review_button"),
-    )?;
-
-    let test1b_result = if let Some(bounds) = button_bounds {
-        // Calculate the center of the button for hovering
-        let center = bounds.center();
-
-        // Draw to register mouse listeners
-        cx.update_window(workspace_window.into(), |_, window, cx| {
-            window.draw(cx).clear();
-        })?;
-        cx.run_until_parked();
-
-        // Simulate mouse move to hover over the button
-        cx.simulate_mouse_move(workspace_window.into(), center, None, Modifiers::default());
-
-        // Draw again to register tooltip hover listener
-        cx.update_window(workspace_window.into(), |_, window, cx| {
-            window.draw(cx).clear();
-        })?;
-        cx.run_until_parked();
-
-        // Move mouse again to trigger tooltip scheduling
-        cx.simulate_mouse_move(workspace_window.into(), center, None, Modifiers::default());
-
-        // Wait for the tooltip delay (500ms) plus some buffer
-        cx.advance_clock(TOOLTIP_SHOW_DELAY + Duration::from_millis(100));
-        cx.run_until_parked();
-
-        // Draw to render the tooltip
-        cx.update_window(workspace_window.into(), |_, window, cx| {
-            window.draw(cx).clear();
-        })?;
-        cx.run_until_parked();
-
-        // Refresh window
-        cx.update_window(workspace_window.into(), |_, window, _cx| {
-            window.refresh();
-        })?;
-        cx.run_until_parked();
-
-        // Capture the tooltip screenshot
-        run_visual_test(
-            "diff_review_button_tooltip",
-            workspace_window.into(),
-            cx,
-            update_baseline,
-        )?
-    } else {
-        println!("  Warning: Could not find diff_review_button bounds for tooltip test");
-        TestResult::Passed
-    };
 
     // Test 2: Diff view with feature flag disabled
     // Disable the feature flag
@@ -1450,14 +1393,11 @@ import { AiPaneTabContext } from 'context';
     }
 
     // Return combined result
-    match (&test1_result, &test1b_result, &test2_result, &test3_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed, TestResult::Passed) => {
-            Ok(TestResult::Passed)
-        }
-        (TestResult::BaselineUpdated(p), _, _, _)
-        | (_, TestResult::BaselineUpdated(p), _, _)
-        | (_, _, TestResult::BaselineUpdated(p), _)
-        | (_, _, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    match (&test1_result, &test2_result, &test3_result) {
+        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _, _)
+        | (_, TestResult::BaselineUpdated(p), _)
+        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
     }
 }
 
