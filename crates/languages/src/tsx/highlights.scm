@@ -381,11 +381,6 @@
   "override"
 ] @keyword
 
-; JSX elements
-(jsx_opening_element (identifier) @tag.jsx)
-(jsx_closing_element (identifier) @tag.jsx)
-(jsx_self_closing_element (identifier) @tag.jsx)
-
 (jsx_opening_element
   [
     (identifier) @type
@@ -394,7 +389,6 @@
       property: (property_identifier) @type
     )
   ]
-  (#match? @type "^[A-Z][^.]*$")
 )
 (jsx_closing_element
   [
@@ -404,7 +398,6 @@
       property: (property_identifier) @type
     )
   ]
-  (#match? @type "^[A-Z][^.]*$")
 )
 (jsx_self_closing_element
   [
@@ -414,8 +407,11 @@
       property: (property_identifier) @type
     )
   ]
-  (#match? @type "^[A-Z][^.]*$")
 )
+
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
