@@ -28,7 +28,7 @@ use language::{
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
-    rust_lang, tree_sitter_typescript,
+    markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
     DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
@@ -10730,20 +10730,6 @@ fn js_lang() -> Arc<Language> {
             name: "JavaScript".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        None,
-    ))
-}
-
-fn markdown_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["md".to_string()],
                 ..Default::default()
             },
             ..Default::default()
