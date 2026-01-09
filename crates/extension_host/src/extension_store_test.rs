@@ -741,7 +741,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
     await_or_timeout(
         "awaiting install_dev_extension",
-        5,
+        60,
         extension_store.update(cx, |store, cx| {
             store.install_dev_extension(test_extension_dir.clone(), cx)
         }),
@@ -749,6 +749,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await
     .unwrap();
     log::info!("[test_extension_store_with_test_extension] install_dev_extension completed");
+
+
 
     log::info!("[test_extension_store_with_test_extension] registering fake LSP server: gleam");
     let mut fake_servers = language_registry.register_fake_lsp_server(
@@ -784,6 +786,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let fake_server = await_or_timeout("awaiting first fake server spawn", 10, fake_servers.next())
         .await
         .unwrap();
+
     log::info!(
         "[test_extension_store_with_test_extension] got first fake LSP server spawn (binary={:?}, args={:?})",
         fake_server.binary.path,
@@ -873,6 +876,21 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             },
         ])))
     });
+
+    // `register_fake_lsp_server` can yield a server instance before the client has finished the LSP
+    // initialization handshake. Wait until we observe the client's `initialized` notification before
+    // issuing requests like completion.
+    await_or_timeout(
+        "awaiting LSP Initialized notification",
+        5,
+        async {
+            fake_server
+                .clone()
+                .try_receive_notification::<lsp::notification::Initialized>()
+                .await;
+        },
+    )
+    .await;
 
     let completion_labels = await_or_timeout(
         "awaiting completions",

@@ -2,14 +2,16 @@
 
 ## Summary
 21 tests failing after scheduler integration changes. The root cause is timing issues
-with the new scheduler where tests use fake LSP servers before registration is complete.
+with the new scheduler where tests use fake LSP servers before initialization is complete.
 
 ## Fix Strategy
 
 Based on recent commits (efe540f2da, 3286eed6ed), the pattern is:
-**Add `cx.run_until_parked()` after `fake_servers.next().await.unwrap()`**
+**Wait for the LSP initialization handshake before issuing requests, or ensure the scheduler drains after spawn.**
 
-This ensures the language server is fully registered with the buffer before tests proceed.
+In most tests, adding `run_until_parked()` after `fake_servers.next().await.unwrap()` is sufficient.
+For `extension_host::extension_store_test::test_extension_store_with_test_extension`, waiting for the
+client `initialized` notification on the fake server is required before requesting completions.
 
 Example fix pattern:
 ```rust
@@ -44,7 +46,7 @@ cx.executor().run_until_parked();  // <-- ADD THIS LINE
 - [x] `tests::integration_tests::test_project_symbols`
 
 ### Other crates (5 tests)
-- [ ] `extension_host extension_store_test::test_extension_store_with_test_extension`
+- [x] `extension_host extension_store_test::test_extension_store_with_test_extension`
 - [ ] `project_panel project_panel_tests::test_drag_marked_entries_in_folded_directories`
 - [x] `terminal tests::test_terminal_no_exit_on_spawn_failure`
 - [x] `workspace tests::test_moving_items_can_clone_panes`
