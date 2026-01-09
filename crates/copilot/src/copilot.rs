@@ -511,7 +511,8 @@ impl Copilot {
                     ProjectSettings::get_global(app)
                         .global_lsp_settings
                         .get_request_timeout()
-                });
+                })
+                .unwrap_or_else(|_| Default::default());
 
             let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
@@ -522,7 +523,7 @@ impl Copilot {
                 root_path,
                 None,
                 Default::default(),
-                request_timeout.unwrap_or_default(),
+                request_timeout,
                 cx,
             )?;
 
