@@ -4743,7 +4743,7 @@ impl AcpThreadView {
                 changed_buffers
                     .iter()
                     .enumerate()
-                    .flat_map(|(index, (buffer, _diff))| {
+                    .flat_map(|(index, (buffer, diff))| {
                         let file = buffer.read(cx).file()?;
                         let path = file.path();
                         let path_style = file.path_style(cx);
@@ -4769,7 +4769,7 @@ impl AcpThreadView {
                             Label::new(name.to_string())
                                 .size(LabelSize::XSmall)
                                 .buffer_font(cx)
-                                .ml_1p5()
+                                .ml_1()
                         });
 
                         let full_path = path.display(path_style).to_string();
@@ -4788,6 +4788,8 @@ impl AcpThreadView {
                             linear_color_stop(editor_bg_color, 1.),
                             linear_color_stop(editor_bg_color.opacity(0.2), 0.),
                         );
+
+                        let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
 
                         let element = h_flex()
                             .group("edited-code")
@@ -4818,6 +4820,14 @@ impl AcpThreadView {
                                             .child(file_icon)
                                             .children(file_name)
                                             .children(file_path)
+                                            .child(
+                                                DiffStat::new(
+                                                    "file",
+                                                    file_stats.lines_added as usize,
+                                                    file_stats.lines_removed as usize,
+                                                )
+                                                .label_size(LabelSize::XSmall),
+                                            )
                                             .tooltip(move |_, cx| {
                                                 Tooltip::with_meta(
                                                     "Go to File",
