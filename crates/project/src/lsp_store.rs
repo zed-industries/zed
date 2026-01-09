@@ -427,7 +427,7 @@ impl LocalLspStore {
                     &root_path,
                     code_action_kinds,
                     Some(pending_workspace_folders),
-                    Some(request_timeout),
+                    request_timeout,
                     cx,
                 )
             }
@@ -13083,7 +13083,7 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                // Clamp timeout duration at default 120ms to mitigate infinite loops from re-trying connections.
+                // Clamp timeout duration at a minimum of 120ms to mitigate infinite loops from re-trying connections.
                 // This allows users to increase the duration if need be
                 let timer = server.request_timer(Some(DEFAULT_LSP_REQUEST_TIMEOUT)).fuse();
                 let progress = pin!(progress_rx.recv().fuse());

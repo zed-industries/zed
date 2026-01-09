@@ -293,7 +293,7 @@ impl PrettierStore {
                 new_server_id,
                 prettier_dir,
                 node,
-                Some(request_timeout),
+                request_timeout,
                 cx.clone(),
             )
             .await
