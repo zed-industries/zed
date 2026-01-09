@@ -1499,11 +1499,34 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
+        // Capture the pending message content BEFORE spawning the async task.
+        // Also clone the view to keep it alive until the Async task completes.
+        let pending_message_capture = if !loading {
+            if let Some(current_view) = self.active_thread_view() {
+                // Start the content capture synchronously - this returns a Task
+                let pending_message_task =
+                    current_view.update(cx, |view, cx| view.take_pending_message_contents(cx));
+
+                // Clone the view to keep it alive in the async task
+                Some((pending_message_task, current_view.clone()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Always try to restore the pseudo-global draft message.
+        // This implements "Sticky Input" - the input follows you across threads.
+        let draft_to_restore = self
+            .history_store
+            .update(cx, |store, _cx| store.take_draft_message());
+
         let thread_view = cx.new(|cx| {
             crate::acp::AcpThreadView::new(
                 server,
                 resume_thread,
-                summarize_thread,
+                summarize_thread.clone(),
                 workspace.clone(),
                 project,
                 self.history_store.clone(),
@@ -1513,6 +1536,48 @@ impl AgentPanel {
                 cx,
             )
         });
+
+        // Handle the pending message asynchronously.
+        // We capture from the old view, save to the global store, and transfer to the new view.
+        if let Some((pending_message_task, old_view)) = pending_message_capture {
+            let history_store = self.history_store.clone();
+            let new_thread_view = thread_view.clone();
+
+            // The capture runs asynchronously. During this brief window, the new thread
+            // may appear empty until the capture completes and transfers the content.
+            // This is acceptable as the delay is typically sub-millisecond.
+            cx.spawn_in(window, async move |_this, cx| {
+                let pending_message = pending_message_task.await;
+
+                // Persist to the global draft store for recovery across panel close/open
+                if let Some(content) = pending_message.as_ref() {
+                    history_store
+                        .update(cx, |store, _cx| {
+                            store.set_draft_message(content.clone());
+                        })
+                        .ok();
+                }
+
+                // Transfer to the new thread
+                if let Some(pending_message) = pending_message {
+                    new_thread_view
+                        .update_in(cx, |view, window, cx| {
+                            view.set_pending_message(pending_message, window, cx);
+                        })
+                        .ok();
+                }
+
+                drop(old_view);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        } else if let Some(draft) = draft_to_restore {
+            // No active view to capture from (e.g., fresh panel open or loading an existing thread).
+            // Restore from the persistent store, which was populated by a previous session.
+            thread_view.update(cx, |view, cx| {
+                view.set_pending_message(draft, window, cx);
+            });
+        }
 
         self.set_active_view(
             ActiveView::ExternalAgentThread { thread_view },

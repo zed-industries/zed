@@ -500,6 +500,64 @@ impl AcpThreadView {
         }
     }
 
+    /// Returns the metadata of the resumed thread, if any.
+    pub fn resume_thread_metadata(&self) -> Option<&DbThreadMetadata> {
+        self.resume_thread_metadata.as_ref()
+    }
+
+    /// Extracts all message content from the message editor asynchronously,
+    /// including text and any mentions/resources/images.
+    /// IMPORTANT: The caller must keep this Entity alive until the Task completes,
+    /// otherwise the content capture may fail or return incomplete data.
+    pub fn take_pending_message_contents(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Vec<acp::ContentBlock>>> {
+        self.message_editor.update(cx, |editor, cx| {
+            // Capture text synchronously as a fallback
+            let text_backup = editor.text(cx).trim().to_string();
+
+            if editor.is_empty(cx) {
+                return Task::ready(None);
+            }
+            let contents_task = editor.contents(false, cx);
+            cx.spawn(async move |_, _cx| {
+                match contents_task.await {
+                    Ok((contents, _buffers)) => {
+                        if contents.is_empty() {
+                            None
+                        } else {
+                            Some(contents)
+                        }
+                    }
+                    Err(_) => {
+                        // Fallback to text backup if content extraction fails
+                        if text_backup.is_empty() {
+                            None
+                        } else {
+                            Some(vec![acp::ContentBlock::Text(acp::TextContent::new(
+                                text_backup,
+                            ))])
+                        }
+                    }
+                }
+            })
+        })
+    }
+
+    /// Sets the pending message contents on this view's message editor.
+    /// This is used to restore the message after switching to a new thread.
+    pub fn set_pending_message(
+        &mut self,
+        contents: Vec<acp::ContentBlock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_message(contents, window, cx);
+        });
+    }
+
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_state = Self::initial_state(
             self.agent.clone(),
