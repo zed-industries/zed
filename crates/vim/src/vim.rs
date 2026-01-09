@@ -39,7 +39,6 @@ use language::{
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use multi_buffer::ToPoint as _;
-use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
