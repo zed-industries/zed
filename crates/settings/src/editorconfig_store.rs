@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::StreamExt;
@@ -37,18 +37,16 @@ impl FromStr for Editorconfig {
 pub struct EditorconfigStore {
     /// External editorconfig files shared across multiple worktrees
     external_configs: BTreeMap<Arc<Path>, (Option<Editorconfig>, Task<()>)>,
-    worktree_configs: BTreeMap<WorktreeId, WorktreeEditorconfigs>,
+    worktree_editorconfig_state: BTreeMap<WorktreeId, WorktreeEditorconfigState>,
 }
 
 impl EventEmitter<()> for EditorconfigStore {}
 
 #[derive(Default)]
-pub struct WorktreeEditorconfigs {
-    /// Ordered from closest to filesystem root to closest to worktree root.
-    /// None means external configs haven't been loaded yet for worktree.
-    external_config_paths: Option<Vec<Arc<Path>>>,
+pub struct WorktreeEditorconfigState {
     internal_configs: BTreeMap<Arc<RelPath>, (String, Option<Editorconfig>)>,
-    loading_task: Option<Task<()>>,
+    external_config_paths: Option<BTreeSet<Arc<Path>>>,
+    external_configs_loading_task: Option<Task<()>>,
 }
 
 impl EditorconfigStore {
@@ -60,16 +58,13 @@ impl EditorconfigStore {
     ) -> std::result::Result<(), InvalidSettingsError> {
         match editorconfig_contents {
             None => {
-                if let Some(worktree_configs) = self.worktree_configs.get_mut(&root_id) {
-                    worktree_configs.internal_configs.remove(&directory_path);
+                if let Some(state) = self.worktree_editorconfig_state.get_mut(&root_id) {
+                    state.internal_configs.remove(&directory_path);
                 }
             }
             Some(editorconfig_contents) => {
-                let worktree_configs = self.worktree_configs.entry(root_id).or_default();
-                match worktree_configs
-                    .internal_configs
-                    .entry(directory_path.clone())
-                {
+                let state = self.worktree_editorconfig_state.entry(root_id).or_default();
+                match state.internal_configs.entry(directory_path.clone()) {
                     btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
                         Ok(new_contents) => {
                             v.insert((editorconfig_contents.to_owned(), Some(new_contents)));
@@ -110,9 +105,9 @@ impl EditorconfigStore {
     }
 
     pub(crate) fn remove_worktree(&mut self, root_id: WorktreeId) {
-        if let Some(removed) = self.worktree_configs.remove(&root_id) {
+        if let Some(removed) = self.worktree_editorconfig_state.remove(&root_id) {
             let paths_in_use: HashSet<_> = self
-                .worktree_configs
+                .worktree_editorconfig_state
                 .values()
                 .flat_map(|w| w.external_config_paths.iter().flatten())
                 .collect();
@@ -128,11 +123,11 @@ impl EditorconfigStore {
         &self,
         root_id: WorktreeId,
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
-        self.worktree_configs
+        self.worktree_editorconfig_state
             .get(&root_id)
             .into_iter()
-            .flat_map(|worktree_configs| {
-                worktree_configs
+            .flat_map(|state| {
+                state
                     .internal_configs
                     .iter()
                     .map(|(path, (content, parsed_content))| {
@@ -148,19 +143,16 @@ impl EditorconfigStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) {
-        let Some(worktree_configs) = self.worktree_configs.get(&worktree_id) else {
+        let Some(state) = self.worktree_editorconfig_state.get(&worktree_id) else {
             return;
         };
-        if worktree_configs.external_config_paths.is_some() {
+        if state.external_config_paths.is_some() {
             return;
         }
-        if worktree_configs.internal_configs.is_empty() {
+        if state.internal_configs.is_empty() {
             return;
         }
-        if let Some((_, Some(parsed))) = worktree_configs
-            .internal_configs
-            .get(RelPath::empty())
-        {
+        if let Some((_, Some(parsed))) = state.internal_configs.get(RelPath::empty()) {
             if parsed.is_root {
                 return;
             }
@@ -209,15 +201,16 @@ impl EditorconfigStore {
                 current = dir.parent().map(|p| p.to_path_buf());
             }
 
-            external_configs_to_load.reverse();
-
             if external_configs_to_load.is_empty() {
                 return;
             }
 
             this.update(cx, |this, cx| {
-                let worktree_config = this.worktree_configs.entry(worktree_id).or_default();
-                worktree_config.external_config_paths = Some(
+                let state = this
+                    .worktree_editorconfig_state
+                    .entry(worktree_id)
+                    .or_default();
+                state.external_config_paths = Some(
                     external_configs_to_load
                         .iter()
                         .map(|(path, _)| path.clone())
@@ -242,10 +235,10 @@ impl EditorconfigStore {
             .ok();
         });
 
-        self.worktree_configs
+        self.worktree_editorconfig_state
             .entry(worktree_id)
             .or_default()
-            .loading_task = Some(task);
+            .external_configs_loading_task = Some(task);
     }
 
     fn watch_external_config(
@@ -293,16 +286,16 @@ impl EditorconfigStore {
         for_path: &RelPath,
     ) -> Option<EditorconfigProperties> {
         let mut properties = EditorconfigProperties::new();
-        let worktree_configs = self.worktree_configs.get(&for_worktree);
+        let state = self.worktree_editorconfig_state.get(&for_worktree);
         let empty_path: Arc<RelPath> = RelPath::empty().into();
-        let root_has_root_true = worktree_configs
-            .and_then(|configs| configs.internal_configs.get(&empty_path))
+        let root_has_root_true = state
+            .and_then(|state| state.internal_configs.get(&empty_path))
             .and_then(|(_, parsed)| parsed.as_ref())
             .is_some_and(|ec| ec.is_root);
 
         if !root_has_root_true {
-            if let Some(configs) = worktree_configs {
-                for path in configs.external_config_paths.iter().flatten() {
+            if let Some(state) = state {
+                for path in state.external_config_paths.iter().flatten() {
                     if let Some((Some(parsed_editorconfig), _)) = self.external_configs.get(path) {
                         if parsed_editorconfig.is_root {
                             properties = EditorconfigProperties::new();
