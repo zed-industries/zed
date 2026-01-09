@@ -37,7 +37,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
 /// The terminal emulator is an interactive pty, so commands may block waiting for user input.
-/// Some comamnds can be configured not to do this, such as `git --no-pager diff` and similar.
+/// Some commands can be configured not to do this, such as `git --no-pager diff` and similar.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute.
