@@ -961,6 +961,102 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
+    // Per-tool permission rules for granular control over tool actions.
+    // This setting only applies to the native Zed agent.
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Dangerous rm commands
+            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
+            { "pattern": "rm\\s+-rf\\s*$" },
+            // Disk destruction
+            { "pattern": "> /dev/sd" },
+            { "pattern": "mkfs\\." },
+            { "pattern": "dd\\s+if=/dev/(zero|random)" },
+            // Fork bomb
+            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
+            // System files
+            { "pattern": "/etc/passwd" },
+            { "pattern": "/etc/shadow" },
+            // Windows destructive commands
+            { "pattern": "del /f /s /q c:\\\\" },
+            { "pattern": "format c:" },
+            { "pattern": "rd /s /q" },
+          ],
+          "always_confirm": [
+            // File deletion
+            { "pattern": "rm\\s" },
+            // Destructive git operations
+            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+            { "pattern": "git\\s+push\\s+(-f|--force)" },
+            // Database operations
+            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
+            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
+            // Privileged commands
+            { "pattern": "sudo\\s" },
+          ],
+          "always_allow": [
+            // Build and test commands
+            { "pattern": "^cargo\\s+(build|test|check|clippy|run)" },
+            { "pattern": "^npm\\s+(test|run|install)" },
+            { "pattern": "^pnpm\\s+(test|run|install)" },
+            { "pattern": "^yarn\\s+(test|run|install)" },
+            // Safe read-only commands
+            { "pattern": "^ls(\\s|$)" },
+            { "pattern": "^cat\\s" },
+            { "pattern": "^head\\s" },
+            { "pattern": "^tail\\s" },
+            { "pattern": "^grep\\s" },
+            { "pattern": "^find\\s" },
+            // Safe git commands
+            { "pattern": "^git\\s+(status|log|diff|branch|show)" },
+          ],
+        },
+        "edit_file": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Secrets and credentials
+            { "pattern": "\\.env($|\\.)" },
+            { "pattern": "secrets?/" },
+            { "pattern": "\\.pem$" },
+            { "pattern": "\\.key$" },
+          ],
+        },
+        "delete_path": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // System directories
+            { "pattern": "^/etc" },
+            { "pattern": "^/usr" },
+            { "pattern": "^/bin" },
+            { "pattern": "^/sbin" },
+            { "pattern": "^/var" },
+            { "pattern": "^/boot" },
+            { "pattern": "^/root" },
+            // Home directory root
+            { "pattern": "^~$" },
+            { "pattern": "^/Users/[^/]+$" },
+            { "pattern": "^/home/[^/]+$" },
+            // Git directory
+            { "pattern": "\\.git/?$" },
+            // Windows system directories
+            { "pattern": "^C:\\\\Windows" },
+            { "pattern": "^C:\\\\Program Files" },
+          ],
+        },
+        "fetch": {
+          "default_mode": "confirm",
+          "always_allow": [
+            // Common documentation sites
+            { "pattern": "^https://(docs\\.|api\\.)?github\\.com" },
+            { "pattern": "^https://docs\\.rs" },
+            { "pattern": "^https://crates\\.io" },
+          ],
+        },
+      },
+    },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
@@ -1044,6 +1140,10 @@
     //
     // Default: 4
     "message_editor_min_lines": 4,
+    // Whether to show turn statistics (elapsed time during generation, final turn duration).
+    //
+    // Default: false
+    "show_turn_stats": false,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

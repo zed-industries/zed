@@ -46,11 +46,18 @@ pub enum BatchResult {
     #[serde(rename = "succeeded")]
     Succeeded { message: Response },
     #[serde(rename = "errored")]
-    Errored { error: ApiError },
+    Errored { error: BatchErrorResponse },
     #[serde(rename = "canceled")]
     Canceled,
     #[serde(rename = "expired")]
     Expired,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchErrorResponse {
+    #[serde(rename = "type")]
+    pub response_type: String,
+    pub error: ApiError,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

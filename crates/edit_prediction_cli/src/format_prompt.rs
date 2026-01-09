@@ -6,12 +6,13 @@ use crate::{
     progress::{Progress, Step},
     retrieve_context::run_context_retrieval,
 };
-use anyhow::{Context as _, Result, ensure};
+use anyhow::{Context as _, Result};
 use edit_prediction::{
     EditPredictionStore,
     zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
 };
 use gpui::{AsyncApp, Entity};
+use std::fmt::Write as _;
 use std::sync::Arc;
 use zeta_prompt::format_zeta_prompt;
 
@@ -102,7 +103,7 @@ pub struct TeacherPrompt;
 impl TeacherPrompt {
     const PROMPT: &str = include_str!("teacher.prompt.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
-    pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+    pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
 
     /// Truncate edit history to this number of last lines
@@ -111,12 +112,12 @@ impl TeacherPrompt {
     pub fn format_prompt(example: &Example) -> String {
         let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
-        let editable_region = Self::format_editable_region(example);
+        let cursor_excerpt = Self::format_cursor_excerpt(example);
 
         let prompt = Self::PROMPT
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
-            .replace("{{editable_region}}", &editable_region);
+            .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
         prompt
     }
@@ -133,7 +134,6 @@ impl TeacherPrompt {
             .buffer
             .as_ref()
             .context("`buffer` should be filled in in the context collection step")?;
-        let cursor_file = &example_buffer.content;
 
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
@@ -150,15 +150,17 @@ impl TeacherPrompt {
             new_editable_region.insert(0, '\n');
         }
 
-        ensure!(
-            cursor_file.contains(&old_editable_region),
-            "Something's wrong: editable_region is not found in the cursor file"
-        );
+        let editable_region_start_line = example_buffer.content
+            [..example_buffer.editable_range.start]
+            .matches('\n')
+            .count();
 
-        // Apply editable region to a larger context and compute diff.
-        // This is needed to get a better context lines around the editable region
-        let edited_file = cursor_file.replace(&old_editable_region, &new_editable_region);
-        let diff = language::unified_diff(&cursor_file, &edited_file);
+        let diff = language::unified_diff_with_offsets(
+            &old_editable_region,
+            &new_editable_region,
+            editable_region_start_line as u32,
+            editable_region_start_line as u32,
+        );
 
         let diff = indoc::formatdoc! {"
             --- a/{path}
@@ -192,21 +194,44 @@ impl TeacherPrompt {
     }
 
     fn format_context(example: &Example) -> String {
-        assert!(example.context.is_some(), "Missing context retriever step");
+        let context = example
+            .context
+            .as_ref()
+            .expect("Missing context retriever step");
+
+        if context.files.is_empty() {
+            return "(No context)".to_string();
+        }
 
         let mut prompt = String::new();
-        zeta_prompt::write_related_files(&mut prompt, &example.context.as_ref().unwrap().files);
+        for file in context.files.as_ref() {
+            let path_str = file.path.to_string_lossy();
+            writeln!(&mut prompt, "`````{path_str}").ok();
+            let mut prev_row = 0;
+            for excerpt in &file.excerpts {
+                if excerpt.row_range.start > prev_row {
+                    prompt.push_str("…\n");
+                }
+                prompt.push_str(&excerpt.text);
+                prompt.push('\n');
+                prev_row = excerpt.row_range.end;
+            }
+            if prev_row < file.max_row {
+                prompt.push_str("…\n");
+            }
+            prompt.push_str("\n`````");
+        }
 
         prompt
     }
 
-    fn format_editable_region(example: &Example) -> String {
+    fn format_cursor_excerpt(example: &Example) -> String {
         let mut result = String::new();
 
         let example_buffer = example.buffer.as_ref().unwrap();
 
         let path_str = example.spec.cursor_path.to_string_lossy();
-        result.push_str(&format!("`````path=\"{path_str}\"\n"));
+        result.push_str(&format!("`````{path_str}\n"));
         result.push_str(
             &example_buffer.content
                 [example_buffer.context_range.start..example_buffer.editable_range.start],
@@ -240,7 +265,7 @@ impl TeacherPrompt {
         let region = &text[start..end];
         let region = region.strip_suffix('\n').unwrap_or(region);
 
-        region.replace("<|user_cursor|>", "")
+        region.replace(Self::USER_CURSOR_MARKER, "")
     }
 
     fn is_udiff_content_line(s: &str) -> bool {
@@ -356,8 +381,7 @@ mod tests {
             parsed,
             indoc::indoc! {"
             one
-            two three
-            "}
+            two three"}
         );
     }
 
@@ -403,8 +427,7 @@ mod tests {
     fn test_extract_editable_region_no_markers() {
         let text = indoc::indoc! {"
             one
-            two three
-            "};
+            two three"};
         let parsed = TeacherPrompt::extract_editable_region(text);
         assert_eq!(
             parsed,
@@ -428,8 +451,7 @@ mod tests {
             parsed,
             indoc::indoc! {"
             one
-            two three
-            "}
+            two three"}
         );
     }
 }

@@ -3,7 +3,10 @@ use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
-use std::{borrow::Cow, path::PathBuf, sync::Arc};
+use std::sync::Arc;
+use std::{borrow::Cow, path::PathBuf};
+
+use crate::ExtendingVec;
 
 use crate::{DockPosition, DockSide};
 
@@ -119,6 +122,15 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Whether to show turn statistics (elapsed time during generation, final turn duration).
+    ///
+    /// Default: false
+    pub show_turn_stats: Option<bool>,
+    /// Per-tool permission rules for granular control over which tool actions require confirmation.
+    ///
+    /// This setting only applies to the native Zed agent. External agent servers (Claude Code, Gemini CLI, etc.)
+    /// have their own permission systems and are not affected by these settings.
+    pub tool_permissions: Option<ToolPermissionsContent>,
 }
 
 impl AgentSettingsContent {
@@ -465,4 +477,62 @@ pub enum CustomAgentServerSettings {
         #[serde(default)]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ToolPermissionsContent {
+    /// Per-tool permission rules.
+    /// Keys: terminal, edit_file, delete_path, move_path, create_directory,
+    ///       save_file, fetch, web_search
+    #[serde(default)]
+    pub tools: HashMap<Arc<str>, ToolRulesContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ToolRulesContent {
+    /// Default mode when no regex rules match.
+    /// Default: confirm
+    pub default_mode: Option<ToolPermissionMode>,
+
+    /// Regexes for inputs to auto-approve.
+    /// For terminal: matches command. For file tools: matches path. For fetch: matches URL.
+    /// Default: []
+    pub always_allow: Option<ExtendingVec<ToolRegexRule>>,
+
+    /// Regexes for inputs to auto-reject.
+    /// **SECURITY**: These take precedence over ALL other rules, across ALL settings layers.
+    /// Default: []
+    pub always_deny: Option<ExtendingVec<ToolRegexRule>>,
+
+    /// Regexes for inputs that must always prompt.
+    /// Takes precedence over always_allow but not always_deny.
+    /// Default: []
+    pub always_confirm: Option<ExtendingVec<ToolRegexRule>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ToolRegexRule {
+    /// The regex pattern to match.
+    pub pattern: String,
+
+    /// Whether the regex is case-sensitive.
+    /// Default: false (case-insensitive)
+    pub case_sensitive: Option<bool>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPermissionMode {
+    /// Auto-approve without prompting.
+    Allow,
+    /// Auto-reject with an error.
+    Deny,
+    /// Always prompt for confirmation (default behavior).
+    #[default]
+    Confirm,
 }

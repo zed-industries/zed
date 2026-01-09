@@ -12,7 +12,7 @@ use std::{
 use ui::{App, IconName, SharedString};
 use url::Url;
 use urlencoding::decode;
-use util::paths::PathStyle;
+use util::{ResultExt, paths::PathStyle};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MentionUri {
@@ -53,23 +53,30 @@ pub enum MentionUri {
 impl MentionUri {
     pub fn parse(input: &str, path_style: PathStyle) -> Result<Self> {
         fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
-            let range = fragment
-                .strip_prefix("L")
-                .context("Line range must start with \"L\"")?;
-            let (start, end) = range
-                .split_once(":")
-                .context("Line range must use colon as separator")?;
-            let range = start
+            let range = fragment.strip_prefix("L").unwrap_or(fragment);
+
+            let (start, end) = if let Some((start, end)) = range.split_once(":") {
+                (start, end)
+            } else if let Some((start, end)) = range.split_once("-") {
+                // Also handle L10-20 or L10-L20 format
+                (start, end.strip_prefix("L").unwrap_or(end))
+            } else {
+                // Single line number like L1872 - treat as a range of one line
+                (range, range)
+            };
+
+            let start_line = start
                 .parse::<u32>()
                 .context("Parsing line range start")?
                 .checked_sub(1)
-                .context("Line numbers should be 1-based")?
-                ..=end
-                    .parse::<u32>()
-                    .context("Parsing line range end")?
-                    .checked_sub(1)
-                    .context("Line numbers should be 1-based")?;
-            Ok(range)
+                .context("Line numbers should be 1-based")?;
+            let end_line = end
+                .parse::<u32>()
+                .context("Parsing line range end")?
+                .checked_sub(1)
+                .context("Line numbers should be 1-based")?;
+
+            Ok(start_line..=end_line)
         }
 
         let url = url::Url::parse(input)?;
@@ -85,7 +92,7 @@ impl MentionUri {
                 let path = decoded.as_ref();
 
                 if let Some(fragment) = url.fragment() {
-                    let line_range = parse_line_range(fragment)?;
+                    let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
                     if let Some(name) = single_query_param(&url, "symbol")? {
                         Ok(Self::Symbol {
                             name,
@@ -511,58 +518,52 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_line_range_format() {
-        // Missing L prefix
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#10:20"), PathStyle::local()).is_err()
-        );
-
-        // Missing colon separator
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L1020"), PathStyle::local()).is_err()
-        );
-
-        // Invalid numbers
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L10:abc"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#Labc:20"), PathStyle::local()).is_err()
-        );
+    fn test_single_line_number() {
+        // https://github.com/zed-industries/zed/issues/46114
+        let uri = uri!("file:///path/to/file.rs#L1872");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &1871);
+                assert_eq!(line_range.end(), &1871);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
     }
 
     #[test]
-    fn test_invalid_query_parameters() {
-        // Invalid query parameter name
-        assert!(
-            MentionUri::parse(
-                uri!("file:///path/to/file.rs#L10:20?invalid=test"),
-                PathStyle::local()
-            )
-            .is_err()
-        );
+    fn test_dash_separated_line_range() {
+        let uri = uri!("file:///path/to/file.rs#L10-20");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
 
-        // Too many query parameters
-        assert!(
-            MentionUri::parse(
-                uri!("file:///path/to/file.rs#L10:20?symbol=test&another=param"),
-                PathStyle::local()
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn test_zero_based_line_numbers() {
-        // Test that 0-based line numbers are rejected (should be 1-based)
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L0:10"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L1:0"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L0:0"), PathStyle::local()).is_err()
-        );
+        // Also test L10-L20 format
+        let uri = uri!("file:///path/to/file.rs#L10-L20");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
     }
 }

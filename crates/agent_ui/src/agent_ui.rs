@@ -482,6 +482,8 @@ mod tests {
             expand_terminal_card: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            tool_permissions: Default::default(),
+            show_turn_stats: false,
         };
 
         cx.update(|cx| {

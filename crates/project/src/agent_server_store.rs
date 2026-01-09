@@ -241,6 +241,123 @@ mod ext_agent_tests {
             .collect();
         assert_eq!(remaining, vec!["custom".to_string()]);
     }
+
+    #[test]
+    fn resolve_extension_icon_path_allows_valid_paths() {
+        // Create a temporary directory structure for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Create a valid icon file
+        let icon_path = ext_dir.join("icon.svg");
+        std::fs::write(&icon_path, "<svg></svg>").unwrap();
+
+        // Test that a valid relative path works
+        let result = super::resolve_extension_icon_path(extensions_dir, "my-extension", "icon.svg");
+        assert!(result.is_some());
+        assert!(result.unwrap().ends_with("icon.svg"));
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_allows_nested_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        let icons_dir = ext_dir.join("assets").join("icons");
+        std::fs::create_dir_all(&icons_dir).unwrap();
+
+        let icon_path = icons_dir.join("logo.svg");
+        std::fs::write(&icon_path, "<svg></svg>").unwrap();
+
+        let result = super::resolve_extension_icon_path(
+            extensions_dir,
+            "my-extension",
+            "assets/icons/logo.svg",
+        );
+        assert!(result.is_some());
+        assert!(result.unwrap().ends_with("logo.svg"));
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_blocks_path_traversal() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+
+        // Create two extension directories
+        let ext1_dir = extensions_dir.join("extension1");
+        let ext2_dir = extensions_dir.join("extension2");
+        std::fs::create_dir_all(&ext1_dir).unwrap();
+        std::fs::create_dir_all(&ext2_dir).unwrap();
+
+        // Create a file in extension2
+        let secret_file = ext2_dir.join("secret.svg");
+        std::fs::write(&secret_file, "<svg>secret</svg>").unwrap();
+
+        // Try to access extension2's file from extension1 using path traversal
+        let result = super::resolve_extension_icon_path(
+            extensions_dir,
+            "extension1",
+            "../extension2/secret.svg",
+        );
+        assert!(
+            result.is_none(),
+            "Path traversal to sibling extension should be blocked"
+        );
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_blocks_absolute_escape() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Create a file outside the extensions directory
+        let outside_file = temp_dir.path().join("outside.svg");
+        std::fs::write(&outside_file, "<svg>outside</svg>").unwrap();
+
+        // Try to escape to parent directory
+        let result =
+            super::resolve_extension_icon_path(extensions_dir, "my-extension", "../outside.svg");
+        assert!(
+            result.is_none(),
+            "Path traversal to parent directory should be blocked"
+        );
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_blocks_deep_traversal() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Try deep path traversal
+        let result = super::resolve_extension_icon_path(
+            extensions_dir,
+            "my-extension",
+            "../../../../../../etc/passwd",
+        );
+        assert!(
+            result.is_none(),
+            "Deep path traversal should be blocked (file doesn't exist)"
+        );
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_returns_none_for_nonexistent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Try to access a file that doesn't exist
+        let result =
+            super::resolve_extension_icon_path(extensions_dir, "my-extension", "nonexistent.svg");
+        assert!(result.is_none(), "Nonexistent file should return None");
+    }
 }
 
 impl AgentServerStore {
@@ -278,7 +395,6 @@ impl AgentServerStore {
                 extension_agents.clear();
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
-                        // Store absolute icon path if provided, resolving symlinks for dev extensions
                         // Store display name from manifest
                         self.agent_display_names.insert(
                             ExternalAgentServerName(agent_name.clone().into()),
@@ -286,18 +402,17 @@ impl AgentServerStore {
                         );
 
                         let icon_path = if let Some(icon) = &agent_entry.icon {
-                            let icon_path = extensions_dir.join(ext_id).join(icon);
-                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
-                            let absolute_icon_path = icon_path
-                                .canonicalize()
-                                .unwrap_or(icon_path)
-                                .to_string_lossy()
-                                .to_string();
-                            self.agent_icons.insert(
-                                ExternalAgentServerName(agent_name.clone().into()),
-                                SharedString::from(absolute_icon_path.clone()),
-                            );
-                            Some(absolute_icon_path)
+                            if let Some(absolute_icon_path) =
+                                resolve_extension_icon_path(&extensions_dir, ext_id, icon)
+                            {
+                                self.agent_icons.insert(
+                                    ExternalAgentServerName(agent_name.clone().into()),
+                                    SharedString::from(absolute_icon_path.clone()),
+                                );
+                                Some(absolute_icon_path)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -326,23 +441,18 @@ impl AgentServerStore {
                             SharedString::from(agent_entry.name.clone()),
                         );
 
-                        // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
-                            let icon_path = extensions_dir.join(ext_id).join(icon);
-                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
-                            let absolute_icon_path = icon_path
-                                .canonicalize()
-                                .unwrap_or(icon_path)
-                                .to_string_lossy()
-                                .to_string();
-
-                            // Store icon locally for remote client
-                            self.agent_icons.insert(
-                                ExternalAgentServerName(agent_name.clone().into()),
-                                SharedString::from(absolute_icon_path.clone()),
-                            );
-
-                            Some(absolute_icon_path)
+                            if let Some(absolute_icon_path) =
+                                resolve_extension_icon_path(&extensions_dir, ext_id, icon)
+                            {
+                                self.agent_icons.insert(
+                                    ExternalAgentServerName(agent_name.clone().into()),
+                                    SharedString::from(absolute_icon_path.clone()),
+                                );
+                                Some(absolute_icon_path)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -384,7 +494,49 @@ impl AgentServerStore {
     pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_icons.get(name).cloned()
     }
+}
 
+/// Safely resolves an extension icon path, ensuring it stays within the extension directory.
+/// Returns `None` if the path would escape the extension directory (path traversal attack).
+fn resolve_extension_icon_path(
+    extensions_dir: &Path,
+    extension_id: &str,
+    icon_relative_path: &str,
+) -> Option<String> {
+    let extension_root = extensions_dir.join(extension_id);
+    let icon_path = extension_root.join(icon_relative_path);
+
+    // Canonicalize both paths to resolve symlinks and normalize the paths.
+    // For the extension root, we need to handle the case where it might be a symlink
+    // (common for dev extensions).
+    let canonical_extension_root = extension_root.canonicalize().unwrap_or(extension_root);
+    let canonical_icon_path = match icon_path.canonicalize() {
+        Ok(path) => path,
+        Err(err) => {
+            log::warn!(
+                "Failed to canonicalize icon path for extension '{}': {} (path: {})",
+                extension_id,
+                err,
+                icon_relative_path
+            );
+            return None;
+        }
+    };
+
+    // Verify the resolved icon path is within the extension directory
+    if canonical_icon_path.starts_with(&canonical_extension_root) {
+        Some(canonical_icon_path.to_string_lossy().to_string())
+    } else {
+        log::warn!(
+            "Icon path '{}' for extension '{}' escapes extension directory, ignoring for security",
+            icon_relative_path,
+            extension_id
+        );
+        None
+    }
+}
+
+impl AgentServerStore {
     pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_display_names.get(name).cloned()
     }

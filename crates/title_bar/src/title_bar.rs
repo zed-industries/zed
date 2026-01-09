@@ -366,6 +366,8 @@ impl TitleBar {
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
                 (None, "Dev Container", IconName::Box)
             }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
         };
 
         let nickname = nickname.unwrap_or_else(|| host.clone());

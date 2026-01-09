@@ -6584,7 +6584,7 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 10] {
+    fn agent_configuration_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6768,6 +6768,24 @@ fn ai_page() -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .message_editor_min_lines = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Turn Stats",
+                description: "Whether to show turn statistics like elapsed time during generation and final turn duration.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.show_turn_stats"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.show_turn_stats.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .show_turn_stats = value;
                     },
                 }),
                 metadata: None,

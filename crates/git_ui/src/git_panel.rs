@@ -80,7 +80,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
-use ztracing::instrument;
 actions!(
     git_panel,
     [
@@ -1198,7 +1197,6 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
-    #[instrument(skip_all)]
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
@@ -1249,7 +1247,6 @@ impl GitPanel {
         });
     }
 
-    #[instrument(skip_all)]
     fn open_file(
         &mut self,
         _: &menu::SecondaryConfirm,
@@ -5080,9 +5077,9 @@ impl GitPanel {
                     this.selected_entry = Some(ix);
                     cx.notify();
                     if event.modifiers().secondary() {
-                        this.open_file(&Default::default(), window, cx) // here?
+                        this.open_file(&Default::default(), window, cx)
                     } else {
-                        this.open_diff(&Default::default(), window, cx); // here?
+                        this.open_diff(&Default::default(), window, cx);
                         this.focus_handle.focus(window, cx);
                     }
                 })
