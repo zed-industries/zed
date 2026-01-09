@@ -250,7 +250,7 @@ impl WindowsWindowInner {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             let mut runnables = self.main_receiver.clone().try_iter();
             while let Some(Ok(runnable)) = runnables.next() {
-                runnable.run_and_profile();
+                WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
         } else {

@@ -1,7 +1,7 @@
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -21,14 +21,14 @@ use windows::{
 };
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, GpuiRunnable, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
-    RealtimePriority, SafeHwnd, THREAD_TIMINGS, TaskLabel, ThreadTaskTimings,
-    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+    GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
+    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskLabel, TaskTiming,
+    ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
 };
 
 pub(crate) struct WindowsDispatcher {
     pub(crate) wake_posted: AtomicBool,
-    main_sender: PriorityQueueSender<GpuiRunnable>,
+    main_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_id: ThreadId,
     pub(crate) platform_window_handle: SafeHwnd,
     validation_number: usize,
@@ -36,7 +36,7 @@ pub(crate) struct WindowsDispatcher {
 
 impl WindowsDispatcher {
     pub(crate) fn new(
-        main_sender: PriorityQueueSender<GpuiRunnable>,
+        main_sender: PriorityQueueSender<RunnableVariant>,
         platform_window_handle: HWND,
         validation_number: usize,
     ) -> Self {
@@ -52,14 +52,11 @@ impl WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_threadpool(&self, runnable: GpuiRunnable, priority: WorkItemPriority) {
+    fn dispatch_on_threadpool(&self, priority: WorkItemPriority, runnable: RunnableVariant) {
         let handler = {
-            let mut runnable = Some(runnable);
+            let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
-                runnable
-                    .take()
-                    .expect("Takes FnMut but only runs once")
-                    .run_and_profile();
+                Self::execute_runnable(task_wrapper.take().unwrap());
                 Ok(())
             })
         };
@@ -67,18 +64,53 @@ impl WindowsDispatcher {
         ThreadPool::RunWithPriorityAsync(&handler, priority).log_err();
     }
 
-    fn dispatch_on_threadpool_after(&self, runnable: GpuiRunnable, duration: Duration) {
+    fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
         let handler = {
-            let mut runnable = Some(runnable);
+            let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
-                runnable
-                    .take()
-                    .expect("Takes FnMut but only runs once")
-                    .run_and_profile();
+                Self::execute_runnable(task_wrapper.take().unwrap());
                 Ok(())
             })
         };
         ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
+    }
+
+    #[inline(always)]
+    pub(crate) fn execute_runnable(runnable: RunnableVariant) {
+        let start = Instant::now();
+
+        let mut timing = match runnable {
+            RunnableVariant::Meta(runnable) => {
+                let location = runnable.metadata().location;
+                let timing = TaskTiming {
+                    location,
+                    start,
+                    end: None,
+                };
+                profiler::add_task_timing(timing);
+
+                runnable.run();
+
+                timing
+            }
+            RunnableVariant::Compat(runnable) => {
+                let timing = TaskTiming {
+                    location: core::panic::Location::caller(),
+                    start,
+                    end: None,
+                };
+                profiler::add_task_timing(timing);
+
+                runnable.run();
+
+                timing
+            }
+        };
+
+        let end = Instant::now();
+        timing.end = Some(end);
+
+        profiler::add_task_timing(timing);
     }
 }
 
@@ -106,21 +138,22 @@ impl PlatformDispatcher for WindowsDispatcher {
         current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: GpuiRunnable, label: Option<TaskLabel>) {
-        let priority = match runnable.priority() {
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority) {
+        let priority = match priority {
             Priority::Realtime(_) => unreachable!(),
             Priority::High => WorkItemPriority::High,
             Priority::Medium => WorkItemPriority::Normal,
             Priority::Low => WorkItemPriority::Low,
         };
-        self.dispatch_on_threadpool(runnable, priority);
+        self.dispatch_on_threadpool(priority, runnable);
+
         if let Some(label) = label {
             log::debug!("TaskLabel: {label:?}");
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable) {
-        match self.main_sender.send(runnable.priority(), runnable) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+        match self.main_sender.send(priority, runnable) {
             Ok(_) => {
                 if !self.wake_posted.swap(true, Ordering::AcqRel) {
                     unsafe {
@@ -148,7 +181,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         }
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: GpuiRunnable) {
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
     }
 
