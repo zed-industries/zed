@@ -28,6 +28,10 @@ pub struct ToolPermissionsFeatureFlag;
 
 impl FeatureFlag for ToolPermissionsFeatureFlag {
     const NAME: &'static str = "tool-permissions";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub struct AgentSharingFeatureFlag;
