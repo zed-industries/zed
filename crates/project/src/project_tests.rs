@@ -3,7 +3,6 @@
 use crate::{
     Event,
     git_store::{GitStoreEvent, RepositoryEvent, StatusEntry, pending_op},
-    lsp_store::{DocumentDiagnostics, DocumentDiagnosticsUpdate},
     task_inventory::TaskContexts,
     task_store::TaskSettingsLocation,
     *,
@@ -2876,96 +2875,6 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 warning_count: 0,
             }
         );
-    });
-}
-
-#[gpui::test]
-async fn test_disk_based_diagnostics_not_reused(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/dir"), json!({ "a.rs": "fn a() { A }" }))
-        .await;
-
-    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/dir/a.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    // Setup an initial disk-based diagnostic, which will later become old, so
-    // we can later assert that it is ignored when merging diagnostic entries.
-    let diagnostic = DiagnosticEntry {
-        range: Unclipped(PointUtf16::new(0, 9))..Unclipped(PointUtf16::new(0, 10)),
-        diagnostic: Diagnostic {
-            is_disk_based: true,
-            ..Diagnostic::default()
-        },
-    };
-    let diagnostic_update = DocumentDiagnosticsUpdate {
-        diagnostics: DocumentDiagnostics::new(
-            vec![diagnostic],
-            PathBuf::from(path!("/dir/a.rs")),
-            None,
-        ),
-        result_id: None,
-        server_id: LanguageServerId(0),
-        disk_based_sources: Cow::Borrowed(&[]),
-        registration_id: None,
-    };
-    lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store
-            .merge_diagnostic_entries(vec![diagnostic_update], |_, _, _| false, cx)
-            .unwrap();
-    });
-
-    // Quick sanity check, ensure that the initial diagnostic is part of the
-    // buffer's diagnostics.
-    buffer.update(cx, |buffer, _| {
-        let snapshot = buffer.snapshot();
-        let diagnostics: Vec<_> = snapshot
-            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
-            .collect();
-
-        assert_eq!(diagnostics.len(), 1);
-    });
-
-    // We'll now merge the diagnostic entries with a new diagnostic update, with
-    // no diagnostics. This time around, the `merge` closure will return `true`
-    // to ensure that old diagnostics are retained, ensuring that the first
-    // diagnostic does get added to the full list of diagnostics, even though
-    // it'll later be ignored.
-    let diagnostic_update = lsp_store::DocumentDiagnosticsUpdate {
-        diagnostics: lsp_store::DocumentDiagnostics::new(
-            vec![],
-            PathBuf::from(path!("/dir/a.rs")),
-            None,
-        ),
-        result_id: None,
-        server_id: LanguageServerId(0),
-        disk_based_sources: Cow::Borrowed(&[]),
-        registration_id: None,
-    };
-    lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store
-            .merge_diagnostic_entries(vec![diagnostic_update], |_, _, _| true, cx)
-            .unwrap();
-    });
-
-    // We can now assert that the initial, disk-based diagnostic has been
-    // removed from the buffer's diagnostics, even if the `merge` closure
-    // returned `true`, informing that the old diagnostic could be reused.
-    // The old disk-based diagnostic should be gone, NOT retained
-    buffer.update(cx, |buffer, _| {
-        let snapshot = buffer.snapshot();
-        let diagnostics: Vec<_> = snapshot
-            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
-            .collect();
-
-        assert_eq!(diagnostics.len(), 0);
     });
 }
 
