@@ -187,7 +187,9 @@ impl Editor {
         }
 
         let style = self.style(cx).clone();
-        let sticky_headers = self.sticky_headers(&style, cx).unwrap_or_default();
+        let sticky_headers = self
+            .sticky_headers(&display_map, &style, cx)
+            .unwrap_or_default();
         let visible_sticky_headers = sticky_headers
             .iter()
             .filter(|h| {

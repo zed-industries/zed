@@ -3885,11 +3885,12 @@ impl EditorElement {
         let is_read_only = self.editor.read(cx).read_only(cx);
         let editor_handle: &dyn ItemHandle = &self.editor;
 
-        let breadcrumbs = if is_selected {
-            editor.breadcrumbs_inner(cx.theme(), cx)
-        } else {
-            None
-        };
+        let breadcrumbs = None;
+        // let breadcrumbs = if is_selected {
+        //     editor.breadcrumbs_inner(cx.theme(), cx)
+        // } else {
+        //     None
+        // };
 
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
@@ -4728,7 +4729,9 @@ impl EditorElement {
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor.sticky_headers(style, cx).unwrap_or_default();
+        let items = editor
+            .sticky_headers(&snapshot.display_snapshot, style, cx)
+            .unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -4744,7 +4747,9 @@ impl EditorElement {
                 .row();
             let max_sticky_row = end_row.previous_row();
             if max_sticky_row <= sticky_row {
-                continue;
+                // TODO constraint needs to look at different row definitions in non-singleton cases
+                dbg!("Skipping sticky header, max_sticky_row <= sticky_row");
+                // continue;
             }
 
             while end_rows
@@ -4758,7 +4763,11 @@ impl EditorElement {
 
             if sticky_row.as_f64() >= adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
             {
-                continue;
+                // TODO constraint needs to look at different row definitions in non-singleton cases
+                dbg!(
+                    "Skipping sticky header, sticky_row >= adjusted_scroll_top || end_row <= adjusted_scroll_top"
+                );
+                // continue;
             }
 
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
@@ -9256,7 +9265,7 @@ impl Element for EditorElement {
         };
 
         let is_minimap = self.editor.read(cx).mode.is_minimap();
-        let is_singleton = self.editor.read(cx).buffer_kind(cx) == ItemBufferKind::Singleton;
+        let _is_singleton = self.editor.read(cx).buffer_kind(cx) == ItemBufferKind::Singleton;
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
@@ -9572,30 +9581,9 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
-                                let all_selections =
-                                    editor.selections.all::<Point>(&snapshot.display_snapshot);
                                 let all_anchor_selections =
                                     editor.selections.all_anchors(&snapshot.display_snapshot);
-                                let selected_buffer_ids =
-                                    if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
-                                        Vec::new()
-                                    } else {
-                                        let mut selected_buffer_ids =
-                                            Vec::with_capacity(all_selections.len());
-
-                                        for selection in all_selections {
-                                            for buffer_id in snapshot
-                                                .buffer_snapshot()
-                                                .buffer_ids_for_range(selection.range())
-                                            {
-                                                if selected_buffer_ids.last() != Some(&buffer_id) {
-                                                    selected_buffer_ids.push(buffer_id);
-                                                }
-                                            }
-                                        }
-
-                                        selected_buffer_ids
-                                    };
+                                let selected_buffer_ids = editor.selected_buffer_ids(&snapshot, cx);
 
                                 let mut selections = editor.selections.disjoint_in_range(
                                     start_anchor..end_anchor,
@@ -10000,7 +9988,7 @@ impl Element for EditorElement {
                         scroll_position.y * f64::from(line_height),
                     );
                     let sticky_headers = if !is_minimap
-                        && is_singleton
+                        // && is_singleton
                         && EditorSettings::get_global(cx).sticky_scroll.enabled
                     {
                         let relative = self.editor.read(cx).relative_line_numbers(cx);

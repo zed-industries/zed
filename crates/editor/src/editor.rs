@@ -192,7 +192,7 @@ use std::{
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
+use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
 use theme::{
     AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
@@ -1837,9 +1837,11 @@ impl Editor {
 
     pub fn sticky_headers(
         &self,
+        snapshot: &DisplaySnapshot,
         style: &EditorStyle,
         cx: &App,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
+        let selections = self.selections.all::<Point>(&snapshot);
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -1848,39 +1850,52 @@ impl Editor {
             .anchor
             .to_point(&multi_buffer_snapshot);
         let max_row = multi_buffer_snapshot.max_point().row;
-
         let start_row = (multi_buffer_visible_start.row).min(max_row);
         let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
 
-        if let Some((excerpt_id, _, buffer)) = multi_buffer.read(cx).as_singleton() {
-            let outline_items = buffer
-                .outline_items_containing(
-                    Point::new(start_row, 0)..Point::new(end_row, 0),
+        let excerpt_ids = selections
+            .iter()
+            .flat_map(|selection| multi_buffer_snapshot.excerpt_ids_for_range(selection.range()))
+            .collect::<Vec<ExcerptId>>();
+
+        let outline_items = multi_buffer_snapshot
+            .excerpts()
+            .filter(|(excerpt_id, _, _)| excerpt_ids.contains(excerpt_id))
+            .flat_map(|(excerpt_id, buffer, range)| {
+                let outline_range = if multi_buffer_snapshot.is_singleton() {
+                    Point::new(start_row, 0)..Point::new(end_row, 0)
+                } else {
+                    range.context.start.to_point(buffer)..range.context.end.to_point(buffer)
+                };
+                let contained_outline_items = buffer.outline_items_containing(
+                    outline_range,
                     true,
                     Some(style.syntax.as_ref()),
-                )
-                .into_iter()
-                .map(|outline_item| OutlineItem {
-                    depth: outline_item.depth,
-                    range: Anchor::range_in_buffer(*excerpt_id, outline_item.range),
-                    source_range_for_text: Anchor::range_in_buffer(
-                        *excerpt_id,
-                        outline_item.source_range_for_text,
-                    ),
-                    text: outline_item.text,
-                    highlight_ranges: outline_item.highlight_ranges,
-                    name_ranges: outline_item.name_ranges,
-                    body_range: outline_item
-                        .body_range
-                        .map(|range| Anchor::range_in_buffer(*excerpt_id, range)),
-                    annotation_range: outline_item
-                        .annotation_range
-                        .map(|range| Anchor::range_in_buffer(*excerpt_id, range)),
-                });
-            return Some(outline_items.collect());
-        }
+                );
 
-        None
+                let outline_items = contained_outline_items
+                    .into_iter()
+                    .map(move |outline_item| OutlineItem {
+                        depth: outline_item.depth,
+                        range: Anchor::range_in_buffer(excerpt_id, outline_item.range),
+                        source_range_for_text: Anchor::range_in_buffer(
+                            excerpt_id,
+                            outline_item.source_range_for_text,
+                        ),
+                        text: outline_item.text,
+                        highlight_ranges: outline_item.highlight_ranges,
+                        name_ranges: outline_item.name_ranges,
+                        body_range: outline_item
+                            .body_range
+                            .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
+                        annotation_range: outline_item
+                            .annotation_range
+                            .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
+                    });
+                outline_items
+            })
+            .collect::<Vec<OutlineItem<Anchor>>>();
+        Some(outline_items)
     }
 
     fn new_internal(
@@ -23354,6 +23369,28 @@ impl Editor {
             font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
+    }
+
+    fn selected_buffer_ids(&self, snapshot: &EditorSnapshot, cx: &mut App) -> Vec<BufferId> {
+        let all_selections = self.selections.all::<Point>(&snapshot.display_snapshot);
+        if self.buffer_kind(cx) == ItemBufferKind::Singleton {
+            Vec::new()
+        } else {
+            let mut selected_buffer_ids = Vec::with_capacity(all_selections.len());
+
+            for selection in all_selections {
+                for buffer_id in snapshot
+                    .buffer_snapshot()
+                    .buffer_ids_for_range(selection.range())
+                {
+                    if selected_buffer_ids.last() != Some(&buffer_id) {
+                        selected_buffer_ids.push(buffer_id);
+                    }
+                }
+            }
+
+            selected_buffer_ids
+        }
     }
 }
 
