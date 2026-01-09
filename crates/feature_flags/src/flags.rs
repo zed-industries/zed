@@ -24,6 +24,12 @@ impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
 }
 
+pub struct ToolPermissionsFeatureFlag;
+
+impl FeatureFlag for ToolPermissionsFeatureFlag {
+    const NAME: &'static str = "tool-permissions";
+}
+
 pub struct AgentSharingFeatureFlag;
 
 impl FeatureFlag for AgentSharingFeatureFlag {

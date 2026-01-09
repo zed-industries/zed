@@ -280,31 +280,7 @@ pub(crate) fn edit_prediction_accepted(
 
 #[cfg(feature = "cli-support")]
 pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
-    let text = &input.cursor_excerpt;
-    let editable_region = input.editable_range_in_excerpt.clone();
-    let old_prefix = &text[..editable_region.start];
-    let old_suffix = &text[editable_region.end..];
-
-    // Try applying the patch directly first
-    let new = match crate::udiff::apply_diff_to_string(patch, text) {
-        Ok(new) => new,
-        Err(_) if !text.ends_with('\n') => {
-            // If the text doesn't end with a newline, the patch context may expect one
-            // (due to missing "no newline at EOF" markers). Try again with a trailing newline.
-            let text_with_newline = format!("{}\n", text);
-            let mut new = crate::udiff::apply_diff_to_string(patch, &text_with_newline)?;
-            // Remove the trailing newline we added if the result still has it
-            if new.ends_with('\n') && !text.ends_with('\n') {
-                new.pop();
-            }
-            new
-        }
-        Err(e) => return Err(e),
-    };
-
-    if !new.starts_with(old_prefix) || !new.ends_with(old_suffix) {
-        anyhow::bail!("Patch shouldn't affect text outside of editable region");
-    }
-
-    Ok(new[editable_region.start..new.len() - old_suffix.len()].to_string())
+    let old_editable_region = &input.cursor_excerpt[input.editable_range_in_excerpt.clone()];
+    let new_editable_region = crate::udiff::apply_diff_to_string(patch, old_editable_region)?;
+    Ok(new_editable_region)
 }
