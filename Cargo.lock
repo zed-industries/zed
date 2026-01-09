@@ -14654,6 +14654,7 @@ dependencies = [
  "picker",
  "project",
  "project_symbols",
+ "search",
  "settings",
  "smol",
  "text",

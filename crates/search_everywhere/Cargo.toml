@@ -25,6 +25,7 @@ multi_buffer.workspace = true
 picker.workspace = true
 project.workspace = true
 project_symbols.workspace = true
+search.workspace = true
 settings.workspace = true
 smol.workspace = true
 text.workspace = true
