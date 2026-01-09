@@ -83,6 +83,8 @@ pub enum ModelSupportedEndpoint {
     ChatCompletions,
     #[serde(rename = "/responses")]
     Responses,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Deserialize)]
@@ -1007,5 +1009,60 @@ mod tests {
         assert_eq!(schema.data.len(), 1);
         assert_eq!(schema.data[0].id, "future-model-v1");
         assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
+    }
+
+    #[test]
+    fn test_unknown_supported_endpoint_resilience() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "is_premium": true,
+                    "multiplier": 0.33
+                  },
+                  "capabilities": {
+                    "family": "claude-haiku-4.5",
+                    "limits": {
+                      "max_context_window_tokens": 144000,
+                      "max_output_tokens": 16000,
+                      "max_prompt_tokens": 128000
+                    },
+                    "object": "model_capabilities",
+                    "supports": {
+                      "parallel_tool_calls": true,
+                      "streaming": true,
+                      "tool_calls": true,
+                      "vision": true
+                    },
+                    "tokenizer": "o200k_base",
+                    "type": "chat"
+                  },
+                  "id": "claude-haiku-4.5",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_category": "versatile",
+                  "model_picker_enabled": true,
+                  "name": "Claude Haiku 4.5",
+                  "object": "model",
+                  "policy": {
+                    "state": "enabled"
+                  },
+                  "preview": false,
+                  "supported_endpoints": [
+                    "/chat/completions",
+                    "/new-endpoint"
+                  ],
+                  "vendor": "Anthropic",
+                  "version": "claude-haiku-4.5"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "claude-haiku-4.5");
+        assert_eq!(schema.data[0].vendor, ModelVendor::Anthropic);
     }
 }
