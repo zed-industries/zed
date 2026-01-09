@@ -42,6 +42,32 @@ pub(crate) struct MoveToPrevious {
     regex: bool,
 }
 
+/// Searches for the word under the cursor without moving.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SearchUnderCursor {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
+    #[serde(default)]
+    partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
+}
+
+/// Searches for the word under the cursor without moving (backwards).
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SearchUnderCursorPrevious {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
+    #[serde(default)]
+    partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
+}
+
 /// Initiates a search operation with the specified parameters.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
@@ -95,6 +121,8 @@ actions!(
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
     Vim::action(editor, cx, Vim::move_to_previous);
+    Vim::action(editor, cx, Vim::search_under_cursor);
+    Vim::action(editor, cx, Vim::search_under_cursor_previous);
     Vim::action(editor, cx, Vim::move_to_next_match);
     Vim::action(editor, cx, Vim::move_to_previous_match);
     Vim::action(editor, cx, Vim::search);
@@ -104,12 +132,47 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
+    fn search_under_cursor(
+        &mut self,
+        action: &SearchUnderCursor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_internal(
+            Direction::Next,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            false,
+            window,
+            cx,
+        )
+    }
+
+    fn search_under_cursor_previous(
+        &mut self,
+        action: &SearchUnderCursorPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_internal(
+            Direction::Prev,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            false,
+            window,
+            cx,
+        )
+    }
+
     fn move_to_next(&mut self, action: &MoveToNext, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to_internal(
             Direction::Next,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
+            true,
             window,
             cx,
         )
@@ -126,6 +189,7 @@ impl Vim {
             action.case_sensitive,
             !action.partial_word,
             action.regex,
+            true,
             window,
             cx,
         )
@@ -332,6 +396,7 @@ impl Vim {
         case_sensitive: bool,
         whole_word: bool,
         regex: bool,
+        move_cursor: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -377,27 +442,29 @@ impl Vim {
 
             let Some(search) = search else { return false };
 
-            let search_bar = search_bar.downgrade();
-            cx.spawn_in(window, async move |_, cx| {
-                search.await?;
-                search_bar.update_in(cx, |search_bar, window, cx| {
-                    search_bar.select_match(direction, count, window, cx);
+            if move_cursor {
+                let search_bar = search_bar.downgrade();
+                cx.spawn_in(window, async move |_, cx| {
+                    search.await?;
+                    search_bar.update_in(cx, |search_bar, window, cx| {
+                        search_bar.select_match(direction, count, window, cx);
 
-                    vim.update(cx, |vim, cx| {
-                        let new_selections = vim.editor_selections(window, cx);
-                        vim.search_motion(
-                            Motion::ZedSearchResult {
-                                prior_selections,
-                                new_selections,
-                            },
-                            window,
-                            cx,
-                        )
-                    });
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+                        vim.update(cx, |vim, cx| {
+                            let new_selections = vim.editor_selections(window, cx);
+                            vim.search_motion(
+                                Motion::ZedSearchResult {
+                                    prior_selections,
+                                    new_selections,
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                    })?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
             true
         });
         if !searched {
