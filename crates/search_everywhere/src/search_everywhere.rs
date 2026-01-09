@@ -342,6 +342,8 @@ impl Render for SearchEverywhere {
             .collect::<HashSet<_>>()
             .len();
         let search_in_progress = delegate.search_in_progress;
+        let replace_enabled = delegate.replace_enabled;
+        let filters_enabled = delegate.filters_enabled;
 
         let has_matches = match_count > 0;
 
@@ -372,7 +374,6 @@ impl Render for SearchEverywhere {
                     picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
                     picker.refresh(window, cx);
                 });
-                cx.notify();
             }))
             .m_4()
             .relative()
@@ -436,8 +437,7 @@ impl Render for SearchEverywhere {
                             .gap_1()
                             .items_center()
                             // Replace toggle button
-                            .child({
-                                let replace_enabled = self.picker.read(cx).delegate.replace_enabled;
+                            .child(
                                 IconButton::new("replace-toggle", IconName::Replace)
                                     .size(ButtonSize::Compact)
                                     .toggle_state(replace_enabled)
@@ -448,11 +448,10 @@ impl Render for SearchEverywhere {
                                                 !picker.delegate.replace_enabled;
                                         });
                                         cx.notify();
-                                    }))
-                            })
+                                    })),
+                            )
                             // Filters toggle button
-                            .child({
-                                let filters_enabled = self.picker.read(cx).delegate.filters_enabled;
+                            .child(
                                 IconButton::new("filters-toggle", IconName::Filter)
                                     .size(ButtonSize::Compact)
                                     .toggle_state(filters_enabled)
@@ -465,9 +464,8 @@ impl Render for SearchEverywhere {
                                                 !picker.delegate.filters_enabled;
                                             picker.refresh(window, cx);
                                         });
-                                        cx.notify();
-                                    }))
-                            })
+                                    })),
+                            )
                             // Close button
                             .child(
                                 div()
@@ -548,9 +546,9 @@ pub struct SearchEverywhereDelegate {
     matches: Vec<SearchMatch>,
     selected_index: usize,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when selection changes via click, cleared on confirm. Used to detect click vs Enter.
+    has_changed_selected_index: bool,
     last_confirm_time: Option<std::time::Instant>,
-    /// Tracks when set_selected_index was last called (to detect clicks vs Enter)
-    last_selection_change: Option<std::time::Instant>,
     search_options: SearchOptions,
     search_in_progress: bool,
 }
@@ -576,8 +574,8 @@ impl SearchEverywhereDelegate {
             matches: Vec::new(),
             selected_index: 0,
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            has_changed_selected_index: false,
             last_confirm_time: None,
-            last_selection_change: None,
             search_options: SearchOptions::NONE,
             search_in_progress: false,
         }
@@ -955,7 +953,7 @@ impl PickerDelegate for SearchEverywhereDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix;
-        self.last_selection_change = Some(std::time::Instant::now());
+        self.has_changed_selected_index = true;
         self.update_preview(window, cx);
     }
 
@@ -1036,7 +1034,7 @@ impl PickerDelegate for SearchEverywhereDelegate {
 
                         cx.notify();
                     })
-                    .ok();
+                    .log_err();
 
                 if limit_reached {
                     break;
@@ -1050,7 +1048,7 @@ impl PickerDelegate for SearchEverywhereDelegate {
                     picker.delegate.search_in_progress = false;
                     cx.notify();
                 })
-                .ok();
+                .log_err();
         })
     }
 
@@ -1070,17 +1068,13 @@ impl PickerDelegate for SearchEverywhereDelegate {
             return;
         }
 
-        let now = std::time::Instant::now();
+        // Check if this confirm was triggered by a click (selection just changed)
+        // or by Enter key (no selection change)
+        if self.has_changed_selected_index {
+            self.has_changed_selected_index = false;
 
-        // Check if this confirm was triggered by a click (selection changed within 50ms)
-        // or by Enter key (no recent selection change)
-        let is_click = self
-            .last_selection_change
-            .map(|t| now.duration_since(t).as_millis() < 50)
-            .unwrap_or(false);
-
-        if is_click {
             // For clicks, require double-click (two confirms within 300ms)
+            let now = std::time::Instant::now();
             let is_double_click = self
                 .last_confirm_time
                 .map(|t| now.duration_since(t).as_millis() < 300)
