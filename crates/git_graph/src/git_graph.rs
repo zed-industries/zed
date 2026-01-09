@@ -2,6 +2,7 @@ mod graph;
 mod graph_rendering;
 
 use anyhow::Context as _;
+use git::repository::LogSource;
 use gpui::{
     AnyElement, App, Context, Corner, DefiniteLength, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
@@ -124,6 +125,11 @@ impl GitGraph {
             return;
         }
 
+        let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx))
+        else {
+            return;
+        };
+
         let last_loaded_chunk = if !fetch_chunks {
             // When we're refreshing the graph we need to start from the beginning
             // so the cached commits don't matter
@@ -148,12 +154,17 @@ impl GitGraph {
                 return;
             };
 
-            // todo! don't count commits everytime
             let commit_count = if fetch_chunks && commit_count_loaded {
                 None
             } else {
-                crate::graph::commit_count(&worktree_path).await.ok()
+                repository
+                    .update(cx, |repo, _cx| repo.commit_count(LogSource::All))
+                    .await
+                    .ok()
+                    .map(|result| result.ok())
+                    .flatten()
             };
+
             let result = crate::graph::load_commits(last_loaded_chunk, worktree_path.clone()).await;
 
             this.update(cx, |this, cx| {

@@ -2,7 +2,7 @@ use std::{ops::Range, path::PathBuf, rc::Rc, str::FromStr};
 
 use anyhow::Result;
 use collections::HashMap;
-use git::Oid;
+use git::{Oid, repository::GRAPH_CHUNK_SIZE};
 use gpui::SharedString;
 use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
@@ -18,7 +18,7 @@ use util::command::new_smol_command;
 /// %D - Ref names
 /// %x1E - ASCII record separator, used to split up commit data
 static COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
-pub(crate) const CHUNK_SIZE: usize = 1000;
+pub(crate) const CHUNK_SIZE: usize = GRAPH_CHUNK_SIZE;
 
 pub fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
@@ -32,21 +32,6 @@ pub fn format_timestamp(timestamp: i64) -> String {
     let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
         .unwrap_or_default();
     local_datetime.format(&format).unwrap_or_default()
-}
-
-// todo! change to repo path
-// move to repo as well
-pub async fn commit_count(worktree_path: &PathBuf) -> Result<usize> {
-    let git_log_output = new_smol_command("git")
-        .current_dir(worktree_path)
-        .arg("rev-list")
-        .arg("--all")
-        .arg("--count")
-        .output()
-        .await?;
-
-    let stdout = String::from_utf8_lossy(&git_log_output.stdout);
-    Ok(stdout.trim().parse::<usize>()?)
 }
 
 // todo: This function should be on a background thread, and it should return a chunk of commits at a time
