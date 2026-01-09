@@ -1138,22 +1138,8 @@ impl LanguageRegistry {
         binary: lsp::LanguageServerBinary,
         cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
-        log::warn!(
-            "[language::language_registry] create_fake_language_server: called name={} id={} path={:?} args={:?}",
-            name.0,
-            server_id,
-            binary.path,
-            binary.arguments
-        );
-
         let mut state = self.state.write();
-        let Some(fake_entry) = state.fake_server_entries.get_mut(name) else {
-            log::warn!(
-                "[language::language_registry] create_fake_language_server: no fake server entry registered for {}",
-                name.0
-            );
-            return None;
-        };
+        let fake_entry = state.fake_server_entries.get_mut(name)?;
 
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
@@ -1168,18 +1154,9 @@ impl LanguageRegistry {
             initializer(&mut fake_server);
         }
 
-        let server_name = name.0.to_string();
-        log::info!(
-            "[language_registry] create_fake_language_server: created fake server for {server_name}, emitting synchronously (tests must not depend on LSP task scheduling)"
-        );
-
         // Emit synchronously so tests can reliably observe server creation even if the LSP startup
         // task hasn't progressed to initialization yet.
-        if fake_entry.tx.unbounded_send(fake_server).is_err() {
-            log::warn!(
-                "[language_registry] create_fake_language_server: failed to send fake server for {server_name} (receiver dropped)"
-            );
-        }
+        fake_entry.tx.unbounded_send(fake_server).ok();
 
         Some(server)
     }

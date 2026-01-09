@@ -534,10 +534,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
-    log::info!("Initializing test");
     init_test(cx);
     cx.executor().allow_parking();
-    log::info!("[test_extension_store_with_test_extension] after init_test + allow_parking");
 
     fn panic_timeout<T>(what: &str, seconds: u64) -> T {
         panic!(
@@ -582,16 +580,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
 
-    log::info!("Setting up test");
-
-    log::info!("[test_extension_store_with_test_extension] creating Project::test");
     let project = await_or_timeout(
         "awaiting Project::test",
         5,
         Project::test(fs.clone(), [project_dir.as_path()], cx),
     )
     .await;
-    log::info!("[test_extension_store_with_test_extension] created Project::test");
 
     let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
@@ -709,18 +703,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         )
     });
 
-    log::info!("Flushing events");
-
     // Ensure that debounces fire.
     let mut events = cx.events(&extension_store);
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
             if let Event::StartedReloading = event {
-                log::info!(
-                    "[test_extension_store_with_test_extension] saw Event::StartedReloading; advancing clock by {:?}",
-                    RELOAD_DEBOUNCE_DURATION
-                );
                 executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
@@ -735,10 +723,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .detach();
     });
 
-    log::info!(
-        "[test_extension_store_with_test_extension] install_dev_extension starting: {:?}",
-        test_extension_dir
-    );
     await_or_timeout(
         "awaiting install_dev_extension",
         60,
@@ -748,11 +732,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
-    log::info!("[test_extension_store_with_test_extension] install_dev_extension completed");
 
-
-
-    log::info!("[test_extension_store_with_test_extension] registering fake LSP server: gleam");
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
@@ -761,13 +741,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         },
         None,
     );
-    log::info!("[test_extension_store_with_test_extension] registered fake LSP server: gleam");
-    log::warn!("[test_extension_store_with_test_extension] after register_fake_lsp_server; running until parked");
     cx.executor().run_until_parked();
-    log::warn!("[test_extension_store_with_test_extension] after run_until_parked (post fake server registration)");
 
-    log::warn!("[test_extension_store_with_test_extension] about to open buffer with LSP");
-    log::info!("[test_extension_store_with_test_extension] opening buffer with LSP");
     let (buffer, _handle) = await_or_timeout(
         "awaiting open_local_buffer_with_lsp",
         5,
@@ -777,21 +752,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
-    log::info!("[test_extension_store_with_test_extension] opened buffer with LSP");
-    log::warn!("[test_extension_store_with_test_extension] opened buffer; running until parked before awaiting fake server");
     cx.executor().run_until_parked();
-    log::warn!("[test_extension_store_with_test_extension] done run_until_parked; awaiting first fake LSP server spawn");
 
-    log::info!("[test_extension_store_with_test_extension] awaiting first fake LSP server spawn");
     let fake_server = await_or_timeout("awaiting first fake server spawn", 10, fake_servers.next())
         .await
         .unwrap();
 
-    log::info!(
-        "[test_extension_store_with_test_extension] got first fake LSP server spawn (binary={:?}, args={:?})",
-        fake_server.binary.path,
-        fake_server.binary.arguments
-    );
     let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
     let expected_server_path = work_dir.join("gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
