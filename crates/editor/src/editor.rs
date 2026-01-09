@@ -2463,6 +2463,8 @@ impl Editor {
                                 })
                                 .ok();
                         });
+
+                        editor.update_visible_blame(cx);
                     }
                 }
                 EditorEvent::Edited { .. } => {
@@ -21046,6 +21048,22 @@ impl Editor {
         } else {
             self.show_git_blame_inline = true
         }
+    }
+
+    fn update_visible_blame(&mut self, cx: &mut Context<Self>) {
+        let Some(git_blame) = self.blame() else {
+            return;
+        };
+        let visible_buffer_ids = self
+            .visible_excerpts(false, cx)
+            .values()
+            .map(|(buffer, _, _)| buffer.read(cx).remote_id())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        git_blame.update(cx, |blame, cx| {
+            blame.blame_visible_buffers(&visible_buffer_ids, cx);
+        });
     }
 
     pub fn blame(&self) -> Option<&Entity<GitBlame>> {

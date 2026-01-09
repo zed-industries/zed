@@ -83,17 +83,11 @@ pub struct GitBlame {
     project: Entity<Project>,
     multi_buffer: WeakEntity<MultiBuffer>,
     buffers: HashMap<BufferId, GitBlameBuffer>,
-    task: Task<Result<()>>,
-    debounced_generate_task: Task<Result<()>>,
-    regenerate_on_edit_task: Task<Result<()>>,
+    pending: HashMap<BufferId, Task<Result<()>>>,
     focused: bool,
-    changed_while_blurred: bool,
     user_triggered: bool,
     _regenerate_subscriptions: Vec<Subscription>,
 }
-
-const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
-const GENERATE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(200);
 
 pub trait BlameRenderer {
     fn max_author_length(&self) -> usize;
@@ -215,11 +209,23 @@ impl GitBlame {
                     if !multi_buffer.read(cx).is_dirty(cx) {
                         let span = ztracing::info_span!("blame_trigger_dirty_changed");
                         let _enter = span.enter();
-                        git_blame.debounced_generate(cx);
+                        // TODO(jk): invalidate only buffers that changed
+                        // Can we detect that?
                     }
                 }
                 multi_buffer::Event::ExcerptsAdded { .. }
-                | multi_buffer::Event::ExcerptsEdited { .. } => git_blame.regenerate_on_edit(cx),
+                | multi_buffer::Event::ExcerptsEdited { .. } => {
+                    // TODO(jk): invalidate only buffers that changed
+                }
+                multi_buffer::Event::ExcerptsRemoved {
+                    ids,
+                    removed_buffer_ids,
+                } => {
+                    _ = ids;
+                    git_blame
+                        .buffers
+                        .retain(|id, _| !removed_buffer_ids.contains(id));
+                }
                 _ => {}
             },
         );
@@ -243,7 +249,7 @@ impl GitBlame {
                         let span = ztracing::info_span!("blame_trigger_worktree_updated");
                         let _enter = span.enter();
                         log::debug!("Updated buffers. Regenerating blame data...",);
-                        git_blame.debounced_generate(cx);
+                        // TODO(jk)
                     }
                 }
             }
@@ -259,45 +265,38 @@ impl GitBlame {
                         "Repository updated ({:?}). Regenerating blame data...",
                         repo_event
                     );
-                    this.debounced_generate(cx);
+                    // TODO(jk): invalidate/clear buffers and re-generate for visible buffers
+                    // Requires us somehow getting access to a list of currently visible buffers
                 }
                 GitStoreEvent::RepositoryAdded => {
                     let span = ztracing::info_span!("blame_trigger_repo_added");
                     let _enter = span.enter();
                     log::debug!("Repository added. Regenerating blame data...");
-                    this.debounced_generate(cx);
+                    // TODO(jk): invalidate/clear buffers and re-generate for visible buffers
+                    // Requires us somehow getting access to a list of currently visible buffers
                 }
                 GitStoreEvent::RepositoryRemoved(_) => {
                     let span = ztracing::info_span!("blame_trigger_repo_removed");
                     let _enter = span.enter();
-                    log::debug!("Repository removed. Regenerating blame data...");
-                    this.debounced_generate(cx);
+                    // TODO(jk): invalidate/clear buffers and re-generate for visible buffers
+                    // Requires us somehow getting access to a list of currently visible buffers
                 }
                 _ => {}
             });
 
-        let mut this = Self {
+        Self {
             project,
             multi_buffer: multi_buffer.downgrade(),
             buffers: HashMap::default(),
+            pending: HashMap::default(),
             user_triggered,
             focused,
-            changed_while_blurred: false,
-            task: Task::ready(Ok(())),
-            regenerate_on_edit_task: Task::ready(Ok(())),
-            debounced_generate_task: Task::ready(Ok(())),
             _regenerate_subscriptions: vec![
                 multi_buffer_subscription,
                 project_subscription,
                 git_store_subscription,
             ],
-        };
-        {
-            let span = ztracing::info_span!("blame_trigger_init");
-            let _enter = span.enter();
-            this.debounced_generate(cx);
         }
-        this
     }
 
     pub fn repository(&self, cx: &App, id: BufferId) -> Option<Entity<Repository>> {
@@ -372,12 +371,9 @@ impl GitBlame {
             return;
         }
         self.focused = true;
-        if self.changed_while_blurred {
-            self.changed_while_blurred = false;
-            let span = ztracing::info_span!("blame_trigger_focus");
-            let _enter = span.enter();
-            self.debounced_generate(cx);
-        }
+        let span = ztracing::info_span!("blame_trigger_focus");
+        let _enter = span.enter();
+        // TODO(jk): should we do anything here?
     }
 
     fn sync_all(&mut self, cx: &mut App) {
@@ -527,182 +523,240 @@ impl GitBlame {
         }
     }
 
-    #[ztracing::instrument(skip_all)]
-    fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
-        // todo(lw): hot foreground spawn
-        self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
-                .await;
-            this.update(cx, |this, cx| {
-                this.generate(cx);
-            })
-        });
-    }
-
-    fn debounced_generate(&mut self, cx: &mut Context<Self>) {
-        // todo(lw): hot foreground spawn
-        self.debounced_generate_task = cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(GENERATE_DEBOUNCE_INTERVAL)
-                .await;
-            this.update(cx, |this, cx| {
-                this.generate(cx);
-            })
-        });
-    }
-
-    #[ztracing::instrument(skip_all)]
-    fn generate(&mut self, cx: &mut Context<Self>) {
-        if !self.focused {
-            self.changed_while_blurred = true;
-            return;
-        }
-
-        let buffers_to_blame = self
-            .multi_buffer
-            .update(cx, |multi_buffer, _| {
-                multi_buffer
-                    .all_buffer_ids()
-                    .into_iter()
-                    .filter_map(|id| Some(multi_buffer.buffer(id)?.downgrade()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let project = self.project.downgrade();
-        let buffer_count = buffers_to_blame.len();
-
-        let generation_id = BLAME_GENERATION_ID.fetch_add(1, Ordering::SeqCst);
-
-        self.task = cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(GENERATE_DEBOUNCE_INTERVAL)
-                .await;
-
-            let span = ztracing::info_span!("blame_task", buffer_count, generation_id);
-            let _enter = span.enter();
-            let mut all_results = Vec::new();
-            let mut all_errors = Vec::new();
-
-            for buffers in buffers_to_blame.chunks(4) {
-                let span = ztracing::info_span!("blame_task_for_buffers");
-                let _enter = span.enter();
-                let blame = cx.update(|cx| {
-                    buffers
-                        .iter()
-                        .map(|buffer| {
-                            let buffer = buffer.upgrade().context("buffer was dropped")?;
-                            let project = project.upgrade().context("project was dropped")?;
-                            let id = buffer.read(cx).remote_id();
-                            let snapshot = buffer.read(cx).snapshot();
-                            let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
-                            let remote_url = project
-                                .read(cx)
-                                .git_store()
-                                .read(cx)
-                                .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-                                .and_then(|(repo, _)| repo.read(cx).default_remote_url());
-                            let blame_buffer = project.update(cx, |project, cx| {
-                                project.blame_buffer(&buffer, None, Some(generation_id), cx)
-                            });
-                            Ok(async move {
-                                (id, snapshot, buffer_edits, blame_buffer.await, remote_url)
-                            })
-                        })
-                        .collect::<Result<Vec<_>>>()
-                })??;
-                let provider_registry =
-                    cx.update(|cx| GitHostingProviderRegistry::default_global(cx))?;
-                let (results, errors) = cx
-                    .background_spawn({
-                        async move {
-                            let blame = futures::future::join_all(blame).await;
-                            let mut res = vec![];
-                            let mut errors = vec![];
-                            for (id, snapshot, buffer_edits, blame, remote_url) in blame {
-                                match blame {
-                                    Ok(Some(Blame { entries, messages })) => {
-                                        let entries = build_blame_entry_sum_tree(
-                                            entries,
-                                            snapshot.max_point().row,
-                                        );
-                                        let commit_details = messages
-                                            .into_iter()
-                                            .map(|(oid, message)| {
-                                                let parsed_commit_message =
-                                                    ParsedCommitMessage::parse(
-                                                        oid.to_string(),
-                                                        message,
-                                                        remote_url.as_deref(),
-                                                        Some(provider_registry.clone()),
-                                                    );
-                                                (oid, parsed_commit_message)
-                                            })
-                                            .collect();
-                                        res.push((
-                                            id,
-                                            snapshot,
-                                            buffer_edits,
-                                            Some(entries),
-                                            commit_details,
-                                        ));
-                                    }
-                                    Ok(None) => res.push((
-                                        id,
-                                        snapshot,
-                                        buffer_edits,
-                                        None,
-                                        Default::default(),
-                                    )),
-                                    Err(e) => errors.push(e),
-                                }
-                            }
-                            (res, errors)
-                        }
-                    })
-                    .await;
-
-                all_results.extend(results);
-                all_errors.extend(errors);
+    pub fn blame_visible_buffers(
+        &mut self,
+        visible_buffer_ids: &[BufferId],
+        cx: &mut Context<Self>,
+    ) {
+        self.pending
+            .retain(|id, _task| visible_buffer_ids.contains(id));
+        for &buffer_id in visible_buffer_ids {
+            if self.buffers.contains_key(&buffer_id) {
+                continue;
             }
+            if self.pending.contains_key(&buffer_id) {
+                continue;
+            }
+            let task = self.blame_buffer(buffer_id, cx);
+            self.pending.insert(buffer_id, task);
+        }
+    }
 
+    #[ztracing::instrument(skip_all)]
+    fn blame_buffer(&self, buffer_id: BufferId, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let project = self.project.downgrade();
+        let multi_buffer = self.multi_buffer.clone();
+
+        cx.spawn(async move |this, cx| {
+            let provider_registry =
+                cx.update(|cx| GitHostingProviderRegistry::default_global(cx))?;
+            let buffer = cx
+                .update(|cx| {
+                    let mb = multi_buffer.upgrade()?;
+                    mb.read(cx).buffer(buffer_id)
+                })?
+                .context("buffer not found")?;
+            let project = project.upgrade().context("project dropped")?;
+            let blame_result = {
+                project
+                    .update(cx, |project, cx| {
+                        project.blame_buffer(&buffer, None, None, cx)
+                    })?
+                    .await
+            };
             this.update(cx, |this, cx| {
-                this.buffers.clear();
-                for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
-                    let Some(entries) = entries else {
-                        continue;
-                    };
-                    this.buffers.insert(
-                        id,
-                        GitBlameBuffer {
-                            buffer_edits,
-                            buffer_snapshot: snapshot,
-                            entries,
-                            commit_details,
-                        },
-                    );
-                }
-                cx.notify();
-                if !all_errors.is_empty() {
-                    this.project.update(cx, |_, cx| {
-                        if this.user_triggered {
-                            log::error!("failed to get git blame data: {all_errors:?}");
-                            let notification = all_errors
-                                .into_iter()
-                                .format_with(",", |e, f| f(&format_args!("{:#}", e)))
-                                .to_string();
-                            cx.emit(project::Event::Toast {
-                                notification_id: "git-blame".into(),
-                                message: notification,
-                            });
-                        } else {
-                            log::debug!("failed to get git blame data: {all_errors:?}");
-                        }
-                    })
+                this.pending.remove(&buffer_id);
+                let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+                let buffer = buffer.read(cx);
+                let buffer_snapshot = buffer.snapshot();
+                let remote_url = project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .repository_and_path_for_buffer_id(buffer.remote_id(), cx)
+                    .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+
+                match blame_result {
+                    Ok(Some(Blame { entries, messages })) => {
+                        let entries =
+                            build_blame_entry_sum_tree(entries, buffer_snapshot.max_point().row);
+                        let commit_details = messages
+                            .into_iter()
+                            .map(|(oid, message)| {
+                                let parsed_commit_message = ParsedCommitMessage::parse(
+                                    oid.to_string(),
+                                    message,
+                                    remote_url.as_deref(),
+                                    Some(provider_registry.clone()),
+                                );
+                                (oid, parsed_commit_message)
+                            })
+                            .collect();
+                        this.buffers.insert(
+                            buffer_id,
+                            GitBlameBuffer {
+                                entries,
+                                buffer_snapshot,
+                                buffer_edits,
+                                commit_details,
+                            },
+                        );
+                        cx.notify(); // TODO(jk): ideally we would notify when we have all blames for the visible viewport?
+                    }
+                    Ok(None) => {}
+                    Err(_) => { // TODO(jk): report errors
+                    }
                 }
             })
-        });
+        })
     }
+
+    //     #[ztracing::instrument(skip_all)]
+    //     fn generate(&mut self, cx: &mut Context<Self>) {
+    //         if !self.focused {
+    //             return;
+    //         }
+
+    //         let buffers_to_blame = self
+    //             .multi_buffer
+    //             .update(cx, |multi_buffer, _| {
+    //                 multi_buffer
+    //                     .all_buffer_ids()
+    //                     .into_iter()
+    //                     .filter_map(|id| Some(multi_buffer.buffer(id)?.downgrade()))
+    //                     .collect::<Vec<_>>()
+    //             })
+    //             .unwrap_or_default();
+    //         let project = self.project.downgrade();
+    //         let buffer_count = buffers_to_blame.len();
+
+    //         let generation_id = BLAME_GENERATION_ID.fetch_add(1, Ordering::SeqCst);
+
+    //         self.task = cx.spawn(async move |this, cx| {
+    //             let span = ztracing::info_span!("blame_task", buffer_count, generation_id);
+    //             let _enter = span.enter();
+    //             let mut all_results = Vec::new();
+    //             let mut all_errors = Vec::new();
+
+    //             for buffers in buffers_to_blame.chunks(4) {
+    //                 let span = ztracing::info_span!("blame_task_for_buffers");
+    //                 let _enter = span.enter();
+    //                 let blame = cx.update(|cx| {
+    //                     buffers
+    //                         .iter()
+    //                         .map(|buffer| {
+    //                             let buffer = buffer.upgrade().context("buffer was dropped")?;
+    //                             let project = project.upgrade().context("project was dropped")?;
+    //                             let id = buffer.read(cx).remote_id();
+    //                             let snapshot = buffer.read(cx).snapshot();
+    //                             let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+    //                             let remote_url = project
+    //                                 .read(cx)
+    //                                 .git_store()
+    //                                 .read(cx)
+    //                                 .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+    //                                 .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+    //                             let blame_buffer = project.update(cx, |project, cx| {
+    //                                 project.blame_buffer(&buffer, None, Some(generation_id), cx)
+    //                             });
+    //                             Ok(async move {
+    //                                 (id, snapshot, buffer_edits, blame_buffer.await, remote_url)
+    //                             })
+    //                         })
+    //                         .collect::<Result<Vec<_>>>()
+    //                 })??;
+    //                 let provider_registry =
+    //                     cx.update(|cx| GitHostingProviderRegistry::default_global(cx))?;
+    //                 let (results, errors) = cx
+    //                     .background_spawn({
+    //                         async move {
+    //                             let blame = futures::future::join_all(blame).await;
+    //                             let mut res = vec![];
+    //                             let mut errors = vec![];
+    //                             for (id, snapshot, buffer_edits, blame, remote_url) in blame {
+    //                                 match blame {
+    //                                     Ok(Some(Blame { entries, messages })) => {
+    //                                         let entries = build_blame_entry_sum_tree(
+    //                                             entries,
+    //                                             snapshot.max_point().row,
+    //                                         );
+    //                                         let commit_details = messages
+    //                                             .into_iter()
+    //                                             .map(|(oid, message)| {
+    //                                                 let parsed_commit_message =
+    //                                                     ParsedCommitMessage::parse(
+    //                                                         oid.to_string(),
+    //                                                         message,
+    //                                                         remote_url.as_deref(),
+    //                                                         Some(provider_registry.clone()),
+    //                                                     );
+    //                                                 (oid, parsed_commit_message)
+    //                                             })
+    //                                             .collect();
+    //                                         res.push((
+    //                                             id,
+    //                                             snapshot,
+    //                                             buffer_edits,
+    //                                             Some(entries),
+    //                                             commit_details,
+    //                                         ));
+    //                                     }
+    //                                     Ok(None) => res.push((
+    //                                         id,
+    //                                         snapshot,
+    //                                         buffer_edits,
+    //                                         None,
+    //                                         Default::default(),
+    //                                     )),
+    //                                     Err(e) => errors.push(e),
+    //                                 }
+    //                             }
+    //                             (res, errors)
+    //                         }
+    //                     })
+    //                     .await;
+
+    //                 all_results.extend(results);
+    //                 all_errors.extend(errors);
+    //             }
+
+    //             this.update(cx, |this, cx| {
+    //                 this.buffers.clear();
+    //                 for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
+    //                     let Some(entries) = entries else {
+    //                         continue;
+    //                     };
+    //                     this.buffers.insert(
+    //                         id,
+    //                         GitBlameBuffer {
+    //                             buffer_edits,
+    //                             buffer_snapshot: snapshot,
+    //                             entries,
+    //                             commit_details,
+    //                         },
+    //                     );
+    //                 }
+    //                 cx.notify();
+    //                 if !all_errors.is_empty() {
+    //                     this.project.update(cx, |_, cx| {
+    //                         if this.user_triggered {
+    //                             log::error!("failed to get git blame data: {all_errors:?}");
+    //                             let notification = all_errors
+    //                                 .into_iter()
+    //                                 .format_with(",", |e, f| f(&format_args!("{:#}", e)))
+    //                                 .to_string();
+    //                             cx.emit(project::Event::Toast {
+    //                                 notification_id: "git-blame".into(),
+    //                                 message: notification,
+    //                             });
+    //                         } else {
+    //                             log::debug!("failed to get git blame data: {all_errors:?}");
+    //                         }
+    //                     })
+    //                 }
+    //             })
+    //         });
+    //     }
 }
 
 fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
