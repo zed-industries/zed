@@ -139,8 +139,8 @@ pub fn state_dir() -> &'static PathBuf {
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
-                flatpak_xdg_data.into()
+            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
+                flatpak_xdg_state.into()
             } else {
                 dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
             }
