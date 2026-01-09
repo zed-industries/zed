@@ -258,6 +258,33 @@ actions!(
         PushHelixSurroundReplace,
         /// Deletes surrounding characters in Helix mode.
         PushHelixSurroundDelete,
+        /// Yanks the current selection or character if no selection.
+        HelixYank,
+        /// Inserts at the beginning of the selection.
+        HelixInsert,
+        /// Appends at the end of the selection.
+        HelixAppend,
+        /// Goes to the location of the last modification.
+        HelixGotoLastModification,
+        /// Select entire line or multiple lines, extending downwards.
+        HelixSelectLine,
+        /// Select all matches of a given pattern within the current selection.
+        HelixSelectRegex,
+        /// Removes all but the one selection that was created last.
+        /// `Newest` can eventually be `Primary`.
+        HelixKeepNewestSelection,
+        /// Copies all selections below.
+        HelixDuplicateBelow,
+        /// Copies all selections above.
+        HelixDuplicateAbove,
+        /// Delete the selection and enter edit mode.
+        HelixSubstitute,
+        /// Delete the selection and enter edit mode, without yanking the selection.
+        HelixSubstituteNoYank,
+        /// Delete the selection and enter edit mode.
+        HelixSelectNext,
+        /// Delete the selection and enter edit mode, without yanking the selection.
+        HelixSelectPrevious,
     ]
 );
 
