@@ -19,29 +19,24 @@ A Zed theme consists of a Theme Family object including:
 The core components a Theme object include:
 
 1. Theme Metadata:
-
    - `name`: The name of the theme
    - `appearance`: Either "light" or "dark"
 
 2. Style Properties under the `style`, such as:
-
    - `background`: The main background color
    - `foreground`: The main text color
    - `accent`: The accent color used for highlighting and emphasis
 
 3. Syntax Highlighting:
-
    - `syntax`: An object containing color definitions for various syntax elements (e.g., keywords, strings, comments)
 
 4. UI Elements:
-
    - Colors for various UI components such as:
      - `element.background`: Background color for UI elements
      - `border`: Border colors for different states (normal, focused, selected)
      - `text`: Text colors for different states (normal, muted, accent)
 
 5. Editor-specific Colors:
-
    - Colors for editor-related elements such as:
      - `editor.background`: Editor background color
      - `editor.gutter`: Gutter colors
