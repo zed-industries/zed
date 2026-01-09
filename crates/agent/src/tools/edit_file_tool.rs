@@ -162,10 +162,6 @@ impl EditFileTool {
             ToolPermissionDecision::Confirm => {}
         }
 
-        if settings.always_allow_tool_actions {
-            return Task::ready(Ok(()));
-        }
-
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
         let local_settings_folder = paths::local_settings_folder_name();

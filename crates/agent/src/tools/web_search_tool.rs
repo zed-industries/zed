@@ -15,6 +15,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use ui::prelude::*;
+use util::markdown::MarkdownInlineCode;
 use web_search::WebSearchRegistry;
 
 /// Search the web for information using your query.
@@ -79,9 +80,10 @@ impl AgentTool for WebSearchTool {
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => {
-                Some(event_stream.authorize("Searching the Web", cx))
-            }
+            ToolPermissionDecision::Confirm => Some(event_stream.authorize(
+                format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                cx,
+            )),
         };
 
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {

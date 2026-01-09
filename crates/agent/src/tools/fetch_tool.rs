@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use ui::SharedString;
-use util::markdown::MarkdownEscaped;
+use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
 
 use crate::{
     AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
@@ -155,7 +155,9 @@ impl AgentTool for FetchTool {
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => Some(event_stream.authorize(input.url.clone(), cx)),
+            ToolPermissionDecision::Confirm => Some(
+                event_stream.authorize(format!("Fetch {}", MarkdownInlineCode(&input.url)), cx),
+            ),
         };
 
         let text = cx.background_spawn({

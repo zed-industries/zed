@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
+use util::markdown::MarkdownInlineCode;
 
 use crate::{
     AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
@@ -84,9 +85,26 @@ impl AgentTool for SaveFileTool {
 
         let authorize = if needs_confirmation {
             let title = if input.paths.len() == 1 {
-                "Save file".to_string()
+                format!(
+                    "Save {}",
+                    MarkdownInlineCode(&input.paths[0].to_string_lossy())
+                )
             } else {
-                format!("Save {} files", input.paths.len())
+                let paths: Vec<_> = input
+                    .paths
+                    .iter()
+                    .take(3)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect();
+                if input.paths.len() > 3 {
+                    format!(
+                        "Save {}, and {} more",
+                        paths.join(", "),
+                        input.paths.len() - 3
+                    )
+                } else {
+                    format!("Save {}", paths.join(", "))
+                }
             };
             Some(event_stream.authorize(title, cx))
         } else {
