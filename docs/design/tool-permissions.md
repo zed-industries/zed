@@ -122,16 +122,16 @@ This ensures clean diffs for reviewers - each PR only shows its own changes, not
    git fetch origin
    git merge origin/main
    git push
-   
+
    # Then rebase each branch on top of the previous one
    git checkout tool-permission-2
    git rebase tool-permission-granularity
-   
+
    git checkout tool-permission-3
    git rebase tool-permission-2
-   
+
    # Continue for any additional branches...
-   
+
    # Force push all rebased branches
    git push --force-with-lease origin tool-permission-2 tool-permission-3
    ```
@@ -174,6 +174,7 @@ This ensures clean diffs for reviewers - each PR only shows its own changes, not
 ## Target State
 
 After all PRs land:
+
 - The global "Always Allow" button is **never shown** in the permission dialog
 - All "Always allow" actions are **tool-specific** (sets `tools.<tool_id>.default_mode = "allow"`)
 - Built-in granular tools also get pattern-based "Always allow `<pattern>`" buttons
@@ -202,6 +203,7 @@ Other built-in tools (`read_file`, `list_directory`, `grep`, `find_path`, `now`,
 MCP tools (from context servers like filesystem, GitHub, etc.) get **simple per-tool permissions** without regex support:
 
 For these tools:
+
 - `default_mode` can be set to `allow`, `deny`, or `confirm`
 - No `always_allow`, `always_deny`, or `always_confirm` regex lists (no predictable input format)
 - The permission dialog shows only 3 buttons:
@@ -576,6 +578,7 @@ Show up to four options:
 4. **Deny** - Reject once
 
 Button counts:
+
 - With extractable pattern: 4 buttons
 - Without extractable pattern (e.g., `./script.sh`): 3 buttons
 
@@ -768,6 +771,7 @@ fn get_settings_for_worktree(
 **Goal**: MCP tools (from context servers) get per-tool default_mode support (no regex)
 
 **Background**: Currently, MCP tools call `event_stream.authorize()` which shows the old global "Always Allow" button. We need to:
+
 1. Make them use the new tool-specific authorization flow
 2. Support arbitrary tool IDs in settings (not just the 8 built-in tools)
 3. Show only 3 buttons: "Always allow <tool_name>", "Allow", "Deny" (no pattern button, since MCP tools don't have predictable input formats that we can extract patterns from)
@@ -778,16 +782,17 @@ fn get_settings_for_worktree(
 
 #### Files to Modify
 
-| File | Changes |
-|------|---------|
+| File                                                | Changes                                                                                              |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `crates/agent/src/tools/context_server_registry.rs` | Add `mcp_tool_id()` helper and update `ContextServerTool::run()` to use `authorize_third_party_tool` |
-| `crates/agent/src/thread.rs` | Add `authorize_third_party_tool()` method that generates options without pattern button |
-| `crates/settings/src/settings_content/agent.rs` | Add `set_tool_default_mode()` helper method |
-| `crates/agent/src/tool_permissions.rs` | Add tests for MCP tool permission evaluation |
+| `crates/agent/src/thread.rs`                        | Add `authorize_third_party_tool()` method that generates options without pattern button              |
+| `crates/settings/src/settings_content/agent.rs`     | Add `set_tool_default_mode()` helper method                                                          |
+| `crates/agent/src/tool_permissions.rs`              | Add tests for MCP tool permission evaluation                                                         |
 
 #### Implementation Details
 
 **1. Add `authorize_third_party_tool` to `ToolCallEventStream`**:
+
 ```rust
 pub fn authorize_third_party_tool(
     &self,
@@ -799,11 +804,13 @@ pub fn authorize_third_party_tool(
 ```
 
 This method generates only 3 options:
+
 - "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
 - "Allow" → approve once
 - "Deny" → reject once
 
 **2. Add `mcp_tool_id` helper and update `ContextServerTool::run()`**:
+
 ```rust
 /// Generates a tool ID for an MCP tool that can be used in settings.
 /// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
@@ -815,7 +822,7 @@ fn run(...) -> Task<Result<AgentToolOutput>> {
     // Build tool_id with server prefix to avoid collisions
     let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
     let display_name = self.tool.name.clone();
-    
+
     let authorize = event_stream.authorize_third_party_tool(
         self.initial_title(input.clone(), cx),
         tool_id,
@@ -827,6 +834,7 @@ fn run(...) -> Task<Result<AgentToolOutput>> {
 ```
 
 **3. Check permissions before showing dialog**:
+
 ```rust
 // In authorize_third_party_tool, check if already allowed
 let settings = AgentSettings::get_global(cx);
