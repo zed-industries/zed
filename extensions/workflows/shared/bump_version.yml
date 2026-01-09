@@ -1,0 +1,59 @@
+# Generated from xtask::workflows::extensions::bump_version within the Zed repository.
+# Rebuild with `cargo xtask workflows`.
+name: extensions::bump_version
+on:
+  pull_request:
+    types:
+    - labeled
+  push:
+    branches:
+    - main
+    paths-ignore:
+    - .github/**
+  workflow_dispatch: {}
+jobs:
+  determine_bump_type:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions: {}
+    steps:
+    - id: get-bump-type
+      name: extensions::bump_version::get_bump_type
+      run: |
+        if [ "$HAS_MAJOR_LABEL" = "true" ]; then
+            bump_type="major"
+        elif [ "$HAS_MINOR_LABEL" = "true" ]; then
+            bump_type="minor"
+        else
+            bump_type="patch"
+        fi
+        echo "bump_type=$bump_type" >> $GITHUB_OUTPUT
+      shell: bash -euxo pipefail {0}
+      env:
+        HAS_MAJOR_LABEL: |-
+          ${{ (github.event.action == 'labeled' && github.event.label.name == 'major') ||
+          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'major')) }}
+        HAS_MINOR_LABEL: |-
+          ${{ (github.event.action == 'labeled' && github.event.label.name == 'minor') ||
+          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'minor')) }}
+    outputs:
+      bump_type: ${{ steps.get-bump-type.outputs.bump_type }}
+  call_bump_version:
+    needs:
+    - determine_bump_type
+    if: github.event.action != 'labeled' || needs.determine_bump_type.outputs.bump_type != 'patch'
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: zed-industries/zed/.github/workflows/extension_bump.yml@main
+    secrets:
+      app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+      app-secret: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    with:
+      bump-type: ${{ needs.determine_bump_type.outputs.bump_type }}
+      force-bump: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}labels
+  cancel-in-progress: true

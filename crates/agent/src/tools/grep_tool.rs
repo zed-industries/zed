@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, WorktreeSettings,
+    Project, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -176,19 +176,22 @@ impl AgentTool for GrepTool {
 
         let project = self.project.downgrade();
         cx.spawn(async move |cx|  {
-            futures::pin_mut!(results);
+            // Keep the search alive for the duration of result iteration. Dropping this task is the
+            // cancellation mechanism; we intentionally do not detach it.
+            let SearchResults {rx, _task_handle}  = results;
+            futures::pin_mut!(rx);
 
             let mut output = String::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = rx.next().await {
                 if ranges.is_empty() {
                     continue;
                 }
 
-                let Ok((Some(path), mut parse_status)) = buffer.read_with(cx, |buffer, cx| {
+                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
                     (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
                 }) else {
                     continue;
@@ -197,20 +200,21 @@ impl AgentTool for GrepTool {
                 // Check if this file should be excluded based on its worktree settings
                 if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
                     project.find_project_path(&path, cx)
-                })
-                    && cx.update(|cx| {
+                }) {
+                    if cx.update(|cx| {
                         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
-                    }).unwrap_or(false) {
+                    }) {
                         continue;
                     }
+                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
                 }
 
-                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let mut ranges = ranges
                     .into_iter()
@@ -322,7 +326,6 @@ mod tests {
 
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal};
-    use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -564,7 +567,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         project.update(cx, |project, _cx| {
-            project.languages().add(rust_lang().into())
+            project.languages().add(language::rust_lang())
         });
 
         project
@@ -791,22 +794,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(include_str!("../../../languages/src/rust/outline.scm"))
-        .unwrap()
     }
 
     #[gpui::test]

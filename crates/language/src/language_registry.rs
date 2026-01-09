@@ -43,12 +43,18 @@ impl LanguageName {
         Self(SharedString::new(s))
     }
 
+    pub fn new_static(s: &'static str) -> Self {
+        Self(SharedString::new_static(s))
+    }
+
     pub fn from_proto(s: String) -> Self {
         Self(SharedString::from(s))
     }
+
     pub fn to_proto(&self) -> String {
         self.0.to_string()
     }
+
     pub fn lsp_id(&self) -> String {
         match self.0.as_ref() {
             "Plain Text" => "plaintext".to_string(),
@@ -87,9 +93,9 @@ impl std::fmt::Display for LanguageName {
     }
 }
 
-impl<'a> From<&'a str> for LanguageName {
-    fn from(str: &'a str) -> LanguageName {
-        LanguageName(SharedString::new(str))
+impl From<&'static str> for LanguageName {
+    fn from(str: &'static str) -> Self {
+        Self(SharedString::new_static(str))
     }
 }
 
@@ -222,7 +228,6 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("brackets", |q| &mut q.brackets),
     ("outline", |q| &mut q.outline),
     ("indents", |q| &mut q.indents),
-    ("embedding", |q| &mut q.embedding),
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
@@ -239,7 +244,6 @@ pub struct LanguageQueries {
     pub brackets: Option<Cow<'static, str>>,
     pub indents: Option<Cow<'static, str>>,
     pub outline: Option<Cow<'static, str>>,
-    pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
@@ -402,6 +406,12 @@ impl LanguageRegistry {
         let load_lsp_adapter = state.available_lsp_adapters.get(name)?;
 
         Some(load_lsp_adapter())
+    }
+
+    /// Checks if a language server adapter with the given name is available to be loaded.
+    pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
+        let state = self.state.read();
+        state.available_lsp_adapters.contains_key(name)
     }
 
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
@@ -745,7 +755,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
+        user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
@@ -788,7 +798,7 @@ impl LanguageRegistry {
             let path_matches_custom_suffix = || {
                 user_file_types
                     .and_then(|types| types.get(language_name.as_ref()))
-                    .map_or(None, |custom_suffixes| {
+                    .map_or(None, |(custom_suffixes, _)| {
                         path_suffixes
                             .iter()
                             .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))

@@ -1,10 +1,14 @@
 use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
+use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
+use agent_settings::AgentSettings;
 use anyhow::Result;
+use collections::HashSet;
 use fs::Fs;
 use gpui::{App, Entity, SharedString, Task};
 use prompt_store::PromptStore;
+use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
 use crate::{HistoryStore, NativeAgent, NativeAgentConnection, templates::Templates};
 
@@ -21,10 +25,6 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn telemetry_id(&self) -> &'static str {
-        "zed"
-    }
-
     fn name(&self) -> SharedString {
         "Zed Agent".into()
     }
@@ -74,6 +74,38 @@ impl AgentServer for NativeAgentServer {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+
+    fn favorite_model_ids(&self, cx: &mut App) -> HashSet<acp::ModelId> {
+        AgentSettings::get_global(cx).favorite_model_ids()
+    }
+
+    fn toggle_favorite_model(
+        &self,
+        model_id: acp::ModelId,
+        should_be_favorite: bool,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) {
+        let selection = model_id_to_selection(&model_id);
+        update_settings_file(fs, cx, move |settings, _| {
+            let agent = settings.agent.get_or_insert_default();
+            if should_be_favorite {
+                agent.add_favorite_model(selection.clone());
+            } else {
+                agent.remove_favorite_model(&selection);
+            }
+        });
+    }
+}
+
+/// Convert a ModelId (e.g. "anthropic/claude-3-5-sonnet") to a LanguageModelSelection.
+fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
+    let id = model_id.0.as_ref();
+    let (provider, model) = id.split_once('/').unwrap_or(("", id));
+    LanguageModelSelection {
+        provider: provider.to_owned().into(),
+        model: model.to_owned(),
     }
 }
 

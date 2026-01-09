@@ -32,10 +32,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::submenu(Menu {
             name: "Editor Layout".into(),
             items: vec![
-                MenuItem::action("Split Up", workspace::SplitUp),
-                MenuItem::action("Split Down", workspace::SplitDown),
-                MenuItem::action("Split Left", workspace::SplitLeft),
-                MenuItem::action("Split Right", workspace::SplitRight),
+                MenuItem::action("Split Up", workspace::SplitUp::default()),
+                MenuItem::action("Split Down", workspace::SplitDown::default()),
+                MenuItem::action("Split Left", workspace::SplitLeft::default()),
+                MenuItem::action("Split Right", workspace::SplitRight::default()),
             ],
         }),
         MenuItem::separator(),
@@ -169,7 +169,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
-                MenuItem::action("Find In Project", workspace::DeploySearch::find()),
+                MenuItem::action("Find in Project", workspace::DeploySearch::find()),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",
@@ -247,7 +247,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
                 MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
-                MenuItem::action("Find All References", editor::actions::FindAllReferences),
+                MenuItem::action(
+                    "Find All References",
+                    editor::actions::FindAllReferences::default(),
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(
@@ -277,7 +280,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Toggle Breakpoint", editor::actions::ToggleBreakpoint),
                 MenuItem::action("Edit Breakpoint", editor::actions::EditLogBreakpoint),
-                MenuItem::action("Clear all Breakpoints", debugger_ui::ClearAllBreakpoints),
+                MenuItem::action("Clear All Breakpoints", debugger_ui::ClearAllBreakpoints),
             ],
         },
         Menu {

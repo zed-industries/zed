@@ -170,17 +170,14 @@ impl ChannelStore {
                 match status {
                     client::Status::Connected { .. } => {
                         this.update(cx, |this, cx| this.handle_connect(cx))
-                            .ok()?
                             .await
                             .log_err()?;
                     }
                     client::Status::SignedOut | client::Status::UpgradeRequired => {
-                        this.update(cx, |this, cx| this.handle_disconnect(false, cx))
-                            .ok();
+                        this.update(cx, |this, cx| this.handle_disconnect(false, cx));
                     }
                     _ => {
-                        this.update(cx, |this, cx| this.handle_disconnect(true, cx))
-                            .ok();
+                        this.update(cx, |this, cx| this.handle_disconnect(true, cx));
                     }
                 }
             }
@@ -204,7 +201,7 @@ impl ChannelStore {
                     while let Some(update_channels) = update_channels_rx.next().await {
                         if let Some(this) = this.upgrade() {
                             let update_task = this
-                                .update(cx, |this, cx| this.update_channels(update_channels, cx))?;
+                                .update(cx, |this, cx| this.update_channels(update_channels, cx));
                             if let Some(update_task) = update_task {
                                 update_task.await.log_err();
                             }
@@ -814,7 +811,7 @@ impl ChannelStore {
             this.update_channels_tx
                 .unbounded_send(message.payload)
                 .unwrap();
-        })?;
+        });
         Ok(())
     }
 
@@ -841,7 +838,8 @@ impl ChannelStore {
                         .set_role(role)
                 }
             }
-        })
+        });
+        Ok(())
     }
 
     fn handle_connect(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -965,8 +963,7 @@ impl ChannelStore {
                                 buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                             }
                         }
-                    })
-                    .ok();
+                    });
                 }
             })
         });

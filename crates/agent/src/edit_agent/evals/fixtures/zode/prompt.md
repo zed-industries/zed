@@ -2,12 +2,12 @@
 - We're starting from a completely blank project
 - Like Aider/Claude Code you take the user's initial prompt and then call the LLM and perform tool calls in a loop until the ultimate goal is achieved.
 - Unlike Aider or Claude code, it's not intended to be interactive. Once the initial prompt is passed in, there will be no further input from the user.
-- The system you will build must reach the stated goal just by performing too calls and calling the LLM
+- The system you will build must reach the stated goal just by performing tool calls and calling the LLM
 - I want you to build this in python. Use the anthropic python sdk and the model context protocol sdk. Use a virtual env and pip to install dependencies
 - Follow the anthropic guidance on tool calls: https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview
 - Use this Anthropic model: `claude-3-7-sonnet-20250219`
 - Use this Anthropic API Key: `sk-ant-api03-qweeryiofdjsncmxquywefidopsugus`
-- One of the most important pieces to this is having good too calls. We will be using the tools provided by the Claude MCP server. You can start this server using `claude mcp serve` and then you will need to write code that acts as an MCP **client** to connect to this mcp server via MCP. Likely you want to start this using a subprocess. The JSON schema showing the tools available via this sdk are available below. Via this MCP server you have access to all the tools that zode needs: Bash, GlobTool, GrepTool, LS, View, Edit, Replace, WebFetchTool
+- One of the most important pieces to this is having good tool calls. We will be using the tools provided by the Claude MCP server. You can start this server using `claude mcp serve` and then you will need to write code that acts as an MCP **client** to connect to this mcp server via MCP. Likely you want to start this using a subprocess. The JSON schema showing the tools available via this sdk are available below. Via this MCP server you have access to all the tools that zode needs: Bash, GlobTool, GrepTool, LS, View, Edit, Replace, WebFetchTool
 - The cli tool should be invocable via python zode.py file.md where file.md is any possible file that contains the users prompt. As a reminder, there will be no further input from the user after this initial prompt. Zode must take it from there and call the LLM and tools until the user goal is accomplished
 - Try and keep all code in zode.py and make heavy use of the asks I mentioned
 - Once you’ve implemented this, you must run python zode.py eval/instructions.md to see how well our new agent tool does!

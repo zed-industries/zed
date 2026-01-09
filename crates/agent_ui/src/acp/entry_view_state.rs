@@ -22,7 +22,7 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
@@ -34,7 +34,7 @@ pub struct EntryViewState {
 impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
+        project: WeakEntity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -328,7 +328,7 @@ impl Entry {
 
 fn create_terminal(
     workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     terminal: Entity<acp_thread::Terminal>,
     window: &mut Window,
     cx: &mut App,
@@ -336,9 +336,9 @@ fn create_terminal(
     cx.new(|cx| {
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
-            workspace.clone(),
+            workspace,
             None,
-            project.downgrade(),
+            project,
             window,
             cx,
         );
@@ -458,7 +458,7 @@ mod tests {
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
-                project.clone(),
+                project.downgrade(),
                 history_store,
                 None,
                 Default::default(),

@@ -1,1 +1,0 @@
-ALTER TABLE users ADD accepted_tos_at TIMESTAMP WITHOUT TIME ZONE;

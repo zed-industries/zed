@@ -28,6 +28,7 @@ gpui.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -37,8 +38,8 @@ smol.workspace = true
 task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
+url.workspace = true
 util.workspace = true
-fancy-regex.workspace = true
 urlencoding.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -49,5 +50,4 @@ gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-url.workspace = true
 util_macros.workspace = true

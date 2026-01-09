@@ -2,46 +2,46 @@
   "languages": {
     "Markdown": {
       "tab_size": 2,
-      "formatter": "prettier"
+      "formatter": "prettier",
     },
     "TOML": {
       "formatter": "prettier",
-      "format_on_save": "off"
+      "format_on_save": "off",
     },
     "YAML": {
       "tab_size": 2,
-      "formatter": "prettier"
+      "formatter": "prettier",
     },
     "JSON": {
       "tab_size": 2,
       "preferred_line_length": 120,
-      "formatter": "prettier"
+      "formatter": "prettier",
     },
     "JSONC": {
       "tab_size": 2,
       "preferred_line_length": 120,
-      "formatter": "prettier"
+      "formatter": "prettier",
     },
     "JavaScript": {
       "tab_size": 2,
-      "formatter": "prettier"
+      "formatter": "prettier",
     },
     "CSS": {
       "tab_size": 2,
-      "formatter": "prettier"
+      "formatter": "prettier",
     },
     "Rust": {
       "tasks": {
         "variables": {
-          "RUST_DEFAULT_PACKAGE_RUN": "zed"
-        }
-      }
-    }
+          "RUST_DEFAULT_PACKAGE_RUN": "zed",
+        },
+      },
+    },
   },
   "file_types": {
     "Dockerfile": ["Dockerfile*[!dockerignore]"],
     "JSONC": ["**/assets/**/*.json", "renovate.json"],
-    "Git Ignore": ["dockerignore"]
+    "Git Ignore": ["dockerignore"],
   },
   "hard_tabs": false,
   "formatter": "auto",
@@ -59,6 +59,7 @@
     "**/.DS_Store",
     "**/Thumbs.db",
     "**/.classpath",
-    "**/.settings"
-  ]
+    "**/.settings",
+  ],
+  "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
 }

@@ -109,18 +109,6 @@ git submodule init
 git submodule update
 ```
 
-## Update Your Extension
-
-When developing/updating your extension, you will likely need to update its content from its submodule in the extensions repository.
-To quickly fetch the latest code for only specific extension (and avoid updating all others), use the specific path:
-
-```sh
-# From the root of the repository:
-git submodule update --remote extensions/your-extension-name
-```
-
-> Note: If you need to update all submodules (e.g., if multiple extensions have changed, or for a full clean build), you can run `git submodule update` without a path, but this will take longer.
-
 ## Extension License Requirements
 
 As of October 1st, 2025, extension repositories must include a license.
@@ -129,7 +117,9 @@ The following licenses are accepted:
 - [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 - [BSD 3-Clause](https://opensource.org/license/bsd-3-clause)
 - [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html)
+- [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.en.html)
 - [MIT](https://opensource.org/license/mit)
+- [zlib](https://opensource.org/license/zlib)
 
 This allows us to distribute the resulting binary produced from your extension code to our users.
 Without a valid license, the pull request to add or update your extension in the following steps will fail CI.
@@ -177,7 +167,15 @@ To update an extension, open a PR to [the `zed-industries/extensions` repo](http
 
 In your PR do the following:
 
-1. Update the extension's submodule to the commit of the new version.
+1. Update the extension's submodule to the commit of the new version. For this, you can run
+
+```sh
+# From the root of the repository:
+git submodule update --remote extensions/your-extension-name
+```
+
+to update your extension to the latest commit available in your remote repository.
+
 2. Update the `version` field for the extension in `extensions.toml`
    - Make sure the `version` matches the one set in `extension.toml` at the particular commit.
 

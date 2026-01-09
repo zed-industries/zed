@@ -1,7 +1,6 @@
 ((comment) @injection.content
-  (#match? @injection.content "^(///|//!|/\\*\\*|/\\*!)(.*)")
-  (#set! injection.language "doxygen")
-  (#set! injection.include-children))
+ (#set! injection.language "comment")
+)
 
 (preproc_def
     value: (preproc_arg) @injection.content

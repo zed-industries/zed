@@ -84,7 +84,7 @@ impl settings::Settings for TerminalSettings {
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
-            font_size: user_content.font_size.map(px),
+            font_size: user_content.font_size.map(Into::into),
             font_family: user_content.font_family,
             font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
@@ -95,7 +95,7 @@ impl settings::Settings for TerminalSettings {
                 )
             }),
             font_features: user_content.font_features,
-            font_weight: user_content.font_weight.map(FontWeight),
+            font_weight: user_content.font_weight,
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),

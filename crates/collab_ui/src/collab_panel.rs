@@ -31,9 +31,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tab, Tooltip,
-    prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
+    IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -109,22 +108,8 @@ pub fn init(cx: &mut App) {
         });
         // TODO: make it possible to bind this one to a held key for push to talk?
         // how to make "toggle_on_modifiers_press" contextual?
-        workspace.register_action(|_, _: &Mute, window, cx| {
-            let room = ActiveCall::global(cx).read(cx).room().cloned();
-            if let Some(room) = room {
-                window.defer(cx, move |_window, cx| {
-                    room.update(cx, |room, cx| room.toggle_mute(cx))
-                });
-            }
-        });
-        workspace.register_action(|_, _: &Deafen, window, cx| {
-            let room = ActiveCall::global(cx).read(cx).room().cloned();
-            if let Some(room) = room {
-                window.defer(cx, move |_window, cx| {
-                    room.update(cx, |room, cx| room.toggle_deafen(cx))
-                });
-            }
-        });
+        workspace.register_action(|_, _: &Mute, _, cx| title_bar::collab::toggle_mute(cx));
+        workspace.register_action(|_, _: &Deafen, _, cx| title_bar::collab::toggle_deafen(cx));
         workspace.register_action(|_, _: &LeaveCall, window, cx| {
             CollabPanel::leave_call(window, cx);
         });
@@ -1266,7 +1251,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1438,7 +1423,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1501,7 +1486,7 @@ impl CollabPanel {
             })
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1535,9 +1520,9 @@ impl CollabPanel {
         if cx.stop_active_drag(window) {
             return;
         } else if self.take_editing_state(window, cx) {
-            window.focus(&self.filter_editor.focus_handle(cx));
+            window.focus(&self.filter_editor.focus_handle(cx), cx);
         } else if !self.reset_filter_editor_text(window, cx) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1840,7 +1825,7 @@ impl CollabPanel {
         });
         self.update_entries(false, cx);
         self.select_channel_editor();
-        window.focus(&self.channel_name_editor.focus_handle(cx));
+        window.focus(&self.channel_name_editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -1865,7 +1850,7 @@ impl CollabPanel {
         });
         self.update_entries(false, cx);
         self.select_channel_editor();
-        window.focus(&self.channel_name_editor.focus_handle(cx));
+        window.focus(&self.channel_name_editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -1914,7 +1899,7 @@ impl CollabPanel {
                 editor.set_text(channel.name.clone(), window, cx);
                 editor.select_all(&Default::default(), window, cx);
             });
-            window.focus(&self.channel_name_editor.focus_handle(cx));
+            window.focus(&self.channel_name_editor.focus_handle(cx), cx);
             self.update_entries(false, cx);
             self.select_channel_editor();
         }
@@ -2194,7 +2179,7 @@ impl CollabPanel {
             cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
-                        .update(cx, |channels, _| channels.remove_channel(channel_id))?
+                        .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                         .notify_async_err(cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
@@ -2228,7 +2213,7 @@ impl CollabPanel {
         cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
-                    .update(cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                     .notify_async_err(cx);
             }
@@ -2436,6 +2421,9 @@ impl CollabPanel {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
+
+        let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+
         v_flex()
             .size_full()
             .gap_1()
@@ -2451,7 +2439,18 @@ impl CollabPanel {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_filter_input(&self.filter_editor, cx)),
+                    .child(self.render_filter_input(&self.filter_editor, cx))
+                    .when(has_query, |this| {
+                        this.pr_2p5().child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Filter"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(
                 list(
@@ -2541,16 +2540,9 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link;
-                IconButton::new("channel-link", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
+                CopyButton::new(channel_link)
                     .visible_on_hover("section-header")
-                    .on_click(move |_, _, cx| {
-                        let item = ClipboardItem::new_string(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(Tooltip::text("Copy channel link"))
+                    .tooltip_label("Copy Channel Link")
                     .into_any_element()
             }),
             Section::Contacts => Some(

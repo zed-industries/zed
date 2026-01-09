@@ -286,10 +286,10 @@ impl Item for SubView {
 impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .id(SharedString::from(format!(
+            .id(format!(
                 "subview-container-{}",
                 self.kind.to_shared_string()
-            )))
+            ))
             .on_hover(cx.listener(|this, hovered, _, cx| {
                 this.hovered = *hovered;
                 cx.notify();
@@ -348,7 +348,7 @@ pub(crate) fn new_debugger_pane(
                         debug_assert!(_previous_subscription.is_none());
                         running
                             .panes
-                            .split(&this_pane, &new_pane, split_direction)?;
+                            .split(&this_pane, &new_pane, split_direction, cx)?;
                         anyhow::Ok(new_pane)
                     })
                 })
@@ -484,10 +484,7 @@ pub(crate) fn new_debugger_pane(
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
-                                    .id(SharedString::from(format!(
-                                        "debugger_tab_{}",
-                                        item.item_id().as_u64()
-                                    )))
+                                    .id(format!("debugger_tab_{}", item.item_id().as_u64()))
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
@@ -607,7 +604,7 @@ impl DebugTerminal {
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
             if let Some(terminal) = this.terminal.as_ref() {
-                terminal.focus_handle(cx).focus(window);
+                terminal.focus_handle(cx).focus(window, cx);
             }
         });
 
@@ -1116,7 +1113,7 @@ impl RunningState {
                             task_with_shell.clone(),
                             cx,
                         )
-                    })?.await?;
+                    }).await?;
 
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
@@ -1138,7 +1135,7 @@ impl RunningState {
                 })?;
 
                 let exit_status = terminal
-                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
                     .await
                     .context("Failed to wait for completed task")?;
 
@@ -1305,7 +1302,7 @@ impl RunningState {
                     .pid()
                     .map(|pid| pid.as_u32())
                     .context("Terminal was spawned but PID was not available")
-            })?
+            })
         });
 
         cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })
@@ -1465,7 +1462,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1743,7 +1740,7 @@ impl RunningState {
 
         let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-            matches!(session.mode, session::SessionState::Booting(_))
+            matches!(session.state, session::SessionState::Booting(_))
         });
 
         if is_building {
@@ -1892,9 +1889,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self) {
+    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies();
+        self.panes.invert_axies(cx);
     }
 }
 

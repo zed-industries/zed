@@ -387,7 +387,7 @@ pub fn init(cx: &mut App) {
                     window.on_action(
                         TypeId::of::<editor::actions::EvaluateSelectedText>(),
                         move |_, _, window, cx| {
-                            maybe!({
+                            let status = maybe!({
                                 let text = editor
                                     .update(cx, |editor, cx| {
                                         let range = editor
@@ -411,7 +411,13 @@ pub fn init(cx: &mut App) {
 
                                         state.session().update(cx, |session, cx| {
                                             session
-                                                .evaluate(text, None, stack_id, None, cx)
+                                                .evaluate(
+                                                    text,
+                                                    Some(dap::EvaluateArgumentsContext::Repl),
+                                                    stack_id,
+                                                    None,
+                                                    cx,
+                                                )
                                                 .detach();
                                         });
                                     });
@@ -419,6 +425,9 @@ pub fn init(cx: &mut App) {
 
                                 Some(())
                             });
+                            if status.is_some() {
+                                cx.stop_propagation();
+                            }
                         },
                     );
                 })

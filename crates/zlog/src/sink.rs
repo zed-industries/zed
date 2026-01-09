@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use crate::{SCOPE_STRING_SEP_CHAR, Scope};
+use crate::{SCOPE_STRING_SEP_CHAR, ScopeRef};
 
 // ANSI color escape codes for log levels
 const ANSI_RESET: &str = "\x1b[0m";
@@ -35,7 +35,7 @@ static SINK_FILE_SIZE_BYTES: AtomicU64 = AtomicU64::new(0);
 const SINK_FILE_SIZE_BYTES_MAX: u64 = 1024 * 1024; // 1 MB
 
 pub struct Record<'a> {
-    pub scope: Scope,
+    pub scope: ScopeRef<'a>,
     pub level: log::Level,
     pub message: &'a std::fmt::Arguments<'a>,
     pub module_path: Option<&'a str>,
@@ -208,7 +208,7 @@ pub fn flush() {
 }
 
 struct SourceFmt<'a> {
-    scope: Scope,
+    scope: ScopeRef<'a>,
     module_path: Option<&'a str>,
     line: Option<u32>,
     ansi: bool,
