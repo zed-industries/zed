@@ -46,7 +46,10 @@ use crate::provider::anthropic::{
     AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
 };
 use crate::provider::google::{GoogleEventMapper, into_google};
-use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
+use crate::provider::open_ai::{
+    OpenAiEventMapper, OpenAiResponseEventMapper, count_open_ai_tokens, into_open_ai,
+    into_open_ai_response,
+};
 use crate::provider::x_ai::count_xai_tokens;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::ZED_CLOUD_PROVIDER_ID;
@@ -817,7 +820,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
-                let request = into_open_ai(
+                let request = into_open_ai_response(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -849,7 +852,7 @@ impl LanguageModel for CloudLanguageModel {
                     )
                     .await?;
 
-                    let mut mapper = OpenAiEventMapper::new();
+                    let mut mapper = OpenAiResponseEventMapper::new();
                     Ok(map_cloud_completion_events(
                         Box::pin(
                             response_lines(response, includes_status_messages)
