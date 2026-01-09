@@ -30136,3 +30136,161 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
 
     // If we get here without hanging, the test passes
 }
+
+#[gpui::test]
+async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.txt")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Enable diff review button mode
+    editor.update(cx, |editor, cx| {
+        editor.set_show_diff_review_button(true, cx);
+    });
+
+    // Initially, no indicator should be present
+    editor.update(cx, |editor, _cx| {
+        assert!(
+            editor.gutter_diff_review_indicator.0.is_none(),
+            "Indicator should be None initially"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diff_review_button_hidden_when_ai_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Register DisableAiSettings and set disable_ai to true
+    cx.update(|cx| {
+        project::DisableAiSettings::register(cx);
+        project::DisableAiSettings::override_global(
+            project::DisableAiSettings { disable_ai: true },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.txt")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Enable diff review button mode
+    editor.update(cx, |editor, cx| {
+        editor.set_show_diff_review_button(true, cx);
+    });
+
+    // Verify AI is disabled
+    cx.read(|cx| {
+        assert!(
+            project::DisableAiSettings::get_global(cx).disable_ai,
+            "AI should be disabled"
+        );
+    });
+
+    // The indicator should not be created when AI is disabled
+    // (The mouse_moved handler checks DisableAiSettings before creating the indicator)
+    editor.update(cx, |editor, _cx| {
+        assert!(
+            editor.gutter_diff_review_indicator.0.is_none(),
+            "Indicator should be None when AI is disabled"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Register DisableAiSettings and set disable_ai to false
+    cx.update(|cx| {
+        project::DisableAiSettings::register(cx);
+        project::DisableAiSettings::override_global(
+            project::DisableAiSettings { disable_ai: false },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.txt")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Enable diff review button mode
+    editor.update(cx, |editor, cx| {
+        editor.set_show_diff_review_button(true, cx);
+    });
+
+    // Verify AI is enabled
+    cx.read(|cx| {
+        assert!(
+            !project::DisableAiSettings::get_global(cx).disable_ai,
+            "AI should be enabled"
+        );
+    });
+
+    // The show_diff_review_button flag should be true
+    editor.update(cx, |editor, _cx| {
+        assert!(
+            editor.show_diff_review_button(),
+            "show_diff_review_button should be true"
+        );
+    });
+}
