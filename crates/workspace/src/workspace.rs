@@ -261,6 +261,8 @@ actions!(
         ResetOpenDocksSize,
         /// Reloads the application
         Reload,
+        /// Refreshes all top-level folders in the project from the file system.
+        RefreshFolders,
         /// Saves the current file with a new name.
         SaveAs,
         /// Saves without formatting.
@@ -2393,6 +2395,19 @@ impl Workspace {
             for future in futures {
                 future.await;
             }
+        }
+    }
+
+    /// Triggers a full rescan of all top-level folders (worktrees) in the project.
+    fn refresh_folders(&mut self, _: &RefreshFolders, _window: &mut Window, cx: &mut Context<Self>) {
+        let worktrees: Vec<_> = self.worktrees(cx).collect();
+
+        for worktree in worktrees {
+            let task = worktree.update(cx, |worktree, cx| {
+                // Rescan the root of each worktree (empty path represents root)
+                worktree.rescan_directory(Arc::from(RelPath::empty()), cx)
+            });
+            task.detach_and_log_err(cx);
         }
     }
 
@@ -5911,6 +5926,7 @@ impl Workspace {
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
+            .on_action(cx.listener(Self::refresh_folders))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
