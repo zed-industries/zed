@@ -759,8 +759,11 @@ mod tests {
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher =
-            ModelMatcher::new(models, cx.foreground_executor().clone(), cx.background_executor.clone());
+        let matcher = ModelMatcher::new(
+            models,
+            cx.foreground_executor().clone(),
+            cx.background_executor.clone(),
+        );
 
         // The order of models should be maintained, case doesn't matter
         let results = matcher.exact_search("GPT-4.1");
@@ -788,8 +791,11 @@ mod tests {
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher =
-            ModelMatcher::new(models, cx.foreground_executor().clone(), cx.background_executor.clone());
+        let matcher = ModelMatcher::new(
+            models,
+            cx.foreground_executor().clone(),
+            cx.background_executor.clone(),
+        );
 
         // Results should preserve models order whenever possible.
         // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical

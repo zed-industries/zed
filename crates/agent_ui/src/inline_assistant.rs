@@ -2208,7 +2208,6 @@ pub mod evals {
     use gpui::TestAppContext;
     use language_model::{LanguageModelRegistry, SelectedModel};
 
-
     use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
     #[test]

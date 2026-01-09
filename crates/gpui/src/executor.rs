@@ -531,7 +531,10 @@ impl Drop for Scope<'_> {
             self.rx.next().await;
         };
         let mut future = std::pin::pin!(future);
-        self.executor.inner.scheduler().block(None, future.as_mut(), None);
+        self.executor
+            .inner
+            .scheduler()
+            .block(None, future.as_mut(), None);
     }
 }
 

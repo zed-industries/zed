@@ -7,8 +7,8 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll},
     thread::{self, ThreadId},

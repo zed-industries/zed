@@ -63,7 +63,8 @@ use ui::{
     v_flex,
 };
 use util::{
-    ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths,
+    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    paths::compare_paths,
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{
@@ -3272,10 +3273,7 @@ impl ProjectPanel {
             let destination_worktree_id = destination_path.worktree_id;
 
             let destination_dir = if destination_is_file {
-                destination_path
-                    .path
-                    .parent()
-                    .unwrap_or(RelPath::empty())
+                destination_path.path.parent().unwrap_or(RelPath::empty())
             } else {
                 destination_path.path.as_ref()
             };
@@ -3290,7 +3288,11 @@ impl ProjectPanel {
             let mut new_path = destination_dir.to_rel_path_buf();
             new_path.push(source_name);
             let rename_task = (new_path.as_rel_path() != source_path.path.as_ref()).then(|| {
-                project.rename_entry(entry_to_move, (destination_worktree_id, new_path).into(), cx)
+                project.rename_entry(
+                    entry_to_move,
+                    (destination_worktree_id, new_path).into(),
+                    cx,
+                )
             });
 
             (

@@ -4846,8 +4846,7 @@ impl BackgroundScanner {
                                 repository.common_dir_abs_path.join(REPO_EXCLUDE);
                             if let Ok(current_exclude) = futures::executor::block_on(
                                 build_gitignore(&exclude_abs_path, self.fs.as_ref()),
-                            )
-                            {
+                            ) {
                                 *exclude = Arc::new(current_exclude);
                             }
                         }

@@ -6,7 +6,6 @@ use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant,
     THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
 };
-use util::ResultExt;
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -17,6 +16,7 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
+use util::ResultExt;
 
 use async_task::Runnable;
 use objc::{
@@ -186,8 +186,7 @@ fn set_audio_thread_priority() -> anyhow::Result<()> {
     // SAFETY: timebase_info is a valid pointer to a mach_timebase_info_data_t struct
     unsafe { mach2::mach_time::mach_timebase_info(&mut timebase_info) };
 
-    let ms_to_abs_time =
-        ((timebase_info.denom as f32) / (timebase_info.numer as f32)) * 1000000f32;
+    let ms_to_abs_time = ((timebase_info.denom as f32) / (timebase_info.numer as f32)) * 1000000f32;
 
     let mut time_constraints = thread_time_constraint_policy_data_t {
         period: (TIME_QUANTUM * ms_to_abs_time) as u32,

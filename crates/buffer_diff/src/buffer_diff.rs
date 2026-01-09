@@ -1247,37 +1247,36 @@ impl BufferDiff {
             cx,
         );
 
-        cx.background_executor()
-            .spawn(async move {
-                let base_text_rope = if let Some(base_text) = &base_text {
-                    if base_text_changed {
-                        Rope::from(base_text.as_ref())
-                    } else {
-                        prev_base_text
-                    }
+        cx.background_executor().spawn(async move {
+            let base_text_rope = if let Some(base_text) = &base_text {
+                if base_text_changed {
+                    Rope::from(base_text.as_ref())
                 } else {
-                    Rope::new()
-                };
-                let base_text_exists = base_text.is_some();
-                let hunks = compute_hunks(
-                    base_text
-                        .clone()
-                        .map(|base_text| (base_text, base_text_rope.clone())),
-                    buffer.clone(),
-                    diff_options,
-                );
-                let base_text = base_text.unwrap_or_default();
-                let inner = BufferDiffInner {
-                    base_text,
-                    hunks,
-                    base_text_exists,
-                    pending_hunks: SumTree::new(&buffer),
-                };
-                BufferDiffUpdate {
-                    inner,
-                    base_text_changed,
+                    prev_base_text
                 }
-            })
+            } else {
+                Rope::new()
+            };
+            let base_text_exists = base_text.is_some();
+            let hunks = compute_hunks(
+                base_text
+                    .clone()
+                    .map(|base_text| (base_text, base_text_rope.clone())),
+                buffer.clone(),
+                diff_options,
+            );
+            let base_text = base_text.unwrap_or_default();
+            let inner = BufferDiffInner {
+                base_text,
+                hunks,
+                base_text_exists,
+                pending_hunks: SumTree::new(&buffer),
+            };
+            BufferDiffUpdate {
+                inner,
+                base_text_changed,
+            }
+        })
     }
 
     pub fn language_changed(
