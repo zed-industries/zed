@@ -1,10 +1,12 @@
 use collections::HashSet;
+use futures::StreamExt;
 use std::ops::Range;
+use std::pin::pin;
 use std::sync::{Arc, RwLock};
 
 use editor::{Editor, EditorEvent};
 use gpui::{
-    Action, App, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
+    Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyBinding, KeyContext, ParentElement, Render, Styled,
     StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
@@ -338,6 +340,7 @@ impl Render for SearchEverywhere {
             .map(|m| &m.path)
             .collect::<HashSet<_>>()
             .len();
+        let search_in_progress = delegate.search_in_progress;
 
         let has_matches = match_count > 0;
 
@@ -406,7 +409,17 @@ impl Render for SearchEverywhere {
                             .gap_2()
                             .items_center()
                             .child(Label::new("Search Everywhere").size(LabelSize::Default))
-                            .when(has_matches, |this| {
+                            .when(search_in_progress, |this| {
+                                this.child(
+                                    Label::new(format!(
+                                        "Searching... {} matches in {} files",
+                                        match_count, file_count
+                                    ))
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                                )
+                            })
+                            .when(!search_in_progress && has_matches, |this| {
                                 this.child(
                                     Label::new(format!(
                                         "{} matches in {} files",
@@ -540,6 +553,7 @@ pub struct SearchEverywhereDelegate {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
+    search_in_progress: bool,
 }
 
 impl SearchEverywhereDelegate {
@@ -568,6 +582,7 @@ impl SearchEverywhereDelegate {
             case_sensitive: false,
             whole_word: false,
             regex: false,
+            search_in_progress: false,
         }
     }
 
@@ -659,14 +674,13 @@ impl SearchEverywhereDelegate {
         PathMatcher::new(&queries, path_style).unwrap_or_default()
     }
 
-    fn search_text(
+    fn build_search_query(
         &self,
         query: &str,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Task<Vec<SearchMatch>> {
+        cx: &Context<Picker<Self>>,
+    ) -> Option<SearchQuery> {
         if query.is_empty() {
-            return Task::ready(Vec::new());
+            return None;
         }
 
         let files_to_include = if self.filters_enabled {
@@ -685,8 +699,8 @@ impl SearchEverywhereDelegate {
 
         let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
 
-        let search_query = if self.regex {
-            match SearchQuery::regex(
+        if self.regex {
+            SearchQuery::regex(
                 query,
                 self.whole_word,
                 self.case_sensitive,
@@ -696,12 +710,10 @@ impl SearchEverywhereDelegate {
                 files_to_exclude,
                 match_full_paths,
                 None,
-            ) {
-                Ok(q) => q,
-                Err(_) => return Task::ready(Vec::new()),
-            }
+            )
+            .ok()
         } else {
-            match SearchQuery::text(
+            SearchQuery::text(
                 query,
                 self.whole_word,
                 self.case_sensitive,
@@ -710,94 +722,76 @@ impl SearchEverywhereDelegate {
                 files_to_exclude,
                 match_full_paths,
                 None,
-            ) {
-                Ok(q) => q,
-                Err(_) => return Task::ready(Vec::new()),
-            }
-        };
+            )
+            .ok()
+        }
+    }
 
-        let search_results = self
-            .project
-            .update(cx, |project, cx| project.search(search_query, cx));
+    fn process_search_result(
+        buffer: &Entity<Buffer>,
+        ranges: &[Range<Anchor>],
+        cx: &AsyncApp,
+    ) -> Vec<SearchMatch> {
+        if ranges.is_empty() {
+            return Vec::new();
+        }
 
-        let cancel_flag = self.cancel_flag.clone();
+        let buffer_data = buffer.read_with(cx, |buf, cx| {
+            let file = buf.file();
+            let path = file.map(|f| ProjectPath {
+                worktree_id: f.worktree_id(cx),
+                path: f.path().clone(),
+            });
+            let text = buf.text();
 
-        cx.spawn_in(window, async move |_, cx| {
-            let mut matches = Vec::new();
-            let SearchResults { rx, _task_handle } = search_results;
+            let mut result = Vec::new();
+            for range in ranges {
+                let start_offset: usize = buf.summary_for_anchor(&range.start);
+                let end_offset: usize = buf.summary_for_anchor(&range.end);
+                let match_row = buf.offset_to_point(start_offset).row;
+                let line_number = match_row + 1;
+                let line_start = text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_end = text[start_offset..]
+                    .find('\n')
+                    .map(|i| start_offset + i)
+                    .unwrap_or(text.len());
+                let line_text = text[line_start..line_end].to_string();
 
-            while let Ok(result) = rx.recv().await {
-                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
-                }
+                let relative_start = start_offset - line_start;
+                let relative_end = end_offset - line_start;
+                let relative_range = relative_start..relative_end;
 
-                match result {
-                    SearchResult::Buffer { buffer, ranges } => {
-                        if ranges.is_empty() {
-                            continue;
-                        }
-
-                        let buffer_data = buffer.read_with(cx, |buf, cx| {
-                            let file = buf.file();
-                            let path = file.map(|f| ProjectPath {
-                                worktree_id: f.worktree_id(cx),
-                                path: f.path().clone(),
-                            });
-                            let text = buf.text();
-
-                            let mut result = Vec::new();
-                            for range in &ranges {
-                                let start_offset: usize = buf.summary_for_anchor(&range.start);
-                                let end_offset: usize = buf.summary_for_anchor(&range.end);
-                                let match_row = buf.offset_to_point(start_offset).row;
-                                let line_number = match_row + 1;
-                                let line_start =
-                                    text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-                                let line_end = text[start_offset..]
-                                    .find('\n')
-                                    .map(|i| start_offset + i)
-                                    .unwrap_or(text.len());
-                                let line_text = text[line_start..line_end].to_string();
-
-                                let relative_start = start_offset - line_start;
-                                let relative_end = end_offset - line_start;
-                                let relative_range = relative_start..relative_end;
-
-                                if let Some(path) = &path {
-                                    result.push((
-                                        path.clone(),
-                                        range.clone(),
-                                        start_offset..end_offset,
-                                        relative_range,
-                                        line_text,
-                                        line_number,
-                                    ));
-                                }
-                            }
-                            result
-                        });
-
-                        for (path, anchor_range, range, relative_range, line_text, line_number) in
-                            buffer_data
-                        {
-                            matches.push(SearchMatch {
-                                path,
-                                buffer: buffer.clone(),
-                                anchor_ranges: vec![anchor_range],
-                                ranges: vec![range],
-                                relative_ranges: vec![relative_range],
-                                line_text,
-                                line_number,
-                            });
-                        }
-                    }
-                    SearchResult::LimitReached => {
-                        break;
-                    }
+                if let Some(path) = &path {
+                    result.push((
+                        path.clone(),
+                        range.clone(),
+                        start_offset..end_offset,
+                        relative_range,
+                        line_text,
+                        line_number,
+                        buffer.clone(),
+                    ));
                 }
             }
-            matches
-        })
+            result
+        });
+
+        buffer_data
+            .into_iter()
+            .map(
+                |(path, anchor_range, range, relative_range, line_text, line_number, buffer)| {
+                    SearchMatch {
+                        path,
+                        buffer,
+                        anchor_ranges: vec![anchor_range],
+                        ranges: vec![range],
+                        relative_ranges: vec![relative_range],
+                        line_text,
+                        line_number,
+                    }
+                },
+            )
+            .collect()
     }
 }
 
@@ -983,21 +977,81 @@ impl PickerDelegate for SearchEverywhereDelegate {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        let text_search = self.search_text(&query, window, cx);
+        let cancel_flag = self.cancel_flag.clone();
+
+        let Some(search_query) = self.build_search_query(&query, cx) else {
+            self.matches.clear();
+            self.selected_index = 0;
+            self.search_in_progress = false;
+            cx.notify();
+            return Task::ready(());
+        };
+
+        let search_results = self
+            .project
+            .update(cx, |project, cx| project.search(search_query, cx));
+
+        self.matches.clear();
+        self.selected_index = 0;
+        self.search_in_progress = true;
+        cx.notify();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let text_matches = text_search.await;
+            let SearchResults { rx, _task_handle } = search_results;
+            let mut results_stream = pin!(rx.ready_chunks(256));
+
+            while let Some(results) = results_stream.next().await {
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+
+                let mut batch_matches = Vec::new();
+                let mut limit_reached = false;
+
+                for result in results {
+                    match result {
+                        SearchResult::Buffer { buffer, ranges } => {
+                            let matches =
+                                SearchEverywhereDelegate::process_search_result(&buffer, &ranges, cx);
+                            batch_matches.extend(matches);
+                        }
+                        SearchResult::LimitReached => {
+                            limit_reached = true;
+                        }
+                    }
+                }
+
+                picker
+                    .update_in(cx, |picker, window, cx| {
+                        let delegate = &mut picker.delegate;
+                        delegate.matches.extend(batch_matches);
+
+                        if delegate.selected_index >= delegate.matches.len()
+                            && !delegate.matches.is_empty()
+                        {
+                            delegate.selected_index = 0;
+                        }
+
+                        if delegate.matches.len() == delegate.selected_index + 1
+                            || delegate.selected_index == 0
+                        {
+                            delegate.update_preview(window, cx);
+                        }
+
+                        cx.notify();
+                    })
+                    .ok();
+
+                if limit_reached {
+                    break;
+                }
+
+                smol::future::yield_now().await;
+            }
 
             picker
-                .update_in(cx, |picker, window, cx| {
-                    let delegate = &mut picker.delegate;
-                    delegate.matches = text_matches;
-
-                    if delegate.selected_index >= delegate.matches.len() {
-                        delegate.selected_index = delegate.matches.len().saturating_sub(1);
-                    }
-
-                    delegate.update_preview(window, cx);
+                .update_in(cx, |picker, _window, cx| {
+                    picker.delegate.search_in_progress = false;
                     cx.notify();
                 })
                 .ok();
