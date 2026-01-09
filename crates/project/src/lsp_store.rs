@@ -249,21 +249,6 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
-#[cfg(test)]
-impl DocumentDiagnostics {
-    pub fn new(
-        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        document_abs_path: PathBuf,
-        version: Option<i32>,
-    ) -> Self {
-        Self {
-            diagnostics,
-            document_abs_path,
-            version,
-        }
-    }
-}
-
 #[derive(Default, Debug)]
 struct DynamicRegistrations {
     did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
@@ -2475,10 +2460,7 @@ impl LocalLspStore {
         for (new_diagnostic, entry) in diagnostics {
             let start;
             let end;
-            if entry.diagnostic.is_disk_based {
-                if !new_diagnostic {
-                    continue;
-                }
+            if new_diagnostic && entry.diagnostic.is_disk_based {
                 // Some diagnostics are based on files on disk instead of buffers'
                 // current contents. Adjust these diagnostics' ranges to reflect
                 // any unsaved edits.
