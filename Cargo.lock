@@ -5577,10 +5577,16 @@ dependencies = [
 name = "encoding_selector"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
  "encoding_rs",
+ "fuzzy",
  "gpui",
+ "language",
+ "picker",
+ "project",
  "ui",
+ "util",
  "workspace",
 ]
 

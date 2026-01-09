@@ -139,6 +139,7 @@ pub struct Buffer {
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
     has_bom: bool,
+    force_encoding_on_next_reload: bool,
 }
 
 #[derive(Debug)]
@@ -1146,6 +1147,7 @@ impl Buffer {
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
+            force_encoding_on_next_reload: false,
         }
     }
 
@@ -1453,6 +1455,11 @@ impl Buffer {
         self.has_bom = has_bom;
     }
 
+    /// Sets whether to force the buffer's current encoding on the next reload, bypassing automatic encoding detection.
+    pub fn set_force_encoding_on_next_reload(&mut self, ignore: bool) {
+        self.force_encoding_on_next_reload = ignore;
+    }
+
     /// Assign a language to the buffer.
     pub fn set_language_async(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
         self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
@@ -1534,6 +1541,10 @@ impl Buffer {
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
+
+        let force_encoding = self.force_encoding_on_next_reload;
+        self.force_encoding_on_next_reload = false;
+
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, load_bytes_task, encoding)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
@@ -1547,15 +1558,37 @@ impl Buffer {
                 return Ok(());
             };
 
-            let bytes = load_bytes_task.await?;
-            let (cow, _encoding_used, _has_errors) = encoding.decode(&bytes);
-            let new_text = cow.into_owned();
+            let is_unicode = encoding == encoding_rs::UTF_8
+                || encoding == encoding_rs::UTF_16LE
+                || encoding == encoding_rs::UTF_16BE;
+
+            let (new_text, has_bom, encoding_used) = if force_encoding && !is_unicode {
+                let bytes = load_bytes_task.await?;
+                let (cow, _had_errors) = encoding.decode_without_bom_handling(&bytes);
+                (cow.into_owned(), false, encoding)
+            } else {
+                let bytes = load_bytes_task.await?;
+                let (cow, encoding_used, _had_errors) = encoding.decode(&bytes);
+
+                let actual_has_bom = if encoding_used == encoding_rs::UTF_8 {
+                    bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+                } else if encoding_used == encoding_rs::UTF_16LE {
+                    bytes.starts_with(&[0xFF, 0xFE])
+                } else if encoding_used == encoding_rs::UTF_16BE {
+                    bytes.starts_with(&[0xFE, 0xFF])
+                } else {
+                    false
+                };
+                (cow.into_owned(), actual_has_bom, encoding_used)
+            };
 
             let diff = this.update(cx, |this, cx| this.diff(new_text, cx))?.await;
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
+                    this.encoding = encoding_used;
+                    this.has_bom = has_bom;
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
