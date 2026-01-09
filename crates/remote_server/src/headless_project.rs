@@ -870,7 +870,6 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::FindSearchCandidatesCancelled>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        log::error!("Ending search!");
         let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone());
         BufferStore::handle_find_search_candidates_cancel(buffer_store, envelope, cx).await
     }
