@@ -159,7 +159,6 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
- "assistant_text_thread",
  "chrono",
  "client",
  "clock",
@@ -429,11 +428,11 @@ name = "agent_ui_v2"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
- "assistant_text_thread",
  "chrono",
  "db",
  "editor",

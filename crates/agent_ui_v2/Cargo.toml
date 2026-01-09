@@ -18,11 +18,11 @@ test-support = ["agent/test-support"]
 
 [dependencies]
 agent.workspace = true
+agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
-assistant_text_thread.workspace = true
 chrono.workspace = true
 db.workspace = true
 editor.workspace = true
