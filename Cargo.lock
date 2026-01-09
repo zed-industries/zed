@@ -14763,6 +14763,8 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "multi_buffer",
+ "picker",
  "pretty_assertions",
  "project",
  "schemars",
@@ -14770,6 +14772,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "text",
  "theme",
  "tracing",
  "ui",
@@ -14779,33 +14782,6 @@ dependencies = [
  "workspace",
  "zed_actions",
  "ztracing",
-]
-
-[[package]]
-name = "search_everywhere"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "editor",
- "file_finder",
- "futures 0.3.31",
- "gpui",
- "language",
- "menu",
- "multi_buffer",
- "picker",
- "project",
- "project_symbols",
- "search",
- "settings",
- "smol",
- "text",
- "theme",
- "ui",
- "util",
- "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -21025,7 +21001,6 @@ dependencies = [
  "reqwest_client",
  "rope",
  "search",
- "search_everywhere",
  "semver",
  "serde",
  "serde_json",

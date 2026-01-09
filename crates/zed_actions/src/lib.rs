@@ -296,13 +296,13 @@ pub mod command_palette {
     );
 }
 
-pub mod search_everywhere {
+pub mod quick_search {
     use gpui::actions;
 
     actions!(
-        search_everywhere,
+        quick_search,
         [
-            /// Opens the Search Everywhere popup.
+            /// Opens the Quick Search popup.
             Toggle,
         ]
     );

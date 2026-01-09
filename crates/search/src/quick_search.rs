@@ -17,7 +17,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchQuery, SearchResult};
 use project::{Project, ProjectPath};
-use search::SearchOptions;
+use crate::SearchOptions;
 use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
 use ui::Divider;
@@ -26,9 +26,9 @@ use ui::{
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, Workspace};
-pub use zed_actions::search_everywhere::Toggle;
+pub use zed_actions::quick_search::Toggle;
 
-actions!(search_everywhere, [ReplaceNext, ReplaceAll, ToggleFilters]);
+actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters]);
 
 /// Global state for storing the recent search query.
 struct RecentSearchState {
@@ -53,18 +53,18 @@ fn save_recent_query(query: &str, cx: &mut App) {
     });
 }
 
-/// Initialize the search_everywhere crate.
+/// Initialize the quick_search module.
 pub fn init(cx: &mut App) {
-    cx.observe_new(SearchEverywhere::register).detach();
+    cx.observe_new(QuickSearch::register).detach();
     cx.bind_keys([
-        KeyBinding::new("escape", menu::Cancel, Some("SearchEverywhere")),
-        KeyBinding::new("enter", ReplaceNext, Some("SearchEverywhere && in_replace")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuickSearch")),
+        KeyBinding::new("enter", ReplaceNext, Some("QuickSearch && in_replace")),
         KeyBinding::new(
             "cmd-enter",
             ReplaceAll,
-            Some("SearchEverywhere && in_replace"),
+            Some("QuickSearch && in_replace"),
         ),
-        KeyBinding::new("alt-cmd-f", ToggleFilters, Some("SearchEverywhere")),
+        KeyBinding::new("alt-cmd-f", ToggleFilters, Some("QuickSearch")),
     ]);
 }
 
@@ -79,8 +79,8 @@ pub struct SearchMatch {
     pub line_number: u32,
 }
 
-pub struct SearchEverywhere {
-    picker: Entity<Picker<SearchEverywhereDelegate>>,
+pub struct QuickSearch {
+    picker: Entity<Picker<QuickSearchDelegate>>,
     preview_editor: Entity<Editor>,
     replace_editor: Entity<Editor>,
     offset: gpui::Point<Pixels>,
@@ -88,7 +88,7 @@ pub struct SearchEverywhere {
 }
 
 #[derive(Clone, Copy)]
-struct SearchEverywhereDrag {
+struct QuickSearchDrag {
     mouse_start: gpui::Point<Pixels>,
     offset_start: gpui::Point<Pixels>,
 }
@@ -101,17 +101,17 @@ impl Render for DragPreview {
     }
 }
 
-impl ModalView for SearchEverywhere {}
+impl ModalView for QuickSearch {}
 
-impl EventEmitter<DismissEvent> for SearchEverywhere {}
+impl EventEmitter<DismissEvent> for QuickSearch {}
 
-impl Focusable for SearchEverywhere {
+impl Focusable for QuickSearch {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
-impl SearchEverywhere {
+impl QuickSearch {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
@@ -121,7 +121,7 @@ impl SearchEverywhere {
             let project = workspace.project().clone();
             let weak_workspace = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| {
-                SearchEverywhere::new(weak_workspace, project, window, cx)
+                QuickSearch::new(weak_workspace, project, window, cx)
             });
         });
     }
@@ -144,7 +144,7 @@ impl SearchEverywhere {
 
         let replace_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Replace with…", window, cx);
+            editor.set_placeholder_text("Replace in project…", window, cx);
             editor
         });
 
@@ -160,7 +160,7 @@ impl SearchEverywhere {
             editor
         });
 
-        let delegate = SearchEverywhereDelegate::new(
+        let delegate = QuickSearchDelegate::new(
             workspace,
             project,
             preview_editor.clone(),
@@ -321,7 +321,7 @@ impl SearchEverywhere {
     }
 }
 
-impl Render for SearchEverywhere {
+impl Render for QuickSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let modal_width = rems(50.).to_pixels(window.rem_size());
 
@@ -343,14 +343,14 @@ impl Render for SearchEverywhere {
         let in_replace = self.replace_editor.focus_handle(cx).is_focused(window);
 
         let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("SearchEverywhere");
+        key_context.add("QuickSearch");
         if in_replace {
             key_context.add("in_replace");
         }
 
         v_flex()
             .key_context(key_context)
-            .id("search-everywhere")
+            .id("quick-search")
             .track_focus(&focus_handle)
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
@@ -378,14 +378,14 @@ impl Render for SearchEverywhere {
             .rounded_md()
             .shadow_lg()
             .on_drag(
-                SearchEverywhereDrag {
+                QuickSearchDrag {
                     mouse_start: window.mouse_position(),
                     offset_start: self.offset,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
-            .on_drag_move::<SearchEverywhereDrag>(cx.listener(
-                |this, event: &DragMoveEvent<SearchEverywhereDrag>, _window, cx| {
+            .on_drag_move::<QuickSearchDrag>(cx.listener(
+                |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
                     let drag = event.drag(cx);
                     this.offset = drag.offset_start + (event.event.position - drag.mouse_start);
                     cx.notify();
@@ -402,7 +402,7 @@ impl Render for SearchEverywhere {
                         h_flex()
                             .gap_2()
                             .items_center()
-                            .child(Label::new("Search Everywhere").size(LabelSize::Default))
+                            .child(Label::new("Quick Search").size(LabelSize::Default))
                             .when(search_in_progress, |this| {
                                 this.child(
                                     Label::new(format!(
@@ -526,7 +526,7 @@ impl Render for SearchEverywhere {
     }
 }
 
-pub struct SearchEverywhereDelegate {
+pub struct QuickSearchDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     preview_editor: Entity<Editor>,
@@ -545,7 +545,7 @@ pub struct SearchEverywhereDelegate {
     search_in_progress: bool,
 }
 
-impl SearchEverywhereDelegate {
+impl QuickSearchDelegate {
     fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -661,11 +661,7 @@ impl SearchEverywhereDelegate {
         PathMatcher::new(&queries, path_style).unwrap_or_default()
     }
 
-    fn build_search_query(
-        &self,
-        query: &str,
-        cx: &Context<Picker<Self>>,
-    ) -> Option<SearchQuery> {
+    fn build_search_query(&self, query: &str, cx: &Context<Picker<Self>>) -> Option<SearchQuery> {
         if query.is_empty() {
             return None;
         }
@@ -784,11 +780,11 @@ impl SearchEverywhereDelegate {
     }
 }
 
-impl PickerDelegate for SearchEverywhereDelegate {
+impl PickerDelegate for QuickSearchDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search in project...".into()
+        "Search all files...".into()
     }
 
     fn render_editor(
@@ -815,20 +811,30 @@ impl PickerDelegate for SearchEverywhereDelegate {
                             .child(
                                 IconButton::new("case-sensitive", IconName::CaseSensitive)
                                     .size(ButtonSize::Compact)
-                                    .toggle_state(search_options.contains(SearchOptions::CASE_SENSITIVE))
+                                    .toggle_state(
+                                        search_options.contains(SearchOptions::CASE_SENSITIVE),
+                                    )
                                     .tooltip(Tooltip::text("Match Case"))
                                     .on_click(cx.listener(|picker, _, window, cx| {
-                                        picker.delegate.search_options.toggle(SearchOptions::CASE_SENSITIVE);
+                                        picker
+                                            .delegate
+                                            .search_options
+                                            .toggle(SearchOptions::CASE_SENSITIVE);
                                         picker.refresh(window, cx);
                                     })),
                             )
                             .child(
                                 IconButton::new("whole-word", IconName::WholeWord)
                                     .size(ButtonSize::Compact)
-                                    .toggle_state(search_options.contains(SearchOptions::WHOLE_WORD))
+                                    .toggle_state(
+                                        search_options.contains(SearchOptions::WHOLE_WORD),
+                                    )
                                     .tooltip(Tooltip::text("Match Whole Word"))
                                     .on_click(cx.listener(|picker, _, window, cx| {
-                                        picker.delegate.search_options.toggle(SearchOptions::WHOLE_WORD);
+                                        picker
+                                            .delegate
+                                            .search_options
+                                            .toggle(SearchOptions::WHOLE_WORD);
                                         picker.refresh(window, cx);
                                     })),
                             )
@@ -997,8 +1003,9 @@ impl PickerDelegate for SearchEverywhereDelegate {
                 for result in results {
                     match result {
                         SearchResult::Buffer { buffer, ranges } => {
-                            let matches =
-                                SearchEverywhereDelegate::process_search_result(&buffer, &ranges, cx);
+                            let matches = QuickSearchDelegate::process_search_result(
+                                &buffer, &ranges, cx,
+                            );
                             batch_matches.extend(matches);
                         }
                         SearchResult::LimitReached => {

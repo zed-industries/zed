@@ -653,7 +653,6 @@ fn main() {
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        search_everywhere::init(cx);
         project_panel::init(cx);
         outline_panel::init(cx);
         tasks_ui::init(cx);
