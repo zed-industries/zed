@@ -100,10 +100,9 @@ fn check_invalid_patterns(tool_name: &str, rules: &ToolRules) -> Option<String> 
     let pattern_word = if count == 1 { "pattern" } else { "patterns" };
 
     Some(format!(
-        "The {} tool cannot run because {} regex {} in your settings failed to compile. \
-         You should have already received an error about this in your settings. \
-         Please fix the invalid regex patterns in your tool_permissions settings for the {} tool.",
-        tool_name, count, pattern_word, tool_name
+        "The {} tool cannot run because {} regex {} failed to compile. \
+         Please fix the invalid patterns in your tool_permissions settings.",
+        tool_name, count, pattern_word
     ))
 }
 
@@ -467,79 +466,82 @@ mod tests {
     }
 
     #[test]
-    fn test_decide_permission_from_settings() {
-        // Test that decide_permission_from_settings correctly extracts settings
-        // and delegates to decide_permission
+    fn test_same_pattern_in_deny_and_allow_deny_wins() {
+        // When the same pattern appears in both deny and allow lists, deny should win
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![CompiledRegex::new("deploy", false).unwrap()],
+                always_deny: vec![CompiledRegex::new("deploy", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
 
-        // With no tool rules and always_allow_tool_actions=false, should confirm
-        let settings = AgentSettings {
-            always_allow_tool_actions: false,
-            tool_permissions: empty_permissions(),
-            ..test_agent_settings()
-        };
-        let decision = decide_permission_from_settings("terminal", "any command", &settings);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
-
-        // With always_allow_tool_actions=true, should allow
-        let settings = AgentSettings {
-            always_allow_tool_actions: true,
-            tool_permissions: empty_permissions(),
-            ..test_agent_settings()
-        };
-        let decision = decide_permission_from_settings("terminal", "any command", &settings);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-
-        // Add a deny rule and verify it takes effect
-        let settings = AgentSettings {
-            always_allow_tool_actions: true,
-            tool_permissions: terminal_rules_with_deny(&["dangerous"]),
-            ..test_agent_settings()
-        };
-        let decision =
-            decide_permission_from_settings("terminal", "run dangerous command", &settings);
+        let decision = decide_permission("terminal", "deploy production", &permissions, true);
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        // Non-matching command should fall through to default_mode (Confirm in terminal_rules_with_deny)
-        // With always_allow_tool_actions=true, Confirm becomes Allow
-        let decision = decide_permission_from_settings("terminal", "safe command", &settings);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
     }
 
-    fn test_agent_settings() -> AgentSettings {
-        use agent_settings::*;
-        use gpui::px;
-        use settings::{DefaultAgentView, DockPosition, DockSide, NotifyWhenAgentWaiting};
+    #[test]
+    fn test_same_pattern_in_confirm_and_allow_confirm_wins() {
+        // When the same pattern appears in both confirm and allow lists, confirm should win
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![CompiledRegex::new("deploy", false).unwrap()],
+                always_deny: vec![],
+                always_confirm: vec![CompiledRegex::new("deploy", false).unwrap()],
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
 
-        AgentSettings {
-            enabled: true,
-            button: true,
-            dock: DockPosition::Right,
-            agents_panel_dock: DockSide::Left,
-            default_width: px(300.),
-            default_height: px(600.),
-            default_model: None,
-            inline_assistant_model: None,
-            inline_assistant_use_streaming_tools: false,
-            commit_message_model: None,
-            thread_summary_model: None,
-            inline_alternatives: vec![],
-            favorite_models: vec![],
-            default_profile: AgentProfileId::default(),
-            default_view: DefaultAgentView::Thread,
-            profiles: Default::default(),
-            always_allow_tool_actions: false,
-            notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
-            play_sound_when_agent_done: false,
-            single_file_review: false,
-            model_parameters: vec![],
-            preferred_completion_mode: CompletionMode::Normal,
-            enable_feedback: false,
-            expand_edit_card: true,
-            expand_terminal_card: true,
-            use_modifier_to_send: true,
-            message_editor_min_lines: 1,
-            show_turn_stats: false,
-            tool_permissions: Default::default(),
-        }
+        let decision = decide_permission("terminal", "deploy production", &permissions, true);
+        assert_eq!(decision, ToolPermissionDecision::Confirm);
+    }
+
+    #[test]
+    fn test_partial_tool_name_does_not_match() {
+        // Rules for "term" should not affect "terminal"
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("term"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Deny,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        // "terminal" should not be affected by "term" rules, falls back to global setting
+        let decision = decide_permission("terminal", "echo hello", &permissions, true);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+
+        let decision = decide_permission("terminal", "echo hello", &permissions, false);
+        assert_eq!(decision, ToolPermissionDecision::Confirm);
+    }
+
+    #[test]
+    fn test_very_long_input() {
+        // Test that very long inputs are handled correctly
+        let permissions = terminal_rules_with_deny(&[r"\brm\b"]);
+
+        // Long input without the pattern should not match
+        let long_safe_input = "echo ".to_string() + &"a".repeat(100_000);
+        let decision = decide_permission("terminal", &long_safe_input, &permissions, true);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+
+        // Long input with the pattern should match
+        let long_dangerous_input = "a".repeat(50_000) + " rm " + &"b".repeat(50_000);
+        let decision = decide_permission("terminal", &long_dangerous_input, &permissions, true);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
     }
 }

@@ -3617,352 +3617,217 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_terminal_tool_deny_rule_blocks_command(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.tool_permissions.tools.insert(
-            "terminal".into(),
-            agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Confirm,
-                always_allow: vec![],
-                always_deny: vec![agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
-
-    let task = cx.update(|cx| {
-        tool.run(
-            crate::TerminalToolInput {
-                command: "rm -rf /".to_string(),
-                cd: ".".to_string(),
-                timeout_ms: None,
-            },
-            event_stream,
-            cx,
-        )
-    });
-
-    let result = task.await;
-    assert!(result.is_err(), "expected command to be blocked");
-    assert!(
-        result.unwrap_err().to_string().contains("blocked"),
-        "error should mention the command was blocked"
-    );
-}
-
-#[gpui::test]
-async fn test_terminal_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) {
+async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/root", json!({})).await;
     let project = Project::test(fs, ["/root".as_ref()], cx).await;
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    // Test 1: Deny rule blocks command
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
 
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
-        settings.tool_permissions.tools.insert(
-            "terminal".into(),
-            agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Confirm,
-                always_allow: vec![agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap()],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Confirm,
+                    always_allow: vec![],
+                    always_deny: vec![
+                        agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap(),
+                    ],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "rm -rf /".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by deny rule"
         );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
-    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
-
-    let task = cx.update(|cx| {
-        tool.run(
-            crate::TerminalToolInput {
-                command: "echo hello".to_string(),
-                cd: ".".to_string(),
-                timeout_ms: None,
-            },
-            event_stream,
-            cx,
-        )
-    });
-
-    let update = rx.expect_update_fields().await;
-    assert!(
-        update.content.iter().any(|blocks| {
-            blocks
-                .iter()
-                .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
-        }),
-        "expected tool call update to include terminal content (no authorization should be requested)"
-    );
-
-    let result = task.await;
-    assert!(
-        result.is_ok(),
-        "expected command to succeed without confirmation"
-    );
-}
-
-#[gpui::test]
-async fn test_terminal_tool_always_confirm_rule_forces_confirmation(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/root", json!({})).await;
-    let project = Project::test(fs, ["/root".as_ref()], cx).await;
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = true;
-        settings.tool_permissions.tools.insert(
-            "terminal".into(),
-            agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
-                always_allow: vec![],
-                always_deny: vec![],
-                always_confirm: vec![agent_settings::CompiledRegex::new(r"sudo", false).unwrap()],
-                invalid_patterns: vec![],
-            },
+        assert!(
+            result.unwrap_err().to_string().contains("blocked"),
+            "error should mention the command was blocked"
         );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
+    }
 
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
-    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+    // Test 2: Allow rule skips confirmation (and overrides default_mode: Deny)
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
 
-    let _task = cx.update(|cx| {
-        tool.run(
-            crate::TerminalToolInput {
-                command: "sudo rm file".to_string(),
-                cd: ".".to_string(),
-                timeout_ms: None,
-            },
-            event_stream,
-            cx,
-        )
-    });
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = false;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Deny,
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
 
-    let auth = rx.expect_authorization().await;
-    assert!(
-        auth.tool_call.fields.title.is_some(),
-        "expected authorization request for sudo command despite always_allow_tool_actions=true"
-    );
-}
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
-#[gpui::test]
-async fn test_terminal_tool_default_mode_deny_blocks_command(cx: &mut TestAppContext) {
-    init_test(cx);
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "echo hello".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = true;
-        settings.tool_permissions.tools.insert(
-            "terminal".into(),
-            agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Deny,
-                always_allow: vec![],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content (allow rule should skip confirmation and override default deny)"
         );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
 
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
-
-    let task = cx.update(|cx| {
-        tool.run(
-            crate::TerminalToolInput {
-                command: "echo hello".to_string(),
-                cd: ".".to_string(),
-                timeout_ms: None,
-            },
-            event_stream,
-            cx,
-        )
-    });
-
-    let result = task.await;
-    assert!(
-        result.is_err(),
-        "expected command to be blocked by default_mode: Deny"
-    );
-    assert!(
-        result.unwrap_err().to_string().contains("disabled"),
-        "error should mention the tool is disabled"
-    );
-}
-
-#[gpui::test]
-async fn test_terminal_tool_allow_rule_overrides_default_deny(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/root", json!({})).await;
-    let project = Project::test(fs, ["/root".as_ref()], cx).await;
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
-        settings.tool_permissions.tools.insert(
-            "terminal".into(),
-            agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Deny,
-                always_allow: vec![agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap()],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
+        let result = task.await;
+        assert!(
+            result.is_ok(),
+            "expected command to succeed without confirmation"
         );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
+    }
 
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
-    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+    // Test 3: Confirm rule forces confirmation even with always_allow_tool_actions=true
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
 
-    let task = cx.update(|cx| {
-        tool.run(
-            crate::TerminalToolInput {
-                command: "echo hello".to_string(),
-                cd: ".".to_string(),
-                timeout_ms: None,
-            },
-            event_stream,
-            cx,
-        )
-    });
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Allow,
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![
+                        agent_settings::CompiledRegex::new(r"sudo", false).unwrap(),
+                    ],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
 
-    let update = rx.expect_update_fields().await;
-    assert!(
-        update.content.iter().any(|blocks| {
-            blocks
-                .iter()
-                .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
-        }),
-        "expected terminal content (allow rule should override default deny)"
-    );
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
-    let result = task.await;
-    assert!(
-        result.is_ok(),
-        "expected command to succeed because allow rule overrides default deny"
-    );
-}
+        let _task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "sudo rm file".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
 
-#[gpui::test]
-async fn test_terminal_tool_invalid_regex_blocks_all_commands(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/root", json!({})).await;
-    let project = Project::test(fs, ["/root".as_ref()], cx).await;
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = true;
-        // Create rules with an invalid regex pattern
-        settings.tool_permissions.tools.insert(
-            "terminal".into(),
-            agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
-                always_allow: vec![],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![agent_settings::InvalidRegexPattern {
-                    pattern: "[invalid(regex".to_string(),
-                    rule_type: "always_deny".to_string(),
-                    error: "unclosed character class".to_string(),
-                }],
-            },
+        let auth = rx.expect_authorization().await;
+        assert!(
+            auth.tool_call.fields.title.is_some(),
+            "expected authorization request for sudo command despite always_allow_tool_actions=true"
         );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
+    }
 
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+    // Test 4: default_mode: Deny blocks commands when no pattern matches
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
 
-    // Even a completely safe command should be blocked
-    let task = cx.update(|cx| {
-        tool.run(
-            crate::TerminalToolInput {
-                command: "echo hello".to_string(),
-                cd: ".".to_string(),
-                timeout_ms: None,
-            },
-            event_stream,
-            cx,
-        )
-    });
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Deny,
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
 
-    let result = task.await;
-    assert!(
-        result.is_err(),
-        "expected command to be blocked due to invalid regex in settings"
-    );
-    let error_msg = result.unwrap_err().to_string();
-    assert!(
-        error_msg.contains("regex"),
-        "error should mention regex: {}",
-        error_msg
-    );
-    assert!(
-        error_msg.contains("settings"),
-        "error should mention settings: {}",
-        error_msg
-    );
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "echo hello".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by default_mode: Deny"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("disabled"),
+            "error should mention the tool is disabled"
+        );
+    }
 }

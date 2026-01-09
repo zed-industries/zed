@@ -230,15 +230,14 @@ impl std::fmt::Debug for CompiledRegex {
 
 impl CompiledRegex {
     pub fn new(pattern: &str, case_sensitive: bool) -> Option<Self> {
+        Self::try_new(pattern, case_sensitive).ok()
+    }
+
+    pub fn try_new(pattern: &str, case_sensitive: bool) -> Result<Self, regex::Error> {
         let regex = regex::RegexBuilder::new(pattern)
             .case_insensitive(!case_sensitive)
-            .build()
-            .map_err(|e| {
-                log::warn!("Invalid regex pattern '{}': {}", pattern, e);
-                e
-            })
-            .ok()?;
-        Some(Self {
+            .build()?;
+        Ok(Self {
             pattern: pattern.to_string(),
             case_sensitive,
             regex,
@@ -293,6 +292,7 @@ impl Settings for AgentSettings {
         }
     }
 }
+
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
     let Some(content) = content else {
         return ToolPermissions::default();
@@ -361,21 +361,13 @@ fn compile_regex_rules(
 
     for rule in rules {
         let case_sensitive = rule.case_sensitive.unwrap_or(false);
-        match CompiledRegex::new(&rule.pattern, case_sensitive) {
-            Some(regex) => compiled.push(regex),
-            None => {
-                // Get the actual error message by trying to compile again
-                let error_msg = regex::RegexBuilder::new(&rule.pattern)
-                    .case_insensitive(!case_sensitive)
-                    .build()
-                    .err()
-                    .map(|e| e.to_string())
-                    .unwrap_or_else(|| "Unknown regex error".to_string());
-
+        match CompiledRegex::try_new(&rule.pattern, case_sensitive) {
+            Ok(regex) => compiled.push(regex),
+            Err(error) => {
                 errors.push(InvalidRegexPattern {
                     pattern: rule.pattern,
                     rule_type: rule_type.to_string(),
-                    error: error_msg,
+                    error: error.to_string(),
                 });
             }
         }
