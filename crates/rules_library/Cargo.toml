@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/rules_library.rs"
 
+[features]
+test-support = ["title_bar/test-support"]
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true

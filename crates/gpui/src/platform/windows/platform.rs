@@ -51,7 +51,7 @@ struct WindowsPlatformInner {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
-    main_receiver: PriorityQueueReceiver<GpuiRunnable>,
+    main_receiver: PriorityQueueReceiver<RunnableVariant>,
     dispatcher: Arc<WindowsDispatcher>,
 }
 
@@ -863,7 +863,7 @@ impl WindowsPlatformInner {
                 }
                 let mut main_receiver = self.main_receiver.clone();
                 match main_receiver.try_pop() {
-                    Ok(Some(runnable)) => _ = runnable.run_and_profile(),
+                    Ok(Some(runnable)) => WindowsDispatcher::execute_runnable(runnable),
                     _ => break 'timeout_loop,
                 }
             }
@@ -875,7 +875,8 @@ impl WindowsPlatformInner {
             match main_receiver.try_pop() {
                 Ok(Some(runnable)) => {
                     self.dispatcher.wake_posted.store(true, Ordering::Release);
-                    runnable.run_and_profile();
+
+                    WindowsDispatcher::execute_runnable(runnable);
                 }
                 _ => break 'tasks,
             }
@@ -939,7 +940,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: PriorityQueueReceiver<GpuiRunnable>,
+    pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
@@ -952,8 +953,8 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
-    main_sender: Option<PriorityQueueSender<GpuiRunnable>>,
-    main_receiver: Option<PriorityQueueReceiver<GpuiRunnable>>,
+    main_sender: Option<PriorityQueueSender<RunnableVariant>>,
+    main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
 }
