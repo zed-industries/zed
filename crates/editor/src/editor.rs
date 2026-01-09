@@ -1021,6 +1021,16 @@ struct PhantomBreakpointIndicator {
     collides_with_existing_breakpoint: bool,
 }
 
+/// Represents a diff review button indicator that shows up when hovering over lines in the gutter
+/// in diff view mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PhantomDiffReviewIndicator {
+    pub display_row: DisplayRow,
+    /// There's a small debounce between hovering over the line and showing the indicator.
+    /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
+    pub is_active: bool,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1184,6 +1194,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
@@ -2348,6 +2359,7 @@ impl Editor {
 
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
+            gutter_diff_review_indicator: (None, None),
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {

@@ -1,251 +1,189 @@
 # Diff Review Button - Remaining Work
 
-This document describes the remaining work needed to match the diff review button implementation to the mockup design.
+This document describes the remaining work needed to complete the diff review button implementation.
 
 ## Background
 
-The diff review button is a "+" button that appears in the gutter of the editor when viewing uncommitted changes in the Project Diff view. When hovered, it should show an "Add Review" tooltip.
+The diff review button is a "+" button that appears in the gutter of the editor when viewing uncommitted changes in the Project Diff view. When hovered, it should show an "Add Review" tooltip. The button should behave like the breakpoint phantom indicator - appearing when the user hovers over the gutter.
 
-### Current State
+## Current State (Completed)
 
-The button is now functional and visible in the visual tests:
+The following items have been completed:
+
 - ✅ Button appears in the diff view when the `diff-review` feature flag is enabled
 - ✅ Button is hidden when the feature flag is disabled
 - ✅ Button is hidden in regular editors (only shows in diff view)
-- ⚠️ Button uses text "+" instead of SVG icon (workaround for rendering limitation)
-- ⚠️ Tooltip test doesn't show the tooltip (mouse position needs adjustment)
+- ✅ Button uses SVG `IconName::Plus` icon via `IconButton` (not text "+")
+- ✅ Tooltip shows "Add Review" when hovering over the button
+- ✅ Visual tests pass for enabled, disabled, tooltip, and regular editor cases
+- ✅ Button positioned at left edge of gutter to avoid overlap with expand excerpt button
 
-### Mockup Reference
+## Remaining Work
 
-The mockup shows:
-- A "+" button with a dark gray/charcoal rounded rectangle background
-- A white "+" icon inside
-- On hover: a subtle light border appears around the button
-- Tooltip: "Add Review" appears below the button when hovering
+### Issue 1: Button Should Only Appear on Hover (Like Breakpoints)
+
+**Current behavior**: The diff review button is always visible on the last row of the document.
+
+**Expected behavior**: The button should only appear when the user hovers over the gutter, appearing on whichever row they're hovering over (just like the breakpoint phantom indicator).
+
+**Reference implementation**: The breakpoint phantom indicator in `crates/editor/src/editor.rs`:
+- `PhantomBreakpointIndicator` struct (line ~1016) tracks the hovered row and active state
+- `gutter_breakpoint_indicator` field on `Editor` stores the indicator state
+- `mouse_moved()` in `crates/editor/src/element.rs` (line ~1269) handles hover detection and creates the indicator
+- There's a 200ms debounce before showing the indicator
+
+**Implementation approach**:
+1. Create a similar `PhantomDiffReviewIndicator` struct to track hover state
+2. Add a `gutter_diff_review_indicator` field to `Editor`
+3. Update `mouse_moved()` to detect gutter hover and create the indicator (when `show_diff_review_button` is true)
+4. Update `layout_diff_review_button()` to use the indicator's row instead of `max_point.row()`
+
+### Issue 2: Don't Show Button on Rows with Expand Excerpt Buttons
+
+**Current behavior**: The diff review button can appear on the same row as an expand excerpt button, causing visual overlap.
+
+**Expected behavior**: If a row has an expand excerpt button (indicated by `row_info.expand_info.is_some()`), don't show the diff review button on that row. Users can expand the excerpt first, then the diff review button will be available.
+
+**Reference implementation**: The breakpoint code already does this check in `layout_breakpoints()` (line ~3007):
+```rust
+if row_infos
+    .get((display_row.0.saturating_sub(range.start.0)) as usize)
+    .is_some_and(|row_info| {
+        row_info.expand_info.is_some()
+            || row_info
+                .diff_status
+                .is_some_and(|status| status.is_deleted())
+    })
+{
+    return None;
+}
+```
+
+**Implementation approach**:
+1. Pass `row_infos` to the diff review button layout function
+2. Check if the hovered row has `expand_info` before showing the button
+3. If `expand_info.is_some()`, don't show the diff review button
+
+### Issue 3: Respect "Disable AI" Setting
+
+**Current behavior**: The diff review button appears regardless of the "disable AI" setting.
+
+**Expected behavior**: When `DisableAiSettings::get_global(cx).disable_ai` is `true`, the diff review button should never appear. The normal breakpoint hover behavior should work instead.
+
+**Reference implementation**: See how other AI features check this setting:
+- `crates/agent_ui/src/inline_assistant.rs` line ~61
+- `crates/edit_prediction_ui/src/edit_prediction_button.rs` line ~90
+
+**Implementation approach**:
+1. In `layout_diff_review_button()`, check `DisableAiSettings::get_global(cx).disable_ai`
+2. If AI is disabled, return `None` immediately
+3. Add `project::DisableAiSettings` to the imports in `element.rs`
+
+## Required Tests
+
+### Unit Tests
+
+Create unit tests in `crates/editor/src/editor_tests.rs` (or a new test file):
+
+1. **`test_diff_review_button_shown_on_gutter_hover_without_expand`**
+   - Set up a diff view with `show_diff_review_button = true`
+   - Simulate hovering over a gutter row that does NOT have an expand button
+   - Verify the diff review indicator is created for that row
+
+2. **`test_diff_review_button_hidden_on_gutter_hover_with_expand`**
+   - Set up a diff view with `show_diff_review_button = true`
+   - Simulate hovering over a gutter row that HAS an expand button
+   - Verify the diff review indicator is NOT created
+
+3. **`test_diff_review_button_hidden_when_ai_disabled`**
+   - Set `DisableAiSettings { disable_ai: true }`
+   - Set up a diff view with `show_diff_review_button = true`
+   - Simulate hovering over the gutter
+   - Verify the diff review indicator is NOT created
+   - Verify normal breakpoint indicator behavior still works
+
+4. **`test_diff_review_button_shown_when_ai_enabled`**
+   - Set `DisableAiSettings { disable_ai: false }`
+   - Set up a diff view with `show_diff_review_button = true`
+   - Simulate hovering over the gutter
+   - Verify the diff review indicator IS created
+
+### Visual Tests
+
+Update visual tests in `crates/zed/src/visual_test_runner.rs`:
+
+1. **`diff_review_button_hover_row_1`** (rename from `diff_review_button_enabled`)
+   - Hover over line 1 in the gutter
+   - Verify the "+" button appears on line 1
+
+2. **`diff_review_button_hover_row_3`** (new test)
+   - Hover over line 3 in the gutter
+   - Verify the "+" button appears on line 3 (different from row 1)
+
+3. **`diff_review_button_tooltip`** (keep existing)
+   - Hover over the "+" button
+   - Verify "Add Review" tooltip appears
+
+4. **`diff_review_button_hidden_on_expand_row`** (new test)
+   - Set up a diff where a row has an expand button
+   - Hover over that row in the gutter
+   - Verify the "+" button does NOT appear (only expand button visible)
+
+5. **`diff_review_button_disabled`** (keep existing)
+   - Feature flag disabled
+   - Verify no button appears
+
+6. **`diff_review_button_regular_editor`** (keep existing)
+   - Regular editor (not diff view)
+   - Verify no button appears
+
+**Note**: Visual tests are NOT needed for the "disable AI" setting - unit tests are sufficient for that.
 
 ## Relevant Files
 
 | File | Purpose |
 |------|---------|
-| `crates/editor/src/element.rs` | Contains `layout_diff_review_button()` which creates the button |
-| `crates/zed/src/visual_test_runner.rs` | Contains `run_diff_review_visual_tests()` which runs the visual tests |
-| `crates/zed/test_fixtures/visual_tests/` | Baseline images for visual tests |
-| `target/visual_tests/` | Generated test screenshots (created when tests run) |
+| `crates/editor/src/editor.rs` | Contains `PhantomBreakpointIndicator` as reference, and `Editor` struct |
+| `crates/editor/src/element.rs` | Contains `layout_diff_review_button()`, `mouse_moved()`, and gutter rendering |
+| `crates/editor/src/editor_tests.rs` | Unit tests for editor functionality |
+| `crates/zed/src/visual_test_runner.rs` | Visual test infrastructure |
+| `crates/project/src/project.rs` | Contains `DisableAiSettings` |
+| `crates/multi_buffer/src/multi_buffer.rs` | Contains `RowInfo` and `expand_info` |
 
-## Running the Visual Tests
+## Running Tests
 
-### Basic Test Run
-
+### Unit Tests
 ```bash
-cd /path/to/zed
+cargo -q test --package editor test_diff_review
+```
+
+### Visual Tests
+```bash
 cargo -q run --package zed --bin zed_visual_test_runner --features="visual-tests"
 ```
 
-This will:
-1. Run all visual tests
-2. Save screenshots to `target/visual_tests/`
-3. Compare against baselines in `crates/zed/test_fixtures/visual_tests/`
-4. Report pass/fail status
-
-### Updating Baselines
-
-When you've made intentional visual changes:
-
+### Update Visual Test Baselines
 ```bash
 UPDATE_BASELINE=1 cargo -q run --package zed --bin zed_visual_test_runner --features="visual-tests"
 ```
 
-This will update the baseline images to match the current output.
+## Implementation Order
 
-### Viewing Screenshots
+1. **Phase 1**: Implement hover-based display (Issue 1)
+   - Create `PhantomDiffReviewIndicator`
+   - Update `mouse_moved()` to detect gutter hover for diff review
+   - Update `layout_diff_review_button()` to use indicator row
+   - Add visual tests for hovering different rows
 
-After running tests, view the generated screenshots:
+2. **Phase 2**: Hide on expand rows (Issue 2)
+   - Add `expand_info` check to diff review button layout
+   - Add visual test for expand row behavior
 
-```bash
-open target/visual_tests/diff_review_button_enabled.png
-open target/visual_tests/diff_review_button_tooltip.png
-open target/visual_tests/diff_review_button_disabled.png
-open target/visual_tests/diff_review_button_regular_editor.png
-```
+3. **Phase 3**: Respect "Disable AI" setting (Issue 3)
+   - Add `DisableAiSettings` check
+   - Add unit tests for AI disabled/enabled states
 
-Compare these against the mockup to identify differences.
-
-## Remaining Issues
-
-### Issue 1: Button Uses Text "+" Instead of SVG Icon
-
-**Current behavior**: The button displays a text "+" character.
-
-**Expected behavior**: The button should display the `IconName::Plus` SVG icon (same as mockup).
-
-**Root cause**: SVG icons don't render when elements are painted via `prepaint_as_root()`. This is a limitation of how the editor paints gutter elements outside the normal element tree.
-
-**Location**: `crates/editor/src/element.rs`, function `layout_diff_review_button()`, around line 3058-3080.
-
-**Current code**:
-```rust
-let button = div()
-    .id("diff_review_button")
-    .flex()
-    .items_center()
-    .justify_center()
-    .w(px(20.0))
-    .h(px(20.0))
-    .rounded(px(4.0))
-    .bg(cx.theme().colors().element_background)
-    .text_color(cx.theme().colors().text)
-    .text_size(px(14.0))
-    .font_weight(gpui::FontWeight::BOLD)
-    .child("+")
-    .tooltip(|window, cx| ui::Tooltip::text("Add Review")(window, cx))
-    .into_any_element();
-```
-
-**Investigation needed**: 
-1. Understand why SVG icons don't render in `prepaint_as_root()` context
-2. Look at how breakpoint indicators render their SVG icons (they use the same `prepaint_gutter_button()` mechanism)
-3. The breakpoint code is in `crates/editor/src/editor.rs`, function `render_breakpoint()` around line 8590
-
-**Possible solutions**:
-1. Find what's different between how breakpoints render icons vs our approach
-2. Consider if there's a different rendering approach that would work
-3. As a fallback, the text "+" is acceptable but not ideal
-
-### Issue 2: Tooltip Not Appearing in Tests
-
-**Current behavior**: The `diff_review_button_tooltip.png` screenshot looks identical to `diff_review_button_enabled.png` - no tooltip visible.
-
-**Expected behavior**: The tooltip "Add Review" should be visible in the screenshot.
-
-**Root cause**: The test hovers the mouse at a hardcoded position that may not match where the button actually is.
-
-**Location**: `crates/zed/src/visual_test_runner.rs`, around line 1051.
-
-**Current code**:
-```rust
-// Test 1b: Tooltip visible when hovering over the button
-// The button is positioned in the gutter at the last row of the diff
-let button_position = point(px(27.0), px(232.0));
-
-// Simulate mouse move to hover over the button
-cx.update_window(workspace_window.into(), |_, window, cx| {
-    window.simulate_mouse_move(button_position, cx);
-})?;
-```
-
-**How tooltips work**:
-1. The button has `.tooltip(...)` which registers a tooltip builder
-2. During `paint()`, `Interactivity::paint_mouse_listeners()` registers mouse event handlers
-3. When mouse hovers over the button's hitbox, a timer starts
-4. After `TOOLTIP_SHOW_DELAY` (500ms), the tooltip appears
-
-**How to fix**:
-1. Calculate the actual button position based on the layout:
-   - Window size: 600x500 (see `window_size` in the test)
-   - The button is on the last row of visible diff content (line 4)
-   - Button is in the gutter area (left side, around x=10-30)
-   - Y position depends on: title bar + tab bar + file header + line heights
-
-2. Or, add debugging to print the button's actual position:
-   ```rust
-   // In layout_diff_review_button, after prepaint_gutter_button:
-   eprintln!("Button position: {:?}", /* get position from hitbox */);
-   ```
-
-3. Update the hardcoded `button_position` to match the actual position
-
-**Verification**: After fixing, the `diff_review_button_tooltip.png` should show:
-- The same diff view as `enabled.png`
-- Plus a tooltip near the button saying "Add Review"
-
-### Issue 3: Button Styling Refinements
-
-**Current vs Mockup differences**:
-
-| Aspect | Current | Mockup |
-|--------|---------|--------|
-| Background | `element_background` (subtle gray) | Darker charcoal |
-| Icon | Text "+" | SVG Plus icon |
-| Hover state | No visible change | Light border appears |
-| Size | 20x20px | Similar |
-| Corners | 4px radius | Similar |
-
-**To match the mockup more closely**:
-
-1. **Darker background**: Try using a different theme color or a custom color:
-   ```rust
-   // Option 1: Use a darker theme color
-   .bg(cx.theme().colors().surface_background)
-   
-   // Option 2: Use a custom darker color
-   .bg(gpui::hsla(220.0/360.0, 0.1, 0.15, 1.0))
-   ```
-
-2. **Hover state with border**:
-   ```rust
-   let border_color = cx.theme().colors().border;
-   
-   div()
-       // ... existing styles ...
-       .border_1()
-       .border_color(gpui::transparent_black())
-       .hover(move |style| style.border_color(border_color))
-   ```
-
-## How to Approach the Work
-
-### Step 1: Set Up Your Environment
-
-1. Clone the repo and checkout the `diff-review-button` branch
-2. Ensure you can build: `cargo build --package zed`
-3. Run the visual tests to confirm they pass: `cargo -q run --package zed --bin zed_visual_test_runner --features="visual-tests"`
-
-### Step 2: Understand the Current Implementation
-
-1. Read `layout_diff_review_button()` in `crates/editor/src/element.rs`
-2. Read how breakpoints render their icons in `render_breakpoint()` in `crates/editor/src/editor.rs`
-3. Run the app and open a project with uncommitted changes to see the button in action
-
-### Step 3: Fix the Tooltip Test
-
-1. Add debug logging to find the button's actual position
-2. Update the `button_position` in the test
-3. Run the test and verify the tooltip appears
-4. Update baselines: `UPDATE_BASELINE=1 cargo -q run ...`
-
-### Step 4: Investigate SVG Icon Rendering
-
-1. Compare the breakpoint icon rendering path to our button
-2. Try using `IconButton` instead of `div()` with a text child
-3. If icons still don't render, document the technical limitation
-
-### Step 5: Refine Button Styling
-
-1. Adjust background color to be darker
-2. Add hover state with border
-3. Test against the mockup
-4. Update baselines
-
-## Testing Checklist
-
-After each change, verify:
-
-- [ ] `diff_review_button_enabled.png` shows the button on line 4 with correct styling
-- [ ] `diff_review_button_tooltip.png` shows the tooltip "Add Review"
-- [ ] `diff_review_button_disabled.png` shows NO button (feature flag disabled)
-- [ ] `diff_review_button_regular_editor.png` shows NO button (regular editor, not diff view)
-- [ ] All visual tests pass: `cargo -q run --package zed --bin zed_visual_test_runner --features="visual-tests"`
-
-## Additional Resources
-
-- **GPUI Elements**: Look at `crates/gpui/src/elements/div.rs` for how elements handle tooltips
-- **UI Components**: Look at `crates/ui/src/components/button/` for how IconButton works
-- **Visual Test Framework**: `crates/zed/src/visual_test_runner.rs` contains all visual test infrastructure
-
-## Questions?
-
-If you get stuck:
-1. Search the codebase for similar patterns (e.g., how other gutter elements work)
-2. Look at the breakpoint implementation as a reference
-3. Add `eprintln!()` debugging to understand the flow
-4. Check the GPUI documentation in `crates/gpui/src/` for how elements are painted
+4. **Phase 4**: Final cleanup
+   - Remove any debug logging
+   - Update all baselines
+   - Verify all tests pass

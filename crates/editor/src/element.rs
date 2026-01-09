@@ -7,9 +7,9 @@ use crate::{
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
+    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -61,7 +61,7 @@ use multi_buffer::{
 
 use edit_prediction_types::EditPredictionGranularity;
 use project::{
-    Entry, ProjectPath,
+    DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
@@ -1267,9 +1267,58 @@ impl EditorElement {
             }
         }
 
-        // Check if we're on the row where the diff review button is shown
-        let is_on_diff_review_button_row = editor.show_diff_review_button()
-            && valid_point.row() == position_map.snapshot.display_snapshot.max_point().row();
+        // Handle diff review indicator when gutter is hovered in diff mode with AI enabled
+        let show_diff_review = editor.show_diff_review_button()
+            && cx.has_flag::<DiffReviewFeatureFlag>()
+            && !DisableAiSettings::get_global(cx).disable_ai;
+
+        let diff_review_indicator = if gutter_hovered && show_diff_review {
+            let is_visible = editor
+                .gutter_diff_review_indicator
+                .0
+                .is_some_and(|indicator| indicator.is_active);
+
+            if !is_visible {
+                editor
+                    .gutter_diff_review_indicator
+                    .1
+                    .get_or_insert_with(|| {
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+
+                            this.update(cx, |this, cx| {
+                                if let Some(indicator) =
+                                    this.gutter_diff_review_indicator.0.as_mut()
+                                {
+                                    indicator.is_active = true;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                        })
+                    });
+            }
+
+            Some(PhantomDiffReviewIndicator {
+                display_row: valid_point.row(),
+                is_active: is_visible,
+            })
+        } else {
+            editor.gutter_diff_review_indicator.1 = None;
+            None
+        };
+
+        if diff_review_indicator != editor.gutter_diff_review_indicator.0 {
+            editor.gutter_diff_review_indicator.0 = diff_review_indicator;
+            cx.notify();
+        }
+
+        // Don't show breakpoint indicator when diff review indicator is active on this row
+        let is_on_diff_review_button_row = diff_review_indicator.is_some_and(|indicator| {
+            indicator.is_active && indicator.display_row == valid_point.row()
+        });
 
         let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
             let buffer_anchor = position_map
@@ -3055,15 +3104,20 @@ impl EditorElement {
     fn layout_diff_review_button(
         &self,
         line_height: Pixels,
+        range: Range<DisplayRow>,
+        row_infos: &[RowInfo],
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
+            return None;
+        }
+
+        if DisableAiSettings::get_global(cx).disable_ai {
             return None;
         }
 
@@ -3072,8 +3126,21 @@ impl EditorElement {
             return None;
         }
 
-        let max_point = snapshot.display_snapshot.max_point();
-        let last_row = max_point.row();
+        // Only show button when hovering over gutter and the indicator is active
+        let indicator = self.editor.read(cx).gutter_diff_review_indicator.0?;
+        if !indicator.is_active {
+            return None;
+        }
+
+        let display_row = indicator.display_row;
+
+        // Don't show on rows with expand excerpt buttons
+        if row_infos
+            .get((display_row.0.saturating_sub(range.start.0)) as usize)
+            .is_some_and(|row_info| row_info.expand_info.is_some())
+        {
+            return None;
+        }
 
         let button = IconButton::new("diff_review_button", ui::IconName::Plus)
             .icon_size(ui::IconSize::XSmall)
@@ -3086,7 +3153,7 @@ impl EditorElement {
 
         let button = prepaint_gutter_button(
             button,
-            last_row,
+            display_row,
             line_height,
             gutter_dimensions,
             scroll_position,
@@ -8326,28 +8393,18 @@ fn prepaint_gutter_button(
         .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
     let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
-    let mut x = left_offset;
-    let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
-        - indicator_size.width
-        - left_offset;
-    x += available_width / 2.;
+    let x = left_offset;
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
     y += (line_height - indicator_size.height) / 2.;
 
-    let final_origin = gutter_hitbox.origin + point(x, y);
-    eprintln!(
-        "[DEBUG] prepaint_gutter_button: row={:?}, origin=({:.2}, {:.2}), size=({:.2}, {:.2}), gutter_hitbox.origin=({:.2}, {:.2})",
-        row,
-        final_origin.x,
-        final_origin.y,
-        indicator_size.width,
-        indicator_size.height,
-        gutter_hitbox.origin.x,
-        gutter_hitbox.origin.y
+    button.prepaint_as_root(
+        gutter_hitbox.origin + point(x, y),
+        available_space,
+        window,
+        cx,
     );
-    button.prepaint_as_root(final_origin, available_space, window, cx);
     button
 }
 
@@ -10415,11 +10472,12 @@ impl Element for EditorElement {
 
                     let diff_review_button = self.layout_diff_review_button(
                         line_height,
+                        start_row..end_row,
+                        &row_infos,
                         scroll_position,
                         &gutter_dimensions,
                         &gutter_hitbox,
                         &display_hunks,
-                        &snapshot,
                         window,
                         cx,
                     );
