@@ -16,11 +16,6 @@ use crate::{
     syntax_tree::SyntaxHint,
 };
 
-/// Default graph limit (1 million vertices).
-///
-/// Difftastic uses a higher value: https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/options.rs#L25
-pub const DEFAULT_GRAPH_LIMIT: usize = 1_000_000;
-
 /// The kind of change for a syntax node.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SyntaxChange {
@@ -75,10 +70,11 @@ impl SyntaxDiff {
 pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
+    graph_size_limit: usize,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
     let delimeters = SyntaxDelimiterTree::new();
 
-    let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, &delimeters, DEFAULT_GRAPH_LIMIT)?;
+    let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, &delimeters, graph_size_limit)?;
 
     let mut lhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
     let mut rhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());

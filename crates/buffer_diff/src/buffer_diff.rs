@@ -1042,47 +1042,65 @@ fn process_patch_hunk(
         let buffer_byte_range =
             buffer_range.start.to_offset(buffer)..buffer_range.end.to_offset(buffer);
 
+        let can_word_diff = base_line_count == buffer_row_range.len()
+            && diff_options.max_word_diff_line_count >= base_line_count;
+
+        let word_diff = || {
+            let base_text: String = diff_base
+                .chunks_in_range(diff_base_byte_range.clone())
+                .collect();
+
+            let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
+
+            word_diff_ranges(
+                &base_text,
+                &buffer_text,
+                DiffOptions {
+                    language_scope: diff_options.language_scope.clone(),
+                    ..*diff_options
+                },
+            )
+        };
+
         let (base_diffs, buffer_diffs_relative) = match diff_options.diff_strategy {
-            DiffStrategy::Word
-                if base_line_count == buffer_row_range.len()
-                    && diff_options.max_word_diff_line_count >= base_line_count =>
-            {
-                let base_text: String = diff_base
-                    .chunks_in_range(diff_base_byte_range.clone())
-                    .collect();
-
-                let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
-
-                word_diff_ranges(
-                    &base_text,
-                    &buffer_text,
-                    DiffOptions {
-                        language_scope: diff_options.language_scope.clone(),
-                        ..*diff_options
-                    },
-                )
-            }
             DiffStrategy::Syntax => {
                 let base_syntax_tree =
                     build_syntax_tree(base_snapshot, diff_base_byte_range.clone());
                 let buffer_syntax_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
 
-                let syntax_diff = match (base_syntax_tree, buffer_syntax_tree) {
-                    (Some(base), Some(buffer)) => {
-                        syntax_diff::diff_trees(&base, &buffer).ok().map(|diff| {
-                            let lhs_hunk_len =
-                                diff_base_byte_range.end - diff_base_byte_range.start;
-                            let rhs_hunk_len = buffer_byte_range.end - buffer_byte_range.start;
-                            diff.relative_to(diff_base_byte_range.start, buffer_byte_range.start)
-                                .bound_to(0..lhs_hunk_len, 0..rhs_hunk_len)
-                        })
-                    }
-                    _ => None,
-                }
-                .unwrap_or_default();
+                // We build the syntax trees before checking the graph size because our
+                // syntax tree can be smaller than tree-sitter's tree (due to flattening).
+                // Checking the size upfront using tree-sitter's node count would be overly
+                // conservative and reject cases that would actually fit within the limit.
+                let syntax_diff = if let (Some(base_syntax_tree), Some(buffer_syntax_tree)) =
+                    (base_syntax_tree, buffer_syntax_tree)
+                    && base_syntax_tree.len() * buffer_syntax_tree.len()
+                        <= diff_options.max_syntax_diff_graph_size
+                {
+                    syntax_diff::diff_trees(
+                        &base_syntax_tree,
+                        &buffer_syntax_tree,
+                        diff_options.max_syntax_diff_graph_size,
+                    )
+                    .ok()
+                    .map(|diff| {
+                        let lhs_hunk_len = diff_base_byte_range.end - diff_base_byte_range.start;
+                        let rhs_hunk_len = buffer_byte_range.end - buffer_byte_range.start;
+                        let diff = diff
+                            .relative_to(diff_base_byte_range.start, buffer_byte_range.start)
+                            .bound_to(0..lhs_hunk_len, 0..rhs_hunk_len);
 
-                (syntax_diff.lhs_ranges, syntax_diff.rhs_ranges)
+                        (diff.lhs_ranges, diff.rhs_ranges)
+                    })
+                } else {
+                    None
+                };
+
+                syntax_diff
+                    .or_else(|| can_word_diff.then(word_diff))
+                    .unwrap_or_default()
             }
+            DiffStrategy::Word if can_word_diff => word_diff(),
             _ => (Vec::default(), Vec::default()),
         };
 
