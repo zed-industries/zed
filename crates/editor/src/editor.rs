@@ -8649,17 +8649,6 @@ impl Editor {
                 Color::Debugger
             };
 
-            let resolved_color = color.color(cx);
-            eprintln!(
-                "[DEBUG] render_breakpoint: is_phantom={}, row={:?}, color={:?}, resolved_color=(h={:.2}, s={:.2}, l={:.2}, a={:.2})",
-                is_phantom,
-                row,
-                color,
-                resolved_color.h,
-                resolved_color.s,
-                resolved_color.l,
-                resolved_color.a
-            );
             (color, icon)
         };
 
