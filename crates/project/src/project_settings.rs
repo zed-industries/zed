@@ -26,7 +26,7 @@ use settings::{
 use std::{
     cell::OnceCell,
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };

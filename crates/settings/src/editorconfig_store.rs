@@ -156,7 +156,7 @@ impl EditorconfigStore {
         }
         if let Some((_, Some(parsed))) = worktree_configs
             .internal_configs
-            .get(RelPath::empty().into())
+            .get(RelPath::empty())
         {
             if parsed.is_root {
                 return;
