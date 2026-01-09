@@ -1077,21 +1077,18 @@ fn process_patch_hunk(
                     && base_syntax_tree.len() * buffer_syntax_tree.len()
                         <= diff_options.max_syntax_diff_graph_size
                 {
-                    syntax_diff::diff_trees(
-                        &base_syntax_tree,
-                        &buffer_syntax_tree,
-                        diff_options.max_syntax_diff_graph_size,
-                    )
-                    .ok()
-                    .map(|diff| {
-                        let lhs_hunk_len = diff_base_byte_range.end - diff_base_byte_range.start;
-                        let rhs_hunk_len = buffer_byte_range.end - buffer_byte_range.start;
-                        let diff = diff
-                            .relative_to(diff_base_byte_range.start, buffer_byte_range.start)
-                            .bound_to(0..lhs_hunk_len, 0..rhs_hunk_len);
+                    syntax_diff::diff_trees(&base_syntax_tree, &buffer_syntax_tree, diff_options)
+                        .ok()
+                        .map(|diff| {
+                            let lhs_hunk_len =
+                                diff_base_byte_range.end - diff_base_byte_range.start;
+                            let rhs_hunk_len = buffer_byte_range.end - buffer_byte_range.start;
+                            let diff = diff
+                                .relative_to(diff_base_byte_range.start, buffer_byte_range.start)
+                                .bound_to(0..lhs_hunk_len, 0..rhs_hunk_len);
 
-                        (diff.lhs_ranges, diff.rhs_ranges)
-                    })
+                            (diff.lhs_ranges, diff.rhs_ranges)
+                        })
                 } else {
                     None
                 };

@@ -4,7 +4,7 @@ mod syntax_delimiters;
 mod syntax_graph;
 mod syntax_tree;
 
-use collections::FxHashMap;
+use arrayvec::ArrayVec;
 use language::DiffOptions;
 pub use syntax_graph::{SyntaxEdge, SyntaxPath, SyntaxVertex};
 pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_tree};
@@ -12,21 +12,10 @@ pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_
 use std::ops::Range;
 
 use crate::{
-    syntax_delimiters::SyntaxDelimiterTree, syntax_graph::ExceededGraphLimit,
+    syntax_delimiters::SyntaxDelimiterTree,
+    syntax_graph::{ExceededGraphLimit, SyntaxRoute},
     syntax_tree::SyntaxHint,
 };
-
-/// The kind of change for a syntax node.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum SyntaxChange {
-    /// This node is unchanged. The associated ID is the corresponding
-    /// node in the opposite tree.
-    Unchanged(SyntaxId),
-    /// This node was replaced with another node.
-    Replaced(SyntaxId, SyntaxId),
-    /// This node is novel (added or removed).
-    Novel,
-}
 
 /// Result of a syntax diff operation.
 ///
@@ -70,54 +59,18 @@ impl SyntaxDiff {
 pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
-    graph_size_limit: usize,
+    options: &DiffOptions,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
     let delimeters = SyntaxDelimiterTree::new();
 
-    let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, &delimeters, graph_size_limit)?;
+    let route = syntax_graph::shortest_path(
+        lhs_tree,
+        rhs_tree,
+        &delimeters,
+        options.max_syntax_diff_graph_size,
+    )?;
 
-    let mut lhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
-    let mut rhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
-
-    for path in route.0 {
-        let Some(edge) = path.edge else { continue };
-        let Some(vertex) = path.from.as_ref() else {
-            continue;
-        };
-
-        match edge {
-            SyntaxEdge::Replaced { levenshtein_pct } => {
-                if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    if levenshtein_pct > 20 {
-                        lhs_change_map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
-                        rhs_change_map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
-                    } else {
-                        lhs_change_map.insert(lhs_id, SyntaxChange::Novel);
-                        rhs_change_map.insert(rhs_id, SyntaxChange::Novel);
-                    }
-                }
-            }
-            SyntaxEdge::NovelAtomLHS | SyntaxEdge::EnterNovelDelimiterLHS => {
-                if let Some(lhs_id) = vertex.lhs.id() {
-                    lhs_change_map.insert(lhs_id, SyntaxChange::Novel);
-                }
-            }
-            SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
-                if let Some(rhs_id) = vertex.rhs.id() {
-                    rhs_change_map.insert(rhs_id, SyntaxChange::Novel);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut lhs_ranges = collect_novel_ranges(lhs_tree, &lhs_change_map);
-    let mut rhs_ranges = collect_novel_ranges(rhs_tree, &rhs_change_map);
-
-    let (lhs_replace_ranges, rhs_replace_ranges) =
-        collect_replace_ranges(lhs_tree, rhs_tree, &lhs_change_map);
-    lhs_ranges.extend(lhs_replace_ranges);
-    rhs_ranges.extend(rhs_replace_ranges);
+    let (lhs_ranges, rhs_ranges) = collect_ranges(&route, lhs_tree, rhs_tree, options);
 
     Ok(SyntaxDiff {
         lhs_ranges: merge_ranges(lhs_ranges),
@@ -125,73 +78,110 @@ pub fn diff_trees(
     })
 }
 
-fn collect_novel_ranges(
-    tree: &SyntaxTree,
-    change_map: &FxHashMap<SyntaxId, SyntaxChange>,
-) -> Vec<Range<usize>> {
-    let mut ranges = Vec::new();
+fn collect_ranges(
+    route: &SyntaxRoute<'_>,
+    lhs_tree: &SyntaxTree,
+    rhs_tree: &SyntaxTree,
+    options: &DiffOptions,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let mut lhs_ranges = Vec::default();
+    let mut rhs_ranges = Vec::default();
 
-    for (id, change) in change_map.iter() {
-        if let SyntaxChange::Novel = change {
-            let node = tree.get(*id);
+    for path in &route.0 {
+        let Some(edge) = path.edge else { continue };
+        let Some(vertex) = path.from.as_ref() else {
+            continue;
+        };
 
-            if node.is_atom() {
-                ranges.push(node.byte_range.clone());
-            } else {
-                if let Some(open_delimiter_range) = node.open_delimiter_range() {
-                    ranges.push(open_delimiter_range);
-                }
-
-                if let Some(close_delimiter_range) = node.close_delimiter_range() {
-                    ranges.push(close_delimiter_range);
+        match edge {
+            SyntaxEdge::Replaced { levenshtein_pct } => {
+                if let (Some(lhs_node), Some(rhs_node)) = (
+                    vertex.lhs.id().map(|id| lhs_tree.get(id)),
+                    vertex.rhs.id().map(|id| rhs_tree.get(id)),
+                ) {
+                    if levenshtein_pct > 20 {
+                        if let Some((lhs_replace_ranges, rhs_replace_ranges)) =
+                            get_replace_ranges(lhs_node, rhs_node, options)
+                        {
+                            lhs_ranges.extend(lhs_replace_ranges);
+                            rhs_ranges.extend(rhs_replace_ranges);
+                        }
+                    } else {
+                        lhs_ranges.extend(get_novel_ranges(lhs_node));
+                        rhs_ranges.extend(get_novel_ranges(rhs_node));
+                    }
                 }
             }
+            SyntaxEdge::NovelAtomLHS | SyntaxEdge::EnterNovelDelimiterLHS => {
+                if let Some(lhs_node) = vertex.lhs.id().map(|id| lhs_tree.get(id)) {
+                    lhs_ranges.extend(get_novel_ranges(lhs_node));
+                }
+            }
+            SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
+                if let Some(rhs_node) = vertex.rhs.id().map(|id| rhs_tree.get(id)) {
+                    rhs_ranges.extend(get_novel_ranges(rhs_node));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (lhs_ranges, rhs_ranges)
+}
+
+fn get_novel_ranges(node: &SyntaxNode) -> ArrayVec<Range<usize>, 2> {
+    let mut ranges = ArrayVec::new();
+
+    if node.is_atom() {
+        ranges.push(node.byte_range.clone());
+    } else {
+        if let Some(open_delimiter_range) = node.open_delimiter_range() {
+            ranges.push(open_delimiter_range);
+        }
+
+        if let Some(close_delimiter_range) = node.close_delimiter_range() {
+            ranges.push(close_delimiter_range);
         }
     }
 
     ranges
 }
 
-fn collect_replace_ranges(
-    lhs_tree: &SyntaxTree,
-    rhs_tree: &SyntaxTree,
-    lhs_change_map: &FxHashMap<SyntaxId, SyntaxChange>,
-) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
-    let mut lhs_ranges = Vec::new();
-    let mut rhs_ranges = Vec::new();
+fn get_replace_ranges(
+    lhs_node: &SyntaxNode,
+    rhs_node: &SyntaxNode,
+    options: &DiffOptions,
+) -> Option<(Vec<Range<usize>>, Vec<Range<usize>>)> {
+    if let (Some(SyntaxHint::Comment(lhs_comment)), Some(SyntaxHint::Comment(rhs_comment))) =
+        (lhs_node.hint.as_ref(), rhs_node.hint.as_ref())
+    {
+        let (lhs_word_ranges, rhs_word_ranges) = language::word_diff_ranges(
+            lhs_comment,
+            rhs_comment,
+            DiffOptions {
+                language_scope: options.language_scope.clone(),
+                ..*options
+            },
+        );
 
-    for (lhs_id, change) in lhs_change_map.iter() {
-        if let SyntaxChange::Replaced(_, rhs_id) = change {
-            let lhs_node = lhs_tree.get(*lhs_id);
-            let rhs_node = rhs_tree.get(*rhs_id);
+        // Convert relative ranges to absolute byte positions
+        let lhs_offset = lhs_node.byte_range.start;
+        let rhs_offset = rhs_node.byte_range.start;
 
-            if let (
-                Some(SyntaxHint::Comment(lhs_comment)),
-                Some(SyntaxHint::Comment(rhs_comment)),
-            ) = (lhs_node.hint.as_ref(), rhs_node.hint.as_ref())
-            {
-                let (lhs_word_ranges, rhs_word_ranges) =
-                    language::word_diff_ranges(lhs_comment, rhs_comment, DiffOptions::default());
+        let lhs_ranges = lhs_word_ranges
+            .into_iter()
+            .map(|r| (r.start + lhs_offset)..(r.end + lhs_offset))
+            .collect();
 
-                // Convert relative ranges to absolute byte positions
-                let lhs_offset = lhs_node.byte_range.start;
-                let rhs_offset = rhs_node.byte_range.start;
+        let rhs_ranges = rhs_word_ranges
+            .into_iter()
+            .map(|r| (r.start + rhs_offset)..(r.end + rhs_offset))
+            .collect();
 
-                lhs_ranges.extend(
-                    lhs_word_ranges
-                        .into_iter()
-                        .map(|r| (r.start + lhs_offset)..(r.end + lhs_offset)),
-                );
-                rhs_ranges.extend(
-                    rhs_word_ranges
-                        .into_iter()
-                        .map(|r| (r.start + rhs_offset)..(r.end + rhs_offset)),
-                );
-            }
-        }
+        Some((lhs_ranges, rhs_ranges))
+    } else {
+        None
     }
-
-    (lhs_ranges, rhs_ranges)
 }
 
 fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
