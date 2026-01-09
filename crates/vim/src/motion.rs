@@ -4606,7 +4606,7 @@ mod test {
         cx.simulate_keystrokes("b");
         cx.assert_state("fooˇ.bar", Mode::Normal);
         cx.simulate_keystrokes("b");
-        cx.assert_state("foo.bar", Mode::Normal);
+        cx.assert_state("ˇfoo.bar", Mode::Normal);
 
         cx.set_state("foo(barˇ)", Mode::Normal);
         cx.simulate_keystrokes("b");
