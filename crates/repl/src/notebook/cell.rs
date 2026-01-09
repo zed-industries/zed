@@ -348,11 +348,9 @@ impl MarkdownCell {
         let markdown_language = languages.language_for_name("Markdown");
         cx.spawn_in(window, async move |_this, cx| {
             if let Some(markdown) = markdown_language.await.log_err() {
-                buffer
-                    .update(cx, |buffer, cx| {
-                        buffer.set_language(Some(markdown), cx);
-                    })
-                    .log_err();
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(Some(markdown), cx);
+                });
             }
         })
         .detach();
