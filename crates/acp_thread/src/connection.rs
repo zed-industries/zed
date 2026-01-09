@@ -332,6 +332,7 @@ mod test_support {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
         permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
+        cancel_count: Arc<Mutex<usize>>,
     }
 
     struct Session {
@@ -345,7 +346,12 @@ mod test_support {
                 next_prompt_updates: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
+                cancel_count: Arc::default(),
             }
+        }
+
+        pub fn cancel_count(&self) -> usize {
+            *self.cancel_count.lock()
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp::SessionUpdate>) {
@@ -513,6 +519,7 @@ mod test_support {
         }
 
         fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
+            *self.cancel_count.lock() += 1;
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
