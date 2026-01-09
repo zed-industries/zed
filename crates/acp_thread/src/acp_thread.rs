@@ -835,6 +835,7 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub output_tokens: u64,
 }
 
 impl TokenUsage {
@@ -1177,6 +1178,23 @@ impl AcpThread {
                         ..
                     },
                 ) if call.diffs().next().is_some() => {
+                    return true;
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
+    pub fn has_in_progress_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
+                    ..
+                }) => {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}

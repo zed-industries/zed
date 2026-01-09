@@ -1119,6 +1119,7 @@ impl Thread {
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
             used_tokens: usage.total_tokens(),
+            output_tokens: usage.output_tokens,
         })
     }
 

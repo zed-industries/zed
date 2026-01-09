@@ -122,6 +122,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Whether to show turn statistics (elapsed time during generation, final turn duration).
+    ///
+    /// Default: false
+    pub show_turn_stats: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions require confirmation.
     ///
     /// This setting only applies to the native Zed agent. External agent servers (Claude Code, Gemini CLI, etc.)
