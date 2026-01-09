@@ -1469,7 +1469,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-static FORCE_CLI_MODE: LazyLock<bool> = LazyLock::new(|| {
+pub(crate) static FORCE_CLI_MODE: LazyLock<bool> = LazyLock::new(|| {
     let env_var = std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some();
     unsafe { std::env::remove_var(FORCE_CLI_MODE_ENV_VAR_NAME) };
     env_var
