@@ -66,8 +66,8 @@ impl Editor {
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
-                            if fetched_chunks.insert(chunk_range) {
-                                pairs
+                            if fetched_chunks.insert(dbg!(chunk_range)) {
+                                dbg!(pairs)
                             } else {
                                 Vec::new()
                             }
@@ -345,6 +345,54 @@ where
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth, again"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_brackets_in_multiple_hunks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        let rows = 100;
+        let footer = "1 hsla(207.80, 16.20%, 69.19%, 1.00)\n";
+
+        let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
+        let simple_brackets_highlights = (0..simple_brackets.len())
+            .map(|_| "«1[]1»\n")
+            .collect::<String>();
+        cx.set_state(&simple_brackets);
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{simple_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Simple bracket pairs should be colored"
+        );
+
+        let paired_brackets = (0..rows).map(|_| "ˇ[]()\n").collect::<String>();
+        let paired_brackets_highlights = (0..paired_brackets.len())
+            .map(|_| "«1[]1»«1()1»\n")
+            .collect::<String>();
+        cx.set_state(&paired_brackets);
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{paired_brackets_highlights}\n\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Paired bracket pairs should be colored"
         );
     }
 
