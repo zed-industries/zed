@@ -51,7 +51,7 @@ cx.executor().run_until_parked();  // <-- ADD THIS LINE
 
 ## Interrupted Tests (3)
 These may also need the same fix or have other timing issues:
-- [ ] `project project_tests::test_file_status`
+- [x] `project project_tests::test_file_status` - Fixed `futures::executor::block_on` deadlock in `LocalSnapshot::insert_entry`
 - [x] `editor editor_tests::test_multiline_completion`
 - [x] `editor editor_tests::test_html_linked_edits_on_completion`
 
