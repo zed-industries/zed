@@ -8,14 +8,13 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::{BTreeMap, BTreeSet, HashMap};
 use format::VsSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 pub use registry::*;
-use util::ResultExt;
 
 pub fn init(cx: &mut App) {
     SnippetRegistry::init_global(cx);
@@ -43,13 +42,10 @@ fn file_to_snippets(file_contents: VsSnippetsFile, source: &Path) -> Vec<Arc<Sni
             .description
             .map(|description| description.to_string());
         let body = snippet.body.to_string();
-        if snippet::Snippet::parse(&body)
-            .with_context(|| format!("invalid snippet in {} ({})", source.display(), name))
-            .log_err()
-            .is_none()
-        {
+        if let Err(e) = snippet::Snippet::parse(&body) {
+            log::error!("Invalid snippet name '{name}' in {source:?}: {e:#}");
             continue;
-        };
+        }
         snippets.push(Arc::new(Snippet {
             body,
             prefix: prefixes,
