@@ -2741,14 +2741,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
-    let text_thread_store =
-        cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-    let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(
         project.clone(),
-        history_store,
+        thread_store,
         templates.clone(),
         None,
         fake_fs.clone(),
