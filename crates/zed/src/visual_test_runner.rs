@@ -42,59 +42,52 @@ fn main() {
     std::process::exit(1);
 }
 
+// All macOS-specific imports grouped together
 #[cfg(target_os = "macos")]
-use anyhow::{Context as _, Result};
-#[cfg(target_os = "macos")]
-use assets::Assets;
-#[cfg(target_os = "macos")]
-use gpui::{
-    App, AppContext as _, Bounds, KeyBinding, Modifiers, VisualTestAppContext, WindowBounds,
-    WindowHandle, WindowOptions, point, px, size,
+use {
+    acp_thread::{AgentConnection, StubAgentConnection},
+    agent_client_protocol as acp,
+    agent_servers::{AgentServer, AgentServerDelegate},
+    anyhow::{Context as _, Result},
+    assets::Assets,
+    gpui::{
+        App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString, VisualTestAppContext,
+        WindowBounds, WindowHandle, WindowOptions, point, px, size,
+    },
+    image::RgbaImage,
+    project_panel::ProjectPanel,
+    settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore},
+    std::{
+        any::Any,
+        path::{Path, PathBuf},
+        rc::Rc,
+        sync::Arc,
+        time::Duration,
+    },
+    workspace::{AppState, Workspace},
 };
+
+// All macOS-specific constants grouped together
 #[cfg(target_os = "macos")]
-use image::RgbaImage;
-#[cfg(target_os = "macos")]
-use project_panel::ProjectPanel;
-#[cfg(target_os = "macos")]
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
-#[cfg(target_os = "macos")]
-use std::any::Any;
-#[cfg(target_os = "macos")]
-use std::path::{Path, PathBuf};
-#[cfg(target_os = "macos")]
-use std::rc::Rc;
-#[cfg(target_os = "macos")]
-use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use std::time::Duration;
-#[cfg(target_os = "macos")]
-use workspace::{AppState, Workspace};
+mod constants {
+    use std::time::Duration;
+
+    /// Baseline images are stored relative to this file
+    pub const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
+
+    /// Embedded test image (Zed app icon) for visual tests.
+    pub const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
+
+    /// Threshold for image comparison (0.0 to 1.0)
+    /// Images must match at least this percentage to pass
+    pub const MATCH_THRESHOLD: f64 = 0.99;
+
+    /// Tooltip show delay - must match TOOLTIP_SHOW_DELAY in gpui/src/elements/div.rs
+    pub const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+}
 
 #[cfg(target_os = "macos")]
-use acp_thread::{AgentConnection, StubAgentConnection};
-#[cfg(target_os = "macos")]
-use agent_client_protocol as acp;
-#[cfg(target_os = "macos")]
-use agent_servers::{AgentServer, AgentServerDelegate};
-#[cfg(target_os = "macos")]
-use gpui::SharedString;
-
-/// Baseline images are stored relative to this file
-#[cfg(target_os = "macos")]
-const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
-
-/// Embedded test image (Zed app icon) for visual tests.
-#[cfg(target_os = "macos")]
-const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
-
-/// Threshold for image comparison (0.0 to 1.0)
-/// Images must match at least this percentage to pass
-#[cfg(target_os = "macos")]
-const MATCH_THRESHOLD: f64 = 0.99;
-
-/// Tooltip show delay - must match TOOLTIP_SHOW_DELAY in gpui/src/elements/div.rs
-#[cfg(target_os = "macos")]
-const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+use constants::*;
 
 #[cfg(target_os = "macos")]
 fn main() {
