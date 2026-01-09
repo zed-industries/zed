@@ -204,7 +204,7 @@ impl Display for Command {
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
-    #[clap(long)]
+    #[clap(long, short('p'))]
     prompt_format: PromptFormat,
 }
 
