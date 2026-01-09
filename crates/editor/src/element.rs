@@ -3117,10 +3117,6 @@ impl EditorElement {
             return None;
         }
 
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return None;
-        }
-
         let show_diff_review_button = self.editor.read(cx).show_diff_review_button();
         if !show_diff_review_button {
             return None;
