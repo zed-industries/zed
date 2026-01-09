@@ -3121,14 +3121,11 @@ impl EditorElement {
             return None;
         }
 
-        let button = IconButton::new("diff_review_button", ui::IconName::Plus)
-            .icon_size(ui::IconSize::XSmall)
-            .size(ui::ButtonSize::None)
-            .icon_color(ui::Color::Default)
-            .style(ui::ButtonStyle::Filled)
-            .layer(ui::ElevationIndex::Surface)
-            .tooltip(Tooltip::text("Add Review"))
-            .into_any_element();
+        let button = self.editor.update(cx, |editor, cx| {
+            editor
+                .render_diff_review_button(display_row, cx)
+                .into_any_element()
+        });
 
         let button = prepaint_gutter_button(
             button,

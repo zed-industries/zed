@@ -50,6 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
+    editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
@@ -58,7 +59,7 @@ use {
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore},
+    settings::{NotifyWhenAgentWaiting, Settings as _},
     std::{
         any::Any,
         path::{Path, PathBuf},
@@ -146,17 +147,15 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Use real Assets so that SVG icons render properly
     let mut cx = VisualTestAppContext::with_asset_source(Arc::new(Assets));
 
-    // Initialize settings store first (required by theme and other subsystems)
-    // and disable telemetry to prevent HTTP errors from FakeHttpClient
+    // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
-        let mut settings_store = SettingsStore::test(cx);
-        settings_store.update_user_settings(cx, |settings| {
-            settings.telemetry = Some(settings::TelemetrySettingsContent {
-                diagnostics: Some(false),
-                metrics: Some(false),
-            });
-        });
-        cx.set_global(settings_store);
+        Assets.load_fonts(cx).unwrap();
+    });
+
+    // Initialize settings store with real default settings (not test settings)
+    // Test settings use Courier font, but we want the real Zed fonts for visual tests
+    cx.update(|cx| {
+        settings::init(cx);
     });
 
     // Create AppState using the test initialization
@@ -1360,6 +1359,40 @@ import { AiPaneTabContext } from 'context';
         update_baseline,
     )?;
 
+    // Test 4: Show the diff review overlay on the regular editor
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            // Get the first editor from the workspace
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    editor.show_diff_review_overlay(DisplayRow(1), window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for overlay to render
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 4: Regular editor with overlay shown
+    let test4_result = run_visual_test(
+        "diff_review_overlay_shown",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
     // Clean up: remove worktrees to stop background scanning
     workspace_window
         .update(cx, |workspace, _window, cx| {
@@ -1393,11 +1426,14 @@ import { AiPaneTabContext } from 'context';
     }
 
     // Return combined result
-    match (&test1_result, &test2_result, &test3_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _, _)
-        | (_, TestResult::BaselineUpdated(p), _)
-        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    match (&test1_result, &test2_result, &test3_result, &test4_result) {
+        (TestResult::Passed, TestResult::Passed, TestResult::Passed, TestResult::Passed) => {
+            Ok(TestResult::Passed)
+        }
+        (TestResult::BaselineUpdated(p), _, _, _)
+        | (_, TestResult::BaselineUpdated(p), _, _)
+        | (_, _, TestResult::BaselineUpdated(p), _)
+        | (_, _, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
     }
 }
 

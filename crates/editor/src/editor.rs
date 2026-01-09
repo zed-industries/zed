@@ -1031,6 +1031,19 @@ pub(crate) struct PhantomDiffReviewIndicator {
     pub is_active: bool,
 }
 
+/// Represents an active diff review overlay that appears when clicking the "Add Review" button.
+#[allow(dead_code)]
+pub(crate) struct DiffReviewOverlay {
+    /// The display row where the overlay is anchored.
+    pub display_row: DisplayRow,
+    /// The anchor position for the block.
+    pub anchor: Anchor,
+    /// The block ID for the overlay.
+    pub block_id: CustomBlockId,
+    /// The editor entity for the review input.
+    pub prompt_editor: Entity<Editor>,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1195,6 +1208,7 @@ pub struct Editor {
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
+    pub(crate) diff_review_overlay: Option<DiffReviewOverlay>,
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
@@ -2360,6 +2374,7 @@ impl Editor {
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
+            diff_review_overlay: None,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
@@ -20729,6 +20744,182 @@ impl Editor {
 
     pub fn show_diff_review_button(&self) -> bool {
         self.show_diff_review_button
+    }
+
+    pub fn render_diff_review_button(
+        &self,
+        display_row: DisplayRow,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        IconButton::new("diff_review_button", IconName::Plus)
+            .icon_size(IconSize::XSmall)
+            .size(ButtonSize::None)
+            .icon_color(ui::Color::Default)
+            .style(ButtonStyle::Filled)
+            .layer(ui::ElevationIndex::Surface)
+            .tooltip(Tooltip::text("Add Review"))
+            .on_click(cx.listener(move |editor, _event: &ClickEvent, window, cx| {
+                editor.show_diff_review_overlay(display_row, window, cx);
+            }))
+    }
+
+    pub fn show_diff_review_overlay(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Dismiss any existing overlay first
+        self.dismiss_diff_review_overlay(cx);
+
+        // Create anchor for the block
+        // Convert display row to buffer position using the display snapshot
+        let editor_snapshot = self.snapshot(window, cx);
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_point = editor_snapshot
+            .display_snapshot
+            .display_point_to_point(display_point, Bias::Left);
+
+        // Create anchor at the end of the row so the block appears immediately below it
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
+        let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
+
+        // Create the prompt editor for the review input
+        let prompt_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Add a review comment...", window, cx);
+            editor
+        });
+
+        // Create the overlay block
+        let prompt_editor_for_render = prompt_editor.clone();
+        let block = BlockProperties {
+            style: BlockStyle::Sticky,
+            placement: BlockPlacement::Below(anchor),
+            height: Some(8), // Height for the overlay with multiple comments
+            render: Arc::new(move |cx| {
+                Self::render_diff_review_overlay(&prompt_editor_for_render, cx)
+            }),
+            priority: 0,
+        };
+
+        let block_ids = self.insert_blocks([block], None, cx);
+        let block_id = block_ids.into_iter().next().expect("inserted one block");
+
+        self.diff_review_overlay = Some(DiffReviewOverlay {
+            display_row,
+            anchor,
+            block_id,
+            prompt_editor: prompt_editor.clone(),
+        });
+
+        // Focus the prompt editor
+        let focus_handle = prompt_editor.focus_handle(cx);
+        window.focus(&focus_handle, cx);
+
+        cx.notify();
+    }
+
+    pub fn dismiss_diff_review_overlay(&mut self, cx: &mut Context<Self>) {
+        if let Some(overlay) = self.diff_review_overlay.take() {
+            let mut block_ids = HashSet::default();
+            block_ids.insert(overlay.block_id);
+            self.remove_blocks(block_ids, None, cx);
+            cx.notify();
+        }
+    }
+
+    fn render_diff_review_overlay(
+        prompt_editor: &Entity<Editor>,
+        cx: &mut BlockContext,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let colors = theme.colors();
+
+        // Hardcoded review comments for now (icon path, comment text, timestamp)
+        let hardcoded_comments = vec![
+            (
+                "icons/ai_claude.svg",
+                "This looks good, but consider adding error handling here.",
+                "2 hours ago",
+            ),
+            (
+                "icons/ai_gemini.svg",
+                "Can we add a test for this case?",
+                "1 day ago",
+            ),
+        ];
+
+        let avatar_size = px(20.);
+
+        v_flex()
+            .w_full()
+            .bg(colors.editor_background)
+            .border_b_1()
+            .border_color(colors.border)
+            .pb_2()
+            .gap_2()
+            // Top row: editable input with user's avatar (Zed logo)
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_1()
+                    .child(
+                        div().size(avatar_size).flex_shrink_0().child(
+                            Icon::new(IconName::ZedAssistant)
+                                .size(IconSize::Small)
+                                .color(ui::Color::Accent),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_md()
+                            .bg(colors.editor_background)
+                            .px_2()
+                            .py_1()
+                            .child(prompt_editor.clone()),
+                    ),
+            )
+            // Hardcoded review comments below
+            .children(
+                hardcoded_comments
+                    .into_iter()
+                    .map(|(icon_path, comment, time)| {
+                        h_flex()
+                            .w_full()
+                            .items_start()
+                            .gap_2()
+                            .px_3()
+                            .py_1()
+                            .mx_1()
+                            .bg(colors.surface_background)
+                            .rounded_md()
+                            .child(
+                                div().size(avatar_size).flex_shrink_0().child(
+                                    Icon::from_path(icon_path)
+                                        .size(IconSize::Small)
+                                        .color(ui::Color::Muted),
+                                ),
+                            )
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1()
+                                    .child(div().text_sm().text_color(colors.text).child(comment))
+                                    .child(
+                                        div().text_xs().text_color(colors.text_muted).child(time),
+                                    ),
+                            )
+                    }),
+            )
+            .into_any_element()
     }
 
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
