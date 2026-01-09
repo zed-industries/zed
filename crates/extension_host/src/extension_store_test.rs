@@ -537,12 +537,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    fn panic_timeout<T>(what: &str, seconds: u64) -> T {
-        panic!(
-            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
-        );
-    }
-
     async fn await_or_timeout<T>(
         what: &'static str,
         seconds: u64,
@@ -555,7 +549,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
         futures::select! {
             output = future.fuse() => output,
-            _ = futures::FutureExt::fuse(timeout) => panic_timeout(what, seconds),
+            _ = futures::FutureExt::fuse(timeout) => panic!(
+            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
+        )
         }
     }
 
@@ -846,16 +842,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     // `register_fake_lsp_server` can yield a server instance before the client has finished the LSP
     // initialization handshake. Wait until we observe the client's `initialized` notification before
     // issuing requests like completion.
-    await_or_timeout(
-        "awaiting LSP Initialized notification",
-        5,
-        async {
-            fake_server
-                .clone()
-                .try_receive_notification::<lsp::notification::Initialized>()
-                .await;
-        },
-    )
+    await_or_timeout("awaiting LSP Initialized notification", 5, async {
+        fake_server
+            .clone()
+            .try_receive_notification::<lsp::notification::Initialized>()
+            .await;
+    })
     .await;
 
     let completion_labels = await_or_timeout(
@@ -894,10 +886,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // The extension has cached the binary path, and does not attempt
     // to reinstall it.
-    let fake_server =
-        await_or_timeout("awaiting second fake server spawn", 5, fake_servers.next())
-            .await
-            .unwrap();
+    let fake_server = await_or_timeout("awaiting second fake server spawn", 5, fake_servers.next())
+        .await
+        .unwrap();
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(
         await_or_timeout(
@@ -947,14 +938,16 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
 
     // The old language server directory has been cleaned up.
-    assert!(await_or_timeout(
-        "awaiting fs.metadata(expected_server_path)",
-        5,
-        fs.metadata(&expected_server_path)
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(
+        await_or_timeout(
+            "awaiting fs.metadata(expected_server_path)",
+            5,
+            fs.metadata(&expected_server_path)
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) {
