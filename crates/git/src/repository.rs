@@ -482,6 +482,7 @@ pub enum LogSource {
     #[default]
     All,
     Branch(SharedString),
+    Sha(Oid),
 }
 
 impl LogSource {
@@ -489,6 +490,8 @@ impl LogSource {
         match self {
             LogSource::All => "--all",
             LogSource::Branch(branch) => branch.as_str(),
+            // todo! We probably don't want a default here, but all well
+            LogSource::Sha(oid) => str::from_utf8(oid.as_bytes()).unwrap_or_default(),
         }
     }
 }
@@ -2494,6 +2497,7 @@ impl GitRepository for RealGitRepository {
             let args = [
                 "rev-list",
                 "--parents",
+                "--max-count=1000",
                 log_order.as_arg(),
                 log_source.get_arg(),
             ];
@@ -2501,7 +2505,9 @@ impl GitRepository for RealGitRepository {
             let now = std::time::Instant::now();
             let output = git.run(&args).await?;
             dbg!(now.elapsed());
-            Ok(parse_rev_list_output(&output))
+            let result = Ok(parse_rev_list_output(&output));
+            dbg!(now.elapsed());
+            result
         }
         .boxed()
     }

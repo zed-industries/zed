@@ -125,27 +125,12 @@ impl GitGraph {
             return;
         };
 
-        let first_visible_worktree = project.read_with(cx, |project, cx| {
-            project
-                .visible_worktrees(cx)
-                .next()
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+        let commits = repository.update(cx, |repo, cx| {
+            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, cx)
         });
 
         self._load_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
-            let Some(worktree_path) = first_visible_worktree
-                .context("Can't open git graph in Project without visible worktrees")
-                .ok()
-            else {
-                // todo! handle error
-                return;
-            };
-
-            let commits = repository
-                .update(cx, |repo, cx| {
-                    repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, cx)
-                })
-                .await;
+            let commits = commits.await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
@@ -156,7 +141,6 @@ impl GitGraph {
                         let commit_count = commits.len();
                         this.graph.add_commits(commits);
                         this.max_lanes = this.graph.max_lanes;
-                        this.work_dir = Some(worktree_path);
                         this.graph.max_commit_count = AllCommitCount::Loaded(commit_count);
                     }
                     Err(e) => {
