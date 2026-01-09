@@ -47,12 +47,12 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
-use text::Anchor;
+use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, Disclosure, Divider,
-    DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip,
-    WithScrollbar, prelude::*, right_click_menu,
+    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DiffStat, Disclosure,
+    Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor,
+    Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -265,6 +265,43 @@ impl ThreadFeedbackState {
 
         editor.read(cx).focus_handle(cx).focus(window, cx);
         editor
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct DiffStats {
+    lines_added: u32,
+    lines_removed: u32,
+}
+
+impl DiffStats {
+    fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
+        let mut stats = DiffStats::default();
+        let diff_snapshot = diff.snapshot(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let base_text = diff_snapshot.base_text();
+
+        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
+            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+            stats.lines_added += added_rows;
+
+            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
+            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
+            let removed_rows = base_end.saturating_sub(base_start);
+            stats.lines_removed += removed_rows;
+        }
+
+        stats
+    }
+
+    fn all_files(changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>, cx: &App) -> Self {
+        let mut total = DiffStats::default();
+        for (buffer, diff) in changed_buffers {
+            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+            total.lines_added += stats.lines_added;
+            total.lines_removed += stats.lines_removed;
+        }
+        total
     }
 }
 
@@ -4594,12 +4631,19 @@ impl AcpThreadView {
                                 ),
                             )
                         } else {
+                            let stats = DiffStats::all_files(changed_buffers, cx);
+                            let dot_divider = || {
+                                Label::new("•")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Disabled)
+                            };
+
                             this.child(
                                 Label::new("Edits")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                            .child(dot_divider())
                             .child(
                                 Label::new(format!(
                                     "{} {}",
@@ -4613,6 +4657,12 @@ impl AcpThreadView {
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                             )
+                            .child(dot_divider())
+                            .child(DiffStat::new(
+                                "total",
+                                stats.lines_added as usize,
+                                stats.lines_removed as usize,
+                            ))
                         }
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -4693,7 +4743,7 @@ impl AcpThreadView {
                 changed_buffers
                     .iter()
                     .enumerate()
-                    .flat_map(|(index, (buffer, _diff))| {
+                    .flat_map(|(index, (buffer, diff))| {
                         let file = buffer.read(cx).file()?;
                         let path = file.path();
                         let path_style = file.path_style(cx);
@@ -4719,7 +4769,7 @@ impl AcpThreadView {
                             Label::new(name.to_string())
                                 .size(LabelSize::XSmall)
                                 .buffer_font(cx)
-                                .ml_1p5()
+                                .ml_1()
                         });
 
                         let full_path = path.display(path_style).to_string();
@@ -4738,6 +4788,8 @@ impl AcpThreadView {
                             linear_color_stop(editor_bg_color, 1.),
                             linear_color_stop(editor_bg_color.opacity(0.2), 0.),
                         );
+
+                        let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
 
                         let element = h_flex()
                             .group("edited-code")
@@ -4768,6 +4820,14 @@ impl AcpThreadView {
                                             .child(file_icon)
                                             .children(file_name)
                                             .children(file_path)
+                                            .child(
+                                                DiffStat::new(
+                                                    "file",
+                                                    file_stats.lines_added as usize,
+                                                    file_stats.lines_removed as usize,
+                                                )
+                                                .label_size(LabelSize::XSmall),
+                                            )
                                             .tooltip(move |_, cx| {
                                                 Tooltip::with_meta(
                                                     "Go to File",
