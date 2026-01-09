@@ -518,7 +518,7 @@ impl SplittableEditor {
 
 #[cfg(test)]
 impl SplittableEditor {
-    fn check_invariants(&self, quiesced: bool, cx: &App) {
+    fn check_invariants(&self, quiesced: bool, cx: &mut App) {
         use buffer_diff::DiffHunkStatusKind;
         use collections::HashSet;
         use multi_buffer::MultiBufferOffset;
@@ -588,38 +588,78 @@ impl SplittableEditor {
         assert_eq!(secondary_excerpts.len(), primary_excerpts.len());
 
         if quiesced {
-            let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
-            let secondary_snapshot = secondary.multibuffer.read(cx).snapshot(cx);
-            let primary_diff_hunks = primary_snapshot
-                .diff_hunks()
-                .map(|hunk| hunk.diff_base_byte_range)
-                .collect::<Vec<_>>();
-            let secondary_diff_hunks = secondary_snapshot
-                .diff_hunks()
-                .map(|hunk| hunk.diff_base_byte_range)
-                .collect::<Vec<_>>();
-            pretty_assertions::assert_eq!(secondary_diff_hunks, primary_diff_hunks);
+            // todo! re-enable
+            // self.check_sides_match(cx, Self::unmodified_rows);
+
+            self.check_sides_match(cx, |snapshot| {
+                snapshot
+                    .diff_hunks()
+                    .map(|hunk| hunk.diff_base_byte_range)
+                    .collect::<Vec<_>>()
+            });
 
             // Filtering out empty lines is a bit of a hack, to work around a case where
             // the base text has a trailing newline but the current text doesn't, or vice versa.
             // In this case, we get the additional newline on one side, but that line is not
             // marked as added/deleted by rowinfos.
-            let primary_unmodified_rows = primary_snapshot
-                .text()
-                .split("\n")
-                .zip(primary_snapshot.row_infos(MultiBufferRow(0)))
-                .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
-                .map(|(line, _)| line.to_owned())
-                .collect::<Vec<_>>();
-            let secondary_unmodified_rows = secondary_snapshot
-                .text()
-                .split("\n")
-                .zip(secondary_snapshot.row_infos(MultiBufferRow(0)))
-                .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
-                .map(|(line, _)| line.to_owned())
-                .collect::<Vec<_>>();
-            pretty_assertions::assert_eq!(secondary_unmodified_rows, primary_unmodified_rows);
+            self.check_sides_match(cx, |snapshot| {
+                snapshot
+                    .text()
+                    .split("\n")
+                    .zip(snapshot.row_infos(MultiBufferRow(0)))
+                    .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
+                    .map(|(line, _)| line.to_owned())
+                    .collect::<Vec<_>>()
+            });
         }
+    }
+
+    fn check_sides_match<T: std::fmt::Debug + PartialEq>(
+        &self,
+        cx: &mut App,
+        mut extract: impl FnMut(&multi_buffer::MultiBufferSnapshot) -> T,
+    ) {
+        let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
+        let secondary_snapshot = self
+            .secondary
+            .as_ref()
+            .expect("requires split")
+            .multibuffer
+            .read(cx)
+            .snapshot(cx);
+
+        let primary_t = extract(&primary_snapshot);
+        let secondary_t = extract(&secondary_snapshot);
+
+        if primary_t != secondary_t {
+            self.debug_print(cx);
+            pretty_assertions::assert_eq!(primary_t, secondary_t);
+        }
+    }
+
+    fn unmodified_rows(snapshot: &multi_buffer::MultiBufferSnapshot) -> Vec<Vec<String>> {
+        let mut result: Vec<Vec<String>> = Vec::new();
+        let mut current_group: Vec<String> = Vec::new();
+
+        for (line, row_info) in snapshot
+            .text()
+            .split("\n")
+            .zip(snapshot.row_infos(MultiBufferRow(0)))
+        {
+            if row_info.diff_status.is_none() {
+                current_group.push(line.to_owned());
+            } else {
+                if !current_group.is_empty() {
+                    result.push(std::mem::take(&mut current_group));
+                }
+            }
+        }
+
+        if !current_group.is_empty() {
+            result.push(current_group);
+        }
+
+        result
     }
 
     fn debug_print(&self, cx: &mut App) {
@@ -669,10 +709,14 @@ impl SplittableEditor {
             {
                 let (block_type, height) = match block {
                     Block::Spacer { id, height } => (format!("SPACER[{}]", id.0), *height),
-                    Block::ExcerptBoundary { height, .. } => ("EXCERPT_BOUNDARY".to_string(), *height),
+                    Block::ExcerptBoundary { height, .. } => {
+                        ("EXCERPT_BOUNDARY".to_string(), *height)
+                    }
                     Block::BufferHeader { height, .. } => ("BUFFER_HEADER".to_string(), *height),
                     Block::FoldedBuffer { height, .. } => ("FOLDED_BUFFER".to_string(), *height),
-                    Block::Custom(custom) => ("CUSTOM_BLOCK".to_string(), custom.height.unwrap_or(1)),
+                    Block::Custom(custom) => {
+                        ("CUSTOM_BLOCK".to_string(), custom.height.unwrap_or(1))
+                    }
                 };
                 for offset in 0..height {
                     block_map.insert(start_row.0 + offset, block_type.clone());
@@ -742,7 +786,11 @@ impl SplittableEditor {
             if let Some(block_type) = blocks.get(&row) {
                 let block_str = format!("~~~[{}]~~~", block_type);
                 let formatted = format!("{:^width$}", block_str, width = content_width);
-                return format!("{}{}", line_prefix, truncate_line(&formatted, content_width));
+                return format!(
+                    "{}{}",
+                    line_prefix,
+                    truncate_line(&formatted, content_width)
+                );
             }
 
             // Get line text
