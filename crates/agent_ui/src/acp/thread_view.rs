@@ -77,7 +77,8 @@ use crate::{
     SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
-const TIMER_THRESHOLD: Duration = Duration::from_secs(30);
+const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
+const TOKEN_THRESHOLD: u64 = 1;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -316,6 +317,7 @@ pub struct AcpThreadView {
     last_turn_tokens: Option<u64>,
     turn_started_at: Option<Instant>,
     last_turn_duration: Option<Duration>,
+    turn_generation: usize,
     _turn_timer_task: Option<Task<()>>,
 }
 
@@ -493,6 +495,7 @@ impl AcpThreadView {
             last_turn_tokens: None,
             turn_started_at: None,
             last_turn_duration: None,
+            turn_generation: 0,
             _turn_timer_task: None,
         }
     }
@@ -1315,7 +1318,9 @@ impl AcpThreadView {
         .detach();
     }
 
-    fn start_turn(&mut self, cx: &mut Context<Self>) {
+    fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
+        self.turn_generation += 1;
+        let generation = self.turn_generation;
         self.turn_started_at = Some(Instant::now());
         self.last_turn_duration = None;
         self.last_turn_tokens = None;
@@ -1328,9 +1333,13 @@ impl AcpThreadView {
                 }
             }
         }));
+        generation
     }
 
-    fn stop_turn(&mut self) {
+    fn stop_turn(&mut self, generation: usize) {
+        if self.turn_generation != generation {
+            return;
+        }
         self.last_turn_duration = self.turn_started_at.take().map(|started| started.elapsed());
         self.last_turn_tokens = self.turn_tokens.take();
         self._turn_timer_task = None;
@@ -1424,23 +1433,25 @@ impl AcpThreadView {
                 return Ok(());
             };
 
+            let generation = this.update_in(cx, |this, _window, cx| {
+                this.in_flight_prompt = Some(contents.clone());
+                let generation = this.start_turn(cx);
+                this.set_editor_is_expanded(false, cx);
+                this.scroll_to_bottom(cx);
+                generation
+            })?;
+
             let _stop_turn = defer({
                 let this = this.clone();
                 let mut cx = cx.clone();
                 move || {
                     this.update(&mut cx, |this, cx| {
-                        this.stop_turn();
+                        this.stop_turn(generation);
                         cx.notify();
                     })
                     .ok();
                 }
             });
-            this.update_in(cx, |this, _window, cx| {
-                this.in_flight_prompt = Some(contents.clone());
-                this.start_turn(cx);
-                this.set_editor_is_expanded(false, cx);
-                this.scroll_to_bottom(cx);
-            })?;
             let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
                 thread.action_log().update(cx, |action_log, cx| {
@@ -5913,7 +5924,7 @@ impl AcpThreadView {
             .then(|| {
                 self.turn_started_at.and_then(|started_at| {
                     let elapsed = started_at.elapsed();
-                    (elapsed > TIMER_THRESHOLD).then(|| duration_alt_display(elapsed))
+                    (elapsed > STOPWATCH_THRESHOLD).then(|| duration_alt_display(elapsed))
                 })
             })
             .flatten();
@@ -5927,7 +5938,7 @@ impl AcpThreadView {
             .is_some()
             .then(|| {
                 self.turn_tokens
-                    .filter(|&tokens| tokens > 1)
+                    .filter(|&tokens| tokens > TOKEN_THRESHOLD)
                     .map(|tokens| crate::text_thread_editor::humanize_token_count(tokens))
             })
             .flatten();
@@ -5951,9 +5962,11 @@ impl AcpThreadView {
                             .child(SpinnerLabel::sand().size(LabelSize::Small)),
                     )
                     .child(
-                        LoadingLabel::new("Waiting Confirmation")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        div().min_w(rems(8.)).child(
+                            LoadingLabel::new("Waiting Confirmation")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                 } else {
                     this.child(SpinnerLabel::new().size(LabelSize::Small))
@@ -6027,20 +6040,23 @@ impl AcpThreadView {
             }));
 
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
-        let last_turn_label = show_stats
+        let last_turn_clock = show_stats
             .then(|| {
-                self.last_turn_duration.map(|duration| {
-                    Label::new(duration_alt_display(duration))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                })
+                self.last_turn_duration
+                    .filter(|&duration| duration > STOPWATCH_THRESHOLD)
+                    .map(|duration| {
+                        Label::new(duration_alt_display(duration))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })
             })
             .flatten();
 
-        let last_turn_tokens_label = show_stats
+        let last_turn_tokens = last_turn_clock
+            .is_some()
             .then(|| {
                 self.last_turn_tokens
-                    .filter(|&tokens| tokens > 1)
+                    .filter(|&tokens| tokens > TOKEN_THRESHOLD)
                     .map(|tokens| {
                         Label::new(format!(
                             "{} tokens",
@@ -6060,8 +6076,18 @@ impl AcpThreadView {
             .opacity(0.6)
             .hover(|s| s.opacity(1.))
             .justify_end()
-            .when_some(last_turn_label, |this, label| this.child(label))
-            .when_some(last_turn_tokens_label, |this, label| this.child(label));
+            .when(
+                last_turn_tokens.is_some() || last_turn_clock.is_some(),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .gap_1()
+                            .px_1()
+                            .when_some(last_turn_tokens, |this, label| this.child(label))
+                            .when_some(last_turn_clock, |this, label| this.child(label)),
+                    )
+                },
+            );
 
         if AgentSettings::get_global(cx).enable_feedback
             && self
