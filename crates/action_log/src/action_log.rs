@@ -774,6 +774,15 @@ impl ActionLog {
             .collect()
     }
 
+    /// Returns all tracked buffers for debugging purposes
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tracked_buffers_for_debug(
+        &self,
+        _cx: &App,
+    ) -> impl Iterator<Item = (&Entity<Buffer>, &TrackedBuffer)> {
+        self.tracked_buffers.iter()
+    }
+
     /// Iterate over buffers changed since last read or edited by the model
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
@@ -973,7 +982,7 @@ enum TrackedBufferStatus {
     Deleted,
 }
 
-struct TrackedBuffer {
+pub struct TrackedBuffer {
     buffer: Entity<Buffer>,
     diff_base: Rope,
     unreviewed_edits: Patch<u32>,
@@ -988,6 +997,16 @@ struct TrackedBuffer {
 }
 
 impl TrackedBuffer {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn diff(&self) -> &Entity<BufferDiff> {
+        &self.diff
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn diff_base_len(&self) -> usize {
+        self.diff_base.len()
+    }
+
     fn has_edits(&self, cx: &App) -> bool {
         self.diff
             .read(cx)
