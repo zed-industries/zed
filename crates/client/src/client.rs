@@ -343,7 +343,7 @@ impl ClientCredentialsProvider {
     }
 
     fn server_url(&self, cx: &AsyncApp) -> Result<String> {
-        cx.update(|cx| ClientSettings::get_global(cx).server_url.clone())
+        Ok(cx.update(|cx| ClientSettings::get_global(cx).server_url.clone()))
     }
 
     /// Reads the credentials from the provider.
@@ -934,10 +934,10 @@ impl Client {
         let connect_task = cx.update({
             let cloud_client = self.cloud_client.clone();
             move |cx| cloud_client.connect(cx)
-        })??;
+        })?;
         let connection = connect_task.await?;
 
-        let (mut messages, task) = cx.update(|cx| connection.spawn(cx))?;
+        let (mut messages, task) = cx.update(|cx| connection.spawn(cx));
         task.detach();
 
         cx.spawn({
@@ -977,8 +977,7 @@ impl Client {
                 }
             })
             .detach();
-        })
-        .log_err();
+        });
 
         let credentials = self.sign_in(try_provider, cx).await?;
 
@@ -1003,8 +1002,7 @@ impl Client {
                 }
             })
             .detach_and_log_err(cx);
-        })
-        .log_err();
+        });
 
         Ok(())
     }
@@ -1249,14 +1247,8 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncApp,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let release_channel = cx
-            .update(|cx| ReleaseChannel::try_global(cx))
-            .ok()
-            .flatten();
-        let app_version = cx
-            .update(|cx| AppVersion::global(cx).to_string())
-            .ok()
-            .unwrap_or_default();
+        let release_channel = cx.update(|cx| ReleaseChannel::try_global(cx));
+        let app_version = cx.update(|cx| AppVersion::global(cx).to_string());
 
         let http = self.http.clone();
         let proxy = http.proxy().cloned();
@@ -1293,7 +1285,7 @@ impl Client {
                         None => Box::new(TcpStream::connect(rpc_host).await?),
                     })
                 }
-            })?
+            })
             .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
@@ -1361,12 +1353,12 @@ impl Client {
             let (open_url_tx, open_url_rx) = oneshot::channel::<String>();
             cx.update(|cx| {
                 cx.spawn(async move |cx| {
-                    let url = open_url_rx.await?;
-                    cx.update(|cx| cx.open_url(&url))
+                    if let Ok(url) = open_url_rx.await {
+                        cx.update(|cx| cx.open_url(&url));
+                    }
                 })
-                .detach_and_log_err(cx);
-            })
-            .log_err();
+                .detach();
+            });
 
             let credentials = background
                 .clone()
@@ -1468,7 +1460,7 @@ impl Client {
                 })
                 .await?;
 
-            cx.update(|cx| cx.activate(true))?;
+            cx.update(|cx| cx.activate(true));
             Ok(credentials)
         })
     }
@@ -1687,8 +1679,7 @@ impl Client {
             for handler in self.message_to_client_handlers.lock().iter() {
                 handler(&message, cx);
             }
-        })
-        .ok();
+        });
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
@@ -2101,7 +2092,7 @@ mod tests {
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
-                match entity.read_with(&cx, |entity, _| entity.id).unwrap() {
+                match entity.read_with(&cx, |entity, _| entity.id) {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),

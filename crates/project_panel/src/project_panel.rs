@@ -3897,9 +3897,9 @@ impl ProjectPanel {
 
                 let task = worktree.update(cx, |worktree, cx| {
                     worktree.copy_external_entries(target_directory, paths, fs, cx)
-                })?;
+                });
 
-                let opened_entries = task
+                let opened_entries: Vec<_> = task
                     .await
                     .with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
@@ -4084,7 +4084,7 @@ impl ProjectPanel {
                     // For folded selections, we need to refresh the leaf paths (with suffixes)
                     // because they may not be indexed yet after the parent directory was moved.
                     // First collect the paths to refresh, then refresh them.
-                    let paths_to_refresh: Vec<_> = project_panel
+                    let paths_to_refresh: Vec<(Entity<Worktree>, Arc<RelPath>)> = project_panel
                         .update(cx, |project_panel, cx| {
                             let project = project_panel.project.read(cx);
                             folded_selection_info
@@ -4104,19 +4104,16 @@ impl ProjectPanel {
                     let refresh_tasks: Vec<_> = paths_to_refresh
                         .into_iter()
                         .filter_map(|(worktree, leaf_path)| {
-                            worktree
-                                .update(cx, |worktree, cx| {
-                                    worktree
-                                        .as_local_mut()
-                                        .map(|local| local.refresh_entry(leaf_path, None, cx))
-                                })
-                                .ok()
-                                .flatten()
+                            worktree.update(cx, |worktree, cx| {
+                                worktree
+                                    .as_local_mut()
+                                    .map(|local| local.refresh_entry(leaf_path, None, cx))
+                            })
                         })
                         .collect();
 
                     for task in refresh_tasks {
-                        let _ = task.await.log_err();
+                        task.await.log_err();
                     }
 
                     if update_marks && !folded_selection_entries.is_empty() {

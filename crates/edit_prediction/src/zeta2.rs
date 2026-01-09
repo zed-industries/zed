@@ -18,8 +18,8 @@ use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
 
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
+pub const MAX_CONTEXT_TOKENS: usize = 150;
+pub const MAX_REWRITE_TOKENS: usize = 350;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -280,15 +280,7 @@ pub(crate) fn edit_prediction_accepted(
 
 #[cfg(feature = "cli-support")]
 pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
-    let text = &input.cursor_excerpt;
-    let editable_region = input.editable_range_in_excerpt.clone();
-    let old_prefix = &text[..editable_region.start];
-    let old_suffix = &text[editable_region.end..];
-
-    let new = crate::udiff::apply_diff_to_string(patch, text)?;
-    if !new.starts_with(old_prefix) || !new.ends_with(old_suffix) {
-        anyhow::bail!("Patch shouldn't affect text outside of editable region");
-    }
-
-    Ok(new[editable_region.start..new.len() - old_suffix.len()].to_string())
+    let old_editable_region = &input.cursor_excerpt[input.editable_range_in_excerpt.clone()];
+    let new_editable_region = crate::udiff::apply_diff_to_string(patch, old_editable_region)?;
+    Ok(new_editable_region)
 }

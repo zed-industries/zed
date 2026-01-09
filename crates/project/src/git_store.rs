@@ -696,32 +696,38 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         cx.spawn(async move |this, cx| {
-            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+            let language_registry = buffer.update(cx, |buffer, _| buffer.language_registry());
             let content = match oid {
                 None => None,
                 Some(oid) => Some(
-                    repo.update(cx, |repo, cx| repo.load_blob_content(oid, cx))?
+                    repo.update(cx, |repo, cx| repo.load_blob_content(oid, cx))
                         .await?,
                 ),
             };
-            let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
+            let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
 
             buffer_diff
                 .update(cx, |buffer_diff, cx| {
+                    buffer_diff.language_changed(
+                        buffer_snapshot.language().cloned(),
+                        language_registry,
+                        cx,
+                    );
                     buffer_diff.set_base_text(
                         content.map(|s| s.as_str().into()),
                         buffer_snapshot.language().cloned(),
                         buffer_snapshot.text,
                         cx,
                     )
-                })?
+                })
                 .await?;
             let unstaged_diff = this
                 .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
                 .await?;
             buffer_diff.update(cx, |buffer_diff, _| {
                 buffer_diff.set_secondary_diff(unstaged_diff);
-            })?;
+            });
 
             this.update(cx, |_, cx| {
                 cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
@@ -1111,7 +1117,7 @@ impl GitStore {
             }
             let file_path = file.worktree.read(cx).absolutize(&file.path);
             return cx.spawn(async move |cx| {
-                let provider_registry = cx.update(GitHostingProviderRegistry::default_global)?;
+                let provider_registry = cx.update(GitHostingProviderRegistry::default_global);
                 get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
                     .context("no permalink available")
             });
@@ -1138,7 +1144,7 @@ impl GitStore {
                         let sha = backend.head_sha().await.context("reading HEAD SHA")?;
 
                         let provider_registry =
-                            cx.update(GitHostingProviderRegistry::default_global)?;
+                            cx.update(GitHostingProviderRegistry::default_global);
 
                         let (provider, remote) =
                             parse_git_remote_url(provider_registry, &origin_url)
@@ -1226,8 +1232,7 @@ impl GitStore {
                         for (repo, paths) in paths_by_git_repo {
                             repo.update(cx, |repo, cx| {
                                 repo.paths_changed(paths, downstream.clone(), cx);
-                            })
-                            .ok();
+                            });
                         }
                     })
                     .detach();
@@ -1493,7 +1498,7 @@ impl GitStore {
                             let diff_bases_change = repo
                                 .update(cx, |repo, cx| {
                                     repo.load_committed_text(buffer_id, repo_path, cx)
-                                })?
+                                })
                                 .await?;
 
                             diff_state.update(cx, |diff_state, cx| {
@@ -1503,7 +1508,8 @@ impl GitStore {
                                     Some(diff_bases_change),
                                     cx,
                                 );
-                            })
+                            });
+                            anyhow::Ok(())
                         }
                         .await
                         .log_err();
@@ -1759,7 +1765,7 @@ impl GitStore {
                 client.send(update).log_err();
             }
             Ok(())
-        })?
+        })
     }
 
     async fn handle_remove_repository(
@@ -1780,7 +1786,8 @@ impl GitStore {
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
-        })
+        });
+        Ok(())
     }
 
     async fn handle_git_init(
@@ -1790,7 +1797,7 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let path: Arc<Path> = PathBuf::from(envelope.payload.abs_path).into();
         let name = envelope.payload.fallback_branch_name;
-        cx.update(|cx| this.read(cx).git_init(path, name, cx))?
+        cx.update(|cx| this.read(cx).git_init(path, name, cx))
             .await?;
 
         Ok(proto::Ack {})
@@ -1804,7 +1811,7 @@ impl GitStore {
         let path: Arc<Path> = PathBuf::from(envelope.payload.abs_path).into();
         let repo_name = envelope.payload.remote_repo;
         let result = cx
-            .update(|cx| this.read(cx).git_clone(repo_name, path, cx))?
+            .update(|cx| this.read(cx).git_clone(repo_name, path, cx))
             .await;
 
         Ok(proto::GitCloneResponse {
@@ -1833,7 +1840,7 @@ impl GitStore {
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.fetch(fetch_options, askpass, cx)
-            })?
+            })
             .await??;
 
         Ok(proto::RemoteMessageResponse {
@@ -1882,7 +1889,7 @@ impl GitStore {
                     askpass,
                     cx,
                 )
-            })?
+            })
             .await??;
         Ok(proto::RemoteMessageResponse {
             stdout: remote_output.stdout,
@@ -1913,7 +1920,7 @@ impl GitStore {
         let remote_message = repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.pull(branch_name, remote_name, rebase, askpass, cx)
-            })?
+            })
             .await??;
 
         Ok(proto::RemoteMessageResponse {
@@ -1940,7 +1947,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stage_entries(entries, cx)
-            })?
+            })
             .await?;
         Ok(proto::Ack {})
     }
@@ -1963,7 +1970,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.unstage_entries(entries, cx)
-            })?
+            })
             .await?;
 
         Ok(proto::Ack {})
@@ -1987,7 +1994,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stash_entries(entries, cx)
-            })?
+            })
             .await?;
 
         Ok(proto::Ack {})
@@ -2005,7 +2012,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stash_pop(stash_index, cx)
-            })?
+            })
             .await?;
 
         Ok(proto::Ack {})
@@ -2023,7 +2030,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stash_apply(stash_index, cx)
-            })?
+            })
             .await?;
 
         Ok(proto::Ack {})
@@ -2041,7 +2048,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stash_drop(stash_index, cx)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2064,7 +2071,7 @@ impl GitStore {
                     None,
                     cx,
                 )
-            })?
+            })
             .await??;
         Ok(proto::Ack {})
     }
@@ -2080,7 +2087,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.run_hook(hook, cx)
-            })?
+            })
             .await??;
         Ok(proto::Ack {})
     }
@@ -2119,7 +2126,7 @@ impl GitStore {
                     askpass,
                     cx,
                 )
-            })?
+            })
             .await??;
         Ok(proto::Ack {})
     }
@@ -2138,7 +2145,7 @@ impl GitStore {
         let remotes = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.get_remotes(branch_name, is_push)
-            })?
+            })
             .await??;
 
         Ok(proto::GetRemotesResponse {
@@ -2162,7 +2169,7 @@ impl GitStore {
         let worktrees = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.worktrees()
-            })?
+            })
             .await??;
 
         Ok(proto::GitWorktreesResponse {
@@ -2187,7 +2194,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.create_worktree(name, directory, commit)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2202,7 +2209,7 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let branches = repository_handle
-            .update(&mut cx, |repository_handle, _| repository_handle.branches())?
+            .update(&mut cx, |repository_handle, _| repository_handle.branches())
             .await??;
 
         Ok(proto::GitBranchesResponse {
@@ -2223,7 +2230,7 @@ impl GitStore {
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.default_branch()
-            })?
+            })
             .await??
             .map(Into::into);
 
@@ -2241,7 +2248,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.create_branch(branch_name, None)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2259,7 +2266,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.change_branch(branch_name)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2278,7 +2285,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.rename_branch(branch, new_name)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2297,7 +2304,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.create_remote(remote_name, remote_url)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2315,7 +2322,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.delete_branch(branch_name)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2333,7 +2340,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.remove_remote(remote_name)
-            })?
+            })
             .await??;
 
         Ok(proto::Ack {})
@@ -2350,7 +2357,7 @@ impl GitStore {
         let commit = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.show(envelope.payload.commit)
-            })?
+            })
             .await??;
         Ok(proto::GitCommitDetails {
             sha: commit.sha.into(),
@@ -2372,7 +2379,7 @@ impl GitStore {
         let commit_diff = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.load_commit_diff(envelope.payload.commit)
-            })?
+            })
             .await??;
         Ok(proto::LoadCommitDiffResponse {
             files: commit_diff
@@ -2382,6 +2389,7 @@ impl GitStore {
                     path: file.path.to_proto(),
                     old_text: file.old_text,
                     new_text: file.new_text,
+                    is_binary: file.is_binary,
                 })
                 .collect(),
         })
@@ -2401,7 +2409,7 @@ impl GitStore {
         let file_history = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.file_history_paginated(path, skip, limit)
-            })?
+            })
             .await??;
 
         Ok(proto::GitFileHistoryResponse {
@@ -2437,7 +2445,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.reset(envelope.payload.commit, mode, cx)
-            })?
+            })
             .await??;
         Ok(proto::Ack {})
     }
@@ -2459,7 +2467,7 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
-            })?
+            })
             .await?;
         Ok(proto::Ack {})
     }
@@ -2474,10 +2482,10 @@ impl GitStore {
         let buffer = repository
             .update(&mut cx, |repository, cx| {
                 repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
-            })?
+            })
             .await?;
 
-        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
         this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store
@@ -2488,7 +2496,7 @@ impl GitStore {
                     )
                     .detach_and_log_err(cx);
             })
-        })?;
+        });
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
@@ -2503,7 +2511,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone())?;
+        let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone());
         let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
             debug_panic!("no askpass found");
             anyhow::bail!("no askpass found");
@@ -2535,7 +2543,7 @@ impl GitStore {
         let branches = repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.check_for_pushed_commits()
-            })?
+            })
             .await??;
         Ok(proto::CheckForPushedCommitsResponse {
             pushed_to: branches
@@ -2560,7 +2568,7 @@ impl GitStore {
         let mut diff = repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.diff(diff_type, cx)
-            })?
+            })
             .await??;
         const ONE_MB: usize = 1_000_000;
         if diff.len() > ONE_MB {
@@ -2592,7 +2600,7 @@ impl GitStore {
             .update(&mut cx, |this, cx| {
                 let repository = this.repositories().get(&repository_id)?;
                 Some(repository.update(cx, |repo, cx| repo.diff_tree(diff_type, cx)))
-            })?
+            })
             .context("missing repository")?
             .await??;
 
@@ -2633,7 +2641,7 @@ impl GitStore {
             .update(&mut cx, |this, cx| {
                 let repository = this.repositories().get(&repository_id)?;
                 Some(repository.update(cx, |repo, cx| repo.load_blob_content(oid, cx)))
-            })?
+            })
             .context("missing repository")?
             .await?;
         Ok(proto::GetBlobContentResponse { content })
@@ -2649,7 +2657,7 @@ impl GitStore {
             .update(&mut cx, |this, cx| {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_unstaged_diff(buffer, cx))
-            })?
+            })
             .context("missing buffer")?
             .await?;
         this.update(&mut cx, |this, _| {
@@ -2658,8 +2666,8 @@ impl GitStore {
                 .entry(request.original_sender_id.unwrap_or(request.sender_id))
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().unstaged = Some(diff.clone());
-        })?;
-        let staged_text = diff.read_with(&cx, |diff, cx| diff.base_text_string(cx))?;
+        });
+        let staged_text = diff.read_with(&cx, |diff, cx| diff.base_text_string(cx));
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2673,7 +2681,7 @@ impl GitStore {
             .update(&mut cx, |this, cx| {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_uncommitted_diff(buffer, cx))
-            })?
+            })
             .context("missing buffer")?
             .await?;
         this.update(&mut cx, |this, _| {
@@ -2682,8 +2690,8 @@ impl GitStore {
                 .entry(request.original_sender_id.unwrap_or(request.sender_id))
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().uncommitted = Some(diff.clone());
-        })?;
-        diff.read_with(&cx, |diff, cx| {
+        });
+        Ok(diff.read_with(&cx, |diff, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
             let unstaged_diff = diff.secondary_diff();
@@ -2721,7 +2729,7 @@ impl GitStore {
                 staged_text,
                 mode: mode.into(),
             }
-        })
+        }))
     }
 
     async fn handle_update_diff_bases(
@@ -2739,7 +2747,8 @@ impl GitStore {
                     diff_state.handle_base_texts_updated(buffer, request.payload, cx);
                 })
             }
-        })
+        });
+        Ok(())
     }
 
     async fn handle_blame_buffer(
@@ -2751,16 +2760,16 @@ impl GitStore {
         let version = deserialize_version(&envelope.payload.version);
         let buffer = this.read_with(&cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
+        })?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(version.clone())
-            })?
+            })
             .await?;
         let blame = this
             .update(&mut cx, |this, cx| {
                 this.blame_buffer(&buffer, Some(version), cx)
-            })?
+            })
             .await?;
         Ok(serialize_blame_buffer_response(blame))
     }
@@ -2781,11 +2790,11 @@ impl GitStore {
         };
         let buffer = this.read_with(&cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
+        })?;
         let permalink = this
             .update(&mut cx, |this, cx| {
                 this.get_permalink_to_line(&buffer, selection, cx)
-            })?
+            })
             .await?;
         Ok(proto::GetPermalinkToLineResponse {
             permalink: permalink.to_string(),
@@ -2802,7 +2811,7 @@ impl GitStore {
                 .get(&id)
                 .context("missing repository handle")
                 .cloned()
-        })?
+        })
     }
 
     pub fn repo_snapshots(&self, cx: &App) -> HashMap<RepositoryId, RepositorySnapshot> {
@@ -3106,7 +3115,7 @@ impl BufferGitState {
                             language.clone(),
                             cx,
                         )
-                    })?
+                    })
                     .await,
                 );
             }
@@ -3129,7 +3138,7 @@ impl BufferGitState {
                                 language.clone(),
                                 cx,
                             )
-                        })?
+                        })
                         .await,
                     )
                 }
@@ -3172,7 +3181,7 @@ impl BufferGitState {
                         diff.language_changed(language.clone(), language_registry.clone(), cx);
                     }
                     diff.set_snapshot(new_unstaged_diff, &buffer, cx)
-                })?;
+                });
                 Some(task.await)
             } else {
                 None
@@ -3195,7 +3204,7 @@ impl BufferGitState {
                             true,
                             cx,
                         )
-                    })?
+                    })
                     .await;
             }
 
@@ -3210,7 +3219,7 @@ impl BufferGitState {
                     this.head_changed = false;
                     this.language_changed = false;
                     *this.recalculating_tx.borrow_mut() = false;
-                })?;
+                });
             }
 
             Ok(())
@@ -3244,8 +3253,7 @@ fn make_remote_delegate(
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
-        })
-        .log_err();
+        });
     })
 }
 
@@ -3674,7 +3682,7 @@ impl Repository {
                             })
                             .collect::<Vec<_>>()
                     })
-                })??;
+                })?;
 
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
@@ -3919,7 +3927,7 @@ impl Repository {
                 RepositoryState::Local(..) => {
                     this.update(&mut cx, |_, cx| {
                         Self::open_local_commit_buffer(languages, buffer_store, cx)
-                    })?
+                    })
                     .await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -3932,18 +3940,18 @@ impl Repository {
                     let buffer = buffer_store
                         .update(&mut cx, |buffer_store, cx| {
                             buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                        })?
+                        })
                         .await?;
                     if let Some(language_registry) = languages {
                         let git_commit_language =
                             language_registry.language_for_name("Git Commit").await?;
                         buffer.update(&mut cx, |buffer, cx| {
                             buffer.set_language(Some(git_commit_language), cx);
-                        })?;
+                        });
                     }
                     this.update(&mut cx, |this, _| {
                         this.commit_message_buffer = Some(buffer.clone());
-                    })?;
+                    });
                     Ok(buffer)
                 }
             }
@@ -3959,14 +3967,14 @@ impl Repository {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(false, cx))?
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(false, cx))
                 .await?;
 
             if let Some(language_registry) = language_registry {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(Some(git_commit_language), cx);
-                })?;
+                });
             }
 
             repository.update(cx, |repository, _| {
@@ -4119,6 +4127,7 @@ impl Repository {
                                     path: RepoPath::from_proto(&file.path)?,
                                     old_text: file.old_text,
                                     new_text: file.new_text,
+                                    is_binary: file.is_binary,
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
@@ -4969,20 +4978,22 @@ impl Repository {
                         .read_with(&cx, |this, cx| this.repo_path_to_project_path(&path, cx))
                         .ok()
                         .flatten();
-                    git_store.update(&mut cx, |git_store, cx| {
-                        let buffer_id = git_store
-                            .buffer_store
-                            .read(cx)
-                            .get_by_path(&project_path?)?
-                            .read(cx)
-                            .remote_id();
-                        let diff_state = git_store.diffs.get(&buffer_id)?;
-                        diff_state.update(cx, |diff_state, _| {
-                            diff_state.hunk_staging_operation_count_as_of_write =
-                                hunk_staging_operation_count;
-                        });
-                        Some(())
-                    })?;
+                    git_store
+                        .update(&mut cx, |git_store, cx| {
+                            let buffer_id = git_store
+                                .buffer_store
+                                .read(cx)
+                                .get_by_path(&project_path?)?
+                                .read(cx)
+                                .remote_id();
+                            let diff_state = git_store.diffs.get(&buffer_id)?;
+                            diff_state.update(cx, |diff_state, _| {
+                                diff_state.hunk_staging_operation_count_as_of_write =
+                                    hunk_staging_operation_count;
+                            });
+                            Some(())
+                        })
+                        .context("Git store dropped")?;
                 }
                 Ok(())
             },
@@ -5596,7 +5607,7 @@ impl Repository {
                             this.snapshot.clone(),
                             backend.clone(),
                         )
-                    })?
+                    })
                     .await?;
                 this.update(&mut cx, |this, cx| {
                     this.snapshot = snapshot.clone();
@@ -5604,7 +5615,7 @@ impl Repository {
                     for event in events {
                         cx.emit(event);
                     }
-                })?;
+                });
                 if let Some(updates_tx) = updates_tx {
                     updates_tx
                         .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
@@ -5624,7 +5635,7 @@ impl Repository {
         cx.spawn(async move |_, cx| {
             let state = state.await.map_err(|err| anyhow::anyhow!(err))?;
             if let Some(git_hosting_provider_registry) =
-                cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?
+                cx.update(|cx| GitHostingProviderRegistry::try_global(cx))
             {
                 git_hosting_providers::register_additional_providers(
                     git_hosting_provider_registry,

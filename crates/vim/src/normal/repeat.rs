@@ -145,7 +145,13 @@ impl Replayer {
         lock.ix += 1;
         drop(lock);
         let Some(action) = action else {
-            Vim::globals(cx).replayer.take();
+            // The `globals.dot_replaying = false` is a fail-safe to ensure that
+            // this value is always reset, in the case that the focus is moved
+            // away from the editor, effectively preventing the `EndRepeat`
+            // action from being handled.
+            let globals = Vim::globals(cx);
+            globals.replayer.take();
+            globals.dot_replaying = false;
             return;
         };
         match action {
@@ -396,6 +402,7 @@ mod test {
     use gpui::EntityInputHandler;
 
     use crate::{
+        VimGlobals,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -737,6 +744,48 @@ mod test {
         cx.simulate_shared_keystrokes(": escape").await;
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("ˇx hello\n");
+    }
+
+    #[gpui::test]
+    async fn test_repeat_after_blur_resets_dot_replaying(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Bind `ctrl-f` to the `buffer_search::Deploy` action so that this can
+        // be triggered while in Insert mode, ensuring that an action which
+        // moves the focus away from the editor, gets recorded.
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-f",
+                search::buffer_search::Deploy::find(),
+                None,
+            )])
+        });
+
+        cx.set_state("ˇhello", Mode::Normal);
+
+        // We're going to enter insert mode, which will start recording, type a
+        // character and then immediately use `ctrl-f` to trigger the buffer
+        // search. Triggering the buffer search will move focus away from the
+        // editor, effectively stopping the recording immediately after
+        // `buffer_search::Deploy` is recorded. The first `escape` is used to
+        // dismiss the search bar, while the second is used to move from Insert
+        // to Normal mode.
+        cx.simulate_keystrokes("i x ctrl-f escape escape");
+        cx.run_until_parked();
+
+        // Using the `.` key will dispatch the `vim::Repeat` action, repeating
+        // the set of recorded actions. This will eventually focus on the search
+        // bar, preventing the `EndRepeat` action from being correctly handled.
+        cx.simulate_keystrokes(".");
+        cx.run_until_parked();
+
+        // After replay finishes, even though the `EndRepeat` action wasn't
+        // handled, seeing as the editor lost focus during replay, the
+        // `dot_replaying` value should be set back to `false`.
+        assert!(
+            !cx.update(|_, cx| cx.global::<VimGlobals>().dot_replaying),
+            "dot_replaying should be false after repeat completes"
+        );
     }
 
     #[gpui::test]

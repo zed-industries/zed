@@ -354,7 +354,7 @@ impl RenameBranchModal {
             match repo
                 .update(cx, |repo, _| {
                     repo.rename_branch(current_branch, new_name.clone())
-                })?
+                })
                 .await
             {
                 Ok(Ok(_)) => Ok(()),
