@@ -40,7 +40,7 @@ The Git Panel also allows configuring the `soft_wrap` setting to adjust how comm
 ```json
 "languages": {
   "Git Commit": {
-    "soft_wrap": "editor_width",
+    "soft_wrap": "preferred_line_length",
     "preferred_line_length": 72
   },
 }
