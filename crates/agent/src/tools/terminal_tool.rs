@@ -1,10 +1,12 @@
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -13,7 +15,10 @@ use std::{
 };
 use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream};
+use crate::{
+    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolPermissionDecision,
+    decide_permission_from_settings,
+};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -103,9 +108,23 @@ impl AgentTool for TerminalTool {
             Err(err) => return Task::ready(Err(err)),
         };
 
-        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx);
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings("terminal", &input.command, settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                // Use authorize_required since permission rules already determined confirmation is needed
+                Some(event_stream.authorize_required(self.initial_title(Ok(input.clone()), cx), cx))
+            }
+        };
         cx.spawn(async move |cx| {
-            authorize.await?;
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
 
             let terminal = self
                 .environment

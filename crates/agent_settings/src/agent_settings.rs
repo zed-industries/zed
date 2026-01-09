@@ -162,12 +162,42 @@ pub struct ToolPermissions {
     pub tools: collections::HashMap<Arc<str>, ToolRules>,
 }
 
+impl ToolPermissions {
+    /// Returns all invalid regex patterns across all tools.
+    pub fn invalid_patterns(&self) -> Vec<&InvalidRegexPattern> {
+        self.tools
+            .values()
+            .flat_map(|rules| rules.invalid_patterns.iter())
+            .collect()
+    }
+
+    /// Returns true if any tool has invalid regex patterns.
+    pub fn has_invalid_patterns(&self) -> bool {
+        self.tools
+            .values()
+            .any(|rules| !rules.invalid_patterns.is_empty())
+    }
+}
+
+/// Represents a regex pattern that failed to compile.
+#[derive(Clone, Debug)]
+pub struct InvalidRegexPattern {
+    /// The pattern string that failed to compile.
+    pub pattern: String,
+    /// Which rule list this pattern was in (e.g., "always_deny", "always_allow", "always_confirm").
+    pub rule_type: String,
+    /// The error message from the regex compiler.
+    pub error: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolRules {
     pub default_mode: ToolPermissionMode,
     pub always_allow: Vec<CompiledRegex>,
     pub always_deny: Vec<CompiledRegex>,
     pub always_confirm: Vec<CompiledRegex>,
+    /// Patterns that failed to compile. If non-empty, tool calls should be blocked.
+    pub invalid_patterns: Vec<InvalidRegexPattern>,
 }
 
 impl Default for ToolRules {
@@ -177,6 +207,7 @@ impl Default for ToolRules {
             always_allow: Vec::new(),
             always_deny: Vec::new(),
             always_confirm: Vec::new(),
+            invalid_patterns: Vec::new(),
         }
     }
 }
@@ -199,15 +230,14 @@ impl std::fmt::Debug for CompiledRegex {
 
 impl CompiledRegex {
     pub fn new(pattern: &str, case_sensitive: bool) -> Option<Self> {
+        Self::try_new(pattern, case_sensitive).ok()
+    }
+
+    pub fn try_new(pattern: &str, case_sensitive: bool) -> Result<Self, regex::Error> {
         let regex = regex::RegexBuilder::new(pattern)
             .case_insensitive(!case_sensitive)
-            .build()
-            .map_err(|e| {
-                log::warn!("Invalid regex pattern '{}': {}", pattern, e);
-                e
-            })
-            .ok()?;
-        Some(Self {
+            .build()?;
+        Ok(Self {
             pattern: pattern.to_string(),
             case_sensitive,
             regex,
@@ -272,20 +302,47 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
         .tools
         .into_iter()
         .map(|(tool_name, rules_content)| {
+            let mut invalid_patterns = Vec::new();
+
+            let (always_allow, allow_errors) = compile_regex_rules(
+                rules_content.always_allow.map(|v| v.0).unwrap_or_default(),
+                "always_allow",
+            );
+            invalid_patterns.extend(allow_errors);
+
+            let (always_deny, deny_errors) = compile_regex_rules(
+                rules_content.always_deny.map(|v| v.0).unwrap_or_default(),
+                "always_deny",
+            );
+            invalid_patterns.extend(deny_errors);
+
+            let (always_confirm, confirm_errors) = compile_regex_rules(
+                rules_content
+                    .always_confirm
+                    .map(|v| v.0)
+                    .unwrap_or_default(),
+                "always_confirm",
+            );
+            invalid_patterns.extend(confirm_errors);
+
+            // Log invalid patterns for debugging. Users will see an error when they
+            // attempt to use a tool with invalid patterns in their settings.
+            for invalid in &invalid_patterns {
+                log::error!(
+                    "Invalid regex pattern in tool_permissions for '{}' tool ({}): '{}' - {}",
+                    tool_name,
+                    invalid.rule_type,
+                    invalid.pattern,
+                    invalid.error,
+                );
+            }
+
             let rules = ToolRules {
                 default_mode: rules_content.default_mode.unwrap_or_default(),
-                always_allow: rules_content
-                    .always_allow
-                    .map(|v| compile_regex_rules(v.0))
-                    .unwrap_or_default(),
-                always_deny: rules_content
-                    .always_deny
-                    .map(|v| compile_regex_rules(v.0))
-                    .unwrap_or_default(),
-                always_confirm: rules_content
-                    .always_confirm
-                    .map(|v| compile_regex_rules(v.0))
-                    .unwrap_or_default(),
+                always_allow,
+                always_deny,
+                always_confirm,
+                invalid_patterns,
             };
             (tool_name, rules)
         })
@@ -294,11 +351,28 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
     ToolPermissions { tools }
 }
 
-fn compile_regex_rules(rules: Vec<settings::ToolRegexRule>) -> Vec<CompiledRegex> {
-    rules
-        .into_iter()
-        .filter_map(|rule| CompiledRegex::new(&rule.pattern, rule.case_sensitive.unwrap_or(false)))
-        .collect()
+fn compile_regex_rules(
+    rules: Vec<settings::ToolRegexRule>,
+    rule_type: &str,
+) -> (Vec<CompiledRegex>, Vec<InvalidRegexPattern>) {
+    let mut compiled = Vec::new();
+    let mut errors = Vec::new();
+
+    for rule in rules {
+        let case_sensitive = rule.case_sensitive.unwrap_or(false);
+        match CompiledRegex::try_new(&rule.pattern, case_sensitive) {
+            Ok(regex) => compiled.push(regex),
+            Err(error) => {
+                errors.push(InvalidRegexPattern {
+                    pattern: rule.pattern,
+                    rule_type: rule_type.to_string(),
+                    error: error.to_string(),
+                });
+            }
+        }
+    }
+
+    (compiled, errors)
 }
 
 #[cfg(test)]
@@ -448,13 +522,16 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_regex_is_skipped_not_fail() {
+    fn test_invalid_regex_is_tracked_and_valid_ones_still_compile() {
         let json = json!({
             "tools": {
                 "terminal": {
                     "always_deny": [
                         { "pattern": "[invalid(regex" },
                         { "pattern": "valid_pattern" }
+                    ],
+                    "always_allow": [
+                        { "pattern": "[another_bad" }
                     ]
                 }
             }
@@ -464,8 +541,32 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal = permissions.tools.get("terminal").unwrap();
+
+        // Valid patterns should still be compiled
         assert_eq!(terminal.always_deny.len(), 1);
         assert!(terminal.always_deny[0].is_match("valid_pattern"));
+
+        // Invalid patterns should be tracked (order depends on processing order)
+        assert_eq!(terminal.invalid_patterns.len(), 2);
+
+        let deny_invalid = terminal
+            .invalid_patterns
+            .iter()
+            .find(|p| p.rule_type == "always_deny")
+            .expect("should have invalid pattern from always_deny");
+        assert_eq!(deny_invalid.pattern, "[invalid(regex");
+        assert!(!deny_invalid.error.is_empty());
+
+        let allow_invalid = terminal
+            .invalid_patterns
+            .iter()
+            .find(|p| p.rule_type == "always_allow")
+            .expect("should have invalid pattern from always_allow");
+        assert_eq!(allow_invalid.pattern, "[another_bad");
+
+        // ToolPermissions helper methods should work
+        assert!(permissions.has_invalid_patterns());
+        assert_eq!(permissions.invalid_patterns().len(), 2);
     }
 
     #[test]
