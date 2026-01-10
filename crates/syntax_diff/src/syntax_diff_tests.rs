@@ -109,12 +109,12 @@ fn test_diff_trees_rust_changed_function_signature() {
     assert_diff(
         indoc! {r#"
                 fn process(x: i32) -> i32 {
-                    «x» «*» «2»
+                    x «*» «2»
                 }
             "#},
         indoc! {r#"
                 fn process(x: i32«,» «y:» «i32») -> i32 {
-                    «x» «+» «y»
+                    x «+» «y»
                 }
             "#},
         parse_rust,
