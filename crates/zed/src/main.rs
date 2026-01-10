@@ -1240,15 +1240,16 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 SerializedWorkspaceLocation::Local => {
                     let app_state = app_state.clone();
                     let task = cx.spawn(async move |cx| {
-                        let open_task = cx.update(|cx| {
+                        cx.update(|cx| {
                             workspace::open_paths(
                                 &paths.paths(),
                                 app_state,
                                 workspace::OpenOptions::default(),
                                 cx,
                             )
-                        })?;
-                        open_task.await.map(|_| ())
+                        })
+                        .await
+                        .map(|_| ())
                     });
 
                     // If we're using system window tabs and this is the first workspace,
@@ -1280,7 +1281,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                             .parse(&content)
                             .context("Failed to parse workspace file")?;
                         let paths: Vec<PathBuf> = parsed.folders;
-                        let open_task = cx.update(|cx| {
+                        cx.update(|cx| {
                             workspace::open_paths(
                                 &paths,
                                 app_state,
@@ -1290,8 +1291,9 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                                 },
                                 cx,
                             )
-                        })?;
-                        open_task.await.map(|_| ())
+                        })
+                        .await
+                        .map(|_| ())
                     });
 
                     if use_system_window_tabs && index == 0 {
