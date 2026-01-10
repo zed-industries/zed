@@ -427,6 +427,14 @@
     },
   },
   {
+    "context": "BufferSearchBar && !in_replace > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery",
+    },
+  },
+  {
     "context": "QuickSearch",
     "use_key_equivalents": true,
     "bindings": {
