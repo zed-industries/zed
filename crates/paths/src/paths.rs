@@ -332,6 +332,11 @@ pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
         if dev_path.exists() {
             return dev_path;
         }
+
+        let project_local_path = path.join(".zed").join("prompt_overrides");
+        if project_local_path.exists() {
+            return project_local_path;
+        }
     }
 
     static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
