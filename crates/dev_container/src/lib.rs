@@ -86,16 +86,16 @@ pub struct DevContainerTemplatesResponse {
 pub async fn get_template_text(
     client: Arc<dyn HttpClient>,
     template: &DevContainerTemplate,
-) -> Result<String, String> {
+) -> Result<HashMap<String, String>, String> {
     let id = template.id.clone();
     let token = get_ghcr_token(&client).await?;
     let manifest = get_latest_manifest_for_id(&id, &token.token, &client).await?;
 
-    let file =
+    let file_contents =
         get_devcontainer_template_files(&id, &token.token, &manifest.layers[0].digest, &client)
             .await?;
 
-    Ok(file)
+    Ok(file_contents)
 }
 
 pub async fn get_templates(
@@ -155,7 +155,7 @@ pub async fn get_devcontainer_template_files(
     token: &str,
     blob_digest: &str,
     client: &Arc<dyn HttpClient>,
-) -> Result<String, String> {
+) -> Result<HashMap<String, String>, String> {
     let url = format!(
         "{}/v2/{}/{}/blobs/{}",
         ghcr_url(),
@@ -196,22 +196,31 @@ pub async fn get_devcontainer_template_files(
 
     dbg!(&command_output);
 
-    // let Ok(_) = comm
-
     let extracted_location = &extracted.join(".devcontainer/devcontainer.json");
 
     dbg!(&extracted_location);
 
-    let devcontainer_json = std::fs::read_to_string(extracted_location).unwrap();
+    let files = match std::fs::read_dir(&extracted.join(".devcontainer")) {
+        Ok(files) => files,
+        Err(e) => {
+            println!("Error reading directory: {}", e);
+            return Err("didn't read files".to_string());
+        }
+    };
 
-    //
-    // let mut output = String::new();
+    let mut file_contents: HashMap<String, String> = HashMap::new();
+    for file in files {
+        let Ok(file) = file else {
+            continue;
+        };
 
-    // let Ok(_) = response.into_body().read_to_string(&mut output).await else {
-    //     return Err("Failed to read response body - TODO fix error handling".to_string());
-    // };
+        file_contents.insert(
+            file.file_name().into_string().unwrap(),
+            std::fs::read_to_string(file.path()).unwrap(),
+        );
+    }
 
-    Ok(devcontainer_json)
+    Ok(file_contents)
 }
 
 pub async fn get_devcontainer_templates(

@@ -6,9 +6,10 @@ use std::fmt::Display;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
+use workspace::item::SaveOptions;
 
 use ::dev_container::{DevContainerTemplate, get_template_text, get_templates};
-use editor::{Editor, MultiBufferOffset};
+use editor::Editor;
 use gpui::{
     Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
     WeakEntity,
@@ -26,7 +27,7 @@ use ui::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
-use workspace::{ModalView, Workspace, with_active_or_new_workspace};
+use workspace::{Item, ModalView, Workspace, with_active_or_new_workspace};
 
 use crate::remote_connections::Connection;
 
@@ -841,37 +842,50 @@ impl StatefulModal for DevContainerModal {
 
                     if let Some(worktree) = worktree {
                         let tree_id = worktree.read(cx).id();
-                        let devcontainer_path =
-                            RelPath::unix(".devcontainer/devcontainer.json").unwrap();
                         cx.spawn_in(window, async move |workspace, cx| {
                             let client = cx.update(|_, cx| cx.http_client()).unwrap();
-                            let template_text = get_template_text(client, &template_entry.template)
+                            let files = get_template_text(client, &template_entry.template)
                                 .await
-                                .expect("Hard-coded");
+                                .expect("TODO");
 
-                            let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
-                                workspace.open_path(
-                                    (tree_id, devcontainer_path),
-                                    None,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            }) else {
-                                return;
-                            };
-
-                            let snippet = expand_template_text(template_entry, template_text);
-
-                            if let Ok(item) = open_task.await {
-                                if let Some(editor) = item.downcast::<Editor>() {
-                                    editor
-                                        .update_in(cx, |editor, window, cx| {
-                                            editor.clear(window, cx);
-                                            editor.insert(&snippet, window, cx);
-                                        })
-                                        .log_err();
+                            for (file_name, file_text) in files {
+                                let path = RelPath::unix(".devcontainer/")
+                                    .unwrap()
+                                    .join(RelPath::unix(&file_name).unwrap());
+                                let Ok(open_task) =
+                                    workspace.update_in(cx, |workspace, window, cx| {
+                                        workspace.open_path((tree_id, path), None, true, window, cx)
+                                    })
+                                else {
+                                    // TODO
+                                    continue;
                                 };
+
+                                let snippet = expand_template_text(&template_entry, file_text);
+
+                                if let Ok(item) = open_task.await {
+                                    if let Some(editor) = item.downcast::<Editor>() {
+                                        editor
+                                            .update_in(cx, |editor, window, cx| {
+                                                editor.clear(window, cx);
+                                                editor.insert(&snippet, window, cx);
+                                                if let Some(project) = editor.project() {
+                                                    editor
+                                                        .save(
+                                                            SaveOptions {
+                                                                format: true,
+                                                                autosave: false,
+                                                            },
+                                                            project.clone(),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx);
+                                                }
+                                            })
+                                            .log_err();
+                                    };
+                                }
                             }
                         })
                         .detach();
@@ -940,7 +954,7 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     }
 }
 
-fn expand_template_text(template_entry: TemplateEntry, template_text: String) -> String {
+fn expand_template_text(template_entry: &TemplateEntry, template_text: String) -> String {
     let mut new_text = template_text.clone();
     static TEMPLATE_OPTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"\$\{templateOption:([^\}]+)\}").expect("Failed to create REGEX")
