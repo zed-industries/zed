@@ -2609,20 +2609,21 @@ impl Pane {
             .map(|id| id == item.item_id())
             .unwrap_or(false);
 
+        let item_diagnostic = item
+            .project_path(cx)
+            .map_or(None, |project_path| self.diagnostics.get(&project_path));
+
         let label = item.tab_content(
             TabContentParams {
                 detail: Some(detail),
                 selected: is_active,
                 preview: is_preview,
                 deemphasized: !self.has_focus(window, cx),
+                diagnostic_severity: item_diagnostic.copied(),
             },
             window,
             cx,
         );
-
-        let item_diagnostic = item
-            .project_path(cx)
-            .map_or(None, |project_path| self.diagnostics.get(&project_path));
 
         let decorated_icon = item_diagnostic.map_or(None, |diagnostic| {
             let icon = match item.tab_icon(window, cx) {
@@ -4515,6 +4516,7 @@ impl Render for DraggedTab {
                 selected: false,
                 preview: false,
                 deemphasized: false,
+                diagnostic_severity: None,
             },
             window,
             cx,

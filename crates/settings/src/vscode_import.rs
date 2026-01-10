@@ -609,6 +609,7 @@ impl VsCodeSettings {
                     }
                 }),
             show_diagnostics: None,
+            diagnostic_color: None,
             show_close_button: self
                 .read_bool("workbench.editor.tabActionCloseVisibility")
                 .map(|b| {
