@@ -16193,11 +16193,13 @@ dependencies = [
  "arrayvec",
  "collections",
  "criterion",
+ "indoc",
  "language",
  "strsim",
  "tree-sitter",
  "tree-sitter-json",
  "tree-sitter-rust",
+ "util",
 ]
 
 [[package]]

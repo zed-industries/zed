@@ -21,3 +21,5 @@ arrayvec.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
 criterion.workspace = true
+indoc.workspace = true
+util = { workspace = true, features = ["test-support"] }
