@@ -13,7 +13,7 @@ use settings::{
     DefaultAgentView as DefaultView, LanguageModelProviderSetting, LanguageModelSelection,
 };
 
-use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
+use zed_actions::agent::{OpenClaudeCode, OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
 use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
@@ -189,6 +189,18 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &OpenClaudeCodeOnboardingModal, window, cx| {
                     ClaudeCodeOnboardingModal::toggle(workspace, window, cx)
+                })
+                .register_action(|workspace, _: &OpenClaudeCode, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        let needs_new_thread =
+                            panel.read(cx).selected_agent != AgentType::ClaudeCode;
+                        if needs_new_thread {
+                            panel.update(cx, |panel, cx| {
+                                panel.new_agent_thread(AgentType::ClaudeCode, window, cx);
+                            });
+                        }
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                    }
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
@@ -3074,5 +3086,124 @@ impl AgentPanel {
     /// method for test assertions. Not compiled into production builds.
     pub fn active_thread_view_for_tests(&self) -> Option<&Entity<AcpThreadView>> {
         self.active_thread_view()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use prompt_store::PromptBuilder;
+    use settings::SettingsStore;
+    use workspace::Workspace;
+    use zed_actions::agent::OpenClaudeCode;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
+            agent_settings::AgentSettings::register(cx);
+            super::init(cx);
+        });
+    }
+
+    async fn init_test_workspace(
+        cx: &mut TestAppContext,
+    ) -> gpui::WindowHandle<Workspace> {
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let agent_panel = workspace
+            .update(cx, |_workspace, window, cx| {
+                let weak_workspace = cx.entity().downgrade();
+                cx.spawn_in(window, async move |_this, cx| {
+                    AgentPanel::load(weak_workspace, prompt_builder, cx.clone()).await
+                })
+            })
+            .unwrap()
+            .await
+            .expect("Failed to load agent panel");
+
+        workspace
+            .update(cx, |ws, window, cx| {
+                ws.add_panel(agent_panel, window, cx);
+            })
+            .unwrap();
+
+        workspace
+    }
+
+    #[gpui::test]
+    async fn test_open_claude_code_creates_thread_when_none_exists(cx: &mut TestAppContext) {
+        init_test(cx);
+        let workspace = init_test_workspace(cx).await;
+
+        workspace
+            .update(cx, |ws, _window, cx| {
+                let panel = ws.panel::<AgentPanel>(cx).unwrap();
+                assert_ne!(panel.read(cx).selected_agent, AgentType::ClaudeCode);
+            })
+            .unwrap();
+
+        workspace
+            .update(cx, |_ws, window, cx| {
+                window.dispatch_action(OpenClaudeCode.boxed_clone(), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace
+            .update(cx, |ws, _window, cx| {
+                let panel = ws.panel::<AgentPanel>(cx).unwrap();
+                assert_eq!(panel.read(cx).selected_agent, AgentType::ClaudeCode);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_claude_code_reuses_existing_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        let workspace = init_test_workspace(cx).await;
+
+        workspace
+            .update(cx, |ws, window, cx| {
+                let panel = ws.panel::<AgentPanel>(cx).unwrap();
+                panel.update(cx, |p, cx| {
+                    p.new_agent_thread(AgentType::ClaudeCode, window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace
+            .update(cx, |ws, _window, cx| {
+                let panel = ws.panel::<AgentPanel>(cx).unwrap();
+                assert_eq!(panel.read(cx).selected_agent, AgentType::ClaudeCode);
+            })
+            .unwrap();
+
+        workspace
+            .update(cx, |_ws, window, cx| {
+                window.dispatch_action(OpenClaudeCode.boxed_clone(), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace
+            .update(cx, |ws, _window, cx| {
+                let panel = ws.panel::<AgentPanel>(cx).unwrap();
+                assert_eq!(panel.read(cx).selected_agent, AgentType::ClaudeCode);
+            })
+            .unwrap();
     }
 }
