@@ -685,6 +685,7 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
+    pub repeatable_motions: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
