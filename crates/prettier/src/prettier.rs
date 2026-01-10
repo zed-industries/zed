@@ -12,6 +12,7 @@ use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use util::{
     paths::{PathMatcher, PathStyle},
@@ -273,6 +274,7 @@ impl Prettier {
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: NodeRuntime,
+        _: Duration,
         _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
@@ -281,11 +283,13 @@ impl Prettier {
         }))
     }
 
+    // NB: request_timeout is passed as a parameter to prevent circular dependency issues
     #[cfg(not(any(test, feature = "test-support")))]
     pub async fn start(
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
+        request_timeout: Duration,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
@@ -310,6 +314,7 @@ impl Prettier {
             arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
             env: None,
         };
+
         let server = LanguageServer::new(
             Arc::new(parking_lot::Mutex::new(None)),
             server_id,
@@ -318,6 +323,7 @@ impl Prettier {
             &prettier_dir,
             None,
             Default::default(),
+            request_timeout,
             &mut cx,
         )
         .context("prettier server creation")?;
