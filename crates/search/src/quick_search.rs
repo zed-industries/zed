@@ -17,7 +17,9 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchQuery, SearchResult};
 use project::{Project, ProjectPath};
-use crate::SearchOptions;
+use crate::{SearchOption, SearchOptions};
+use editor::EditorSettings;
+use settings::Settings;
 use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
 use ui::Divider;
@@ -167,6 +169,7 @@ impl QuickSearch {
             replace_editor.clone(),
             include_editor.clone(),
             exclude_editor.clone(),
+            cx,
         );
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
@@ -553,6 +556,7 @@ impl QuickSearchDelegate {
         replace_editor: Entity<Editor>,
         include_editor: Entity<Editor>,
         exclude_editor: Entity<Editor>,
+        cx: &App,
     ) -> Self {
         Self {
             workspace,
@@ -568,7 +572,7 @@ impl QuickSearchDelegate {
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             has_changed_selected_index: false,
             last_confirm_time: None,
-            search_options: SearchOptions::NONE,
+            search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
         }
     }
@@ -809,12 +813,12 @@ impl PickerDelegate for QuickSearchDelegate {
                             .flex_none()
                             .gap_0p5()
                             .child(
-                                IconButton::new("case-sensitive", IconName::CaseSensitive)
+                                IconButton::new("case-sensitive", SearchOption::CaseSensitive.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(
                                         search_options.contains(SearchOptions::CASE_SENSITIVE),
                                     )
-                                    .tooltip(Tooltip::text("Match Case"))
+                                    .tooltip(Tooltip::text(SearchOption::CaseSensitive.label()))
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker
                                             .delegate
@@ -824,12 +828,12 @@ impl PickerDelegate for QuickSearchDelegate {
                                     })),
                             )
                             .child(
-                                IconButton::new("whole-word", IconName::WholeWord)
+                                IconButton::new("whole-word", SearchOption::WholeWord.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(
                                         search_options.contains(SearchOptions::WHOLE_WORD),
                                     )
-                                    .tooltip(Tooltip::text("Match Whole Word"))
+                                    .tooltip(Tooltip::text(SearchOption::WholeWord.label()))
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker
                                             .delegate
@@ -839,14 +843,14 @@ impl PickerDelegate for QuickSearchDelegate {
                                     })),
                             )
                             .child(
-                                IconButton::new("regex", IconName::Regex)
+                                IconButton::new("regex", SearchOption::Regex.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(search_options.contains(SearchOptions::REGEX))
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker.delegate.search_options.toggle(SearchOptions::REGEX);
                                         picker.refresh(window, cx);
                                     }))
-                                    .tooltip(Tooltip::text("Use Regular Expression")),
+                                    .tooltip(Tooltip::text(SearchOption::Regex.label())),
                             ),
                     ),
             )
