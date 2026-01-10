@@ -188,8 +188,9 @@ where
 
     impl<F> Drop for Checked<F> {
         fn drop(&mut self) {
-            assert!(
-                self.id == thread_id(),
+            assert_eq!(
+                self.id,
+                thread_id(),
                 "local task dropped by a thread that didn't spawn it. Task spawned at {}",
                 self.location
             );
