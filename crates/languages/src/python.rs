@@ -536,6 +536,7 @@ impl LspAdapter for PyrightLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
+        _container_name: Option<&str>,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let (text, filter_range, display_range) = match kind {
@@ -1669,6 +1670,7 @@ impl LspAdapter for PyLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
+        _container_name: Option<&str>,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let (text, filter_range, display_range) = match kind {
@@ -1961,6 +1963,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
+        _container_name: Option<&str>,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let (text, filter_range, display_range) = match kind {

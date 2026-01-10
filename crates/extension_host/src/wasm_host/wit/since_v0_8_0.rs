@@ -421,6 +421,7 @@ impl From<extension::Symbol> for Symbol {
         Self {
             kind: value.kind.into(),
             name: value.name,
+            container_name: value.container_name,
         }
     }
 }

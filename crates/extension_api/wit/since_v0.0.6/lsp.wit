@@ -48,6 +48,7 @@ interface lsp {
     record symbol {
         kind: symbol-kind,
         name: string,
+        container-name: option<string>,
     }
 
     /// The kind of an LSP symbol.
