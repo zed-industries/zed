@@ -44,7 +44,7 @@ pub async fn run_load_project(
         let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
             cursor_point,
             &snapshot,
-            zeta2::MAX_REWRITE_TOKENS,
+            zeta2::MAX_EDITABLE_TOKENS,
             zeta2::MAX_CONTEXT_TOKENS,
         );
         let editable_range = editable_range.to_offset(&snapshot);

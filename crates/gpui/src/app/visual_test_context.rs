@@ -1,9 +1,9 @@
 use crate::{
-    Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds,
-    ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
-    Result, Size, Task, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, current_platform,
+    Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor,
+    Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point,
+    Render, Result, Size, Task, TestDispatcher, TextSystem, VisualTestPlatform, Window,
+    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
@@ -25,35 +25,59 @@ pub struct VisualTestAppContext {
     pub background_executor: BackgroundExecutor,
     /// The foreground executor for running tasks on the main thread
     pub foreground_executor: ForegroundExecutor,
+    /// The test dispatcher for deterministic task scheduling
+    dispatcher: TestDispatcher,
     platform: Rc<dyn Platform>,
     text_system: Arc<TextSystem>,
 }
 
 impl VisualTestAppContext {
-    /// Creates a new `VisualTestAppContext` with real macOS platform rendering.
+    /// Creates a new `VisualTestAppContext` with real macOS platform rendering
+    /// but deterministic task scheduling via TestDispatcher.
     ///
-    /// This initializes the real macOS platform (not the test platform), which means:
-    /// - Windows are actually rendered by Metal/the compositor
-    /// - Screenshots can be captured via ScreenCaptureKit
-    /// - All platform APIs work as they do in production
+    /// This provides:
+    /// - Real Metal/compositor rendering for accurate screenshots
+    /// - Deterministic task scheduling via TestDispatcher
+    /// - Controllable time via `advance_clock`
+    ///
+    /// Note: This uses a no-op asset source, so SVG icons won't render.
+    /// Use `with_asset_source` to provide real assets for icon rendering.
     pub fn new() -> Self {
-        let liveness = Arc::new(());
-        let liveness_weak = Arc::downgrade(&liveness);
-        let platform = current_platform(false, liveness_weak);
+        Self::with_asset_source(Arc::new(()))
+    }
+
+    /// Creates a new `VisualTestAppContext` with a custom asset source.
+    ///
+    /// Use this when you need SVG icons to render properly in visual tests.
+    /// Pass the real `Assets` struct to enable icon rendering.
+    pub fn with_asset_source(asset_source: Arc<dyn AssetSource>) -> Self {
+        // Use a seeded RNG for deterministic behavior
+        let seed = std::env::var("SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        // Create a visual test platform that combines real Mac rendering
+        // with controllable TestDispatcher for deterministic task scheduling
+        let platform = Rc::new(VisualTestPlatform::new(seed));
+
+        // Get the dispatcher and executors from the platform
+        let dispatcher = platform.dispatcher().clone();
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
+
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let mut app = App::new_app(platform.clone(), liveness, asset_source, http_client);
+        let mut app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
             app,
             background_executor,
             foreground_executor,
+            dispatcher,
             platform,
             text_system,
         }
@@ -120,9 +144,17 @@ impl VisualTestAppContext {
         self.foreground_executor.clone()
     }
 
-    /// Runs pending background tasks until there's nothing left to do.
+    /// Runs all pending foreground and background tasks until there's nothing left to do.
+    /// This is essential for processing async operations like tooltip timers.
     pub fn run_until_parked(&self) {
-        self.background_executor.run_until_parked();
+        self.dispatcher.run_until_parked();
+    }
+
+    /// Advances the simulated clock by the given duration and processes any tasks
+    /// that become ready. This is essential for testing time-based behaviors like
+    /// tooltip delays.
+    pub fn advance_clock(&self, duration: Duration) {
+        self.dispatcher.advance_clock(duration);
     }
 
     /// Updates the app state.
@@ -442,5 +474,114 @@ impl AppContext for VisualTestAppContext {
     {
         let app = self.app.borrow();
         callback(app.global::<G>(), &app)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Empty;
+    use std::cell::RefCell;
+
+    // Note: All VisualTestAppContext tests are ignored by default because they require
+    // the macOS main thread. Standard Rust tests run on worker threads, which causes
+    // SIGABRT when interacting with macOS AppKit/Cocoa APIs.
+    //
+    // To run these tests, use:
+    // cargo test -p gpui visual_test_context -- --ignored --test-threads=1
+
+    #[test]
+    #[ignore] // Requires macOS main thread
+    fn test_foreground_tasks_run_with_run_until_parked() {
+        let mut cx = VisualTestAppContext::new();
+
+        let task_ran = Rc::new(RefCell::new(false));
+
+        // Spawn a foreground task via the App's spawn method
+        // This should use our TestDispatcher, not the MacDispatcher
+        {
+            let task_ran = task_ran.clone();
+            cx.update(|cx| {
+                cx.spawn(async move |_| {
+                    *task_ran.borrow_mut() = true;
+                })
+                .detach();
+            });
+        }
+
+        // The task should not have run yet
+        assert!(!*task_ran.borrow());
+
+        // Run until parked should execute the foreground task
+        cx.run_until_parked();
+
+        // Now the task should have run
+        assert!(*task_ran.borrow());
+    }
+
+    #[test]
+    #[ignore] // Requires macOS main thread
+    fn test_advance_clock_triggers_delayed_tasks() {
+        let mut cx = VisualTestAppContext::new();
+
+        let task_ran = Rc::new(RefCell::new(false));
+
+        // Spawn a task that waits for a timer
+        {
+            let task_ran = task_ran.clone();
+            let executor = cx.background_executor.clone();
+            cx.update(|cx| {
+                cx.spawn(async move |_| {
+                    executor.timer(Duration::from_millis(500)).await;
+                    *task_ran.borrow_mut() = true;
+                })
+                .detach();
+            });
+        }
+
+        // Run until parked - the task should be waiting on the timer
+        cx.run_until_parked();
+        assert!(!*task_ran.borrow());
+
+        // Advance clock past the timer duration
+        cx.advance_clock(Duration::from_millis(600));
+
+        // Now the task should have completed
+        assert!(*task_ran.borrow());
+    }
+
+    #[test]
+    #[ignore] // Requires macOS main thread - window creation fails on test threads
+    fn test_window_spawn_uses_test_dispatcher() {
+        let mut cx = VisualTestAppContext::new();
+
+        let task_ran = Rc::new(RefCell::new(false));
+
+        let window = cx
+            .open_offscreen_window_default(|_, cx| cx.new(|_| Empty))
+            .expect("Failed to open window");
+
+        // Spawn a task via window.spawn - this is the critical test case
+        // for tooltip behavior, as tooltips use window.spawn for delayed show
+        {
+            let task_ran = task_ran.clone();
+            cx.update_window(window.into(), |_, window, cx| {
+                window
+                    .spawn(cx, async move |_| {
+                        *task_ran.borrow_mut() = true;
+                    })
+                    .detach();
+            })
+            .ok();
+        }
+
+        // The task should not have run yet
+        assert!(!*task_ran.borrow());
+
+        // Run until parked should execute the foreground task spawned via window
+        cx.run_until_parked();
+
+        // Now the task should have run
+        assert!(*task_ran.borrow());
     }
 }

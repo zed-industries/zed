@@ -6,7 +6,7 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, BackgroundExecutor, Context, DismissEvent, Entity, FocusHandle,
-    Focusable, SharedString, Subscription, Task, Window,
+    Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -103,6 +103,7 @@ impl ProfileSelector {
                 self.fs.clone(),
                 self.provider.clone(),
                 self.profiles.clone(),
+                cx.foreground_executor().clone(),
                 cx.background_executor().clone(),
                 self.focus_handle.clone(),
                 cx,
@@ -196,8 +197,8 @@ impl Render for ProfileSelector {
                         ))
                         .child(
                             container()
-                                .pb_1()
-                                .border_b_1()
+                                .pt_1()
+                                .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(Label::new("Cycle Through Profiles"))
                                 .child(KeyBinding::for_action_in(
@@ -239,6 +240,7 @@ enum ProfilePickerEntry {
 pub(crate) struct ProfilePickerDelegate {
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
+    foreground: ForegroundExecutor,
     background: BackgroundExecutor,
     candidates: Vec<ProfileCandidate>,
     string_candidates: Arc<Vec<StringMatchCandidate>>,
@@ -255,6 +257,7 @@ impl ProfilePickerDelegate {
         fs: Arc<dyn Fs>,
         provider: Arc<dyn ProfileProvider>,
         profiles: AvailableProfiles,
+        foreground: ForegroundExecutor,
         background: BackgroundExecutor,
         focus_handle: FocusHandle,
         cx: &mut Context<ProfileSelector>,
@@ -266,6 +269,7 @@ impl ProfilePickerDelegate {
         let mut this = Self {
             fs,
             provider,
+            foreground,
             background,
             candidates,
             string_candidates,
@@ -401,7 +405,7 @@ impl ProfilePickerDelegate {
 
         let cancel_flag = AtomicBool::new(false);
 
-        self.background.block(match_strings(
+        self.foreground.block_on(match_strings(
             self.string_candidates.as_ref(),
             query,
             false,
@@ -734,6 +738,7 @@ mod tests {
             let delegate = ProfilePickerDelegate {
                 fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+                foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
                 candidates,
                 string_candidates: Arc::new(Vec::new()),
@@ -771,6 +776,7 @@ mod tests {
             let delegate = ProfilePickerDelegate {
                 fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+                foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
                 candidates,
                 string_candidates: Arc::new(Vec::new()),
