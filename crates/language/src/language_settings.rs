@@ -1,6 +1,8 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageName, LanguageServerName};
+use crate::{
+    Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName, ModelineSettings,
+};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -15,21 +17,91 @@ pub use settings::{
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use text::ToOffset;
 
-/// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(
+pub struct LanguageSettingsBuilder<'a> {
+    cx: &'a App,
     language: Option<LanguageName>,
     file: Option<&'a Arc<dyn File>>,
-    cx: &'a App,
-) -> Cow<'a, LanguageSettings> {
-    let location = file.map(|f| SettingsLocation {
-        worktree_id: f.worktree_id(cx),
-        path: f.path().as_ref(),
-    });
-    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
+    modeline: Option<&'a ModelineSettings>,
+}
+
+impl<'a> LanguageSettingsBuilder<'a> {
+    pub fn language(mut self, language: Option<LanguageName>) -> Self {
+        self.language = language;
+        self
+    }
+
+    pub fn file(mut self, file: Option<&'a Arc<dyn File>>) -> Self {
+        self.file = file;
+        self
+    }
+
+    pub fn buffer(mut self, buffer: &'a Buffer) -> Self {
+        self.language = buffer.language().map(|l| l.name());
+        self.file = buffer.file();
+        self.modeline = buffer.modeline().map(|arc| arc.as_ref());
+        self
+    }
+
+    pub fn buffer_at<D: ToOffset>(mut self, buffer: &'a Buffer, position: D) -> Self {
+        self.language = buffer.language_at(position).map(|l| l.name());
+        self.file = buffer.file();
+        self
+    }
+
+    pub fn buffer_snapshot(mut self, buffer: &'a BufferSnapshot) -> Self {
+        self.language = buffer.language().map(|l| l.name());
+        self.file = buffer.file();
+        self.modeline = buffer.modeline().map(|arc| arc.as_ref());
+        self
+    }
+
+    pub fn modeline(mut self, modeline: Option<&'a ModelineSettings>) -> Self {
+        self.modeline = modeline;
+        self
+    }
+
+    pub fn buffer_snapshot_at<D: ToOffset>(
+        mut self,
+        buffer: &'a BufferSnapshot,
+        position: D,
+    ) -> Self {
+        self.language = buffer.language_at(position).map(|l| l.name());
+        self.file = buffer.file();
+        self
+    }
+
+    pub fn get(self) -> Cow<'a, LanguageSettings> {
+        let location = self.file.map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(self.cx),
+            path: f.path().as_ref(),
+        });
+        let mut settings = AllLanguageSettings::get(location, self.cx).language(
+            location,
+            self.language.as_ref(),
+            self.cx,
+        );
+
+        if let Some(modeline) = self.modeline {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
+}
+
+/// Returns the settings for the specified language from the provided file.
+pub fn language_settings<'a>(cx: &'a App) -> LanguageSettingsBuilder<'a> {
+    LanguageSettingsBuilder {
+        cx,
+        language: None,
+        file: None,
+        modeline: None,
+    }
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -478,6 +550,35 @@ impl AllLanguageSettings {
     }
 }
 
+fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {
+    let show_whitespaces = modeline.show_trailing_whitespace.and_then(|v| {
+        if v {
+            Some(ShowWhitespaceSetting::Trailing)
+        } else {
+            None
+        }
+    });
+
+    settings
+        .tab_size
+        .merge_from_option(modeline.tab_size.as_ref());
+    settings
+        .hard_tabs
+        .merge_from_option(modeline.hard_tabs.as_ref());
+    settings
+        .preferred_line_length
+        .merge_from_option(modeline.preferred_line_length.map(u32::from).as_ref());
+    settings
+        .auto_indent
+        .merge_from_option(modeline.auto_indent.as_ref());
+    settings
+        .show_whitespaces
+        .merge_from_option(show_whitespaces.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(modeline.ensure_final_newline.as_ref());
+}
+
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
     let preferred_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
         MaxLineLen::Value(u) => Some(u as u32),
@@ -505,22 +606,18 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             TrimTrailingWs::Value(b) => b,
         })
         .ok();
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
-        }
-    }
-    merge(&mut settings.preferred_line_length, preferred_line_length);
-    merge(&mut settings.tab_size, tab_size);
-    merge(&mut settings.hard_tabs, hard_tabs);
-    merge(
-        &mut settings.remove_trailing_whitespace_on_save,
-        remove_trailing_whitespace_on_save,
-    );
-    merge(
-        &mut settings.ensure_final_newline_on_save,
-        ensure_final_newline_on_save,
-    );
+
+    settings
+        .preferred_line_length
+        .merge_from_option(preferred_line_length.as_ref());
+    settings.tab_size.merge_from_option(tab_size.as_ref());
+    settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
+    settings
+        .remove_trailing_whitespace_on_save
+        .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(ensure_final_newline_on_save.as_ref());
 }
 
 impl settings::Settings for AllLanguageSettings {
