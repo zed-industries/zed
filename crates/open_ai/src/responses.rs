@@ -4,13 +4,13 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ReasoningEffort, RequestError, ToolChoice};
+use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
 
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<Value>,
+    pub input: Vec<ResponseInputItem>,
     #[serde(default)]
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,6 +29,50 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseInputItem {
+    Message(ResponseMessageItem),
+    FunctionCall(ResponseFunctionCallItem),
+    FunctionCallOutput(ResponseFunctionCallOutputItem),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseMessageItem {
+    pub role: Role,
+    pub content: Vec<ResponseInputContent>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseFunctionCallItem {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseFunctionCallOutputItem {
+    pub call_id: String,
+    pub output: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseInputContent {
+    #[serde(rename = "input_text")]
+    Text { text: String },
+    #[serde(rename = "input_image")]
+    Image { image_url: String },
+    #[serde(rename = "output_text")]
+    OutputText {
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        annotations: Vec<serde_json::Value>,
+    },
+    #[serde(rename = "refusal")]
+    Refusal { refusal: String },
 }
 
 #[derive(Serialize, Debug)]
