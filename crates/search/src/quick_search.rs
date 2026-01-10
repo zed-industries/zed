@@ -3,6 +3,7 @@ use futures::StreamExt;
 use std::ops::Range;
 use std::pin::pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use editor::{Editor, EditorEvent};
 use gpui::{
@@ -31,6 +32,8 @@ use workspace::{ModalView, Workspace};
 pub use zed_actions::quick_search::Toggle;
 
 actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters]);
+
+const SEARCH_DEBOUNCE_MS: u64 = 100;
 
 /// Global state for storing the recent search query.
 struct RecentSearchState {
@@ -987,6 +990,14 @@ impl PickerDelegate for QuickSearchDelegate {
         cx.notify();
 
         cx.spawn_in(window, async move |picker, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
+                .await;
+
+            if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+
             let SearchResults { rx, _task_handle } = search_results;
             let mut results_stream = pin!(rx.ready_chunks(256));
 
