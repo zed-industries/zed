@@ -246,7 +246,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             } => abs_path.to_string_lossy(),
         };
         let label = symbol.label.text.clone();
-        let path = path.to_string();
+        let line_number = symbol.range.start.0.row + 1;
+        let path = format!("{}:{}", path, line_number);
 
         let settings = ThemeSettings::get_global(cx);
 
