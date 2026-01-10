@@ -862,11 +862,8 @@ fn in_subword(
         .buffer_chars_at(offset)
         .next()
         .map(|(c, _)| {
-            if classifier.is_word('-') {
-                !classifier.is_whitespace(c) && c != '_' && c != '-'
-            } else {
-                !classifier.is_whitespace(c) && c != '_'
-            }
+            let is_separator = "._-".contains(c);
+            !classifier.is_whitespace(c) && !is_separator
         })
         .unwrap_or(false);
 
@@ -876,28 +873,28 @@ fn in_subword(
             right(map, relative_to, 1),
             movement::FindRange::SingleLine,
             |left, right| {
+                let is_separator = |c: char| "._-".contains(c);
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
-                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                    || left == '_' && right != '_'
-                    || left.is_lowercase() && right.is_uppercase();
+                let is_subword_start = (is_separator(left) && !is_separator(right))
+                    || (left.is_lowercase() && right.is_uppercase());
                 is_word_start || is_subword_start
             },
         )
     } else {
         movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+            let is_separator = |c: char| "._-".contains(c);
             let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                || left == '_' && right != '_'
-                || left.is_lowercase() && right.is_uppercase();
+            let is_subword_start = (is_separator(left) && !is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
             is_word_start || is_subword_start
         })
     };
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        let is_separator = |c: char| "._-".contains(c);
         let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
+        let is_subword_end = (!is_separator(left) && is_separator(right))
+            || (left.is_lowercase() && right.is_uppercase());
         is_word_end || is_subword_end
     });
 
@@ -1039,19 +1036,20 @@ fn around_subword(
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
         |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
-                || left != '_' && right == '_'
-                || left.is_lowercase() && right.is_uppercase();
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_start =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(left);
+            let is_subword_start = (!is_separator(left) && is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
             is_word_start || is_subword_start
         },
     );
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
+        let is_separator = |c: char| "._-".contains(c);
+        let is_word_end = classifier.kind(left) != classifier.kind(right) && !is_separator(right);
+        let is_subword_end = (!is_separator(left) && is_separator(right))
+            || (left.is_lowercase() && right.is_uppercase());
         is_word_end || is_subword_end
     });
 
