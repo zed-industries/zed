@@ -114,8 +114,9 @@ pub struct GlobalLspSettings {
     /// Default: `true`
     pub button: bool,
     /// The maximum amount of time to wait for responses from language servers, in seconds.
-    /// A value of `0` will result in no timeout being applied (causing all LSP reponses to wait
-    // indefinitely until completed).
+    /// A value of `0` will result in no timeout being applied (causing all LSP responses to wait
+    /// indefinitely until completed).
+    /// This should not be used outside of serialization/de-serialization in favor of get_request_timeout.
     ///
     /// Default: `120`
     pub request_timeout: u64,
@@ -131,11 +132,13 @@ impl Default for GlobalLspSettings {
 }
 
 impl GlobalLspSettings {
-    /// Returns the timeout duration for the LSP settings, or Duration::MAX if no timeout should be used.
-    pub fn get_request_timeout(&self) -> Duration {
+    /// Returns the timeout duration for LSP-related interactions, or Duration::ZERO if no timeout should be applied.
+    /// Zero durations are treated as no timeout by language servers, so code using this in an async context can
+    /// simply call unwrap_or_default.
+    pub const fn get_request_timeout(&self) -> Duration {
         match self.request_timeout {
-            0 => Duration::MAX,
-            secs => Duration::from_secs(secs),
+            0 => Duration::ZERO,
+            _ => Duration::from_secs(self.request_timeout),
         }
     }
 }

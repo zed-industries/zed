@@ -118,7 +118,7 @@ pub struct LanguageServer {
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
     /// The user-configured timeout for performing LSP requests.
-    request_timeout: Option<Duration>,
+    request_timeout: Duration,
     root_uri: Uri,
 }
 
@@ -327,6 +327,7 @@ pub struct AdapterServerCapabilities {
 
 impl LanguageServer {
     /// Starts a language server process.
+    /// A request_timeout of zero or Duration::MAX indicates an indefinite timeout.
     pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
@@ -335,7 +336,7 @@ impl LanguageServer {
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
-        request_timeout: Option<Duration>,
+        request_timeout: Duration,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -409,7 +410,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_uri: Uri,
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
-        request_timeout: Option<Duration>,
+        request_timeout: Duration,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -1169,6 +1170,7 @@ impl LanguageServer {
         self.name.clone()
     }
 
+    /// Get the process name of the running language server.
     pub fn process_name(&self) -> &str {
         &self.process_name
     }
@@ -1187,25 +1189,28 @@ impl LanguageServer {
         }
     }
 
+    /// Update the capabilities of the running language server.
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
     }
 
+    /// Get the individual configuration settings for the running language server.
+    /// Does not include globally applied settings (which are stored in ProjectSettings.GlobalLspSettings).
     pub fn configuration(&self) -> &Value {
         &self.configuration.settings
     }
 
-    /// Get the id of the running language server.
+    /// Get the ID of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
     }
 
-    /// Language server's binary information.
+    /// Get the binary information of the running language server.
     pub fn binary(&self) -> &LanguageServerBinary {
         &self.binary
     }
 
-    /// Sends a RPC request to the language server.
+    /// Send a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request<T: request::Request>(
@@ -1226,8 +1231,8 @@ impl LanguageServer {
         )
     }
 
-    /// Sends a RPC request to the language server, with a custom timer, a future which when becoming
-    /// ready causes the request to be timed out with the future's output message.
+    /// Send a RPC request to the language server with a custom timer.
+    /// Once the attached future becomes ready, the request will time out with the provided output message.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
@@ -1270,7 +1275,7 @@ impl LanguageServer {
             method: T::METHOD,
             params,
         })
-        .unwrap();
+        .expect("LSP message should be serializable to JSON");
 
         let (tx, rx) = oneshot::channel();
         let handle_response = response_handlers
@@ -1356,7 +1361,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
-        request_timeout: Option<Duration>,
+        request_timeout: Duration,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
@@ -1374,24 +1379,34 @@ impl LanguageServer {
         )
     }
 
+    /// Internal function to return a Future from a configured timeout duration.
+    /// If the duration is zero or `Duration::MAX`, the returned future never completes.
     fn request_timeout_future(
         executor: BackgroundExecutor,
-        request_timeout: Option<Duration>,
+        request_timeout: Duration,
     ) -> impl Future<Output = String> {
-        match request_timeout {
-            Some(timeout) => Either::Left(
-                executor
-                    .timer(timeout)
-                    .map(move |_| format!("which took over {timeout:?}")),
-            ),
-            None => Either::Right(future::pending::<String>()),
+        if request_timeout == Duration::MAX || request_timeout == Default::default() {
+            return Either::Left(future::pending::<String>());
         }
+
+        Either::Right(
+            executor
+                .timer(request_timeout)
+                .map(move |_| format!("which took over {request_timeout:?}")),
+        )
     }
 
     /// Obtain a request timer for the LSP.
-    /// Accepts a minimum timeout duration to use.
+    /// Accepts an optional minimum timeout duration to use.
     pub fn request_timer(&self, min_timeout: Option<Duration>) -> impl Future<Output = String> {
-        Self::request_timeout_future(self.executor.clone(), self.request_timeout.max(min_timeout))
+        let timeout = if let Some(min_timeout) = min_timeout
+            && self.request_timeout != Duration::ZERO
+        {
+            self.request_timeout.max(min_timeout)
+        } else {
+            self.request_timeout
+        };
+        Self::request_timeout_future(self.executor.clone(), timeout)
     }
 
     /// Sends a RPC notification to the language server.
@@ -1670,7 +1685,7 @@ impl FakeLanguageServer {
             binary.clone(),
             root,
             Some(workspace_folders.clone()),
-            Some(DEFAULT_LSP_REQUEST_TIMEOUT),
+            DEFAULT_LSP_REQUEST_TIMEOUT,
             cx,
             |_| false,
         );
@@ -1690,7 +1705,7 @@ impl FakeLanguageServer {
                     binary,
                     Self::root_path(),
                     Some(workspace_folders),
-                    Some(DEFAULT_LSP_REQUEST_TIMEOUT),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
                     cx,
                     move |msg| {
                         notifications_tx
