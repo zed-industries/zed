@@ -14,7 +14,6 @@ pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_
 use std::ops::Range;
 
 use crate::{
-    syntax_delimiters::SyntaxDelimiterTree,
     syntax_graph::{ExceededGraphLimit, SyntaxRoute},
     syntax_tree::SyntaxHint,
 };
@@ -63,14 +62,8 @@ pub fn diff_trees(
     rhs_tree: &SyntaxTree,
     options: &DiffOptions,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
-    let delimeters = SyntaxDelimiterTree::new();
-
-    let route = syntax_graph::shortest_path(
-        lhs_tree,
-        rhs_tree,
-        &delimeters,
-        options.max_syntax_diff_graph_size,
-    )?;
+    let route =
+        syntax_graph::shortest_path(lhs_tree, rhs_tree, options.max_syntax_diff_graph_size)?;
 
     let (lhs_ranges, rhs_ranges) = collect_ranges(&route, lhs_tree, rhs_tree, options);
 

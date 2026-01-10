@@ -9,7 +9,7 @@ use arrayvec::ArrayVec;
 use collections::FxHashMap;
 
 use crate::SyntaxTree;
-use crate::syntax_delimiters::{SyntaxDelimiterCursor, SyntaxDelimiterEntry, SyntaxDelimiterTree};
+use crate::syntax_delimiters::SyntaxDelimiterCursor;
 use crate::syntax_tree::{SyntaxHint, SyntaxTreeCursor};
 
 /// Error when the graph search exceeds the configured limit.
@@ -62,14 +62,14 @@ impl<'a> Ord for SyntaxPath<'a> {
 pub struct SyntaxVertex<'a> {
     pub lhs: SyntaxTreeCursor<'a>,
     pub rhs: SyntaxTreeCursor<'a>,
-    pub delimiters: SyntaxDelimiterCursor<'a>,
+    pub delimiters: SyntaxDelimiterCursor,
 }
 
 impl<'a> SyntaxVertex<'a> {
     pub fn new(
         lhs: SyntaxTreeCursor<'a>,
         rhs: SyntaxTreeCursor<'a>,
-        delimiters: SyntaxDelimiterCursor<'a>,
+        delimiters: SyntaxDelimiterCursor,
     ) -> Self {
         Self {
             lhs,
@@ -83,7 +83,7 @@ impl<'a> SyntaxVertex<'a> {
     }
 
     fn can_pop_either(&self) -> bool {
-        self.delimiters.can_pop_either()
+        self.delimiters.can_pop_lhs() || self.delimiters.can_pop_rhs()
     }
 }
 
@@ -148,35 +148,52 @@ impl SyntaxEdge {
 fn pop_all_delimiters<'a>(
     mut lhs: SyntaxTreeCursor<'a>,
     mut rhs: SyntaxTreeCursor<'a>,
-    mut delimiters: SyntaxDelimiterCursor<'a>,
+    mut delimiters: SyntaxDelimiterCursor,
 ) -> (
     SyntaxTreeCursor<'a>,
     SyntaxTreeCursor<'a>,
-    SyntaxDelimiterCursor<'a>,
+    SyntaxDelimiterCursor,
 ) {
     loop {
-        let Some((entry, parent)) = delimiters.pop() else {
-            break;
-        };
+        let mut popped = false;
 
-        match entry {
-            SyntaxDelimiterEntry::Lhs(id) if lhs.is_end() => {
-                lhs = lhs.tree().cursor_at(id).next_sibling();
-                delimiters = parent;
+        // Try popping LHS delimiters while LHS cursor is at end
+        while lhs.is_end() {
+            if let Some(new_delimiters) = delimiters.pop_lhs() {
+                // TODO: Fix SyntaxTreeCursor::parent() to work when at end
+                lhs = lhs.parent().next_sibling();
+                delimiters = new_delimiters;
+                popped = true;
+            } else {
+                break;
             }
-            SyntaxDelimiterEntry::Rhs(id) if rhs.is_end() => {
-                rhs = rhs.tree().cursor_at(id).next_sibling();
-                delimiters = parent;
+        }
+
+        // Try popping RHS delimiters while RHS cursor is at end
+        while rhs.is_end() {
+            if let Some(new_delimiters) = delimiters.pop_rhs() {
+                // TODO: Fix SyntaxTreeCursor::parent() to work when at end
+                rhs = rhs.parent().next_sibling();
+                delimiters = new_delimiters;
+                popped = true;
+            } else {
+                break;
             }
-            SyntaxDelimiterEntry::Both {
-                lhs: lhs_id,
-                rhs: rhs_id,
-            } if lhs.is_end() && rhs.is_end() => {
-                lhs = lhs.tree().cursor_at(lhs_id).next_sibling();
-                rhs = rhs.tree().cursor_at(rhs_id).next_sibling();
-                delimiters = parent;
+        }
+
+        // Try popping Both when both cursors are at end
+        if lhs.is_end() && rhs.is_end() {
+            if let Some(new_delimiters) = delimiters.pop_both() {
+                // TODO: Fix SyntaxTreeCursor::parent() to work when at end
+                lhs = lhs.parent().next_sibling();
+                rhs = rhs.parent().next_sibling();
+                delimiters = new_delimiters;
+                popped = true;
             }
-            _ => break,
+        }
+
+        if !popped {
+            break;
         }
     }
 
@@ -238,7 +255,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
                 && lhs_node.close_delimiter() == rhs_node.close_delimiter()
             {
                 let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
-                let delimiters = v.delimiters.push_both(lhs_node.id, rhs_node.id);
+                let delimiters = v.delimiters.push_both();
                 let (lhs, rhs, delimiters) =
                     pop_all_delimiters(v.lhs.first_child(), v.rhs.first_child(), delimiters);
                 neighbours.push((
@@ -257,7 +274,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
     if let Some(lhs_node) = v.lhs.node() {
         if lhs_node.is_atom() {
             let (lhs, rhs, delimiters) =
-                pop_all_delimiters(v.lhs.next_sibling(), v.rhs, v.delimiters.clone());
+                pop_all_delimiters(v.lhs.next_sibling(), v.rhs, v.delimiters);
             neighbours.push((
                 SyntaxEdge::NovelAtomLHS,
                 SyntaxVertex {
@@ -268,7 +285,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
             ));
         } else {
             // Enter novel LHS list
-            let delimiters = v.delimiters.push_lhs(lhs_node.id);
+            let delimiters = v.delimiters.push_lhs();
             let (lhs, rhs, delimiters) = pop_all_delimiters(v.lhs.first_child(), v.rhs, delimiters);
             neighbours.push((
                 SyntaxEdge::EnterNovelDelimiterLHS,
@@ -296,7 +313,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
             ));
         } else {
             // Enter novel RHS list
-            let delimiters = v.delimiters.push_rhs(rhs_node.id);
+            let delimiters = v.delimiters.push_rhs();
             let (lhs, rhs, delimiters) = pop_all_delimiters(v.lhs, v.rhs.first_child(), delimiters);
             neighbours.push((
                 SyntaxEdge::EnterNovelDelimiterRHS,
@@ -318,7 +335,6 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
 pub fn shortest_path<'a>(
     lhs_tree: &'a SyntaxTree,
     rhs_tree: &'a SyntaxTree,
-    delimeters: &'a SyntaxDelimiterTree,
     graph_limit: usize,
 ) -> Result<SyntaxRoute<'a>, ExceededGraphLimit> {
     let lhs_cursor = lhs_tree.cursor();
@@ -330,7 +346,7 @@ pub fn shortest_path<'a>(
     let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> =
         FxHashMap::with_capacity_and_hasher(graph_limit, Default::default());
 
-    let start = SyntaxVertex::new(lhs_cursor, rhs_cursor, delimeters.cursor());
+    let start = SyntaxVertex::new(lhs_cursor, rhs_cursor, SyntaxDelimiterCursor::default());
 
     heap.push(Reverse(SyntaxPath {
         from: None,

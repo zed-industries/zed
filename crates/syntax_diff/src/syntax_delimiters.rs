@@ -1,123 +1,95 @@
-use std::cell::RefCell;
-
-use crate::SyntaxId;
-
-/// Represents how we entered a delimiter during diff traversal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyntaxDelimiterEntry {
-    /// Entered matching delimiters on both sides together (must exit together).
-    Both { lhs: SyntaxId, rhs: SyntaxId },
-    /// Entered a delimiter only on the LHS (can exit independently).
-    Lhs(SyntaxId),
-    /// Entered a delimiter only on the RHS (can exit independently).
-    Rhs(SyntaxId),
+#[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct SyntaxDelimiterCursor {
+    // TODO: SmallVec<[(u64, u64)]; 16> to avoid limits
+    lhs_depths: u128,
+    rhs_depths: u128,
+    both_depth: u8,
 }
 
-/// Shared storage for delimiter stack nodes.
-///
-/// Nodes are stored in a flat vector, with each node containing its entry and
-/// a parent index. This forms a tree where paths from any node to the root
-/// represent complete stacks. Multiple cursors can share prefixes efficiently.
-pub struct SyntaxDelimiterTree {
-    nodes: RefCell<Vec<(SyntaxDelimiterEntry, Option<usize>)>>,
-}
+impl SyntaxDelimiterCursor {
+    const LAYER_SIZE: u8 = 8;
 
-impl SyntaxDelimiterTree {
-    pub fn new() -> Self {
-        Self {
-            nodes: RefCell::new(Vec::new()),
-        }
-    }
-
-    /// Creates an empty cursor pointing to the root (empty stack).
-    pub fn cursor(&self) -> SyntaxDelimiterCursor<'_> {
-        SyntaxDelimiterCursor {
-            tree: self,
-            head: None,
-        }
-    }
-}
-
-/// A cursor into the delimiter tree that behaves like a stack.
-///
-/// The cursor is `Copy` - it's just a reference to the tree plus an index.
-/// Push operations return a new cursor; the original remains valid.
-/// This enables structural sharing: branching paths share common prefixes.
-#[derive(Clone, Copy)]
-pub struct SyntaxDelimiterCursor<'a> {
-    tree: &'a SyntaxDelimiterTree,
-    head: Option<usize>,
-}
-
-impl<'a> SyntaxDelimiterCursor<'a> {
     pub fn is_empty(&self) -> bool {
-        self.head.is_none()
+        self.both_depth == 0 && self.lhs_depths == 0 && self.rhs_depths == 0
     }
 
-    /// Pushes a `Both` entry, returning a new cursor. O(1).
-    pub fn push_both(&self, lhs: SyntaxId, rhs: SyntaxId) -> Self {
-        self.push(SyntaxDelimiterEntry::Both { lhs, rhs })
-    }
-
-    /// Pushes an `Lhs` entry, returning a new cursor. O(1).
-    pub fn push_lhs(&self, id: SyntaxId) -> Self {
-        self.push(SyntaxDelimiterEntry::Lhs(id))
-    }
-
-    /// Pushes an `Rhs` entry, returning a new cursor. O(1).
-    pub fn push_rhs(&self, id: SyntaxId) -> Self {
-        self.push(SyntaxDelimiterEntry::Rhs(id))
-    }
-
-    fn push(&self, entry: SyntaxDelimiterEntry) -> Self {
-        let mut nodes = self.tree.nodes.borrow_mut();
-        let idx = nodes.len();
-        nodes.push((entry, self.head));
+    pub fn push_both(self) -> Self {
         Self {
-            tree: self.tree,
-            head: Some(idx),
+            lhs_depths: self.lhs_depths,
+            rhs_depths: self.rhs_depths,
+            both_depth: self.both_depth + 1,
         }
     }
 
-    /// Returns the top entry without modifying the cursor.
-    pub fn last(&self) -> Option<SyntaxDelimiterEntry> {
-        self.head.map(|idx| self.tree.nodes.borrow()[idx].0)
+    pub fn push_lhs(self) -> Self {
+        Self {
+            lhs_depths: self.lhs_depths + self.shift(),
+            rhs_depths: self.rhs_depths,
+            both_depth: self.both_depth,
+        }
     }
 
-    /// Pops the top entry, returning it and a cursor to the parent. O(1).
-    pub fn pop(&self) -> Option<(SyntaxDelimiterEntry, Self)> {
-        self.head.map(|idx| {
-            let nodes = self.tree.nodes.borrow();
-            let (entry, parent) = nodes[idx];
-            (
-                entry,
-                Self {
-                    tree: self.tree,
-                    head: parent,
-                },
-            )
+    pub fn push_rhs(self) -> Self {
+        Self {
+            rhs_depths: self.rhs_depths + self.shift(),
+            lhs_depths: self.lhs_depths,
+            both_depth: self.both_depth,
+        }
+    }
+
+    pub fn pop_lhs(self) -> Option<Self> {
+        if self.lhs_depth() == 0 {
+            return None;
+        }
+
+        Some(Self {
+            lhs_depths: self.lhs_depths - self.shift(),
+            rhs_depths: self.rhs_depths,
+            both_depth: self.both_depth,
         })
     }
 
-    /// Returns true if the top entry is `Lhs` or `Rhs` (can pop independently).
-    pub fn can_pop_either(&self) -> bool {
-        matches!(
-            self.last(),
-            Some(SyntaxDelimiterEntry::Lhs(_) | SyntaxDelimiterEntry::Rhs(_))
-        )
+    pub fn pop_rhs(self) -> Option<Self> {
+        if self.rhs_depth() == 0 {
+            return None;
+        }
+
+        Some(Self {
+            rhs_depths: self.rhs_depths - self.shift(),
+            lhs_depths: self.lhs_depths,
+            both_depth: self.both_depth,
+        })
     }
-}
 
-impl PartialEq for SyntaxDelimiterCursor<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.tree, other.tree) && self.head == other.head
+    pub fn pop_both(self) -> Option<Self> {
+        if self.both_depth == 0 || self.lhs_depth() != 0 || self.rhs_depth() != 0 {
+            return None;
+        }
+
+        Some(Self {
+            both_depth: self.both_depth - 1,
+            lhs_depths: self.lhs_depths,
+            rhs_depths: self.rhs_depths,
+        })
     }
-}
 
-impl Eq for SyntaxDelimiterCursor<'_> {}
+    pub fn can_pop_lhs(&self) -> bool {
+        self.lhs_depth() > 0
+    }
 
-impl std::hash::Hash for SyntaxDelimiterCursor<'_> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.head.hash(state);
+    pub fn can_pop_rhs(&self) -> bool {
+        self.rhs_depth() > 0
+    }
+
+    fn shift(&self) -> u128 {
+        1 << (self.both_depth * Self::LAYER_SIZE)
+    }
+
+    fn lhs_depth(&self) -> u8 {
+        ((self.lhs_depths >> (self.both_depth * Self::LAYER_SIZE)) & 0xFF) as u8
+    }
+
+    fn rhs_depth(&self) -> u8 {
+        ((self.rhs_depths >> (self.both_depth * Self::LAYER_SIZE)) & 0xFF) as u8
     }
 }
