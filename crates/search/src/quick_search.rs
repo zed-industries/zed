@@ -35,6 +35,8 @@ actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters]);
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 
+struct SearchMatchHighlight;
+
 /// Global state for storing the recent search query.
 struct RecentSearchState {
     last_query: String,
@@ -629,6 +631,7 @@ impl QuickSearchDelegate {
         let buffer = selected_match.buffer.clone();
         let match_row = selected_match.line_number.saturating_sub(1);
         let ranges = selected_match.ranges.clone();
+        let anchor_ranges = selected_match.anchor_ranges.clone();
 
         self.preview_editor.update(cx, |editor, cx| {
             let multi_buffer = editor.buffer().clone();
@@ -660,6 +663,23 @@ impl QuickSearchDelegate {
                     cx,
                 );
             });
+
+            // Highlight all matches with yellow background (like IntelliJ)
+            let multi_buffer_snapshot = multi_buffer.read(cx);
+            if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
+                let highlight_ranges: Vec<_> = anchor_ranges
+                    .iter()
+                    .map(|range| {
+                        editor::Anchor::range_in_buffer(excerpt_id, range.clone())
+                    })
+                    .collect();
+
+                editor.highlight_background::<SearchMatchHighlight>(
+                    &highlight_ranges,
+                    |_, theme| theme.colors().search_match_background,
+                    cx,
+                );
+            }
 
             if let Some(range) = ranges.first() {
                 let start = multi_buffer::MultiBufferOffset(range.start);
@@ -1189,7 +1209,7 @@ impl PickerDelegate for QuickSearchDelegate {
             &line_text_string,
             &highlight_indices,
             HighlightStyle {
-                background_color: Some(cx.theme().status().warning_background),
+                background_color: Some(cx.theme().colors().search_match_background),
                 font_weight: Some(gpui::FontWeight::BOLD),
                 ..Default::default()
             },
