@@ -91,6 +91,7 @@ pub struct QuickSearch {
     focus_handle: FocusHandle,
     offset: gpui::Point<Pixels>,
     _subscriptions: Vec<Subscription>,
+    _autosave_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Copy)]
@@ -143,7 +144,6 @@ impl QuickSearch {
             let multi_buffer = cx.new(|_| MultiBuffer::new(capability));
             let mut editor =
                 Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
-            editor.set_read_only(true);
             editor.set_show_breadcrumbs(false, cx);
             editor
         });
@@ -217,6 +217,32 @@ impl QuickSearch {
                     cx.emit(DismissEvent);
                 }
             }),
+            cx.subscribe_in(
+                &preview_editor,
+                window,
+                |this, _, event: &EditorEvent, window, cx| {
+                    if matches!(event, EditorEvent::Edited { .. }) {
+                        this._autosave_task = Some(cx.spawn_in(window, async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(500))
+                                .await;
+
+                            this.update_in(cx, |this, _window, cx| {
+                                let delegate = &this.picker.read(cx).delegate;
+                                if let Some(m) = delegate.matches.get(delegate.selected_index) {
+                                    let buffer = m.buffer.clone();
+                                    let project = delegate.project.clone();
+                                    let mut buffers = HashSet::default();
+                                    buffers.insert(buffer);
+                                    project
+                                        .update(cx, |p, cx| p.save_buffers(buffers, cx))
+                                        .detach_and_log_err(cx);
+                                }
+                            }).log_err();
+                        }));
+                    }
+                },
+            ),
         ];
 
         Self {
@@ -226,6 +252,7 @@ impl QuickSearch {
             focus_handle,
             offset: gpui::Point::default(),
             _subscriptions: subscriptions,
+            _autosave_task: None,
         }
     }
 
