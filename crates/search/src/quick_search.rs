@@ -5,11 +5,16 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::{
+    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
+    ToggleRegex, ToggleReplace, ToggleWholeWord,
+};
+use editor::EditorSettings;
 use editor::{Editor, EditorEvent};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled,
-    StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
+    Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
+    Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
 use menu;
@@ -18,11 +23,6 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchQuery, SearchResult};
 use project::{Project, ProjectPath};
-use crate::{
-    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
-    ToggleRegex, ToggleReplace, ToggleWholeWord,
-};
-use editor::EditorSettings;
 use settings::Settings;
 use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
@@ -232,7 +232,8 @@ impl QuickSearch {
                                         .update(cx, |p, cx| p.save_buffers(buffers, cx))
                                         .detach_and_log_err(cx);
                                 }
-                            }).log_err();
+                            })
+                            .log_err();
                         }));
                     }
                 },
@@ -402,13 +403,19 @@ impl Render for QuickSearch {
             }))
             .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
                 this.picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(SearchOptions::CASE_SENSITIVE);
+                    picker
+                        .delegate
+                        .search_options
+                        .toggle(SearchOptions::CASE_SENSITIVE);
                     picker.refresh(window, cx);
                 });
             }))
             .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
                 this.picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(SearchOptions::WHOLE_WORD);
+                    picker
+                        .delegate
+                        .search_options
+                        .toggle(SearchOptions::WHOLE_WORD);
                     picker.refresh(window, cx);
                 });
             }))
@@ -569,7 +576,8 @@ impl Render for QuickSearch {
                                         )
                                     })
                                     .on_click(|_, window, cx| {
-                                        window.dispatch_action(SelectPreviousMatch.boxed_clone(), cx);
+                                        window
+                                            .dispatch_action(SelectPreviousMatch.boxed_clone(), cx);
                                     })
                             })
                             .child({
@@ -590,13 +598,9 @@ impl Render for QuickSearch {
                             })
                             .when(match_count > 0, |this| {
                                 this.child(
-                                    Label::new(format!(
-                                        "{}/{}",
-                                        selected_index + 1,
-                                        match_count
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    Label::new(format!("{}/{}", selected_index + 1, match_count))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
                                 )
                             }),
                     ),
@@ -763,9 +767,7 @@ impl QuickSearchDelegate {
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
                 let highlight_ranges: Vec<_> = anchor_ranges
                     .iter()
-                    .map(|range| {
-                        editor::Anchor::range_in_buffer(excerpt_id, range.clone())
-                    })
+                    .map(|range| editor::Anchor::range_in_buffer(excerpt_id, range.clone()))
                     .collect();
 
                 editor.highlight_background::<SearchMatchHighlight>(
@@ -958,26 +960,31 @@ impl PickerDelegate for QuickSearchDelegate {
                             .gap_0p5()
                             .child({
                                 let focus_handle = focus_handle.clone();
-                                IconButton::new("case-sensitive", SearchOption::CaseSensitive.icon())
-                                    .size(ButtonSize::Compact)
-                                    .toggle_state(
-                                        search_options.contains(SearchOptions::CASE_SENSITIVE),
+                                IconButton::new(
+                                    "case-sensitive",
+                                    SearchOption::CaseSensitive.icon(),
+                                )
+                                .size(ButtonSize::Compact)
+                                .toggle_state(
+                                    search_options.contains(SearchOptions::CASE_SENSITIVE),
+                                )
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::for_action_in(
+                                        SearchOption::CaseSensitive.label(),
+                                        &ToggleCaseSensitive,
+                                        &focus_handle,
+                                        cx,
                                     )
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            SearchOption::CaseSensitive.label(),
-                                            &ToggleCaseSensitive,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|picker, _, window, cx| {
+                                })
+                                .on_click(cx.listener(
+                                    |picker, _, window, cx| {
                                         picker
                                             .delegate
                                             .search_options
                                             .toggle(SearchOptions::CASE_SENSITIVE);
                                         picker.refresh(window, cx);
-                                    }))
+                                    },
+                                ))
                             })
                             .child({
                                 let focus_handle = focus_handle.clone();
@@ -1124,7 +1131,8 @@ impl PickerDelegate for QuickSearchDelegate {
                                         .toggle_state(self.opened_only)
                                         .tooltip(Tooltip::text("Only Search Open Files"))
                                         .on_click(cx.listener(|picker, _, window, cx| {
-                                            picker.delegate.opened_only = !picker.delegate.opened_only;
+                                            picker.delegate.opened_only =
+                                                !picker.delegate.opened_only;
                                             picker.refresh(window, cx);
                                         })),
                                 )
@@ -1132,11 +1140,17 @@ impl PickerDelegate for QuickSearchDelegate {
                                     IconButton::new("include-ignored", IconName::Sliders)
                                         .size(ButtonSize::Compact)
                                         .toggle_state(
-                                            self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                                            self.search_options
+                                                .contains(SearchOptions::INCLUDE_IGNORED),
                                         )
-                                        .tooltip(Tooltip::text("Also search files ignored by configuration"))
+                                        .tooltip(Tooltip::text(
+                                            "Also search files ignored by configuration",
+                                        ))
                                         .on_click(cx.listener(|picker, _, window, cx| {
-                                            picker.delegate.search_options.toggle(SearchOptions::INCLUDE_IGNORED);
+                                            picker
+                                                .delegate
+                                                .search_options
+                                                .toggle(SearchOptions::INCLUDE_IGNORED);
                                             picker.refresh(window, cx);
                                         })),
                                 ),
@@ -1230,9 +1244,8 @@ impl PickerDelegate for QuickSearchDelegate {
                 for result in results {
                     match result {
                         SearchResult::Buffer { buffer, ranges } => {
-                            let matches = QuickSearchDelegate::process_search_result(
-                                &buffer, &ranges, cx,
-                            );
+                            let matches =
+                                QuickSearchDelegate::process_search_result(&buffer, &ranges, cx);
                             batch_matches.extend(matches);
                         }
                         SearchResult::LimitReached => {
