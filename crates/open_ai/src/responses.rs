@@ -68,7 +68,7 @@ pub enum ResponseInputContent {
     #[serde(rename = "output_text")]
     OutputText {
         text: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         annotations: Vec<serde_json::Value>,
     },
     #[serde(rename = "refusal")]

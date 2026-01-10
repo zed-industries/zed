@@ -1584,7 +1584,6 @@ mod tests {
                 {
                     "type": "message",
                     "role": "assistant",
-                    "status": "completed",
                     "content": [
                         { "type": "output_text", "text": "Looking that up.", "annotations": [] }
                     ]
