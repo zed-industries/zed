@@ -85,6 +85,7 @@ pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
     preview_editor: Entity<Editor>,
     replace_editor: Entity<Editor>,
+    focus_handle: FocusHandle,
     offset: gpui::Point<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
@@ -108,8 +109,8 @@ impl ModalView for QuickSearch {}
 impl EventEmitter<DismissEvent> for QuickSearch {}
 
 impl Focusable for QuickSearch {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -171,7 +172,7 @@ impl QuickSearch {
             exclude_editor.clone(),
             cx,
         );
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
         // Restore recent query if available
         if let Some(recent_query) = get_recent_query(cx) {
@@ -179,6 +180,8 @@ impl QuickSearch {
                 picker.set_query(recent_query, window, cx);
             });
         }
+
+        let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
             cx.subscribe_in(&picker, window, |_, _, _: &DismissEvent, _, cx| {
@@ -206,12 +209,18 @@ impl QuickSearch {
                     }
                 },
             ),
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                if window.is_window_active() && !this.focus_handle.contains_focused(window, cx) {
+                    cx.emit(DismissEvent);
+                }
+            }),
         ];
 
         Self {
             picker,
             preview_editor,
             replace_editor,
+            focus_handle,
             offset: gpui::Point::default(),
             _subscriptions: subscriptions,
         }
@@ -593,22 +602,11 @@ impl QuickSearchDelegate {
 
         self.preview_editor.update(cx, |editor, cx| {
             let multi_buffer = editor.buffer().clone();
-
             let buffer_snapshot = buffer.read(cx);
-            let max_row = buffer_snapshot.max_point().row;
-            let context_lines = 5u32;
+            let max_point = buffer_snapshot.max_point();
 
-            let context_start_row = match_row.saturating_sub(context_lines);
-            let context_end_row = (match_row + context_lines + 1).min(max_row);
-
-            let context_start_offset =
-                buffer_snapshot.point_to_offset(Point::new(context_start_row, 0));
-
-            let context_start = buffer_snapshot.anchor_before(Point::new(context_start_row, 0));
-            let context_end = buffer_snapshot.anchor_after(Point::new(
-                context_end_row,
-                buffer_snapshot.line_len(context_end_row),
-            ));
+            let context_start = buffer_snapshot.anchor_before(Point::new(0, 0));
+            let context_end = buffer_snapshot.anchor_after(max_point);
 
             let primary_range = if let Some(range) = ranges.first() {
                 let start = buffer_snapshot.anchor_before(range.start);
@@ -634,17 +632,13 @@ impl QuickSearchDelegate {
             });
 
             if let Some(range) = ranges.first() {
-                let start_in_excerpt = multi_buffer::MultiBufferOffset(
-                    range.start.saturating_sub(context_start_offset),
-                );
-                let end_in_excerpt =
-                    multi_buffer::MultiBufferOffset(range.end.saturating_sub(context_start_offset));
+                let start = multi_buffer::MultiBufferOffset(range.start);
+                let end = multi_buffer::MultiBufferOffset(range.end);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges([start_in_excerpt..end_in_excerpt]);
+                    s.select_ranges([start..end]);
                 });
             } else {
-                let excerpt_row = match_row.min(context_lines);
-                editor.go_to_singleton_buffer_point(Point::new(excerpt_row, 0), window, cx);
+                editor.go_to_singleton_buffer_point(Point::new(match_row, 0), window, cx);
             }
         });
     }
