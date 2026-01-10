@@ -1,6 +1,5 @@
 //! AST-aware diffing for syntax trees.
 
-mod syntax_delimiters;
 #[cfg(test)]
 mod syntax_diff_tests;
 mod syntax_graph;

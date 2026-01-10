@@ -188,6 +188,7 @@ impl SyntaxTree {
     pub fn cursor(&self) -> SyntaxTreeCursor<'_> {
         SyntaxTreeCursor {
             tree: self,
+            last: None,
             current: self.root(),
         }
     }
@@ -195,6 +196,7 @@ impl SyntaxTree {
     pub fn cursor_at(&self, node: SyntaxId) -> SyntaxTreeCursor<'_> {
         SyntaxTreeCursor {
             tree: self,
+            last: None,
             current: Some(node),
         }
     }
@@ -214,6 +216,7 @@ impl Default for SyntaxTree {
 #[derive(Clone, Copy, Debug)]
 pub struct SyntaxTreeCursor<'a> {
     tree: &'a SyntaxTree,
+    last: Option<SyntaxId>,
     current: Option<SyntaxId>,
 }
 
@@ -247,6 +250,7 @@ impl<'a> SyntaxTreeCursor<'a> {
     pub fn goto_first_child(&mut self) -> bool {
         if let Some(id) = self.current {
             if let Some(child) = self.tree.first_child(id) {
+                self.last = Some(id);
                 self.current = Some(child);
                 return true;
             }
@@ -259,6 +263,7 @@ impl<'a> SyntaxTreeCursor<'a> {
     pub fn goto_next_sibling(&mut self) -> bool {
         if let Some(id) = self.current {
             if let Some(sibling) = self.tree.next_sibling(id) {
+                self.last = Some(id);
                 self.current = Some(sibling);
                 return true;
             }
@@ -271,9 +276,19 @@ impl<'a> SyntaxTreeCursor<'a> {
     pub fn goto_parent(&mut self) -> bool {
         if let Some(id) = self.current {
             if let Some(parent) = self.tree.parent(id) {
+                self.last = Some(id);
                 self.current = Some(parent);
                 return true;
             }
+        }
+        false
+    }
+
+    pub fn goto_last(&mut self) -> bool {
+        if let Some(id) = self.last {
+            self.last = self.current;
+            self.current = Some(id);
+            return true;
         }
         false
     }
@@ -283,6 +298,7 @@ impl<'a> SyntaxTreeCursor<'a> {
     pub fn first_child(&self) -> Self {
         Self {
             tree: self.tree,
+            last: self.current.or(self.last),
             current: self.current.and_then(|id| self.tree.first_child(id)),
         }
     }
@@ -292,7 +308,18 @@ impl<'a> SyntaxTreeCursor<'a> {
     pub fn next_sibling(&self) -> Self {
         Self {
             tree: self.tree,
+            last: self.current.or(self.last),
             current: self.current.and_then(|id| self.tree.next_sibling(id)),
+        }
+    }
+
+    /// Returns a new cursor pointing to the last valid position.
+    #[inline]
+    pub fn last(&self) -> Self {
+        Self {
+            tree: self.tree,
+            last: self.current,
+            current: self.last,
         }
     }
 
@@ -301,6 +328,7 @@ impl<'a> SyntaxTreeCursor<'a> {
     pub fn parent(&self) -> Self {
         Self {
             tree: self.tree,
+            last: self.current.or(self.last),
             current: self.current.and_then(|id| self.tree.parent(id)),
         }
     }
