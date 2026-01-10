@@ -126,8 +126,8 @@ impl ModalView for QuickSearch {}
 impl EventEmitter<DismissEvent> for QuickSearch {}
 
 impl Focusable for QuickSearch {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.read(cx).focus_handle(cx)
     }
 }
 
