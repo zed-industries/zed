@@ -359,12 +359,7 @@ pub enum Event {
         path: ProjectPath,
         preview: bool,
     },
-    EntryRenamed {
-        transaction: ProjectTransaction,
-        from_path: ProjectPath,
-        to_path: ProjectPath,
-        to_abs_path: PathBuf,
-    },
+    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
 }
@@ -2354,15 +2349,11 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed {
+                    cx.emit(Event::EntryRenamed(
                         transaction,
-                        from_path: ProjectPath {
-                            worktree_id: worktree_id,
-                            path: old_path,
-                        },
-                        to_path: new_path.clone(),
-                        to_abs_path: new_abs_path.clone(),
-                    });
+                        new_path.clone(),
+                        new_abs_path.clone(),
+                    ));
                 })
                 .ok();
 

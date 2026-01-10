@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, btree_map::Entry},
-    fmt::Debug,
     ops::ControlFlow,
     sync::Arc,
 };
@@ -39,7 +38,7 @@ pub enum LabelPresence {
     Present,
 }
 
-impl<Label: Ord + Clone, Value: Debug + PartialEq + Clone> RootPathTrie<Label, Value> {
+impl<Label: Ord + Clone, Value: PartialEq + Clone> RootPathTrie<Label, Value> {
     pub fn new() -> Self {
         Self::new_with_key(Arc::from(RelPath::empty()))
     }
@@ -97,10 +96,12 @@ impl<Label: Ord + Clone, Value: Debug + PartialEq + Clone> RootPathTrie<Label, V
         }
     }
 
-    pub fn get<'a>(&'a self, path: &TriePath) -> Option<&'a BTreeMap<Label, Value>> {
+    pub fn get<'a>(&'a self, path: Option<&TriePath>) -> Option<&'a BTreeMap<Label, Value>> {
         let mut current = self;
-        for key in path.0.iter() {
-            current = current.children.get(key)?;
+        if let Some(path) = path {
+            for key in path.0.iter() {
+                current = current.children.get(key)?;
+            }
         }
         Some(&current.labels)
     }
@@ -117,6 +118,20 @@ impl<Label: Ord + Clone, Value: Debug + PartialEq + Clone> RootPathTrie<Label, V
             Some(last) => current.children.remove(last),
             None => None,
         }
+    }
+
+    pub fn is_leaf(&self, path: &TriePath) -> bool {
+        let mut current = self;
+        for key in path.0.iter() {
+            current = match current.children.get(key) {
+                Some(child) => child,
+                None => return false,
+            }
+        }
+        if current.children.len() > 0 {
+            return false;
+        }
+        true
     }
 
     // Remove path and resulting monochild ancestors, return branch at path
@@ -154,30 +169,6 @@ impl<Label: Ord + Clone, Value: Debug + PartialEq + Clone> RootPathTrie<Label, V
             };
         }
         branch
-    }
-
-    // Insert branch at path, overwriting existing branch if any
-    pub fn graft(&mut self, path: &TriePath, branch: Option<RootPathTrie<Label, Value>>) {
-        let mut current = self;
-        let mut path_so_far = <Arc<RelPath>>::from(RelPath::empty());
-        let max = path.0.len().saturating_sub(1);
-        for (i, key) in path.0.iter().enumerate() {
-            path_so_far = path_so_far.join(RelPath::unix(key.as_ref()).unwrap());
-            if i == max
-                && let Some(mut branch) = branch
-            {
-                branch.worktree_relative_path = path_so_far.clone();
-                current.children.insert(key.clone(), branch);
-                return;
-            } else {
-                current = match current.children.entry(key.clone()) {
-                    Entry::Vacant(vacant_entry) => {
-                        vacant_entry.insert(RootPathTrie::new_with_key(path_so_far.clone()))
-                    }
-                    Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                };
-            }
-        }
     }
 }
 

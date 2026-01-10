@@ -70,7 +70,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, PathChange};
 use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -98,7 +98,7 @@ struct State {
     pinned_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     expanding_path: Option<ProjectPath>,
     collapsing_path: Option<ProjectPath>,
-    open_paths: HashMap<WorktreeId, RootPathTrie<String, usize>>,
+    open_paths: HashMap<WorktreeId, RootPathTrie<(), usize>>,
 }
 
 impl State {
@@ -623,19 +623,20 @@ impl ProjectPanel {
                         if this.state.open_paths.get(&path.worktree_id).is_none() {
                             this.state
                                 .open_paths
-                                .insert(path.worktree_id, RootPathTrie::<String, usize>::new());
+                                .insert(path.worktree_id, RootPathTrie::<(), usize>::new());
                         }
                         if let Some(open_paths) = this.state.open_paths.get_mut(&path.worktree_id) {
                             let trie_path = TriePath::new(&path.path);
                             // Count instances of open file in different panes
-                            if let Some(labels) = open_paths.get(&trie_path)
-                                && let Some(count) = labels.get(&"count".to_string())
+                            if let Some(count) = open_paths
+                                .get(Some(&trie_path))
+                                .and_then(|labels| labels.get(&()))
+                                .or_else(|| Some(&0usize))
                             {
-                                open_paths.insert(&trie_path, "count".to_string(), *count + 1);
-                            } else {
-                                open_paths.insert(&trie_path, "count".to_string(), 1);
+                                open_paths.insert(&trie_path, (), count + 1);
+                                this.update_visible_entries(None, false, false, window, cx);
+                                cx.notify();
                             }
-                            this.update_visible_entries(None, false, false, window, cx);
                         }
                     }
                     project::Event::EntryClosed { path, preview } => {
@@ -644,11 +645,13 @@ impl ProjectPanel {
                         }
                         if let Some(open_paths) = this.state.open_paths.get_mut(&path.worktree_id) {
                             let trie_path = TriePath::new(&path.path);
-                            if let Some(labels) = open_paths.get(&trie_path)
-                                && let Some(count) = labels.get(&"count".to_string())
+                            // Count instances of open file in different panes
+                            if let Some(count) = open_paths
+                                .get(Some(&trie_path))
+                                .and_then(|labels| labels.get(&()))
                                 && *count > 1
                             {
-                                open_paths.insert(&trie_path, "count".to_string(), *count - 1);
+                                open_paths.insert(&trie_path, (), count - 1);
                             } else {
                                 open_paths.prune(&trie_path);
                             }
@@ -659,35 +662,7 @@ impl ProjectPanel {
                                 this.state.open_paths.remove(&path.worktree_id);
                             }
                             this.update_visible_entries(None, false, false, window, cx);
-                        }
-                    }
-                    project::Event::EntryRenamed {
-                        transaction: _,
-                        from_path,
-                        to_path,
-                        to_abs_path: _,
-                    } => {
-                        if let Some(from_open_paths) =
-                            this.state.open_paths.get_mut(&from_path.worktree_id)
-                        {
-                            let trie_path = TriePath::new(&from_path.path);
-                            let branch = from_open_paths.prune(&trie_path);
-                            if from_open_paths.len() == 0 {
-                                this.state.open_paths.remove(&from_path.worktree_id);
-                            }
-                            if this.state.open_paths.get(&to_path.worktree_id).is_none() {
-                                this.state.open_paths.insert(
-                                    to_path.worktree_id,
-                                    RootPathTrie::<String, usize>::new(),
-                                );
-                            }
-                            if let Some(to_open_paths) =
-                                this.state.open_paths.get_mut(&to_path.worktree_id)
-                            {
-                                let trie_path = TriePath::new(&to_path.path);
-                                to_open_paths.graft(&trie_path, branch);
-                            }
-                            this.update_visible_entries(None, false, false, window, cx);
+                            cx.notify();
                         }
                     }
                     project::Event::ActiveEntryChanged(Some(entry_id)) => {
@@ -742,9 +717,50 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
-                    project::Event::WorktreeUpdatedEntries(_, _)
-                    | project::Event::WorktreeAdded(_)
-                    | project::Event::WorktreeOrderChanged => {
+                    project::Event::WorktreeUpdatedEntries(worktree_id, changes) => {
+                        if let Some(open_paths) = this.state.open_paths.get_mut(worktree_id) {
+                            // Remove open files
+                            let mut open_removed: HashMap<&ProjectEntryId, usize> =
+                                Default::default();
+                            for (path, entry_id, change) in changes.iter() {
+                                match change {
+                                    PathChange::Removed => {
+                                        let trie_path = TriePath::new(path);
+                                        if !open_paths.is_leaf(&trie_path) {
+                                            continue;
+                                        }
+                                        open_paths.prune(&trie_path).and_then(|branch| {
+                                            branch.get(None).and_then(|labels| {
+                                                labels.get(&()).and_then(|count| {
+                                                    open_removed.insert(entry_id, *count)
+                                                })
+                                            })
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            // Restore open files that were removed then added (renamed)
+                            // Looping twice as removed and added are not necessarily in order
+                            for (path, entry_id, change) in changes.iter() {
+                                match change {
+                                    PathChange::Added => {
+                                        open_removed.get(entry_id).and_then(|count| {
+                                            let trie_path = TriePath::new(path);
+                                            open_paths.insert(&trie_path, (), *count)
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if open_paths.len() == 0 {
+                                this.state.open_paths.remove(worktree_id);
+                            }
+                        }
+                        this.update_visible_entries(None, false, false, window, cx);
+                        cx.notify();
+                    }
+                    project::Event::WorktreeAdded(_) | project::Event::WorktreeOrderChanged => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
@@ -3655,7 +3671,7 @@ impl ProjectPanel {
                         while let Some(entry) = entry_iter.entry() {
                             let editing = entry.git_summary != GitSummary::UNCHANGED
                                 || open_paths.is_some_and(|open_paths| {
-                                    open_paths.get(&TriePath::new(&entry.path)).is_some()
+                                    open_paths.get(Some(&TriePath::new(&entry.path))).is_some()
                                 });
                             let folded = auto_fold_dirs
                                 && entry.kind.is_dir()

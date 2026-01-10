@@ -2038,12 +2038,7 @@ impl Editor {
                         }
                     }
 
-                    project::Event::EntryRenamed {
-                        transaction,
-                        from_path: _,
-                        to_path,
-                        to_abs_path,
-                    } => {
+                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -2062,8 +2057,8 @@ impl Editor {
                                         p.update(cx, |pane, _| {
                                             pane.nav_history_mut().rename_item(
                                                 entity_id,
-                                                to_path.clone(),
-                                                to_abs_path.clone().into(),
+                                                project_path.clone(),
+                                                abs_path.clone().into(),
                                             );
                                         })
                                     });
