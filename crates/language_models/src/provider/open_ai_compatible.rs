@@ -571,7 +571,7 @@ mod integration_tests {
 
     #[test]
     fn test_model_thinking_mode_configuration() {
-        let available_models = vec![
+        let available_models = [
             AvailableModel {
                 name: "model-openai-default".to_string(),
                 display_name: Some("Model OpenAI Default".to_string()),

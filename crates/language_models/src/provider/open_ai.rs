@@ -2163,7 +2163,7 @@ mod tests {
             open_ai::RequestMessage::Tool { .. } => None,
         };
 
-        content
+        let has_text = content
             .map(|c| match c {
                 open_ai::MessageContent::Plain(text) => text.contains(text_to_find),
                 open_ai::MessageContent::Multipart(parts) => parts.iter().any(|p| {
@@ -2174,7 +2174,22 @@ mod tests {
                     }
                 }),
             })
-            .unwrap_or(false)
+            .unwrap_or(false);
+
+        // Also check reasoning_content for Assistant messages
+        let has_reasoning = if let open_ai::RequestMessage::Assistant {
+            reasoning_content, ..
+        } = message
+        {
+            reasoning_content
+                .as_ref()
+                .map(|r| r.contains(text_to_find))
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        has_text || has_reasoning
     }
 
     fn create_test_request_with_thinking() -> LanguageModelRequest {
@@ -2435,7 +2450,7 @@ mod tests {
                     } => Some((content, reasoning_content)),
                     _ => None,
                 })
-                .last();
+                .next_back();
 
             // The final message should NOT contain "Old thinking"
             if let Some((content, reasoning_content)) = final_assistant_msg {
@@ -2529,20 +2544,21 @@ mod tests {
             let empty_string = String::new();
             let text_content = content
                 .as_ref()
-                .and_then(|c| match c {
-                    open_ai::MessageContent::Plain(text) => Some(text),
+                .map(|c| match c {
+                    open_ai::MessageContent::Plain(text) => text.clone(),
                     open_ai::MessageContent::Multipart(parts) => parts
                         .iter()
                         .filter_map(|p| {
                             if let open_ai::MessagePart::Text { text } = p {
-                                Some(text)
+                                Some(text.as_str())
                             } else {
                                 None
                             }
                         })
-                        .next(),
+                        .collect::<Vec<_>>()
+                        .join(" "),
                 })
-                .unwrap_or(&empty_string);
+                .unwrap_or(empty_string);
 
             assert!(
                 text_content == "Part A Part B",
