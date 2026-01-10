@@ -2700,6 +2700,71 @@ impl AcpThreadView {
                 ContextMenu::build(window, cx, move |menu, _, cx| {
                     let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
 
+                    let copy_message = ContextMenuEntry::new("Copy Response").handler({
+                        let entity = entity.clone();
+                        move |_, cx| {
+                            entity.update(cx, |this, cx| {
+                                if let Some(thread) = this.thread() {
+                                    let entries = thread.read(cx).entries();
+                                    if let Some(entry) = entries.get(entry_ix) {
+                                        let text = if matches!(entry, AgentThreadEntry::UserMessage(_)) {
+                                            if let AgentThreadEntry::UserMessage(msg) = entry {
+                                                msg.content.to_markdown(cx).to_string()
+                                            } else {
+                                                return;
+                                            }
+                                        } else {
+                                            let mut start_ix = entry_ix;
+                                            while start_ix > 0 {
+                                                if matches!(entries.get(start_ix - 1), Some(AgentThreadEntry::UserMessage(_))) {
+                                                    break;
+                                                }
+                                                start_ix -= 1;
+                                            }
+
+                                            let mut end_ix = entry_ix;
+                                            while end_ix + 1 < entries.len() {
+                                                if matches!(entries.get(end_ix + 1), Some(AgentThreadEntry::UserMessage(_))) {
+                                                    break;
+                                                }
+                                                end_ix += 1;
+                                            }
+
+                                            let mut parts = Vec::new();
+                                            for i in start_ix..=end_ix {
+                                                if let Some(e) = entries.get(i) {
+                                                    let part = match e {
+                                                        AgentThreadEntry::AssistantMessage(msg) => msg
+                                                            .chunks
+                                                            .iter()
+                                                            .filter_map(|chunk| match chunk {
+                                                                AssistantMessageChunk::Message { block } => {
+                                                                    let text = block.to_markdown(cx);
+                                                                    if text.trim().is_empty() { None } else { Some(text.to_string()) }
+                                                                }
+                                                                AssistantMessageChunk::Thought { .. } => None,
+                                                            })
+                                                            .collect::<Vec<_>>()
+                                                            .join("\n\n"),
+                                                        AgentThreadEntry::ToolCall(_) => String::new(),
+                                                        AgentThreadEntry::UserMessage(_) => String::new(),
+                                                    };
+                                                    if !part.is_empty() {
+                                                        parts.push(part);
+                                                    }
+                                                }
+                                            }
+                                            parts.join("\n\n")
+                                        };
+                                        if !text.is_empty() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    });
+
                     let scroll_item = if is_at_top {
                         ContextMenuEntry::new("Scroll to Bottom").handler({
                             let entity = entity.clone();
@@ -2736,7 +2801,8 @@ impl AcpThreadView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
-                        .action("Copy", Box::new(markdown::CopyAsMarkdown))
+                        .action("Copy Selection", Box::new(markdown::CopyAsMarkdown))
+                        .item(copy_message)
                         .separator()
                         .item(scroll_item)
                         .item(open_thread_as_markdown)
