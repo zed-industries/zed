@@ -1247,7 +1247,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                                 workspace::OpenOptions::default(),
                                 cx,
                             )
-                        });
+                        })?;
                         open_task.await.map(|_| ())
                     });
 
