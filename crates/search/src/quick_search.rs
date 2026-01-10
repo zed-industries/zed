@@ -8,7 +8,7 @@ use std::time::Duration;
 use editor::{Editor, EditorEvent};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, HighlightStyle, KeyBinding, KeyContext, ParentElement, Render, Styled,
+    Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled,
     StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
@@ -18,7 +18,10 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchQuery, SearchResult};
 use project::{Project, ProjectPath};
-use crate::{SearchOption, SearchOptions};
+use crate::{
+    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
+    ToggleRegex, ToggleReplace, ToggleWholeWord,
+};
 use editor::EditorSettings;
 use settings::Settings;
 use text::{Anchor, Point, ToOffset};
@@ -63,16 +66,6 @@ fn save_recent_query(query: &str, cx: &mut App) {
 /// Initialize the quick_search module.
 pub fn init(cx: &mut App) {
     cx.observe_new(QuickSearch::register).detach();
-    cx.bind_keys([
-        KeyBinding::new("escape", menu::Cancel, Some("QuickSearch")),
-        KeyBinding::new("enter", ReplaceNext, Some("QuickSearch && in_replace")),
-        KeyBinding::new(
-            "cmd-enter",
-            ReplaceAll,
-            Some("QuickSearch && in_replace"),
-        ),
-        KeyBinding::new("alt-cmd-f", ToggleFilters, Some("QuickSearch")),
-    ]);
 }
 
 #[derive(Clone)]
@@ -168,6 +161,8 @@ impl QuickSearch {
             editor
         });
 
+        let focus_handle = cx.focus_handle();
+
         let delegate = QuickSearchDelegate::new(
             workspace,
             project,
@@ -184,8 +179,6 @@ impl QuickSearch {
                 picker.set_query(recent_query, window, cx);
             });
         }
-
-        let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
             cx.subscribe_in(&picker, window, |_, _, _: &DismissEvent, _, cx| {
@@ -369,10 +362,11 @@ impl Render for QuickSearch {
         let search_in_progress = delegate.search_in_progress;
         let replace_enabled = delegate.replace_enabled;
         let filters_enabled = delegate.filters_enabled;
+        let selected_index = delegate.selected_index;
 
         let has_matches = match_count > 0;
 
-        let focus_handle = self.picker.focus_handle(cx);
+        let focus_handle = self.focus_handle.clone();
         let in_replace = self.replace_editor.focus_handle(cx).is_focused(window);
 
         let mut key_context = KeyContext::new_with_defaults();
@@ -397,8 +391,71 @@ impl Render for QuickSearch {
             .on_action(cx.listener(|this, _: &ToggleFilters, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
+                    let focus_handle = if picker.delegate.filters_enabled {
+                        picker.delegate.include_editor.focus_handle(cx)
+                    } else {
+                        picker.focus_handle(cx)
+                    };
+                    window.focus(&focus_handle, cx);
+                });
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.search_options.toggle(SearchOptions::CASE_SENSITIVE);
                     picker.refresh(window, cx);
                 });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.search_options.toggle(SearchOptions::WHOLE_WORD);
+                    picker.refresh(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleRegex, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.search_options.toggle(SearchOptions::REGEX);
+                    picker.refresh(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleReplace, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
+                    let focus_handle = if picker.delegate.replace_enabled {
+                        picker.delegate.replace_editor.focus_handle(cx)
+                    } else {
+                        picker.focus_handle(cx)
+                    };
+                    window.focus(&focus_handle, cx);
+                });
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SelectNextMatch, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    let delegate = &mut picker.delegate;
+                    if !delegate.matches.is_empty() {
+                        delegate.selected_index =
+                            (delegate.selected_index + 1) % delegate.matches.len();
+                        delegate.has_changed_selected_index = true;
+                        delegate.update_preview(window, cx);
+                    }
+                });
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SelectPreviousMatch, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    let delegate = &mut picker.delegate;
+                    if !delegate.matches.is_empty() {
+                        delegate.selected_index = if delegate.selected_index == 0 {
+                            delegate.matches.len() - 1
+                        } else {
+                            delegate.selected_index - 1
+                        };
+                        delegate.has_changed_selected_index = true;
+                        delegate.update_preview(window, cx);
+                    }
+                });
+                cx.notify();
             }))
             .m_4()
             .relative()
@@ -461,46 +518,87 @@ impl Render for QuickSearch {
                         h_flex()
                             .gap_1()
                             .items_center()
-                            .child(
+                            .child({
+                                let focus_handle = self.picker.focus_handle(cx);
                                 IconButton::new("replace-toggle", IconName::Replace)
                                     .size(ButtonSize::Compact)
                                     .toggle_state(replace_enabled)
-                                    .tooltip(Tooltip::text("Toggle Replace"))
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Toggle Replace",
+                                            &ToggleReplace,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.picker.update(cx, |picker, _| {
                                             picker.delegate.replace_enabled =
                                                 !picker.delegate.replace_enabled;
                                         });
                                         cx.notify();
-                                    })),
-                            )
-                            .child(
+                                    }))
+                            })
+                            .child({
+                                let focus_handle = self.picker.focus_handle(cx);
                                 IconButton::new("filters-toggle", IconName::Filter)
                                     .size(ButtonSize::Compact)
                                     .toggle_state(filters_enabled)
-                                    .tooltip(|_window, cx| {
-                                        Tooltip::for_action("Toggle Filters", &ToggleFilters, cx)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Toggle Filters",
+                                            &ToggleFilters,
+                                            &focus_handle,
+                                            cx,
+                                        )
                                     })
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(ToggleFilters.boxed_clone(), cx);
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("close-button")
-                                    .cursor_pointer()
-                                    .rounded_sm()
-                                    .p_1()
-                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                    .on_click(cx.listener(|_, _, _window, cx| {
-                                        cx.emit(DismissEvent);
-                                    }))
-                                    .child(
-                                        Icon::new(IconName::Close)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            ),
+                                    })
+                            })
+                            .child({
+                                let focus_handle = self.picker.focus_handle(cx);
+                                IconButton::new("select-prev-match", IconName::ChevronLeft)
+                                    .size(ButtonSize::Compact)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Previous Match",
+                                            &SelectPreviousMatch,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(SelectPreviousMatch.boxed_clone(), cx);
+                                    })
+                            })
+                            .child({
+                                let focus_handle = self.picker.focus_handle(cx);
+                                IconButton::new("select-next-match", IconName::ChevronRight)
+                                    .size(ButtonSize::Compact)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Next Match",
+                                            &SelectNextMatch,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(SelectNextMatch.boxed_clone(), cx);
+                                    })
+                            })
+                            .when(match_count > 0, |this| {
+                                this.child(
+                                    Label::new(format!(
+                                        "{}/{}",
+                                        selected_index + 1,
+                                        match_count
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
+                            }),
                     ),
             )
             .child(
@@ -561,6 +659,7 @@ pub struct QuickSearchDelegate {
     exclude_editor: Entity<Editor>,
     replace_enabled: bool,
     filters_enabled: bool,
+    opened_only: bool,
     matches: Vec<SearchMatch>,
     selected_index: usize,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
@@ -590,6 +689,7 @@ impl QuickSearchDelegate {
             exclude_editor,
             replace_enabled: false,
             filters_enabled: false,
+            opened_only: false,
             matches: Vec::new(),
             selected_index: 0,
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -598,6 +698,19 @@ impl QuickSearchDelegate {
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
         }
+    }
+
+    fn open_buffers(&self, cx: &App) -> Vec<Entity<Buffer>> {
+        let mut buffers = Vec::new();
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            for editor in workspace.items_of_type::<Editor>(cx) {
+                if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                    buffers.push(buffer);
+                }
+            }
+        }
+        buffers
     }
 
     fn update_preview(&self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -690,7 +803,12 @@ impl QuickSearchDelegate {
         PathMatcher::new(&queries, path_style).unwrap_or_default()
     }
 
-    fn build_search_query(&self, query: &str, cx: &Context<Picker<Self>>) -> Option<SearchQuery> {
+    fn build_search_query(
+        &self,
+        query: &str,
+        open_buffers: Option<Vec<Entity<Buffer>>>,
+        cx: &Context<Picker<Self>>,
+    ) -> Option<SearchQuery> {
         if query.is_empty() {
             return None;
         }
@@ -723,7 +841,7 @@ impl QuickSearchDelegate {
                 files_to_include,
                 files_to_exclude,
                 match_full_paths,
-                None,
+                open_buffers,
             )
             .ok()
         } else {
@@ -735,7 +853,7 @@ impl QuickSearchDelegate {
                 files_to_include,
                 files_to_exclude,
                 match_full_paths,
-                None,
+                open_buffers,
             )
             .ok()
         }
@@ -823,6 +941,7 @@ impl PickerDelegate for QuickSearchDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let search_options = self.search_options;
+        let focus_handle = editor.focus_handle(cx);
 
         v_flex()
             .child(
@@ -832,53 +951,79 @@ impl PickerDelegate for QuickSearchDelegate {
                     .px_2p5()
                     .gap_1()
                     .child(div().flex_1().overflow_hidden().child(editor.clone()))
-                    .child(
+                    .child({
+                        let focus_handle = focus_handle.clone();
                         h_flex()
                             .flex_none()
                             .gap_0p5()
-                            .child(
+                            .child({
+                                let focus_handle = focus_handle.clone();
                                 IconButton::new("case-sensitive", SearchOption::CaseSensitive.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(
                                         search_options.contains(SearchOptions::CASE_SENSITIVE),
                                     )
-                                    .tooltip(Tooltip::text(SearchOption::CaseSensitive.label()))
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            SearchOption::CaseSensitive.label(),
+                                            &ToggleCaseSensitive,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker
                                             .delegate
                                             .search_options
                                             .toggle(SearchOptions::CASE_SENSITIVE);
                                         picker.refresh(window, cx);
-                                    })),
-                            )
-                            .child(
+                                    }))
+                            })
+                            .child({
+                                let focus_handle = focus_handle.clone();
                                 IconButton::new("whole-word", SearchOption::WholeWord.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(
                                         search_options.contains(SearchOptions::WHOLE_WORD),
                                     )
-                                    .tooltip(Tooltip::text(SearchOption::WholeWord.label()))
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            SearchOption::WholeWord.label(),
+                                            &ToggleWholeWord,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker
                                             .delegate
                                             .search_options
                                             .toggle(SearchOptions::WHOLE_WORD);
                                         picker.refresh(window, cx);
-                                    })),
-                            )
-                            .child(
+                                    }))
+                            })
+                            .child({
+                                let focus_handle = focus_handle.clone();
                                 IconButton::new("regex", SearchOption::Regex.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(search_options.contains(SearchOptions::REGEX))
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            SearchOption::Regex.label(),
+                                            &ToggleRegex,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker.delegate.search_options.toggle(SearchOptions::REGEX);
                                         picker.refresh(window, cx);
                                     }))
-                                    .tooltip(Tooltip::text(SearchOption::Regex.label())),
-                            ),
-                    ),
+                            })
+                    }),
             )
             .when(self.replace_enabled, |this| {
+                let focus_handle = focus_handle.clone();
                 this.child(Divider::horizontal()).child(
                     h_flex()
                         .flex_none()
@@ -891,27 +1036,44 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .overflow_hidden()
                                 .child(self.replace_editor.clone()),
                         )
-                        .child(
+                        .child({
+                            let focus_handle = focus_handle.clone();
                             h_flex()
                                 .flex_none()
                                 .gap_0p5()
-                                .child(
+                                .child({
+                                    let focus_handle = focus_handle.clone();
                                     IconButton::new("replace-next", IconName::ReplaceNext)
                                         .shape(ui::IconButtonShape::Square)
-                                        .tooltip(Tooltip::text("Replace Next (Enter)"))
+                                        .tooltip(move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Replace Next Match",
+                                                &ReplaceNext,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        })
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(ReplaceNext.boxed_clone(), cx);
-                                        }),
-                                )
-                                .child(
+                                        })
+                                })
+                                .child({
+                                    let focus_handle = focus_handle.clone();
                                     IconButton::new("replace-all", IconName::ReplaceAll)
                                         .shape(ui::IconButtonShape::Square)
-                                        .tooltip(Tooltip::text("Replace All (Cmd+Enter)"))
+                                        .tooltip(move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Replace All",
+                                                &ReplaceAll,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        })
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(ReplaceAll.boxed_clone(), cx);
-                                        }),
-                                ),
-                        ),
+                                        })
+                                })
+                        }),
                 )
             })
             .when(self.filters_enabled, |this| {
@@ -951,6 +1113,32 @@ impl PickerDelegate for QuickSearchDelegate {
                                         .flex_1()
                                         .overflow_hidden()
                                         .child(self.exclude_editor.clone()),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .child(
+                                    IconButton::new("opened-only", IconName::FolderSearch)
+                                        .size(ButtonSize::Compact)
+                                        .toggle_state(self.opened_only)
+                                        .tooltip(Tooltip::text("Only Search Open Files"))
+                                        .on_click(cx.listener(|picker, _, window, cx| {
+                                            picker.delegate.opened_only = !picker.delegate.opened_only;
+                                            picker.refresh(window, cx);
+                                        })),
+                                )
+                                .child(
+                                    IconButton::new("include-ignored", IconName::Sliders)
+                                        .size(ButtonSize::Compact)
+                                        .toggle_state(
+                                            self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                                        )
+                                        .tooltip(Tooltip::text("Also search files ignored by configuration"))
+                                        .on_click(cx.listener(|picker, _, window, cx| {
+                                            picker.delegate.search_options.toggle(SearchOptions::INCLUDE_IGNORED);
+                                            picker.refresh(window, cx);
+                                        })),
                                 ),
                         ),
                 )
@@ -996,7 +1184,13 @@ impl PickerDelegate for QuickSearchDelegate {
 
         let cancel_flag = self.cancel_flag.clone();
 
-        let Some(search_query) = self.build_search_query(&query, cx) else {
+        let open_buffers = if self.opened_only {
+            Some(self.open_buffers(cx))
+        } else {
+            None
+        };
+
+        let Some(search_query) = self.build_search_query(&query, open_buffers, cx) else {
             self.matches.clear();
             self.selected_index = 0;
             self.search_in_progress = false;

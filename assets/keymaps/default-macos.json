@@ -427,11 +427,19 @@
     },
   },
   {
-    "context": "BufferSearchBar && !in_replace > Editor",
+    "context": "QuickSearch",
     "use_key_equivalents": true,
     "bindings": {
-      "up": "search::PreviousHistoryQuery",
-      "down": "search::NextHistoryQuery",
+      "escape": "menu::Cancel",
+      "alt-cmd-c": "search::ToggleCaseSensitive",
+      "alt-cmd-w": "search::ToggleWholeWord",
+      "alt-cmd-x": "search::ToggleRegex",
+      "alt-cmd-f": "quick_search::ToggleFilters",
+      "alt-cmd-r": "search::ToggleReplace",
+      "cmd-g": "search::SelectNextMatch",
+      "cmd-shift-g": "search::SelectPreviousMatch",
+      "enter": "quick_search::ReplaceNext",
+      "cmd-enter": "quick_search::ReplaceAll",
     },
   },
   {
