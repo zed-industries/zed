@@ -15,7 +15,7 @@ use crate::{
     inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
     terminal_inline_assistant::TerminalInlineAssistant,
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
@@ -468,7 +468,7 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -605,7 +605,7 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -648,7 +648,7 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -2031,8 +2031,7 @@ pub mod test {
 
     use std::sync::Arc;
 
-    use agent::HistoryStore;
-    use assistant_text_thread::TextThreadStore;
+    use agent::ThreadStore;
     use client::{Client, UserStore};
     use editor::{Editor, MultiBuffer, MultiBufferOffset};
     use fs::FakeFs;
@@ -2131,8 +2130,7 @@ pub mod test {
                 })
             });
 
-            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
@@ -2146,8 +2144,8 @@ pub mod test {
                         &editor,
                         workspace.downgrade(),
                         project.downgrade(),
-                        history_store, // thread_store
-                        None,          // prompt_store
+                        thread_store,
+                        None,
                         Some(prompt),
                         window,
                         cx,

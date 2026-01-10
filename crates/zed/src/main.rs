@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use agent::{HistoryStore, SharedThread};
+use agent::{SharedThread, ThreadStore};
 use agent_client_protocol;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
@@ -845,17 +845,16 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let workspace =
                         workspace::get_any_active_workspace(app_state.clone(), cx.clone()).await?;
 
-                    let (client, history_store) =
+                    let (client, thread_store) =
                         workspace.update(cx, |workspace, _window, cx| {
                             let client = workspace.project().read(cx).client();
-                            let history_store: Option<gpui::Entity<HistoryStore>> = workspace
+                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
                                 .panel::<AgentPanel>(cx)
                                 .map(|panel| panel.read(cx).thread_store().clone());
-                            (client, history_store)
+                            (client, thread_store)
                         })?;
 
-                    let Some(history_store): Option<gpui::Entity<HistoryStore>> = history_store
-                    else {
+                    let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");
                     };
 
@@ -870,9 +869,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let db_thread = shared_thread.to_db_thread();
                     let session_id = agent_client_protocol::SessionId::new(session_id);
 
-                    history_store
+                    let save_session_id = session_id.clone();
+
+                    thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(session_id.clone(), db_thread, cx)
+                            store.save_thread(save_session_id.clone(), db_thread, cx)
                         })
                         .await?;
 

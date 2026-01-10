@@ -58,7 +58,7 @@ use {
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore},
+    settings::{NotifyWhenAgentWaiting, Settings as _},
     std::{
         any::Any,
         path::{Path, PathBuf},
@@ -146,17 +146,15 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Use real Assets so that SVG icons render properly
     let mut cx = VisualTestAppContext::with_asset_source(Arc::new(Assets));
 
-    // Initialize settings store first (required by theme and other subsystems)
-    // and disable telemetry to prevent HTTP errors from FakeHttpClient
+    // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
-        let mut settings_store = SettingsStore::test(cx);
-        settings_store.update_user_settings(cx, |settings| {
-            settings.telemetry = Some(settings::TelemetrySettingsContent {
-                diagnostics: Some(false),
-                metrics: Some(false),
-            });
-        });
-        cx.set_global(settings_store);
+        Assets.load_fonts(cx).unwrap();
+    });
+
+    // Initialize settings store with real default settings (not test settings)
+    // Test settings use Courier font, but we want the real Zed fonts for visual tests
+    cx.update(|cx| {
+        settings::init(cx);
     });
 
     // Create AppState using the test initialization

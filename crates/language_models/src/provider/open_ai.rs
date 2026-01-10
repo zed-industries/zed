@@ -887,7 +887,7 @@ impl OpenAiResponseEventMapper {
         })
     }
 
-    fn map_event(
+    pub fn map_event(
         &mut self,
         event: ResponsesStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
