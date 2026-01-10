@@ -6231,6 +6231,24 @@ impl Workspace {
                     cx.propagate();
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, action: &pane::CloseActiveItem, window, cx| {
+                    if let Some(active_dock) = workspace.active_dock(window, cx) {
+                        let dock = active_dock.read(cx);
+                        if let Some(active_panel) = dock.active_panel() {
+                            if active_panel.pane(cx).is_none() {
+                                let active_pane = workspace.active_pane().clone();
+                                active_pane.update(cx, |pane, cx| {
+                                    pane.close_active_item(action, window, cx)
+                                        .detach_and_log_err(cx);
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    cx.propagate();
+                },
+            ))
             .on_action(
                 cx.listener(|workspace, _: &ToggleReadOnlyFile, window, cx| {
                     let pane = workspace.active_pane().clone();
