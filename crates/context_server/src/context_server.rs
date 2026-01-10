@@ -11,6 +11,7 @@ use http_client::HttpClient;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, path::PathBuf};
+use util::ResultExt;
 
 use anyhow::Result;
 use client::Client;
@@ -107,6 +108,10 @@ impl ContextServer {
     }
 
     pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
+        if let ContextServerTransport::Http(http) = &self.configuration {
+            http.restore_credentials(cx).await.log_err();
+        }
+
         self.initialize(self.new_client(cx)?).await
     }
 
@@ -175,11 +180,15 @@ impl ContextServer {
         http.start_auth(www_auth_header).await
     }
 
-    pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
+    pub async fn handle_oauth_callback(
+        &self,
+        callback: &OAuthCallback,
+        cx: &AsyncApp,
+    ) -> Result<()> {
         let ContextServerTransport::Http(http) = &self.configuration else {
             anyhow::bail!("authorization is only supported for HTTP context servers");
         };
 
-        http.handle_oauth_callback(&callback).await
+        http.handle_oauth_callback(&callback, cx).await
     }
 }

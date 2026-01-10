@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Stream, StreamExt, lock::Mutex};
-use gpui::BackgroundExecutor;
+use gpui::{AsyncApp, BackgroundExecutor};
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
 use smol::channel;
@@ -264,11 +264,27 @@ impl HttpTransport {
         Ok(())
     }
 
+    pub async fn restore_credentials(&self, cx: &AsyncApp) -> Result<()> {
+        let mut client_guard = self.oauth_client.lock().await;
+
+        if client_guard.is_some() {
+            return Ok(());
+        }
+
+        if let Some(restored) =
+            OAuthClient::load_from_keychain(&self.endpoint, &self.http_client, cx).await?
+        {
+            client_guard.replace(restored);
+        };
+
+        Ok(())
+    }
+
     pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
-        // todo! bg
+        let mut client_guard = self.oauth_client.lock().await;
+
         let www_authenticate = www_auth_header.and_then(WwwAuthenticate::parse);
 
-        let mut client_guard = self.oauth_client.lock().await;
         let client = match client_guard.as_mut() {
             Some(client) => client,
             None => {
@@ -285,15 +301,18 @@ impl HttpTransport {
         Ok(url)
     }
 
-    pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
-        // todo! bg
+    pub async fn handle_oauth_callback(
+        &self,
+        callback: &OAuthCallback,
+        cx: &AsyncApp,
+    ) -> Result<()> {
         let mut client_guard = self.oauth_client.lock().await;
         let client = match client_guard.as_mut() {
             Some(client) => client,
             None => return Err(anyhow!("oauth client is not initialized; start auth first")),
         };
 
-        client.exchange_token(&callback.code).await?;
+        client.exchange_token(&callback.code, cx).await?;
 
         Ok(())
     }

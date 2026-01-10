@@ -2,11 +2,13 @@ use std::{
     error::Error,
     fmt::{self, Display},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context as _, Result};
 use base64::Engine as _;
+use credentials_provider::CredentialsProvider;
+use gpui::AsyncApp;
 use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
 use rand::distr::Distribution;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -25,9 +27,12 @@ pub struct OAuthClient {
     scope: Option<String>,
     state: State,
     http_client: Arc<dyn HttpClient>,
+    endpoint_url: String,
 }
 
-#[derive(Default)]
+const KEYCHAIN_USER: &str = "mcp";
+
+#[derive(Default, Clone, Serialize, Deserialize)]
 enum State {
     #[default]
     Init,
@@ -37,14 +42,14 @@ enum State {
     Authenticated {
         access_token: String,
         token_type: String,
-        expires_at: Option<Instant>,
+        expires_at: Option<SystemTime>,
         refresh_token: Option<String>,
     },
 }
 
 impl OAuthClient {
     pub async fn init(
-        server_endpoint: &str,
+        endpoint_url: &str,
         www_authenticate: Option<&WwwAuthenticate<'_>>,
         http_client: &Arc<dyn HttpClient>,
     ) -> Result<Self> {
@@ -53,7 +58,7 @@ impl OAuthClient {
         let resource =
             match www_authenticate.and_then(|challenge| challenge.resource_metadata.as_ref()) {
                 Some(url) => ProtectedResource::fetch(url, http_client).await?,
-                None => ProtectedResource::fetch_well_known(server_endpoint, http_client).await?,
+                None => ProtectedResource::fetch_well_known(endpoint_url, http_client).await?,
             };
 
         // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-metadata-discovery
@@ -98,6 +103,7 @@ impl OAuthClient {
             scope,
             state: State::Init,
             http_client: http_client.clone(),
+            endpoint_url: endpoint_url.to_owned(),
         })
     }
 
@@ -127,7 +133,7 @@ impl OAuthClient {
         anyhow::Ok(AuthorizeUrl { url })
     }
 
-    pub async fn exchange_token(&mut self, code: &str) -> Result<()> {
+    pub async fn exchange_token(&mut self, code: &str, cx: &AsyncApp) -> Result<()> {
         let State::WaitingForCode { code_verifier } = &self.state else {
             return Err(ExchangeTokenError::NotWaitingForAuthorizationCode.into());
         };
@@ -154,7 +160,7 @@ impl OAuthClient {
             .body(AsyncBody::from(form))
             .context(ExchangeTokenError::BuildTokenExchangeRequest)?;
 
-        let requested_at = Instant::now();
+        let requested_at = SystemTime::now();
 
         let mut response = self.http_client.send(request).await?;
         let token_response: TokenResponse = decode_response_json(&mut response).await?;
@@ -167,6 +173,8 @@ impl OAuthClient {
                 .map(|expires_in| requested_at + Duration::from_secs(expires_in)),
             refresh_token: token_response.refresh_token,
         };
+
+        self.save_to_keychain(cx).await?;
 
         anyhow::Ok(())
     }
@@ -198,7 +206,7 @@ impl OAuthClient {
             return Ok(None);
         };
 
-        if expires_at.is_some_and(|expires_at| expires_at <= Instant::now()) {
+        if expires_at.is_some_and(|expires_at| expires_at <= SystemTime::now()) {
             if refresh_token.is_none() {
                 return Err(AccessTokenError::AccessTokenExpiredNoRefreshToken.into());
             }
@@ -258,7 +266,7 @@ impl OAuthClient {
             .body(AsyncBody::from(form))
             .context(RefreshTokenError::BuildTokenRefreshRequest)?;
 
-        let requested_at = Instant::now();
+        let requested_at = SystemTime::now();
 
         let mut response = self.http_client.send(request).await?;
         let token_response: TokenResponse = decode_response_json(&mut response).await?;
@@ -276,8 +284,74 @@ impl OAuthClient {
             refresh_token: token_response.refresh_token.or(previous_refresh_token),
         };
 
+        // todo! save to keychain
+
         Ok(())
     }
+
+    pub async fn load_from_keychain(
+        endpoint_url: &str,
+        http_client: &Arc<dyn HttpClient>,
+        cx: &AsyncApp,
+    ) -> Result<Option<Self>> {
+        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+
+        let Some((username, data)) = credentials_provider
+            .read_credentials(endpoint_url, cx)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        if username != KEYCHAIN_USER {
+            return Ok(None);
+        }
+
+        let persisted: PersistedOAuthState = serde_json::from_slice(&data)?;
+
+        Ok(Some(OAuthClient {
+            registration: persisted.registration,
+            server: persisted.server,
+            scope: persisted.scope,
+            state: persisted.state,
+            http_client: http_client.clone(),
+            endpoint_url: endpoint_url.to_owned(),
+        }))
+    }
+
+    async fn save_to_keychain(&self, cx: &AsyncApp) -> Result<()> {
+        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+
+        if !matches!(self.state, State::Authenticated { .. }) {
+            credentials_provider
+                .delete_credentials(&self.endpoint_url, cx)
+                .await?;
+            return Ok(());
+        }
+
+        let persisted = PersistedOAuthState {
+            registration: self.registration.clone(),
+            server: self.server.clone(),
+            scope: self.scope.clone(),
+            state: self.state.clone(),
+        };
+
+        let json = serde_json::to_vec(&persisted)?;
+
+        credentials_provider
+            .write_credentials(&self.endpoint_url, KEYCHAIN_USER, &json, cx)
+            .await?;
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedOAuthState {
+    registration: ClientRegistration,
+    server: AuthorizationServer,
+    scope: Option<String>,
+    state: State,
 }
 
 #[derive(Debug, Error)]
@@ -422,8 +496,8 @@ fn generate_code_verifier() -> String {
     unsafe { String::from_utf8_unchecked(bytes) }
 }
 
-#[cfg_attr(test, derive(Default, Serialize))]
-#[derive(Deserialize)]
+#[cfg_attr(test, derive(Default))]
+#[derive(Clone, Serialize, Deserialize)]
 struct ClientRegistration {
     client_id: String,
     #[serde(default)]
@@ -484,8 +558,8 @@ impl ProtectedResource {
 
 // Server Metadata
 
-#[cfg_attr(test, derive(Default, Serialize))]
-#[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(Default))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthorizationServer {
     issuer: String,
 
@@ -710,7 +784,6 @@ mod abs_uri {
         }
     }
 
-    #[cfg(test)]
     impl serde::Serialize for AbsUri {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where

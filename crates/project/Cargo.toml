@@ -39,6 +39,7 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
+credentials_provider.workspace = true
 dap.workspace = true
 encoding_rs.workspace = true
 extension.workspace = true

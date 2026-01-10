@@ -728,12 +728,11 @@ impl ContextServerStore {
         };
 
         let server = server.clone();
-        // todo! move out of authrequired already?
         let www_auth_header = www_authenticate_header.clone();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(
             // todo! show error somehow?
-            match server.start_auth(www_auth_header.as_deref()).await {
+            async move |_, cx| match server.start_auth(www_auth_header.as_deref()).await {
                 Ok(auth_url) => {
                     let url = auth_url.url(server_id);
                     cx.update(|cx| {
@@ -747,10 +746,9 @@ impl ContextServerStore {
                         server_id,
                         err
                     );
-                    // set server status to err
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -770,9 +768,9 @@ impl ContextServerStore {
             }
         };
 
-        cx.spawn(async move |_, _cx| {
+        cx.spawn(async move |_, cx| {
             server
-                .handle_oauth_callback(&callback)
+                .handle_oauth_callback(&callback, cx)
                 .await
                 .with_context(|| {
                     format!(
