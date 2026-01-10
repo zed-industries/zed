@@ -5,6 +5,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use smallvec::{SmallVec, smallvec};
+
 use anyhow::{Context as _, Result};
 use base64::Engine as _;
 use credentials_provider::CredentialsProvider;
@@ -35,7 +37,7 @@ const KEYCHAIN_USER: &str = "mcp";
 #[derive(Default, Clone, Serialize, Deserialize)]
 enum State {
     #[default]
-    Init,
+    Unauthenticated,
     WaitingForCode {
         code_verifier: String,
     },
@@ -61,6 +63,13 @@ impl OAuthClient {
                 None => ProtectedResource::fetch_well_known(endpoint_url, http_client).await?,
             };
 
+        if !resource
+            .bearer_methods_supported
+            .supports(BearerMethod::Header)
+        {
+            anyhow::bail!(InitError::UnsupportedBearerMethod);
+        }
+
         // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-metadata-discovery
         let auth_server_url = resource
             .authorization_servers
@@ -69,6 +78,24 @@ impl OAuthClient {
             .ok_or(InitError::NoAuthorizationServers)?;
 
         let server = AuthorizationServer::fetch(auth_server_url, http_client).await?;
+
+        if !server.response_types_supported.supports(ResponseType::Code) {
+            anyhow::bail!(InitError::UnsupportedResponseType);
+        }
+
+        if !server
+            .grant_types_supported
+            .supports(GrantType::AuthorizationCode)
+        {
+            anyhow::bail!(InitError::UnsupportedGrantType);
+        }
+
+        if !server
+            .code_challenge_methods_supported
+            .supports(CodeChallengeMethod::S256)
+        {
+            anyhow::bail!(InitError::UnsupportedCodeChallengeMethod);
+        }
 
         // https://modelcontextprotocol.io/specification/draft/basic/authorization#client-registration-approaches
         let registration = if server.client_id_metadata_document_supported {
@@ -80,6 +107,12 @@ impl OAuthClient {
                 client_secret_expires_at: None,
             }
         } else if let Some(registration_endpoint) = server.registration_endpoint.as_ref() {
+            if !server
+                .token_endpoint_auth_methods_supported
+                .supports(TokenEndpointAuthMethod::None)
+            {
+                anyhow::bail!(InitError::UnsupportedTokenEndpointAuthMethod);
+            }
             Self::register(registration_endpoint, http_client).await?
         } else {
             // TODO: Support custom registration
@@ -101,7 +134,7 @@ impl OAuthClient {
             registration,
             server,
             scope,
-            state: State::Init,
+            state: State::Unauthenticated,
             http_client: http_client.clone(),
             endpoint_url: endpoint_url.to_owned(),
         })
@@ -226,6 +259,14 @@ impl OAuthClient {
             return Err(RefreshTokenError::WaitingForAuthorizationCode.into());
         }
 
+        if !self
+            .server
+            .grant_types_supported
+            .supports(GrantType::RefreshToken)
+        {
+            return Err(RefreshTokenError::UnsupportedGrantType.into());
+        }
+
         let State::Authenticated {
             refresh_token: previous_refresh_token,
             token_type: previous_token_type,
@@ -319,6 +360,11 @@ impl OAuthClient {
         }))
     }
 
+    pub async fn logout(&mut self, cx: &AsyncApp) -> Result<()> {
+        self.state = State::Unauthenticated;
+        self.save_to_keychain(cx).await
+    }
+
     async fn save_to_keychain(&self, cx: &AsyncApp) -> Result<()> {
         let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
 
@@ -356,6 +402,9 @@ struct PersistedOAuthState {
 
 #[derive(Debug, Error)]
 pub enum InitError {
+    #[error("protected resource does not support 'header' bearer method")]
+    UnsupportedBearerMethod,
+
     #[error("resource metadata specified 0 authorization servers")]
     NoAuthorizationServers,
 
@@ -363,6 +412,18 @@ pub enum InitError {
         "authorization server does not support client ID metadata or dynamic client registration"
     )]
     UnsupportedRegistration,
+
+    #[error("authorization server does not support 'code' response type")]
+    UnsupportedResponseType,
+
+    #[error("authorization server does not support 'authorization_code' grant type")]
+    UnsupportedGrantType,
+
+    #[error("authorization server does not support 'S256' code challenge method")]
+    UnsupportedCodeChallengeMethod,
+
+    #[error("authorization server does not support 'none' token endpoint auth method")]
+    UnsupportedTokenEndpointAuthMethod,
 }
 
 #[derive(Debug, Error)]
@@ -405,6 +466,9 @@ pub enum RefreshTokenError {
 
     #[error("failed to build token refresh request")]
     BuildTokenRefreshRequest,
+
+    #[error("authorization server does not support 'refresh_token' grant type")]
+    UnsupportedGrantType,
 }
 
 #[derive(Debug, Error)]
@@ -518,9 +582,32 @@ struct TokenResponse {
 
 // Resource Metadata
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BearerMethod {
+    Header,
+    Body,
+    Query,
+    #[serde(untagged)]
+    Other(()),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BearerMethodsSupported(Vec<BearerMethod>);
+
+impl BearerMethodsSupported {
+    pub fn supports(&self, method: BearerMethod) -> bool {
+        if self.0.is_empty() {
+            return true;
+        }
+        self.0.contains(&method)
+    }
+}
+
 #[cfg_attr(test, derive(Default, Serialize))]
 #[derive(Deserialize)]
 pub struct ProtectedResource {
+    #[allow(dead_code)]
     resource: String,
 
     #[serde(default)]
@@ -530,9 +617,10 @@ pub struct ProtectedResource {
     scopes_supported: Vec<String>,
 
     #[serde(default)]
-    bearer_methods_supported: Vec<String>,
+    bearer_methods_supported: BearerMethodsSupported,
 
     #[serde(default)]
+    #[allow(dead_code)]
     resource_name: Option<String>,
 }
 
@@ -558,7 +646,94 @@ impl ProtectedResource {
 
 // Server Metadata
 
-#[cfg_attr(test, derive(Default))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseType {
+    Code,
+    Token,
+    #[serde(untagged)]
+    Other,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseTypesSupported(SmallVec<[ResponseType; 4]>);
+
+impl ResponseTypesSupported {
+    pub fn supports(&self, response_type: ResponseType) -> bool {
+        self.0.contains(&response_type)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantType {
+    AuthorizationCode,
+    Implicit,
+    RefreshToken,
+    ClientCredentials,
+    #[serde(untagged)]
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantTypesSupported(SmallVec<[GrantType; 4]>);
+
+impl Default for GrantTypesSupported {
+    fn default() -> Self {
+        Self(smallvec![GrantType::AuthorizationCode, GrantType::Implicit])
+    }
+}
+
+impl GrantTypesSupported {
+    pub fn supports(&self, grant_type: GrantType) -> bool {
+        self.0.contains(&grant_type)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenEndpointAuthMethod {
+    None,
+    ClientSecretBasic,
+    ClientSecretPost,
+    #[serde(untagged)]
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenEndpointAuthMethodsSupported(SmallVec<[TokenEndpointAuthMethod; 4]>);
+
+impl Default for TokenEndpointAuthMethodsSupported {
+    fn default() -> Self {
+        Self(smallvec![TokenEndpointAuthMethod::ClientSecretBasic])
+    }
+}
+
+impl TokenEndpointAuthMethodsSupported {
+    pub fn supports(&self, method: TokenEndpointAuthMethod) -> bool {
+        self.0.contains(&method)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CodeChallengeMethod {
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "S256")]
+    S256,
+    #[serde(untagged)]
+    Other,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeChallengeMethodsSupported(SmallVec<[CodeChallengeMethod; 4]>);
+
+impl CodeChallengeMethodsSupported {
+    pub fn supports(&self, method: CodeChallengeMethod) -> bool {
+        self.0.contains(&method)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthorizationServer {
     issuer: String,
@@ -579,19 +754,40 @@ pub struct AuthorizationServer {
     scopes_supported: Vec<String>,
 
     #[serde(default)]
-    response_types_supported: Vec<String>,
+    response_types_supported: ResponseTypesSupported,
 
     #[serde(default)]
-    grant_types_supported: Vec<String>,
+    grant_types_supported: GrantTypesSupported,
 
     #[serde(default)]
-    token_endpoint_auth_methods_supported: Vec<String>,
+    token_endpoint_auth_methods_supported: TokenEndpointAuthMethodsSupported,
 
     #[serde(default)]
-    code_challenge_methods_supported: Vec<String>,
+    code_challenge_methods_supported: CodeChallengeMethodsSupported,
 
     #[serde(default)]
     client_id_metadata_document_supported: bool,
+}
+
+#[cfg(test)]
+impl Default for AuthorizationServer {
+    fn default() -> Self {
+        Self {
+            issuer: String::new(),
+            authorization_endpoint: None,
+            token_endpoint: None,
+            jwks_uri: None,
+            registration_endpoint: None,
+            scopes_supported: Vec::new(),
+            response_types_supported: ResponseTypesSupported(smallvec![ResponseType::Code]),
+            grant_types_supported: GrantTypesSupported::default(),
+            token_endpoint_auth_methods_supported: TokenEndpointAuthMethodsSupported::default(),
+            code_challenge_methods_supported: CodeChallengeMethodsSupported(smallvec![
+                CodeChallengeMethod::S256
+            ]),
+            client_id_metadata_document_supported: false,
+        }
+    }
 }
 
 impl AuthorizationServer {
@@ -984,6 +1180,39 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn init_errors_when_unsupported_bearer_method(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                bearer_methods_supported: BearerMethodsSupported(vec![BearerMethod::Body]),
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::UnsupportedBearerMethod)
+        );
+    }
+
+    #[gpui::test]
     async fn init_errors_when_no_authorization_servers(cx: &mut TestAppContext) {
         let (client, mut requests) = fake_client();
         let http_client = client.clone();
@@ -1073,6 +1302,9 @@ mod tests {
                         .try_into()
                         .unwrap(),
                 ),
+                token_endpoint_auth_methods_supported: TokenEndpointAuthMethodsSupported(
+                    smallvec![TokenEndpointAuthMethod::None],
+                ),
                 client_id_metadata_document_supported: false,
                 ..Default::default()
             },
@@ -1157,6 +1389,196 @@ mod tests {
         assert_matches!(
             init_task.await.err().unwrap().downcast::<InitError>(),
             Ok(InitError::UnsupportedRegistration)
+        );
+    }
+
+    #[gpui::test]
+    async fn init_errors_when_unsupported_response_type(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                response_types_supported: ResponseTypesSupported(smallvec![ResponseType::Token]),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::UnsupportedResponseType)
+        );
+    }
+
+    #[gpui::test]
+    async fn init_errors_when_unsupported_grant_type(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                response_types_supported: ResponseTypesSupported(smallvec![ResponseType::Code]),
+                grant_types_supported: GrantTypesSupported(smallvec![GrantType::Implicit]),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::UnsupportedGrantType)
+        );
+    }
+
+    #[gpui::test]
+    async fn init_errors_when_unsupported_code_challenge_method(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                response_types_supported: ResponseTypesSupported(smallvec![ResponseType::Code]),
+                code_challenge_methods_supported: CodeChallengeMethodsSupported(smallvec![
+                    CodeChallengeMethod::Plain
+                ]),
+                client_id_metadata_document_supported: true,
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::UnsupportedCodeChallengeMethod)
+        );
+    }
+
+    #[gpui::test]
+    async fn init_errors_when_unsupported_token_endpoint_auth_method(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let init_task = cx.background_spawn(async move {
+            OAuthClient::init("https://mcp.example.com", None, &http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &ProtectedResource {
+                resource: "https://mcp.example.com".to_string(),
+                authorization_servers: vec![
+                    "https://auth.example.com"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let request = requests.next().await.expect("Expected request");
+        respond_json(
+            request,
+            200,
+            &AuthorizationServer {
+                issuer: "https://auth.example.com".to_string(),
+                response_types_supported: ResponseTypesSupported(smallvec![ResponseType::Code]),
+                token_endpoint_auth_methods_supported: TokenEndpointAuthMethodsSupported(
+                    smallvec![TokenEndpointAuthMethod::ClientSecretBasic],
+                ),
+                registration_endpoint: Some(
+                    "https://auth.example.com/register"
+                        .parse::<Uri>()
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                ),
+                client_id_metadata_document_supported: false,
+                ..Default::default()
+            },
+        );
+
+        assert_matches!(
+            init_task.await.err().unwrap().downcast::<InitError>(),
+            Ok(InitError::UnsupportedTokenEndpointAuthMethod)
         );
     }
 
@@ -1502,7 +1924,7 @@ mod tests {
         );
 
         assert!(
-            query_pairs.get("scope").is_none(),
+            !query_pairs.contains_key("scope"),
             "scope should be absent when no scope is configured"
         );
     }

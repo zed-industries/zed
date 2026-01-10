@@ -191,4 +191,12 @@ impl ContextServer {
 
         http.handle_oauth_callback(&callback, cx).await
     }
+
+    pub async fn logout(&self, cx: &AsyncApp) -> Result<()> {
+        let ContextServerTransport::Http(http) = &self.configuration else {
+            anyhow::bail!("logout is only supported for HTTP context servers");
+        };
+
+        http.logout(cx).await
+    }
 }

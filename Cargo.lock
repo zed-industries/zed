@@ -3668,6 +3668,7 @@ dependencies = [
  "settings",
  "sha2",
  "slotmap",
+ "smallvec",
  "smol",
  "tempfile",
  "terminal",

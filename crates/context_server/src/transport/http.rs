@@ -316,6 +316,14 @@ impl HttpTransport {
 
         Ok(())
     }
+
+    pub async fn logout(&self, cx: &AsyncApp) -> Result<()> {
+        let mut client_guard = self.oauth_client.lock().await;
+        if let Some(client) = client_guard.as_mut() {
+            client.logout(cx).await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]

@@ -752,6 +752,17 @@ impl ContextServerStore {
         .detach();
     }
 
+    pub fn logout(&self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        let Some(server) = self.get_server(&server_id) else {
+            return;
+        };
+
+        cx.spawn(async move |_, cx| {
+            server.logout(&cx).await.log_err();
+        })
+        .detach();
+    }
+
     pub fn handle_oauth_callback(
         &mut self,
         callback: context_server::OAuthCallback,

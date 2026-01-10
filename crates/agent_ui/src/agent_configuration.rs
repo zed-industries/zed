@@ -734,6 +734,7 @@ impl AgentConfiguration {
                 let language_registry = self.language_registry.clone();
                 let workspace = self.workspace.clone();
                 let context_server_registry = self.context_server_registry.clone();
+                let context_server_store = self.context_server_store.clone();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -780,6 +781,17 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
+                        .when(is_remote && is_running, |menu| {
+                            menu.entry("Log Out", None, {
+                                let context_server_id = context_server_id.clone();
+                                let context_server_store = context_server_store.clone();
+                                move |_window, cx| {
+                                    context_server_store.update(cx, |store, cx| {
+                                        store.logout(context_server_id.clone(), cx);
+                                    });
+                                }
+                            })
+                        })
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
@@ -838,7 +850,7 @@ impl AgentConfiguration {
         let action = if matches!(server_status, ContextServerStatus::AuthRequired) {
             Button::new("context-server-authenticate", "Authenticate")
                 .style(ButtonStyle::Filled)
-                .on_click(cx.listener(move |this, _event, window, cx| {
+                .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.context_server_store.update(cx, |store, cx| {
                         store.start_auth(context_server_id.clone(), cx);
                     });
