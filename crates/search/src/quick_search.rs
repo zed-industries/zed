@@ -16,7 +16,7 @@ use gpui::{
     Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
     Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
-use language::Buffer;
+use language::{Buffer, HighlightId};
 use menu;
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
@@ -27,9 +27,7 @@ use settings::Settings;
 use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
 use ui::Divider;
-use ui::{
-    IconButton, IconName, ListItem, ListItemSpacing, Tooltip, highlight_ranges, prelude::*,
-};
+use ui::{IconButton, IconName, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, Workspace};
 pub use zed_actions::quick_search::Toggle;
@@ -1369,29 +1367,97 @@ impl PickerDelegate for QuickSearchDelegate {
         let original_line = &search_match.line_text;
         let line_text = original_line.trim_start();
         let trim_offset = original_line.len() - line_text.len();
+        let line_text_string = line_text.to_string();
 
-        let mut highlight_indices = Vec::new();
+        // Build search match ranges first (these take precedence)
+        let search_match_style = HighlightStyle {
+            background_color: Some(cx.theme().colors().search_match_background),
+            font_weight: Some(gpui::FontWeight::BOLD),
+            ..Default::default()
+        };
+        let mut search_ranges: Vec<Range<usize>> = Vec::new();
         for range in &search_match.relative_ranges {
-            for i in range.clone() {
-                if i >= trim_offset {
-                    let adjusted_i = i - trim_offset;
-                    if line_text.is_char_boundary(adjusted_i) {
-                        highlight_indices.push(adjusted_i);
-                    }
+            if range.end > trim_offset && range.start < trim_offset + line_text_string.len() {
+                let start = range.start.saturating_sub(trim_offset);
+                let end = range.end.saturating_sub(trim_offset).min(line_text_string.len());
+                if start < end
+                    && line_text_string.is_char_boundary(start)
+                    && line_text_string.is_char_boundary(end)
+                {
+                    search_ranges.push(start..end);
                 }
             }
         }
 
-        let line_text_string = line_text.to_string();
-        let highlights = highlight_ranges(
-            &line_text_string,
-            &highlight_indices,
-            HighlightStyle {
-                background_color: Some(cx.theme().colors().search_match_background),
-                font_weight: Some(gpui::FontWeight::BOLD),
-                ..Default::default()
-            },
-        );
+        let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+
+        // Get syntax highlighting from the buffer
+        if let (Some(first_range), Some(first_relative)) = (
+            search_match.ranges.first(),
+            search_match.relative_ranges.first(),
+        ) {
+            let line_start = first_range.start - first_relative.start;
+            let line_end = line_start + original_line.len();
+
+            let syntax_theme = cx.theme().syntax().clone();
+            let snapshot = search_match.buffer.read(cx).snapshot();
+            let mut offset = 0usize;
+
+            for chunk in snapshot.chunks(line_start..line_end, true) {
+                let chunk_len = chunk.text.len();
+                if let Some(style) = chunk
+                    .syntax_highlight_id
+                    .and_then(|id: HighlightId| id.style(&syntax_theme))
+                {
+                    // Calculate range in the trimmed string
+                    let chunk_end = offset + chunk_len;
+                    if chunk_end > trim_offset && offset < trim_offset + line_text_string.len() {
+                        let start = offset.saturating_sub(trim_offset);
+                        let end = chunk_end.saturating_sub(trim_offset).min(line_text_string.len());
+                        // Ensure we're on valid char boundaries
+                        if start < end
+                            && line_text_string.is_char_boundary(start)
+                            && line_text_string.is_char_boundary(end)
+                        {
+                            // Split syntax highlight around search matches
+                            let mut current_start = start;
+                            for search_range in &search_ranges {
+                                if search_range.start > current_start && search_range.start < end {
+                                    // Add portion before search match
+                                    if line_text_string.is_char_boundary(current_start)
+                                        && line_text_string.is_char_boundary(search_range.start)
+                                    {
+                                        highlights
+                                            .push((current_start..search_range.start, style));
+                                    }
+                                    current_start = search_range.end.min(end);
+                                } else if search_range.start <= current_start
+                                    && search_range.end > current_start
+                                {
+                                    current_start = search_range.end.min(end);
+                                }
+                            }
+                            // Add remaining portion after all search matches
+                            if current_start < end
+                                && line_text_string.is_char_boundary(current_start)
+                                && line_text_string.is_char_boundary(end)
+                            {
+                                highlights.push((current_start..end, style));
+                            }
+                        }
+                    }
+                }
+                offset += chunk_len;
+            }
+        }
+
+        // Add search match highlights
+        for range in search_ranges {
+            highlights.push((range, search_match_style));
+        }
+
+        // Sort highlights by start position
+        highlights.sort_by_key(|(range, _)| range.start);
 
         let text_style = window.text_style();
 
