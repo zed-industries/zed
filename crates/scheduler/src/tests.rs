@@ -238,7 +238,7 @@ fn test_block() {
 }
 
 #[test]
-#[should_panic(expected = "futures_channel::oneshot::Inner")]
+#[should_panic(expected = "Parking forbidden. Pending traces:")]
 fn test_parking_panics() {
     let config = TestSchedulerConfig {
         capture_pending_traces: true,
@@ -297,20 +297,27 @@ fn test_block_with_timeout() {
         let foreground = scheduler.foreground();
         let future = future::ready(42);
         let output = foreground.block_with_timeout(Duration::from_millis(100), future);
-        assert_eq!(output.unwrap(), 42);
+        assert_eq!(output.ok(), Some(42));
     });
 
     // Test case: future times out
     TestScheduler::once(async |scheduler| {
+        // Make timeout behavior deterministic by forcing the timeout tick budget to be exactly 0.
+        // This prevents `block_with_timeout` from making progress via extra scheduler stepping and
+        // accidentally completing work that we expect to time out.
+        scheduler.set_timeout_ticks(0..=0);
+
         let foreground = scheduler.foreground();
         let future = future::pending::<()>();
         let output = foreground.block_with_timeout(Duration::from_millis(50), future);
-        let _ = output.expect_err("future should not have finished");
+        assert!(output.is_err(), "future should not have finished");
     });
 
     // Test case: future makes progress via timer but still times out
     let mut results = BTreeSet::new();
     TestScheduler::many(100, async |scheduler| {
+        // Keep the existing probabilistic behavior here (do not force 0 ticks), since this subtest
+        // is explicitly checking that some seeds/timeouts can complete while others can time out.
         let task = scheduler.background().spawn(async move {
             Yield { polls: 10 }.await;
             42
@@ -324,6 +331,44 @@ fn test_block_with_timeout() {
         results.into_iter().collect::<Vec<_>>(),
         vec![None, Some(42)]
     );
+
+    // Regression test:
+    // A timed-out future must not be cancelled. The returned future should still be
+    // pollable to completion later. We also want to ensure time only advances when we
+    // explicitly advance it (not by yielding).
+    TestScheduler::once(async |scheduler| {
+        // Force immediate timeout: the timeout tick budget is 0 so we will not step or
+        // advance timers inside `block_with_timeout`.
+        scheduler.set_timeout_ticks(0..=0);
+
+        let background = scheduler.background();
+
+        // This task should only complete once time is explicitly advanced.
+        let task = background.spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler.timer(Duration::from_millis(100)).await;
+                123
+            }
+        });
+
+        // This should time out before we advance time enough for the timer to fire.
+        let timed_out = scheduler
+            .foreground()
+            .block_with_timeout(Duration::from_millis(50), task);
+        assert!(
+            timed_out.is_err(),
+            "expected timeout before advancing the clock enough for the timer"
+        );
+
+        // Now explicitly advance time and ensure the returned future can complete.
+        let mut task = timed_out.err().unwrap();
+        scheduler.advance_clock(Duration::from_millis(100));
+        scheduler.run();
+
+        let output = scheduler.foreground().block_on(&mut task);
+        assert_eq!(output, 123);
+    });
 }
 
 // When calling block, we shouldn't make progress on foreground-spawned futures with the same session id.
@@ -369,4 +414,65 @@ impl Future for Yield {
             Poll::Pending
         }
     }
+}
+
+#[test]
+fn test_background_priority_scheduling() {
+    use parking_lot::Mutex;
+
+    // Run many iterations to get statistical significance
+    let mut high_before_low_count = 0;
+    let iterations = 100;
+
+    for seed in 0..iterations {
+        let config = TestSchedulerConfig::with_seed(seed);
+        let scheduler = Arc::new(TestScheduler::new(config));
+        let background = scheduler.background();
+
+        let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+        // Spawn low priority tasks first
+        for i in 0..3 {
+            let order = execution_order.clone();
+            background
+                .spawn_with_priority(Priority::Low, async move {
+                    order.lock().push(format!("low-{}", i));
+                })
+                .detach();
+        }
+
+        // Spawn high priority tasks second
+        for i in 0..3 {
+            let order = execution_order.clone();
+            background
+                .spawn_with_priority(Priority::High, async move {
+                    order.lock().push(format!("high-{}", i));
+                })
+                .detach();
+        }
+
+        scheduler.run();
+
+        // Count how many high priority tasks ran in the first half
+        let order = execution_order.lock();
+        let high_in_first_half = order
+            .iter()
+            .take(3)
+            .filter(|s| s.starts_with("high"))
+            .count();
+
+        if high_in_first_half >= 2 {
+            high_before_low_count += 1;
+        }
+    }
+
+    // High priority tasks should tend to run before low priority tasks
+    // With weights of 60 vs 10, high priority should dominate early execution
+    assert!(
+        high_before_low_count > iterations / 2,
+        "Expected high priority tasks to run before low priority tasks more often. \
+         Got {} out of {} iterations",
+        high_before_low_count,
+        iterations
+    );
 }
