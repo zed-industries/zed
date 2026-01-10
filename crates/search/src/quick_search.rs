@@ -28,7 +28,7 @@ use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
 use ui::Divider;
 use ui::{
-    Icon, IconButton, IconName, ListItem, ListItemSpacing, Tooltip, highlight_ranges, prelude::*,
+    IconButton, IconName, ListItem, ListItemSpacing, Tooltip, highlight_ranges, prelude::*,
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, Workspace};
@@ -472,7 +472,7 @@ impl Render for QuickSearch {
             .bg(cx.theme().colors().elevated_surface_background)
             .border_1()
             .border_color(cx.theme().colors().border)
-            .rounded_md()
+            .rounded_lg()
             .shadow_lg()
             .on_drag(
                 QuickSearchDrag {
@@ -607,7 +607,7 @@ impl Render for QuickSearch {
             )
             .child(
                 div()
-                    .max_h(px(250.))
+                    .max_h(px(180.))
                     .overflow_hidden()
                     .child(self.picker.clone()),
             )
@@ -645,7 +645,7 @@ impl Render for QuickSearch {
                 this.child(
                     v_flex().children(preview_header).child(
                         div()
-                            .h(px(200.))
+                            .h(px(280.))
                             .overflow_hidden()
                             .child(self.preview_editor.clone()),
                     ),
