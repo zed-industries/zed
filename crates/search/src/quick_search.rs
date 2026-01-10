@@ -77,12 +77,19 @@ pub struct SearchMatch {
     pub line_number: u32,
 }
 
+const DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
+const DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
+const MIN_PANEL_HEIGHT: f32 = 80.0;
+const MAX_PREVIEW_HEIGHT: f32 = 600.0;
+
 pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
     preview_editor: Entity<Editor>,
     replace_editor: Entity<Editor>,
     focus_handle: FocusHandle,
     offset: gpui::Point<Pixels>,
+    results_height: Pixels,
+    preview_height: Pixels,
     _subscriptions: Vec<Subscription>,
     _autosave_task: Option<Task<()>>,
 }
@@ -91,6 +98,19 @@ pub struct QuickSearch {
 struct QuickSearchDrag {
     mouse_start: gpui::Point<Pixels>,
     offset_start: gpui::Point<Pixels>,
+}
+
+#[derive(Clone, Copy)]
+struct ResizeDrag {
+    mouse_start_y: Pixels,
+    results_height_start: Pixels,
+    preview_height_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct BottomResizeDrag {
+    mouse_start_y: Pixels,
+    preview_height_start: Pixels,
 }
 
 struct DragPreview;
@@ -244,6 +264,8 @@ impl QuickSearch {
             replace_editor,
             focus_handle,
             offset: gpui::Point::default(),
+            results_height: px(DEFAULT_RESULTS_HEIGHT),
+            preview_height: px(DEFAULT_PREVIEW_HEIGHT),
             _subscriptions: subscriptions,
             _autosave_task: None,
         }
@@ -605,7 +627,7 @@ impl Render for QuickSearch {
             )
             .child(
                 div()
-                    .max_h(px(180.))
+                    .h(self.results_height)
                     .overflow_hidden()
                     .child(self.picker.clone()),
             )
@@ -628,7 +650,6 @@ impl Render for QuickSearch {
                         .px_2()
                         .py_1()
                         .gap_2()
-                        .border_t_1()
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .bg(cx.theme().colors().editor_background)
@@ -640,14 +661,79 @@ impl Render for QuickSearch {
                         )
                 });
 
-                this.child(
-                    v_flex().children(preview_header).child(
-                        div()
-                            .h(px(280.))
-                            .overflow_hidden()
-                            .child(self.preview_editor.clone()),
-                    ),
-                )
+                // Resize handle between results and preview
+                let resize_handle = div()
+                    .id("resize-handle")
+                    .h(px(6.))
+                    .w_full()
+                    .cursor_row_resize()
+                    .bg(cx.theme().colors().border)
+                    .hover(|style| style.bg(cx.theme().colors().border_focused))
+                    .on_drag(
+                        ResizeDrag {
+                            mouse_start_y: window.mouse_position().y,
+                            results_height_start: self.results_height,
+                            preview_height_start: self.preview_height,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<ResizeDrag>(cx.listener(
+                        |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            let delta = event.event.position.y - drag.mouse_start_y;
+                            let total_height =
+                                drag.results_height_start + drag.preview_height_start;
+
+                            let new_results = (drag.results_height_start + delta)
+                                .max(px(MIN_PANEL_HEIGHT))
+                                .min(total_height - px(MIN_PANEL_HEIGHT));
+                            let new_preview = total_height - new_results;
+
+                            this.results_height = new_results;
+                            this.preview_height = new_preview;
+                            cx.notify();
+                        },
+                    ));
+
+                // Bottom resize handle for preview
+                let bottom_resize_handle = div()
+                    .id("bottom-resize-handle")
+                    .h(px(6.))
+                    .w_full()
+                    .cursor_row_resize()
+                    .bg(cx.theme().colors().border)
+                    .hover(|style| style.bg(cx.theme().colors().border_focused))
+                    .on_drag(
+                        BottomResizeDrag {
+                            mouse_start_y: window.mouse_position().y,
+                            preview_height_start: self.preview_height,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<BottomResizeDrag>(cx.listener(
+                        |this, event: &DragMoveEvent<BottomResizeDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            let delta = event.event.position.y - drag.mouse_start_y;
+
+                            let new_preview = (drag.preview_height_start + delta)
+                                .max(px(MIN_PANEL_HEIGHT))
+                                .min(px(MAX_PREVIEW_HEIGHT));
+
+                            this.preview_height = new_preview;
+                            cx.notify();
+                        },
+                    ));
+
+                this.child(resize_handle)
+                    .child(
+                        v_flex().children(preview_header).child(
+                            div()
+                                .h(self.preview_height)
+                                .overflow_hidden()
+                                .child(self.preview_editor.clone()),
+                        ),
+                    )
+                    .child(bottom_resize_handle)
             })
     }
 }
