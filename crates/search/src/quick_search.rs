@@ -179,7 +179,6 @@ impl QuickSearch {
         );
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
-        // Restore recent query if available
         if let Some(recent_query) = get_recent_query(cx) {
             picker.update(cx, |picker, cx| {
                 picker.set_query(recent_query, window, cx);
@@ -279,14 +278,12 @@ impl QuickSearch {
         let anchor_range = selected_match.anchor_ranges[0].clone();
 
         buffer.update(cx, |buffer, cx| {
-            // Convert anchors to offsets at edit time
             let snapshot = buffer.snapshot();
             let range =
                 anchor_range.start.to_offset(&snapshot)..anchor_range.end.to_offset(&snapshot);
             buffer.edit([(range, replacement.as_str())], None, cx);
         });
 
-        // Save the buffer so changes persist without manual Cmd+S
         project
             .update(cx, |project, cx| {
                 let mut buffers = HashSet::default();
@@ -295,7 +292,6 @@ impl QuickSearch {
             })
             .detach_and_log_err(cx);
 
-        // Refresh the search and move to next match
         self.picker.update(cx, |picker, cx| {
             picker.refresh(window, cx);
         });
@@ -304,12 +300,10 @@ impl QuickSearch {
     fn replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let replacement = self.replacement_text(cx);
 
-        // Collect all matches grouped by buffer
         let delegate = &self.picker.read(cx).delegate;
         let matches: Vec<_> = delegate.matches.clone();
         let project = delegate.project.clone();
 
-        // Group anchor ranges by buffer
         let mut buffer_edits: std::collections::HashMap<
             gpui::EntityId,
             (Entity<Buffer>, Vec<Range<Anchor>>),
@@ -326,21 +320,18 @@ impl QuickSearch {
             }
         }
 
-        // Collect buffers that were edited for saving
         let mut edited_buffers: HashSet<Entity<Buffer>> = HashSet::default();
 
-        // Apply all edits for each buffer
         for (_, (buffer, mut anchor_ranges)) in buffer_edits {
             buffer.update(cx, |buf, cx| {
-                // Sort anchors by position descending (apply from end to start)
                 let snapshot = buf.snapshot();
+                // Sort descending to avoid offset invalidation when editing
                 anchor_ranges.sort_by(|a, b| {
                     b.start
                         .to_offset(&snapshot)
                         .cmp(&a.start.to_offset(&snapshot))
                 });
 
-                // Apply each edit, getting fresh offset each time
                 for anchor_range in anchor_ranges {
                     let snapshot = buf.snapshot();
                     let range = anchor_range.start.to_offset(&snapshot)
@@ -351,14 +342,12 @@ impl QuickSearch {
             edited_buffers.insert(buffer);
         }
 
-        // Save all edited buffers
         if !edited_buffers.is_empty() {
             project
                 .update(cx, |project, cx| project.save_buffers(edited_buffers, cx))
                 .detach_and_log_err(cx);
         }
 
-        // Refresh the search
         self.picker.update(cx, |picker, cx| {
             picker.refresh(window, cx);
         });
@@ -472,7 +461,6 @@ impl Render for QuickSearch {
                         h_flex()
                             .gap_1()
                             .items_center()
-                            // Replace toggle button
                             .child(
                                 IconButton::new("replace-toggle", IconName::Replace)
                                     .size(ButtonSize::Compact)
@@ -486,7 +474,6 @@ impl Render for QuickSearch {
                                         cx.notify();
                                     })),
                             )
-                            // Filters toggle button
                             .child(
                                 IconButton::new("filters-toggle", IconName::Filter)
                                     .size(ButtonSize::Compact)
@@ -494,15 +481,10 @@ impl Render for QuickSearch {
                                     .tooltip(|_window, cx| {
                                         Tooltip::for_action("Toggle Filters", &ToggleFilters, cx)
                                     })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.picker.update(cx, |picker, cx| {
-                                            picker.delegate.filters_enabled =
-                                                !picker.delegate.filters_enabled;
-                                            picker.refresh(window, cx);
-                                        });
-                                    })),
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(ToggleFilters.boxed_clone(), cx);
+                                    }),
                             )
-                            // Close button
                             .child(
                                 div()
                                     .id("close-button")
@@ -664,7 +646,6 @@ impl QuickSearchDelegate {
                 );
             });
 
-            // Highlight all matches with yellow background (like IntelliJ)
             let multi_buffer_snapshot = multi_buffer.read(cx);
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
                 let highlight_ranges: Vec<_> = anchor_ranges
@@ -844,7 +825,6 @@ impl PickerDelegate for QuickSearchDelegate {
         let search_options = self.search_options;
 
         v_flex()
-            // Search input row with toggle buttons
             .child(
                 h_flex()
                     .flex_none()
@@ -898,7 +878,6 @@ impl PickerDelegate for QuickSearchDelegate {
                             ),
                     ),
             )
-            // Replace input row (shown when replace_enabled)
             .when(self.replace_enabled, |this| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
@@ -935,7 +914,6 @@ impl PickerDelegate for QuickSearchDelegate {
                         ),
                 )
             })
-            // Filters row (shown when filters_enabled)
             .when(self.filters_enabled, |this| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
@@ -977,7 +955,6 @@ impl PickerDelegate for QuickSearchDelegate {
                         ),
                 )
             })
-            // Divider after inputs
             .when(
                 self.editor_position() == PickerEditorPosition::Start,
                 |this| this.child(Divider::horizontal()),
@@ -1108,27 +1085,22 @@ impl PickerDelegate for QuickSearchDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        // If replace editor is focused, handle replace actions instead of confirm
         let in_replace =
             self.replace_enabled && self.replace_editor.focus_handle(cx).is_focused(window);
 
         if in_replace {
             if secondary {
-                // Cmd+Enter: Replace All
                 window.dispatch_action(ReplaceAll.boxed_clone(), cx);
             } else {
-                // Enter: Replace Next
                 window.dispatch_action(ReplaceNext.boxed_clone(), cx);
             }
             return;
         }
 
-        // Check if this confirm was triggered by a click (selection just changed)
-        // or by Enter key (no selection change)
+        // Clicks require double-click, Enter key proceeds immediately
         if self.has_changed_selected_index {
             self.has_changed_selected_index = false;
 
-            // For clicks, require double-click (two confirms within 300ms)
             let now = std::time::Instant::now();
             let is_double_click = self
                 .last_confirm_time
@@ -1140,7 +1112,6 @@ impl PickerDelegate for QuickSearchDelegate {
                 return;
             }
         }
-        // For Enter key (not a click), proceed immediately
 
         let Some(selected_match) = self.matches.get(self.selected_index) else {
             return;
@@ -1216,9 +1187,6 @@ impl PickerDelegate for QuickSearchDelegate {
         );
 
         let text_style = window.text_style();
-        // Since we are not using HighlightedLabel which handles its own base styling,
-        // we might need to be careful. StyledText doesn't have a size() method directly.
-        // We'll trust the default text style or adjust it if needed.
 
         Some(
             ListItem::new(ix)
