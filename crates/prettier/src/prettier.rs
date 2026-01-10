@@ -329,7 +329,7 @@ impl Prettier {
                     settings: Default::default(),
                 };
                 executor.spawn(server.initialize(params, configuration.into(), cx))
-            })?
+            })
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
@@ -475,7 +475,7 @@ impl Prettier {
                                 ignore_path,
                             },
                         })
-                })?
+                })
                 .context("building prettier request")?;
 
                 let response = local
@@ -483,7 +483,7 @@ impl Prettier {
                     .request::<Format>(params)
                     .await
                     .into_response()?;
-                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
+                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx));
                 Ok(diff_task.await)
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -520,7 +520,7 @@ impl Prettier {
                         }
                         None => panic!("Should not format buffer without a language with prettier"),
                     }
-                })??
+                })?
                 .await),
         }
     }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use gpui::{App, AsyncApp, Entity, Global, WeakEntity};
+use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity};
 use lsp::LanguageServer;
 
 use crate::LspStore;
@@ -22,7 +22,7 @@ impl lsp::request::Request for SchemaContentRequest {
     const METHOD: &'static str = "vscode/content";
 }
 
-type SchemaRequestHandler = fn(Entity<LspStore>, String, &mut AsyncApp) -> Result<String>;
+type SchemaRequestHandler = fn(Entity<LspStore>, String, &mut AsyncApp) -> Task<Result<String>>;
 pub struct SchemaHandlingImpl(SchemaRequestHandler);
 
 impl Global for SchemaHandlingImpl {}
@@ -72,9 +72,7 @@ pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: String, cx: &App)
 pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
     language_server
         .on_request::<SchemaContentRequest, _, _>(move |params, cx| {
-            let handler = cx.try_read_global::<SchemaHandlingImpl, _>(|handler, _| {
-                handler.0
-            });
+            let handler = cx.try_read_global::<SchemaHandlingImpl, _>(|handler, _| handler.0);
             let mut cx = cx.clone();
             let uri = params.clone().pop();
             let lsp_store = lsp_store.clone();
@@ -82,7 +80,7 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
                 let lsp_store = lsp_store.upgrade().context("LSP store has been dropped")?;
                 let uri = uri.context("No URI")?;
                 let handle_schema_request = handler.context("No schema handler registered")?;
-                handle_schema_request(lsp_store, uri, &mut cx)
+                handle_schema_request(lsp_store, uri, &mut cx).await
             };
             async move {
                 zlog::trace!(LOGGER => "Handling schema request for {:?}", &params);

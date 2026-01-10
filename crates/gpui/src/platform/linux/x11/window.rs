@@ -1459,6 +1459,24 @@ impl PlatformWindow for X11Window {
         state.renderer.update_transparency(transparent);
     }
 
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.0.state.borrow().background_appearance
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        self.0
+            .state
+            .borrow()
+            .client
+            .0
+            .upgrade()
+            .map(|ref_cell| {
+                let state = ref_cell.borrow();
+                state.gpu_context.supports_dual_source_blending()
+            })
+            .unwrap_or_default()
+    }
+
     fn minimize(&self) {
         let state = self.0.state.borrow();
         const WINDOW_ICONIC_STATE: u32 = 3;

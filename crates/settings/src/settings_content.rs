@@ -977,6 +977,15 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 128
     pub max_columns: Option<usize>,
+    /// Whether to show small single-line outputs inline instead of in a block.
+    ///
+    /// Default: true
+    pub inline_output: Option<bool>,
+    /// Maximum number of characters for an output to be shown inline.
+    /// Only applies when `inline_output` is true.
+    ///
+    /// Default: 50
+    pub inline_output_max_length: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

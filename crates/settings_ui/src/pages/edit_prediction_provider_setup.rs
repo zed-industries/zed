@@ -1,5 +1,5 @@
 use edit_prediction::{
-    ApiKeyState, Zeta2FeatureFlag,
+    ApiKeyState, MercuryFeatureFlag, SweepFeatureFlag,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
@@ -33,7 +33,7 @@ impl Render for EditPredictionSetupPage {
 
         let providers = [
             Some(render_github_copilot_provider(window, cx).into_any_element()),
-            cx.has_flag::<Zeta2FeatureFlag>().then(|| {
+            cx.has_flag::<MercuryFeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::Inception,
                     "Mercury",
@@ -46,7 +46,7 @@ impl Render for EditPredictionSetupPage {
                 )
                 .into_any_element()
             }),
-            cx.has_flag::<Zeta2FeatureFlag>().then(|| {
+            cx.has_flag::<SweepFeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::SweepAi,
                     "Sweep",

@@ -403,10 +403,7 @@ pub fn get_prompt(
     arguments: HashMap<String, String>,
     cx: &mut AsyncApp,
 ) -> Task<Result<context_server::types::PromptsGetResponse>> {
-    let server = match cx.update(|cx| server_store.read(cx).get_running_server(server_id)) {
-        Ok(server) => server,
-        Err(error) => return Task::ready(Err(error)),
-    };
+    let server = cx.update(|cx| server_store.read(cx).get_running_server(server_id));
     let Some(server) = server else {
         return Task::ready(Err(anyhow::anyhow!("Context server not found")));
     };

@@ -29,7 +29,7 @@ impl Example for FileChangeNotificationExample {
                 .read(cx)
                 .find_project_path("README", cx)
                 .expect("README file should exist in this repo")
-        })?;
+        });
 
         let buffer = {
             cx.agent_thread()
@@ -37,7 +37,7 @@ impl Example for FileChangeNotificationExample {
                     thread
                         .project()
                         .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                })?
+                })
                 .await?
         };
 
@@ -45,7 +45,7 @@ impl Example for FileChangeNotificationExample {
             thread.action_log().update(cx, |action_log, cx| {
                 action_log.buffer_read(buffer.clone(), cx);
             });
-        })?;
+        });
 
         // Start conversation (specific message is not important)
         cx.prompt_with_max_turns("Find all files in this repo", 1)
@@ -54,7 +54,7 @@ impl Example for FileChangeNotificationExample {
         // Edit the README buffer - the model should get a notification on next turn
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..buffer.len(), "Surprise!")], None, cx);
-        })?;
+        });
 
         // Run for some more turns.
         // The model shouldn't thank us for letting it know about the file change.

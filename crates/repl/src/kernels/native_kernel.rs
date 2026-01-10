@@ -294,15 +294,13 @@ impl NativeRunningKernel {
                         if let Err(err) = result {
                             log::error!("kernel: handling failed for {name}: {err:?}");
 
-                            session
-                                .update(cx, |session, cx| {
-                                    session.kernel_errored(
-                                        format!("handling failed for {name}: {err}"),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                })
-                                .ok();
+                            session.update(cx, |session, cx| {
+                                session.kernel_errored(
+                                    format!("handling failed for {name}: {err}"),
+                                    cx,
+                                );
+                                cx.notify();
+                            });
                         }
                     }
                 }
@@ -328,13 +326,11 @@ impl NativeRunningKernel {
 
                 log::error!("{}", error_message);
 
-                session
-                    .update(cx, |session, cx| {
-                        session.kernel_errored(error_message, cx);
+                session.update(cx, |session, cx| {
+                    session.kernel_errored(error_message, cx);
 
-                        cx.notify();
-                    })
-                    .ok();
+                    cx.notify();
+                });
             });
 
             anyhow::Ok(Box::new(Self {

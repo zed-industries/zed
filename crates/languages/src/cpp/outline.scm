@@ -9,6 +9,11 @@
         "(" @context
         ")" @context)) @item
 
+(namespace_definition
+    "inline"? @context
+    "namespace" @context
+    name: (_) @name) @item
+
 (type_definition
     "typedef" @context
     declarator: (_) @name) @item
@@ -23,6 +28,14 @@
 
 (enum_specifier
     "enum" @context
+    [
+        "class"
+        "struct"
+    ]? @context
+    name: (_) @name) @item
+
+(union_specifier
+    "union" @context
     name: (_) @name) @item
 
 (enumerator
@@ -33,11 +46,15 @@
     name: (_) @name) @item
 
 (declaration
-    (storage_class_specifier) @context
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_) @context
     declarator: (init_declarator
-      declarator: (_) @name)) @item
+      ; The declaration may define multiple variables, using @item on the
+      ; declarator so that they get distinct ranges.
+      declarator: (_) @item @name))
 
 (function_definition
     (type_qualifier)? @context
@@ -114,7 +131,10 @@
     (type_qualifier)? @context) @item
 
 (field_declaration
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_) @context
     declarator: [
         (field_identifier) @name

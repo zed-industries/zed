@@ -1,14 +1,14 @@
 //! FileDiffView provides a UI for displaying differences between two buffers.
 
 use anyhow::Result;
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::Buffer;
+use language::{Buffer, LanguageRegistry};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -47,13 +47,14 @@ impl FileDiffView {
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
             let old_buffer = project
-                .update(cx, |project, cx| project.open_local_buffer(&old_path, cx))?
+                .update(cx, |project, cx| project.open_local_buffer(&old_path, cx))
                 .await?;
             let new_buffer = project
-                .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))?
+                .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))
                 .await?;
+            let languages = project.update(cx, |project, _| project.languages().clone());
 
-            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
+            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, languages, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
@@ -143,19 +144,16 @@ impl FileDiffView {
                             this.new_buffer.read(cx).snapshot(),
                         )
                     })?;
-                    let diff_snapshot = cx
-                        .update(|cx| {
-                            BufferDiffSnapshot::new_with_base_buffer(
-                                new_snapshot.text.clone(),
-                                Some(old_snapshot.text().into()),
-                                old_snapshot,
-                                cx,
-                            )
-                        })?
-                        .await;
                     diff.update(cx, |diff, cx| {
-                        diff.set_snapshot(diff_snapshot, &new_snapshot, cx)
-                    })?;
+                        diff.set_base_text(
+                            Some(old_snapshot.text().as_str().into()),
+                            old_snapshot.language().cloned(),
+                            new_snapshot.text.clone(),
+                            cx,
+                        )
+                    })
+                    .await
+                    .ok();
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -167,27 +165,37 @@ impl FileDiffView {
 async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
+    language_registry: Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let diff_snapshot = cx
-        .update(|cx| {
-            BufferDiffSnapshot::new_with_base_buffer(
+    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
+
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
                 new_buffer_snapshot.text.clone(),
                 Some(old_buffer_snapshot.text().into()),
-                old_buffer_snapshot,
+                true,
+                new_buffer_snapshot.language().cloned(),
                 cx,
             )
-        })?
+        })
         .await;
 
-    cx.new(|cx| {
-        let mut diff = BufferDiff::new(&new_buffer_snapshot.text, cx);
-        diff.set_snapshot(diff_snapshot, &new_buffer_snapshot.text, cx);
-        diff
+    diff.update(cx, |diff, cx| {
+        diff.language_changed(
+            new_buffer_snapshot.language().cloned(),
+            Some(language_registry),
+            cx,
+        );
+        diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
     })
+    .await;
+
+    Ok(diff)
 }
 
 impl EventEmitter<EditorEvent> for FileDiffView {}

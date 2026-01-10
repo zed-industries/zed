@@ -197,7 +197,7 @@ impl RelatedExcerptStore {
                             DefinitionTask::CacheMiss(task) => {
                                 let locations = task.await.log_err()??;
                                 let duration = start_time.elapsed();
-                                cx.update(|cx| {
+                                Some(cx.update(|cx| {
                                     (
                                         identifier,
                                         Arc::new(CacheEntry {
@@ -210,8 +210,7 @@ impl RelatedExcerptStore {
                                         }),
                                         Some(duration),
                                     )
-                                })
-                                .ok()
+                                }))
                             }
                         }
                     })
@@ -280,12 +279,12 @@ async fn rebuild_related_files(
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
                 definition
                     .buffer
-                    .read_with(cx, |buffer, _| buffer.parsing_idle())?
+                    .read_with(cx, |buffer, _| buffer.parsing_idle())
                     .await;
                 e.insert(
                     definition
                         .buffer
-                        .read_with(cx, |buffer, _| buffer.snapshot())?,
+                        .read_with(cx, |buffer, _| buffer.snapshot()),
                 );
             }
             let worktree_id = definition.path.worktree_id;
@@ -296,7 +295,7 @@ async fn rebuild_related_files(
                     if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                         e.insert(worktree.read(cx).root_name().as_unix_str().to_string());
                     }
-                })?;
+                });
             }
         }
     }

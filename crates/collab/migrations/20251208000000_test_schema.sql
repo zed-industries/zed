@@ -335,7 +335,9 @@ CREATE TABLE public.project_repositories (
     current_merge_conflicts character varying,
     branch_summary character varying,
     head_commit_details character varying,
-    merge_message character varying
+    merge_message character varying,
+    remote_upstream_url character varying,
+    remote_origin_url character varying
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -428,6 +430,15 @@ CREATE SEQUENCE public.servers_id_seq
 
 ALTER SEQUENCE public.servers_id_seq OWNED BY public.servers.id;
 
+CREATE TABLE public.shared_threads (
+    id uuid NOT NULL,
+    user_id integer NOT NULL,
+    title text NOT NULL,
+    data bytea NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.user_features (
     user_id integer NOT NULL,
     feature_id integer NOT NULL
@@ -438,9 +449,6 @@ CREATE TABLE public.users (
     github_login character varying,
     admin boolean NOT NULL,
     email_address character varying(255) DEFAULT NULL::character varying,
-    invite_code character varying(64),
-    invite_count integer DEFAULT 0 NOT NULL,
-    inviter_id integer,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
     github_user_id integer NOT NULL,
@@ -628,6 +636,9 @@ ALTER TABLE ONLY public.rooms
 ALTER TABLE ONLY public.servers
     ADD CONSTRAINT servers_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.user_features
     ADD CONSTRAINT user_features_pkey PRIMARY KEY (user_id, feature_id);
 
@@ -645,6 +656,8 @@ ALTER TABLE ONLY public.worktree_settings_files
 
 ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
+
+CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
 
 CREATE INDEX index_access_tokens_user_id ON public.access_tokens USING btree (user_id);
 
@@ -683,8 +696,6 @@ CREATE UNIQUE INDEX index_feature_flags ON public.feature_flags USING btree (id)
 CREATE UNIQUE INDEX index_followers_on_project_id_and_leader_connection_server_id_a ON public.followers USING btree (project_id, leader_connection_server_id, leader_connection_id, follower_connection_server_id, follower_connection_id);
 
 CREATE INDEX index_followers_on_room_id ON public.followers USING btree (room_id);
-
-CREATE UNIQUE INDEX index_invite_code_users ON public.users USING btree (invite_code);
 
 CREATE INDEX index_language_servers_on_project_id ON public.language_servers USING btree (project_id);
 
@@ -877,14 +888,14 @@ ALTER TABLE ONLY public.room_participants
 ALTER TABLE ONLY public.rooms
     ADD CONSTRAINT rooms_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
 
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
 ALTER TABLE ONLY public.user_features
     ADD CONSTRAINT user_features_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.feature_flags(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.user_features
     ADD CONSTRAINT user_features_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.users
-    ADD CONSTRAINT users_inviter_id_fkey FOREIGN KEY (inviter_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;

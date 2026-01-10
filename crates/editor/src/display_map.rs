@@ -232,8 +232,6 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
 
-        // todo word diff here?
-
         DisplaySnapshot {
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,

@@ -220,7 +220,7 @@ impl ExampleInstance {
             worktree
                 .update(cx, |worktree, _cx| {
                     worktree.as_local().unwrap().scan_complete()
-                })?
+                })
                 .await;
 
             struct LanguageServerState {
@@ -233,39 +233,40 @@ impl ExampleInstance {
 
             let lsp = if let Some(language_server) = &meta.language_server {
                 // Open a file that matches the language to cause LSP to start.
-                let language_file = worktree.read_with(cx, |worktree, _cx| {
-                    worktree
-                        .files(false, 0)
-                        .find_map(|e| {
-                            if e.path.clone().extension()
-                                == Some(&language_server.file_extension)
-                            {
-                                Some(ProjectPath {
-                                    worktree_id: worktree.id(),
-                                    path: e.path.clone(),
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .context("Failed to find a file for example language")
-                })??;
+                let language_file = worktree
+                    .read_with(cx, |worktree, _cx| {
+                        worktree
+                            .files(false, 0)
+                            .find_map(|e| {
+                                if e.path.clone().extension()
+                                    == Some(&language_server.file_extension)
+                                {
+                                    Some(ProjectPath {
+                                        worktree_id: worktree.id(),
+                                        path: e.path.clone(),
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .context("Failed to find a file for example language")
+                    })?;
 
                 let open_language_file_buffer_task = project.update(cx, |project, cx| {
                     project.open_buffer(language_file.clone(), cx)
-                })?;
+                });
 
                 let language_file_buffer = open_language_file_buffer_task.await?;
 
                 let lsp_open_handle = project.update(cx, |project, cx| {
                     project.register_buffer_with_language_servers(&language_file_buffer, cx)
-                })?;
+                });
 
                 wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
 
                 diagnostic_summary_before = project.read_with(cx, |project, cx| {
-                      project.diagnostic_summary(false, cx)
-                })?;
+                    project.diagnostic_summary(false, cx)
+                });
 
                 diagnostics_before = query_lsp_diagnostics(project.clone(), cx).await?;
                 if diagnostics_before.is_some() && language_server.allow_preexisting_diagnostics {
@@ -337,7 +338,7 @@ impl ExampleInstance {
                 });
 
                 thread
-            }).unwrap();
+            });
 
             let mut example_cx = ExampleContext::new(
                 meta.clone(),
@@ -371,13 +372,13 @@ impl ExampleInstance {
                     .update(|cx| {
                         let project = project.clone();
                         cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
-                    })?
+                    })
                     .await?;
                 println!("{}Got diagnostics", this.log_prefix);
 
                 diagnostic_summary_after = project.read_with(cx, |project, cx| {
-                      project.diagnostic_summary(false, cx)
-                })?;
+                    project.diagnostic_summary(false, cx)
+                });
 
             }
 
@@ -389,7 +390,7 @@ impl ExampleInstance {
                 fs::write(this.run_directory.join("diagnostics_after.txt"), diagnostics_after)?;
             }
 
-            thread.update(cx, |thread, _cx| {
+            Ok(thread.update(cx, |thread, _cx| {
                 RunOutput {
                     repository_diff,
                     diagnostic_summary_before,
@@ -401,7 +402,7 @@ impl ExampleInstance {
                     thread_markdown: thread.to_markdown(),
                     programmatic_assertions: example_cx.assertions,
                 }
-            })
+            }))
         })
     }
 
@@ -614,17 +615,19 @@ struct EvalTerminalHandle {
 
 impl agent::TerminalHandle for EvalTerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
-        self.terminal.read_with(cx, |term, _cx| term.id().clone())
+        Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
-        self.terminal
-            .read_with(cx, |term, _cx| term.wait_for_exit())
+        Ok(self
+            .terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit()))
     }
 
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
-        self.terminal
-            .read_with(cx, |term, cx| term.current_output(cx))
+        Ok(self
+            .terminal
+            .read_with(cx, |term, cx| term.current_output(cx)))
     }
 
     fn kill(&self, cx: &AsyncApp) -> Result<()> {
@@ -632,8 +635,14 @@ impl agent::TerminalHandle for EvalTerminalHandle {
             self.terminal.update(cx, |terminal, cx| {
                 terminal.kill(cx);
             });
-        })?;
+        });
         Ok(())
+    }
+
+    fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool> {
+        Ok(self
+            .terminal
+            .read_with(cx, |term, _cx| term.was_stopped_by_user()))
     }
 }
 
@@ -648,7 +657,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
             let language_registry =
-                project.read_with(cx, |project, _cx| project.languages().clone())?;
+                project.read_with(cx, |project, _cx| project.languages().clone());
             let id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
             let terminal =
                 acp_thread::create_terminal_entity(command, &[], vec![], cwd.clone(), &project, cx)
@@ -663,7 +672,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
                     language_registry,
                     cx,
                 )
-            })?;
+            });
             Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
         })
     }
@@ -894,25 +903,20 @@ pub fn wait_for_lang_server(
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
-    let lsp_store = project
-        .read_with(cx, |project, _| project.lsp_store())
-        .unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
-    let has_lang_server = buffer
-        .update(cx, |buffer, cx| {
-            lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store
-                    .running_language_servers_for_local_buffer(buffer, cx)
-                    .next()
-                    .is_some()
-            })
+    let has_lang_server = buffer.update(cx, |buffer, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .running_language_servers_for_local_buffer(buffer, cx)
+                .next()
+                .is_some()
         })
-        .unwrap_or(false);
+    });
 
     if has_lang_server {
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .unwrap()
             .detach();
     }
 
@@ -979,7 +983,7 @@ pub async fn query_lsp_diagnostics(
             .filter(|(_, _, summary)| summary.error_count > 0 || summary.warning_count > 0)
             .map(|(project_path, _, _)| project_path)
             .collect::<Vec<_>>()
-    })?;
+    });
 
     if paths_with_diagnostics.is_empty() {
         return Ok(None);
@@ -988,9 +992,9 @@ pub async fn query_lsp_diagnostics(
     let mut output = String::new();
     for project_path in paths_with_diagnostics {
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
             .await?;
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
         for (_, group) in snapshot.diagnostic_groups(None) {
             let entry = &group.entries[group.primary_ix];

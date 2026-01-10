@@ -1,0 +1,63 @@
+name: "Surface closed issues someone's commented on"
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+
+jobs:
+  add-to-project:
+    if: >
+      github.repository == 'zed-industries/zed' &&
+      github.event.issue.state == 'closed' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.type != null &&
+      github.event.issue.type.name == 'Bug' &&
+      github.event.comment.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: get-app-token
+        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - id: check-staff
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: context.payload.comment.user.login
+              });
+              return response.data.state === 'active';
+            } catch (error) {
+              // 404 means user is not a member
+              if (error.status === 404) {
+                return false;
+              }
+              throw error;
+            }
+
+      - if: steps.check-staff.outputs.result == 'true'
+        run: |
+          echo "::notice::Skipping issue #${{ github.event.issue.number }} - commenter is staff member"
+
+      # github-script outputs are JSON strings, so we compare against 'false' (string)
+      - if: steps.check-staff.outputs.result == 'false'
+        run: |
+          echo "::notice::Adding issue #${{ github.event.issue.number }} to project (comment by ${{ github.event.comment.user.login }})"
+
+      - if: steps.check-staff.outputs.result == 'false'
+        uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
+        with:
+          project-url: https://github.com/orgs/zed-industries/projects/73
+          github-token: ${{ steps.get-app-token.outputs.token }}

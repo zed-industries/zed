@@ -1220,6 +1220,16 @@ impl PlatformWindow for WaylandWindow {
         update_window(state);
     }
 
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.borrow().background_appearance
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        let client = self.borrow().client.get_client();
+        let state = client.borrow();
+        state.gpu_context.supports_dual_source_blending()
+    }
+
     fn minimize(&self) {
         if let Some(toplevel) = self.borrow().surface_state.toplevel() {
             toplevel.set_minimized();

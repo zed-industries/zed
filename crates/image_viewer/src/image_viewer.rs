@@ -44,7 +44,7 @@ impl ImageView {
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
             if let Some(image) = image_data.clone().get_render_image(window, cx) {
-                cx.drop_image(image, None);
+                cx.drop_image(image, Some(window));
             }
             image_data.remove_asset(cx);
         })
@@ -234,10 +234,10 @@ impl SerializableItem for ImageView {
             let (worktree, relative_path) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(image_path.clone(), false, cx)
-                })?
+                })
                 .await
                 .context("Path not found")?;
-            let worktree_id = worktree.update(cx, |worktree, _cx| worktree.id())?;
+            let worktree_id = worktree.update(cx, |worktree, _cx| worktree.id());
 
             let project_path = ProjectPath {
                 worktree_id,
@@ -245,7 +245,7 @@ impl SerializableItem for ImageView {
             };
 
             let image_item = project
-                .update(cx, |project, cx| project.open_image(project_path, cx))?
+                .update(cx, |project, cx| project.open_image(project_path, cx))
                 .await?;
 
             cx.update(

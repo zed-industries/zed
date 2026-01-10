@@ -198,6 +198,8 @@ type: (primitive_type) @type.builtin
   (raw_string_literal)
 ] @string
 
+(escape_sequence) @string.escape
+
 [
   ","
   ":"

@@ -1,8 +1,10 @@
 use anthropic::{
-    ANTHROPIC_API_URL, Message, Request as AnthropicRequest, RequestContent,
-    Response as AnthropicResponse, Role, non_streaming_completion,
+    ANTHROPIC_API_URL, Event, Message, Request as AnthropicRequest, RequestContent,
+    Response as AnthropicResponse, ResponseContent, Role, non_streaming_completion,
+    stream_completion,
 };
 use anyhow::Result;
+use futures::StreamExt as _;
 use http_client::HttpClient;
 use indoc::indoc;
 use reqwest_client::ReqwestClient;
@@ -12,15 +14,15 @@ use sqlez_macros::sql;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct PlainLlmClient {
-    http_client: Arc<dyn HttpClient>,
-    api_key: String,
+    pub http_client: Arc<dyn HttpClient>,
+    pub api_key: String,
 }
 
 impl PlainLlmClient {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY environment variable not set"))?;
@@ -30,7 +32,7 @@ impl PlainLlmClient {
         })
     }
 
-    async fn generate(
+    pub async fn generate(
         &self,
         model: &str,
         max_tokens: u64,
@@ -63,10 +65,76 @@ impl PlainLlmClient {
 
         Ok(response)
     }
+
+    pub async fn generate_streaming<F>(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: Vec<Message>,
+        mut on_progress: F,
+    ) -> Result<AnthropicResponse>
+    where
+        F: FnMut(usize, &str),
+    {
+        let request = AnthropicRequest {
+            model: model.to_string(),
+            max_tokens,
+            messages,
+            tools: Vec::new(),
+            thinking: None,
+            tool_choice: None,
+            system: None,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: None,
+            top_k: None,
+            top_p: None,
+        };
+
+        let mut stream = stream_completion(
+            self.http_client.as_ref(),
+            ANTHROPIC_API_URL,
+            &self.api_key,
+            request,
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+        let mut response: Option<AnthropicResponse> = None;
+        let mut text_content = String::new();
+
+        while let Some(event_result) = stream.next().await {
+            let event = event_result.map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+            match event {
+                Event::MessageStart { message } => {
+                    response = Some(message);
+                }
+                Event::ContentBlockDelta { delta, .. } => {
+                    if let anthropic::ContentDelta::TextDelta { text } = delta {
+                        text_content.push_str(&text);
+                        on_progress(text_content.len(), &text_content);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut response = response.ok_or_else(|| anyhow::anyhow!("No response received"))?;
+
+        if response.content.is_empty() && !text_content.is_empty() {
+            response
+                .content
+                .push(ResponseContent::Text { text: text_content });
+        }
+
+        Ok(response)
+    }
 }
 
 pub struct BatchingLlmClient {
-    connection: sqlez::connection::Connection,
+    connection: Mutex<sqlez::connection::Connection>,
     http_client: Arc<dyn HttpClient>,
     api_key: String,
 }
@@ -129,7 +197,7 @@ impl BatchingLlmClient {
         drop(statement);
 
         Ok(Self {
-            connection,
+            connection: Mutex::new(connection),
             http_client,
             api_key,
         })
@@ -142,7 +210,8 @@ impl BatchingLlmClient {
         messages: &[Message],
     ) -> Result<Option<AnthropicResponse>> {
         let request_hash_str = Self::request_hash(model, max_tokens, messages);
-        let response: Vec<String> = self.connection.select_bound(
+        let connection = self.connection.lock().unwrap();
+        let response: Vec<String> = connection.select_bound(
             &sql!(SELECT response FROM cache WHERE request_hash = ?1 AND response IS NOT NULL;),
         )?(request_hash_str.as_str())?;
         Ok(response
@@ -178,7 +247,8 @@ impl BatchingLlmClient {
             response: None,
             batch_id: None,
         };
-        self.connection.exec_bound(sql!(
+        let connection = self.connection.lock().unwrap();
+        connection.exec_bound::<CacheRow>(sql!(
             INSERT OR IGNORE INTO cache(request_hash, request, response, batch_id) VALUES (?, ?, ?, ?)))?(
             cache_row,
         )
@@ -207,10 +277,13 @@ impl BatchingLlmClient {
     }
 
     async fn download_finished_batches(&self) -> Result<()> {
-        let q = sql!(SELECT DISTINCT batch_id FROM cache WHERE batch_id IS NOT NULL AND response IS NULL);
-        let batch_ids: Vec<String> = self.connection.select(q)?()?;
+        let batch_ids: Vec<String> = {
+            let connection = self.connection.lock().unwrap();
+            let q = sql!(SELECT DISTINCT batch_id FROM cache WHERE batch_id IS NOT NULL AND response IS NULL);
+            connection.select(q)?()?
+        };
 
-        for batch_id in batch_ids {
+        for batch_id in &batch_ids {
             let batch_status = anthropic::batches::retrieve_batch(
                 self.http_client.as_ref(),
                 ANTHROPIC_API_URL,
@@ -236,6 +309,7 @@ impl BatchingLlmClient {
                 .await
                 .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
+                let mut updates: Vec<(String, String)> = Vec::new();
                 let mut success_count = 0;
                 for result in results {
                     let request_hash = result
@@ -247,21 +321,59 @@ impl BatchingLlmClient {
                     match result.result {
                         anthropic::batches::BatchResult::Succeeded { message } => {
                             let response_json = serde_json::to_string(&message)?;
-                            let q = sql!(UPDATE cache SET response = ? WHERE request_hash = ?);
-                            self.connection.exec_bound(q)?((response_json, request_hash))?;
+                            updates.push((response_json, request_hash));
                             success_count += 1;
                         }
                         anthropic::batches::BatchResult::Errored { error } => {
-                            log::error!("Batch request {} failed: {:?}", request_hash, error);
+                            log::error!(
+                                "Batch request {} failed: {}: {}",
+                                request_hash,
+                                error.error.error_type,
+                                error.error.message
+                            );
+                            let error_json = serde_json::json!({
+                                "error": {
+                                    "type": error.error.error_type,
+                                    "message": error.error.message
+                                }
+                            })
+                            .to_string();
+                            updates.push((error_json, request_hash));
                         }
                         anthropic::batches::BatchResult::Canceled => {
                             log::warn!("Batch request {} was canceled", request_hash);
+                            let error_json = serde_json::json!({
+                                "error": {
+                                    "type": "canceled",
+                                    "message": "Batch request was canceled"
+                                }
+                            })
+                            .to_string();
+                            updates.push((error_json, request_hash));
                         }
                         anthropic::batches::BatchResult::Expired => {
                             log::warn!("Batch request {} expired", request_hash);
+                            let error_json = serde_json::json!({
+                                "error": {
+                                    "type": "expired",
+                                    "message": "Batch request expired"
+                                }
+                            })
+                            .to_string();
+                            updates.push((error_json, request_hash));
                         }
                     }
                 }
+
+                let connection = self.connection.lock().unwrap();
+                connection.with_savepoint("batch_download", || {
+                    let q = sql!(UPDATE cache SET response = ? WHERE request_hash = ?);
+                    let mut exec = connection.exec_bound::<(&str, &str)>(q)?;
+                    for (response_json, request_hash) in &updates {
+                        exec((response_json.as_str(), request_hash.as_str()))?;
+                    }
+                    Ok(())
+                })?;
                 log::info!("Downloaded {} successful requests", success_count);
             }
         }
@@ -270,11 +382,13 @@ impl BatchingLlmClient {
     }
 
     async fn upload_pending_requests(&self) -> Result<String> {
-        let q = sql!(
-        SELECT request_hash, request FROM cache WHERE batch_id IS NULL AND response IS NULL
-        );
-
-        let rows: Vec<(String, String)> = self.connection.select(q)?()?;
+        let rows: Vec<(String, String)> = {
+            let connection = self.connection.lock().unwrap();
+            let q = sql!(
+            SELECT request_hash, request FROM cache WHERE batch_id IS NULL AND response IS NULL
+            );
+            connection.select(q)?()?
+        };
 
         if rows.is_empty() {
             return Ok(String::new());
@@ -334,10 +448,13 @@ impl BatchingLlmClient {
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
-        let q = sql!(
-            UPDATE cache SET batch_id = ? WHERE batch_id is NULL
-        );
-        self.connection.exec_bound(q)?(batch.id.as_str())?;
+        {
+            let connection = self.connection.lock().unwrap();
+            let q = sql!(
+                UPDATE cache SET batch_id = ? WHERE batch_id is NULL
+            );
+            connection.exec_bound(q)?(batch.id.as_str())?;
+        }
 
         log::info!("Uploaded batch with {} requests", batch_len);
 
@@ -403,6 +520,29 @@ impl AnthropicClient {
                 batching_llm_client
                     .generate(model, max_tokens, messages)
                     .await
+            }
+            AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn generate_streaming<F>(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: Vec<Message>,
+        on_progress: F,
+    ) -> Result<Option<AnthropicResponse>>
+    where
+        F: FnMut(usize, &str),
+    {
+        match self {
+            AnthropicClient::Plain(plain_llm_client) => plain_llm_client
+                .generate_streaming(model, max_tokens, messages, on_progress)
+                .await
+                .map(Some),
+            AnthropicClient::Batch(_) => {
+                anyhow::bail!("Streaming not supported with batching client")
             }
             AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }

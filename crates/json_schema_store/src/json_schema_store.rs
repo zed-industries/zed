@@ -2,9 +2,10 @@
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
-use language::{LanguageRegistry, language_settings::all_language_settings};
-use project::LspStore;
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
+use language::{LanguageRegistry, LspAdapterDelegate, language_settings::all_language_settings};
+use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
+use settings::LSP_SETTINGS_SCHEMA_URL_PREFIX;
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
 // Origin: https://github.com/SchemaStore/schemastore
@@ -75,23 +76,27 @@ fn handle_schema_request(
     lsp_store: Entity<LspStore>,
     uri: String,
     cx: &mut AsyncApp,
-) -> Result<String> {
-    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone())?;
-    let schema = resolve_schema_request(&languages, uri, cx)?;
-    serde_json::to_string(&schema).context("Failed to serialize schema")
+) -> Task<Result<String>> {
+    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone());
+    cx.spawn(async move |cx| {
+        let schema = resolve_schema_request(&languages, lsp_store, uri, cx).await?;
+        serde_json::to_string(&schema).context("Failed to serialize schema")
+    })
 }
 
-pub fn resolve_schema_request(
+pub async fn resolve_schema_request(
     languages: &Arc<LanguageRegistry>,
+    lsp_store: Entity<LspStore>,
     uri: String,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
     let path = uri.strip_prefix("zed://schemas/").context("Invalid URI")?;
-    resolve_schema_request_inner(languages, path, cx)
+    resolve_schema_request_inner(languages, lsp_store, path, cx).await
 }
 
-pub fn resolve_schema_request_inner(
+pub async fn resolve_schema_request_inner(
     languages: &Arc<LanguageRegistry>,
+    lsp_store: Entity<LspStore>,
     path: &str,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
@@ -99,45 +104,101 @@ pub fn resolve_schema_request_inner(
     let schema_name = schema_name.unwrap_or(path);
 
     let schema = match schema_name {
-        "settings" => cx.update(|cx| {
-            let font_names = &cx.text_system().all_font_names();
-            let language_names = &languages
-                .language_names()
+        "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
+            let lsp_name = rest
+                .and_then(|r| {
+                    r.strip_prefix(
+                        LSP_SETTINGS_SCHEMA_URL_PREFIX
+                            .strip_prefix("zed://schemas/settings/")
+                            .unwrap(),
+                    )
+                })
+                .context("Invalid LSP schema path")?;
+
+            let adapter = languages
+                .all_lsp_adapters()
                 .into_iter()
-                .map(|name| name.to_string())
+                .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
+                .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
+
+            let delegate: Arc<dyn LspAdapterDelegate> = cx
+                .update(|inner_cx| {
+                    lsp_store.update(inner_cx, |lsp_store, cx| {
+                        let Some(local) = lsp_store.as_local() else {
+                            return None;
+                        };
+                        let Some(worktree) = local.worktree_store.read(cx).worktrees().next()
+                        else {
+                            return None;
+                        };
+                        Some(LocalLspAdapterDelegate::from_local_lsp(
+                            local, &worktree, cx,
+                        ))
+                    })
+                })
+                .context(concat!(
+                    "Failed to create adapter delegate - ",
+                    "either LSP store is not in local mode or no worktree is available"
+                ))?;
+
+            adapter
+                .initialization_options_schema(&delegate, cx)
+                .await
+                .unwrap_or_else(|| {
+                    serde_json::json!({
+                        "type": "object",
+                        "additionalProperties": true
+                    })
+                })
+        }
+        "settings" => {
+            let lsp_adapter_names = languages
+                .all_lsp_adapters()
+                .into_iter()
+                .map(|adapter| adapter.name().to_string())
                 .collect::<Vec<_>>();
 
-            let mut icon_theme_names = vec![];
-            let mut theme_names = vec![];
-            if let Some(registry) = theme::ThemeRegistry::try_global(cx) {
-                icon_theme_names.extend(
-                    registry
-                        .list_icon_themes()
-                        .into_iter()
-                        .map(|icon_theme| icon_theme.name),
-                );
-                theme_names.extend(registry.list_names());
-            }
-            let icon_theme_names = icon_theme_names.as_slice();
-            let theme_names = theme_names.as_slice();
+            cx.update(|cx| {
+                let font_names = &cx.text_system().all_font_names();
+                let language_names = &languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>();
 
-            cx.global::<settings::SettingsStore>().json_schema(
-                &settings::SettingsJsonSchemaParams {
-                    language_names,
-                    font_names,
-                    theme_names,
-                    icon_theme_names,
-                },
-            )
-        })?,
-        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions)?,
+                let mut icon_theme_names = vec![];
+                let mut theme_names = vec![];
+                if let Some(registry) = theme::ThemeRegistry::try_global(cx) {
+                    icon_theme_names.extend(
+                        registry
+                            .list_icon_themes()
+                            .into_iter()
+                            .map(|icon_theme| icon_theme.name),
+                    );
+                    theme_names.extend(registry.list_names());
+                }
+                let icon_theme_names = icon_theme_names.as_slice();
+                let theme_names = theme_names.as_slice();
+
+                cx.global::<settings::SettingsStore>().json_schema(
+                    &settings::SettingsJsonSchemaParams {
+                        language_names,
+                        font_names,
+                        theme_names,
+                        icon_theme_names,
+                        lsp_adapter_names: &lsp_adapter_names,
+                    },
+                )
+            })
+        }
+        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions),
         "action" => {
             let normalized_action_name = rest.context("No Action name provided")?;
             let action_name = denormalize_action_name(normalized_action_name);
             let mut generator = settings::KeymapFile::action_schema_generator();
             let schema = cx
                 // PERF: cx.action_schema_by_name(action_name, &mut generator)
-                .update(|cx| cx.action_schemas(&mut generator))?
+                .update(|cx| cx.action_schemas(&mut generator))
                 .into_iter()
                 .find_map(|(name, schema)| (name == action_name).then_some(schema))
                 .flatten();
@@ -147,7 +208,7 @@ pub fn resolve_schema_request_inner(
         "debug_tasks" => {
             let adapter_schemas = cx.read_global::<dap::DapRegistry, _>(|dap_registry, _| {
                 dap_registry.adapters_schema()
-            })?;
+            });
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
         "package_json" => package_json_schema(),

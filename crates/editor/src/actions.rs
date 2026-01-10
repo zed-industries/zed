@@ -848,7 +848,7 @@ actions!(
         /// from the current selections.
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
-        WrapSelectionsInTag
+        WrapSelectionsInTag,
     ]
 );
 

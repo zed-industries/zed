@@ -144,7 +144,6 @@ impl LivekitWindow {
             )
             .unwrap()
         })
-        .unwrap()
     }
 
     fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut Context<Self>) {

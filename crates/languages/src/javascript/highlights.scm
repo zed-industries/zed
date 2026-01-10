@@ -4,9 +4,9 @@
 
 (call_expression
   function: (member_expression
-    object: (identifier) @type.builtin
+    object: (identifier) @type
     (#any-of?
-      @type.builtin
+      @type
       "Promise"
       "Array"
       "Object"

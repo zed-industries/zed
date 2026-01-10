@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
+use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -29,8 +29,8 @@ use std::{
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
+    ItemHandle, ItemNavHistory, Workspace,
+    item::{Item, ItemEvent, TabContentParams},
 };
 
 actions!(
@@ -701,18 +701,6 @@ impl Item for BufferDiagnosticsEditor {
         });
     }
 
-    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
-            ToolbarItemLocation::PrimaryLeft
-        } else {
-            ToolbarItemLocation::Hidden
-        }
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
-    }
-
     fn can_save(&self, _cx: &App) -> bool {
         true
     }
@@ -761,6 +749,10 @@ impl Item for BufferDiagnosticsEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).is_dirty(cx)
+    }
+
+    fn capability(&self, cx: &App) -> Capability {
+        self.multibuffer.read(cx).capability()
     }
 
     fn navigate(

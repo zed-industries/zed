@@ -1,7 +1,7 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
@@ -23,7 +23,7 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
-    history_store: Entity<HistoryStore>,
+    history_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -35,7 +35,7 @@ impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        history_store: Entity<HistoryStore>,
+        history_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -399,9 +399,8 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::HistoryStore;
+    use agent::ThreadStore;
     use agent_client_protocol as acp;
-    use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
@@ -452,8 +451,7 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(

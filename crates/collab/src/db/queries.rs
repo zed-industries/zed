@@ -10,4 +10,5 @@ pub mod notifications;
 pub mod projects;
 pub mod rooms;
 pub mod servers;
+pub mod shared_threads;
 pub mod users;

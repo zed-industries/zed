@@ -32,7 +32,7 @@ If appropriate, use tool calls to explore the current project, which contains th
 - Bias towards not asking the user for help if you can find the answer yourself.
 - When providing paths to tools, the path should always start with the name of a project root directory listed above.
 - Before you read or edit a file, you must first find the full path. DO NOT ever guess a file path!
-{{# if (contains available_tools 'grep') }}
+{{#if (contains available_tools 'grep') }}
 - When looking for symbols in the project, prefer the `grep` tool.
 - As you learn about the structure of the project, use that information to scope `grep` searches to targeted subtrees of the project.
 - The user might specify a partial file path. If you don't know the full path, use `find_path` (not `grep`) before you read the file.
@@ -181,7 +181,7 @@ The user has specified the following rules that should be applied:
 Rules title: {{title}}
 {{/if}}
 ``````
-{{contents}}}
+{{contents}}
 ``````
 {{/each}}
 {{/if}}

@@ -173,14 +173,8 @@ pub(crate) struct MacPlatformState {
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
-impl Default for MacPlatform {
-    fn default() -> Self {
-        Self::new(false)
-    }
-}
-
 impl MacPlatform {
-    pub(crate) fn new(headless: bool) -> Self {
+    pub(crate) fn new(headless: bool, liveness: std::sync::Weak<()>) -> Self {
         let dispatcher = Arc::new(MacDispatcher);
 
         #[cfg(feature = "font-kit")]
@@ -196,7 +190,7 @@ impl MacPlatform {
             headless,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher),
+            foreground_executor: ForegroundExecutor::new(dispatcher, liveness),
             renderer_context: renderer::Context::default(),
             general_pasteboard: Pasteboard::general(),
             find_pasteboard: Pasteboard::find(),
@@ -687,7 +681,7 @@ impl Platform for MacPlatform {
         }
 
         self.background_executor()
-            .spawn(async { crate::Flatten::flatten(done_rx.await.map_err(|e| anyhow!(e))) })
+            .spawn(async { done_rx.await.map_err(|e| anyhow!(e))? })
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {

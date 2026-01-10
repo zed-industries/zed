@@ -1,0 +1,106 @@
+# Generated from xtask::workflows::extension_workflow_rollout
+# Rebuild with `cargo xtask workflows`.
+name: extension_workflow_rollout
+env:
+  CARGO_TERM_COLOR: always
+on:
+  workflow_dispatch: {}
+jobs:
+  fetch_extension_repos:
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: list-repos
+      name: extension_workflow_rollout::fetch_extension_repos::get_repositories
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const repos = await github.paginate(github.rest.repos.listForOrg, {
+              org: 'zed-extensions',
+              type: 'public',
+              per_page: 100,
+          });
+
+          const filteredRepos = repos
+              .filter(repo => !repo.archived)
+              .filter(repo => repo.name !== 'workflows' && repo.name !== 'material-icon-theme')
+              .map(repo => repo.name);
+
+          console.log(`Found ${filteredRepos.length} extension repos`);
+          return filteredRepos;
+        result-encoding: json
+    outputs:
+      repos: ${{ steps.list-repos.outputs.result }}
+    timeout-minutes: 5
+  rollout_workflows_to_extension:
+    needs:
+    - fetch_extension_repos
+    if: needs.fetch_extension_repos.outputs.repos != '[]'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    strategy:
+      matrix:
+        repo: ${{ fromJson(needs.fetch_extension_repos.outputs.repos) }}
+      fail-fast: false
+      max-parallel: 5
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: zed-extensions
+        repositories: ${{ matrix.repo }}
+        permission-pull-requests: write
+        permission-contents: write
+        permission-workflows: write
+    - name: checkout_zed_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        path: zed
+    - name: steps::checkout_repo_with_token
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        token: ${{ steps.generate-token.outputs.token }}
+        repository: zed-extensions/${{ matrix.repo }}
+        path: extension
+    - name: extension_workflow_rollout::rollout_workflows_to_extension::copy_workflow_files
+      run: |
+        mkdir -p extension/.github/workflows
+        cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+      shell: bash -euxo pipefail {0}
+    - id: short-sha
+      name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
+      run: |
+        echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+      working-directory: zed
+    - id: create-pr
+      name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
+      uses: peter-evans/create-pull-request@v7
+      with:
+        path: extension
+        title: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        body: |
+          This PR updates the CI workflow files from the main Zed repository
+          based on the commit zed-industries/zed@${{ github.sha }}
+        commit-message: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        branch: update-workflows
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+    - name: extension_workflow_rollout::rollout_workflows_to_extension::enable_auto_merge
+      run: |
+        PR_NUMBER="${{ steps.create-pr.outputs.pull-request-number }}"
+        if [ -n "$PR_NUMBER" ]; then
+            cd extension
+            gh pr merge "$PR_NUMBER" --auto --squash
+        fi
+      shell: bash -euxo pipefail {0}
+      env:
+        GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+    timeout-minutes: 10

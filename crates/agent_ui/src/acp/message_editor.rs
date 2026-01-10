@@ -1,3 +1,4 @@
+use crate::QueueMessage;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -9,7 +10,7 @@ use crate::{
     },
 };
 use acp_thread::MentionUri;
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::HashSet;
@@ -31,7 +32,7 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{ContextMenu, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
@@ -50,6 +51,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
+    Queue,
     Cancel,
     Focus,
     LostFocus,
@@ -98,7 +100,7 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        history_store: Entity<HistoryStore>,
+        history_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -132,6 +134,21 @@ impl MessageEditor {
                 placement: Some(ContextMenuPlacement::Above),
             });
             editor.register_addon(MessageEditorAddon::new());
+
+            editor.set_custom_context_menu(|editor, _point, window, cx| {
+                let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.action("Cut", Box::new(editor::actions::Cut))
+                        .action_disabled_when(
+                            !has_selection,
+                            "Copy",
+                            Box::new(editor::actions::Copy),
+                        )
+                        .action("Paste", Box::new(editor::actions::Paste))
+                }))
+            });
+
             editor
         });
         let mention_set =
@@ -449,9 +466,9 @@ impl MessageEditor {
                         }
                     }
                 });
-                Ok((chunks, all_tracked_buffers))
+                anyhow::Ok((chunks, all_tracked_buffers))
             })?;
-            result
+            Ok(result)
         })
     }
 
@@ -478,6 +495,18 @@ impl MessageEditor {
             editor.clear_inlay_hints(cx);
         });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    pub fn queue(&mut self, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::Queue)
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -521,6 +550,10 @@ impl MessageEditor {
 
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         self.send(cx);
+    }
+
+    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
+        self.queue(cx);
     }
 
     fn chat_with_follow(
@@ -645,28 +678,24 @@ impl MessageEditor {
                                     .update(cx, |project, cx| {
                                         project.project_path_for_absolute_path(&file_path, cx)
                                     })
-                                    .map_err(|e| e.to_string())?
                                     .ok_or_else(|| "project path not found".to_string())?;
 
                                 let buffer = project
                                     .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                                    .map_err(|e| e.to_string())?
                                     .await
                                     .map_err(|e| e.to_string())?;
 
-                                buffer
-                                    .update(cx, |buffer, cx| {
-                                        let start = Point::new(*line_range.start(), 0)
-                                            .min(buffer.max_point());
-                                        let end = Point::new(*line_range.end() + 1, 0)
-                                            .min(buffer.max_point());
-                                        let content = buffer.text_for_range(start..end).collect();
-                                        Mention::Text {
-                                            content,
-                                            tracked_buffers: vec![cx.entity()],
-                                        }
-                                    })
-                                    .map_err(|e| e.to_string())
+                                Ok(buffer.update(cx, |buffer, cx| {
+                                    let start =
+                                        Point::new(*line_range.start(), 0).min(buffer.max_point());
+                                    let end = Point::new(*line_range.end() + 1, 0)
+                                        .min(buffer.max_point());
+                                    let content = buffer.text_for_range(start..end).collect();
+                                    Mention::Text {
+                                        content,
+                                        tracked_buffers: vec![cx.entity()],
+                                    }
+                                }))
                             }
                         })
                         .shared();
@@ -969,6 +998,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::queue_message))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::paste_raw))
@@ -1032,9 +1062,8 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
-    use agent::{HistoryStore, outline};
+    use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
-    use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1066,8 +1095,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1171,8 +1199,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
@@ -1328,8 +1355,7 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(*window, cx);
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -1558,8 +1584,7 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2051,8 +2076,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2149,8 +2173,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         // Create a thread metadata to insert as summary
         let thread_metadata = agent::DbThreadMetadata {
@@ -2225,8 +2248,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2287,8 +2309,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2442,8 +2463,7 @@ mod tests {
             });
         });
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually

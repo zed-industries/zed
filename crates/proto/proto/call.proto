@@ -305,8 +305,7 @@ message Follow {
 
 message FollowResponse {
     View active_view = 3;
-    // TODO: Remove after version 0.145.x stabilizes.
-    optional ViewId active_view_id = 1;
+    reserved 1;
     repeated View views = 2;
 }
 
@@ -316,7 +315,6 @@ message UpdateFollowers {
     reserved 3;
     oneof variant {
         View create_view = 5;
-        // TODO: Remove after version 0.145.x stabilizes.
         UpdateActiveView update_active_view = 4;
         UpdateView update_view = 6;
     }
@@ -334,8 +332,7 @@ message ViewId {
 }
 
 message UpdateActiveView {
-    optional ViewId id = 1;
-    optional PeerId leader_id = 2;
+    reserved 1, 2;
     View view = 3;
 }
 

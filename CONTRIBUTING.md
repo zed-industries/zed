@@ -23,7 +23,6 @@ In particular we love PRs that are:
 
 If you're looking for concrete ideas:
 
-- [Curated board of issues](https://github.com/orgs/zed-industries/projects/69) suitable for everyone from first-time contributors to seasoned community champions.
 - [Triaged bugs with confirmed steps to reproduce](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible).
 - [Area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) to browse bugs in a specific part of the product you care about (after clicking on an area label, add type:Bug to the search).
 
@@ -44,7 +43,7 @@ submitted. If you'd like your PR to have the best chance of being merged:
   effort. If there isn't already a GitHub issue for your feature with staff
   confirmation that we want it, start with a GitHub discussion rather than a PR.
 - Include a clear description of **what you're solving**, and why it's important.
-- Include **tests**.
+- Include **tests**. For UI changes, consider updating visual regression tests (see [Building Zed for macOS](./docs/src/development/macos.md#visual-regression-tests)).
 - If it changes the UI, attach **screenshots** or screen recordings.
 - Make the PR about **one thing only**, e.g. if it's a bugfix, don't add two
   features and a refactoring on top of that.

@@ -2,7 +2,9 @@ use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
 use copilot::{Copilot, CopilotEditPredictionDelegate};
-use edit_prediction::{SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag};
+use edit_prediction::{
+    MercuryFeatureFlag, SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag,
+};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
@@ -204,7 +206,7 @@ fn assign_edit_prediction_provider(
                         {
                             edit_prediction::EditPredictionModel::Zeta2
                         } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<Zeta2FeatureFlag>()
+                            && cx.has_flag::<MercuryFeatureFlag>()
                         {
                             edit_prediction::EditPredictionModel::Mercury
                         } else {

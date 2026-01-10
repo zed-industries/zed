@@ -25,13 +25,13 @@ pub async fn get_buffer_content_or_outline(
     path: Option<&str>,
     cx: &AsyncApp,
 ) -> Result<BufferContent> {
-    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len())?;
+    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len());
 
     if file_size > AUTO_OUTLINE_SIZE {
         // For large files, use outline instead of full content
         // Wait until the buffer has been fully parsed, so we can read its outline
         buffer
-            .read_with(cx, |buffer, _| buffer.parsing_idle())?
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
             .await;
 
         let outline_items = buffer.read_with(cx, |buffer, _| {
@@ -42,7 +42,7 @@ pub async fn get_buffer_content_or_outline(
                 .into_iter()
                 .map(|item| item.to_point(&snapshot))
                 .collect::<Vec<_>>()
-        })?;
+        });
 
         // If no outline exists, fall back to first 1KB so the agent has some context
         if outline_items.is_empty() {
@@ -55,7 +55,7 @@ pub async fn get_buffer_content_or_outline(
                 } else {
                     format!("# First 1KB of file (file too large to show full content, and no outline available)\n\n{content}")
                 }
-            })?;
+            });
 
             return Ok(BufferContent {
                 text,
@@ -76,7 +76,7 @@ pub async fn get_buffer_content_or_outline(
         })
     } else {
         // File is small enough, return full content
-        let text = buffer.read_with(cx, |buffer, _| buffer.text())?;
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
         Ok(BufferContent {
             text,
             is_outline: false,

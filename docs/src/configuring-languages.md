@@ -454,7 +454,7 @@ Use the `editor: Hover` command to display information about the symbol under th
 
 ### Workspace Symbol Search
 
-The `workspace: Open Symbol` command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
+The {#action project_symbols::Toggle} command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
 
 ### Code Completion
 
@@ -462,4 +462,4 @@ Zed provides intelligent code completion suggestions as you type. You can manual
 
 ### Diagnostics
 
-Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the `diagnostics: Toggle` command.
+Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the {#action diagnostics::Deploy} command.

@@ -1,0 +1,20 @@
+[package]
+name = "encoding_selector"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/encoding_selector.rs"
+doctest = false
+
+[dependencies]
+editor.workspace = true
+encoding_rs.workspace = true
+gpui.workspace = true
+ui.workspace = true
+workspace.workspace = true

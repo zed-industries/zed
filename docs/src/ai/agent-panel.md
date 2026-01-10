@@ -43,9 +43,7 @@ The checkpoint button appears even if you interrupt the thread midway through an
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recent threads.
-
-The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
+To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recently updated threads.
 
 To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
 
@@ -85,6 +83,8 @@ You can type `@` to mention files, directories, symbols, previous threads, and r
 
 Copying images and pasting them in the panel's message editor is also supported.
 
+When you paste multi-line code selections copied from an editor buffer, Zed automatically formats them as @mentions with the file context. To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
+
 ### Selection as Context
 
 Additionally, you can also select text in a buffer and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `@` menu.
@@ -99,6 +99,8 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 ## Changing Models {#changing-models}
 
 After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+
+If you have favorited models configured, you can cycle through them with {#kb agent::CycleFavoriteModels} without opening the model selector.
 
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.

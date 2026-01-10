@@ -1473,9 +1473,9 @@ impl EditAgentTest {
                 .provider(&selected_model.provider)
                 .expect("Provider not found");
             provider.authenticate(cx)
-        })?
+        })
         .await?;
-        cx.update(|cx| {
+        Ok(cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
@@ -1485,7 +1485,7 @@ impl EditAgentTest {
                 })
                 .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0));
             model
-        })
+        }))
     }
 
     async fn eval(&self, mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EditEvalOutput> {

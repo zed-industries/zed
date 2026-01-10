@@ -2,7 +2,7 @@ use crate::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
     FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size,
-    point, px, size, swap_rgba_pa_to_bgra,
+    TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
 };
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
@@ -203,6 +203,14 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, font_runs)
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
     }
 }
 

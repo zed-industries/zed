@@ -218,3 +218,20 @@ message NewExternalAgentVersionAvailable {
     string name = 2;
     string version = 3;
 }
+
+message ShareAgentThread {
+    string session_id = 1; // Client-generated UUID (acp::SessionId)
+    string title = 2;
+    bytes thread_data = 3;
+}
+
+message GetSharedAgentThread {
+    string session_id = 1; // UUID string
+}
+
+message GetSharedAgentThreadResponse {
+    string title = 1;
+    bytes thread_data = 2;
+    string sharer_username = 3;
+    string created_at = 4;
+}
