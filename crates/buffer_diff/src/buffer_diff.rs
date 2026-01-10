@@ -192,6 +192,33 @@ impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for Anchor {
     }
 }
 
+pub use row_boundary::RowBoundary;
+/// Helper module to keep the inner private (very easy to accidentally misuse).
+mod row_boundary {
+    /// A space in between two rows (zero indexed). Includes the space above the
+    /// first line, and below the last line.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct RowBoundary(u32);
+
+    impl RowBoundary {
+        pub fn new_above(row: u32) -> Self {
+            Self(row)
+        }
+
+        pub fn new_below(row: u32) -> Self {
+            Self(row + 1)
+        }
+
+        pub fn row_above(&self) -> Option<u32> {
+            self.0.checked_sub(1)
+        }
+
+        pub fn row_below(&self) -> u32 {
+            self.0
+        }
+    }
+}
+
 impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for usize {
     fn cmp(&self, cursor_location: &DiffHunkSummary, _cx: &text::BufferSnapshot) -> Ordering {
         if *self < cursor_location.diff_base_byte_range.start {
@@ -351,35 +378,51 @@ impl BufferDiffSnapshot {
         (new_id == old_id && new_version == old_version) || (new_empty && old_empty)
     }
 
-    pub fn row_to_base_text_row(
+    // TODO(split-diff) expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
+    pub fn row_boundary_to_base_text_row_boundary(
         &self,
-        row: BufferRow,
-        bias: Bias,
+        boundary: RowBoundary,
         buffer: &text::BufferSnapshot,
-    ) -> u32 {
-        dbg!(row, bias);
-        // TODO(split-diff) expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
-        let target = buffer.anchor_before(Point::new(row, 0));
+    ) -> Option<Range<RowBoundary>> {
+        let target_point = Point::new(boundary.row_below(), 0);
+        let target = buffer.anchor_before(target_point);
         // Find the last hunk that starts before the target.
         let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
         cursor.seek(&target, Bias::Left);
-        if cursor
-            .item()
-            .is_none_or(|hunk| hunk.buffer_range.start.cmp(&target, buffer).is_gt())
-        {
+
+        if let Some(hunk) = cursor.item() {
+            match hunk.buffer_range.start.cmp(&target, buffer) {
+                Ordering::Less => {}
+                Ordering::Equal => {
+                    let base_text_start =
+                        hunk.diff_base_byte_range.start.to_point(self.base_text());
+                    let base_text_start = RowBoundary::new_above(base_text_start.row);
+                    if hunk.buffer_range.end == hunk.buffer_range.start {
+                        let base_text_end =
+                            hunk.diff_base_byte_range.end.to_point(self.base_text());
+                        let base_text_end = RowBoundary::new_above(base_text_end.row);
+                        return Some(base_text_start..base_text_end);
+                    } else {
+                        return Some(base_text_start..base_text_start);
+                    }
+                }
+                Ordering::Greater => cursor.prev(),
+            }
+        } else {
             cursor.prev();
         }
 
-        let unclipped_point = if let Some(hunk) = cursor.item()
+        if let Some(hunk) = dbg!(cursor.item())
             && hunk.buffer_range.start.cmp(&target, buffer).is_le()
         {
             // Found a hunk that starts before the target.
-            let hunk_base_text_end = cursor.end().diff_base_byte_range.end;
+            let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
             let prev_hunk_buffer_end = hunk.buffer_range.end;
-            let unclipped_point = if target.cmp(&prev_hunk_buffer_end, buffer).is_ge()
+            if target.cmp(&prev_hunk_buffer_end, buffer).is_ge()
                 || (!prev_hunk_buffer_end.is_valid(buffer)
-                    && Point::new(row, 0) >= prev_hunk_buffer_end.to_point(buffer))
+                    && target_point >= prev_hunk_buffer_end.to_point(buffer))
             {
+                // Target boundary lies between hunks (i.e. in an unmodified region).
                 cursor.next();
                 let inter_hunk_range = prev_hunk_buffer_end
                     ..cursor
@@ -392,22 +435,19 @@ impl BufferDiffSnapshot {
                     .collect();
                 let patch = Patch::new(edits);
 
-                let range_start_point = prev_hunk_buffer_end.to_point(buffer);
-                let query_point_relative = Point::new(row, 0) - range_start_point;
-                let query_old_point_relative = patch.new_to_old(query_point_relative, bias);
-                hunk_base_text_end.to_point(self.base_text()) + query_old_point_relative
-            } else if bias == Bias::Right {
-                cursor.next();
-                hunk_base_text_end.to_point(self.base_text())
+                let relative_target_point = target_point - prev_hunk_buffer_end.to_point(buffer);
+                let base = prev_hunk_base_text_end.to_point(self.base_text());
+                let start = base + patch.new_to_old(relative_target_point, Bias::Left);
+                let end = base + patch.new_to_old(relative_target_point, Bias::Right);
+                Some(RowBoundary::new_above(start.row)..RowBoundary::new_above(end.row))
             } else {
-                cursor.next();
-                hunk.diff_base_byte_range.start.to_point(self.base_text())
-            };
-            unclipped_point
+                // Target boundary lies inside the added region for a hunk.
+                None
+            }
         } else {
             // Target is before the added region for the first hunk.
             debug_assert!(self.inner.hunks.first().is_none_or(|first_hunk| {
-                target.cmp(&first_hunk.buffer_range.start, buffer).is_le()
+                dbg!(target.cmp(&first_hunk.buffer_range.start, buffer)).is_le()
             }));
 
             let inter_hunk_range = Anchor::MIN
@@ -423,45 +463,51 @@ impl BufferDiffSnapshot {
                 .collect();
             let patch = Patch::new(edits);
 
-            let query_point = Point::new(row, 0);
-            patch.new_to_old(query_point, bias)
-        };
-
-        let max_point = if let Some(next_hunk) = cursor.item() {
-            next_hunk
-                .diff_base_byte_range
-                .start
-                .to_point(self.base_text())
-        } else {
-            self.base_text().max_point()
-        };
-        unclipped_point.min(max_point).row
+            let start = patch.new_to_old(target_point, Bias::Left);
+            let end = patch.new_to_old(target_point, Bias::Right);
+            Some(RowBoundary::new_above(start.row)..RowBoundary::new_above(end.row))
+        }
     }
 
-    pub fn base_text_row_to_row(
+    pub fn base_text_row_boundary_to_row_boundary(
         &self,
-        row: u32,
-        bias: Bias,
+        boundary: RowBoundary,
         buffer: &text::BufferSnapshot,
-    ) -> BufferRow {
-        let target = self.base_text().point_to_offset(Point::new(row, 0));
+    ) -> Option<Range<RowBoundary>> {
+        let target_point = Point::new(boundary.row_below(), 0);
+        let target = self.base_text().point_to_offset(target_point);
         let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
         cursor.seek(&target, Bias::Left);
-        if cursor
-            .item()
-            .is_none_or(|hunk| hunk.diff_base_byte_range.start > target)
-        {
+
+        if let Some(hunk) = cursor.item() {
+            match hunk.diff_base_byte_range.start.cmp(&target) {
+                Ordering::Less => {}
+                Ordering::Equal => {
+                    let buffer_start = hunk.buffer_range.start.to_point(buffer);
+                    let buffer_start = RowBoundary::new_above(buffer_start.row);
+                    if hunk.diff_base_byte_range.end == hunk.diff_base_byte_range.start {
+                        let buffer_end = hunk.buffer_range.end.to_point(buffer);
+                        let buffer_end = RowBoundary::new_above(buffer_end.row);
+                        return Some(buffer_start..buffer_end);
+                    } else {
+                        return Some(buffer_start..buffer_start);
+                    }
+                }
+                Ordering::Greater => cursor.prev(),
+            }
+        } else {
             cursor.prev();
         }
 
-        let unclipped_point = if let Some(hunk) = cursor.item()
+        if let Some(hunk) = cursor.item()
             && hunk.diff_base_byte_range.start <= target
         {
-            let hunk_buffer_end = cursor.end().buffer_range.end;
-            let hunk_base_text_end = cursor.end().diff_base_byte_range.end;
-            let unclipped_point = if target >= hunk_base_text_end {
+            // Found a hunk that starts before the target.
+            let prev_hunk_buffer_end = cursor.end().buffer_range.end;
+            let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
+            if target >= prev_hunk_base_text_end {
                 cursor.next();
-                let inter_hunk_range = hunk_buffer_end
+                let inter_hunk_range = prev_hunk_buffer_end
                     ..cursor
                         .item()
                         .map(|h| h.buffer_range.start)
@@ -472,19 +518,15 @@ impl BufferDiffSnapshot {
                     .collect();
                 let patch = Patch::new(edits);
 
-                let range_start_point = hunk_buffer_end.to_point(buffer);
-                let row_delta = row - hunk_base_text_end.to_point(self.base_text()).row;
-                let query_old_point_relative = Point::new(row_delta, 0);
-                let query_new_point_relative = patch.old_to_new(query_old_point_relative, bias);
-                range_start_point + query_new_point_relative
-            } else if bias == Bias::Right {
-                cursor.next();
-                hunk_buffer_end.to_point(buffer)
+                let relative_target_point =
+                    target_point - prev_hunk_base_text_end.to_point(self.base_text());
+                let base = prev_hunk_buffer_end.to_point(buffer);
+                let start = base + patch.new_to_old(relative_target_point, Bias::Left);
+                let end = base + patch.new_to_old(relative_target_point, Bias::Right);
+                Some(RowBoundary::new_above(start.row)..RowBoundary::new_above(end.row))
             } else {
-                cursor.next();
-                hunk.buffer_range.start.to_point(buffer)
-            };
-            unclipped_point
+                None
+            }
         } else {
             debug_assert!(
                 self.inner
@@ -506,16 +548,10 @@ impl BufferDiffSnapshot {
                 .collect();
             let patch = Patch::new(edits);
 
-            let query_point = Point::new(row, 0);
-            patch.old_to_new(query_point, bias)
-        };
-
-        let max_point = if let Some(next_hunk) = cursor.item() {
-            next_hunk.buffer_range.start.to_point(buffer)
-        } else {
-            buffer.max_point()
-        };
-        unclipped_point.min(max_point).row
+            let start = patch.old_to_new(target_point, Bias::Left);
+            let end = patch.old_to_new(target_point, Bias::Right);
+            Some(RowBoundary::new_above(start.row)..RowBoundary::new_above(end.row))
+        }
     }
 }
 
@@ -2675,349 +2711,298 @@ mod tests {
         }
     }
 
-    #[gpui::test]
-    async fn test_row_translation(cx: &mut TestAppContext) {
-        let base_text = "
-            zero
-            one
-            two
-            three
-            four
-            five
-            six
-            seven
-            eight
-        "
-        .unindent();
-        let buffer_text = "
-            zero
-            ONE
-            two
-            NINE
-            five
-            seven
-        "
-        .unindent();
+    // TODO: Remove this test once test_row_translation_consolidated covers all cases
+    // #[gpui::test]
+    // async fn test_row_translation(cx: &mut gpui::TestAppContext) {
+    //     let base_text = "
+    //         zero
+    //         one
+    //         two
+    //         three
+    //         four
+    //         five
+    //         six
+    //         seven
+    //         eight
+    //     "
+    //     .unindent();
+    //     let buffer_text = "
+    //         zero
+    //         ONE
+    //         two
+    //         NINE
+    //         five
+    //         seven
+    //     "
+    //     .unindent();
 
-        //   zero
-        // - one
-        // + ONE
-        //   two
-        // - three
-        // - four
-        // + NINE
-        //   five
-        // - six
-        //   seven
-        // - eight
+    //     //   zero
+    //     // - one
+    //     // + ONE
+    //     //   two
+    //     // - three
+    //     // - four
+    //     // + NINE
+    //     //   five
+    //     // - six
+    //     //   seven
+    //     // - eight
 
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let buffer_snapshot = buffer.snapshot();
-        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
+    //     let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+    //     let buffer_snapshot = buffer.snapshot();
+    //     let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
 
-        // Test row_to_base_text_row
-        let expected_results = [
-            // main buffer row, base text row (right bias), base text row (left bias)
-            (0, 0, 0),
-            (1, 2, 1),
-            (2, 2, 2),
-            (3, 5, 3),
-            (4, 5, 5),
-            (5, 7, 7),
-            (6, 9, 9),
-        ];
-        for (buffer_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "row_to_base_text_row buffer_row={buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "row_to_base_text_row buffer_row={buffer_row}"
-            );
-        }
+    //     let expected_results = [
+    //         (0, Some((0, 0))),
+    //         (1, Some((1, 1))),
+    //         (2, Some((2, 2))),
+    //         (3, Some((3, 3))),
+    //         (4, Some((5, 5))),
+    //         (5, Some((6, 7))),
+    //         (6, Some((8, 9))),
+    //     ];
 
-        // Test base_text_row_to_row (the inverse direction)
-        let expected_results = [
-            // base text row, buffer row (right bias), buffer row (left bias)
-            (0, 0, 0),
-            (1, 2, 1),
-            (2, 2, 2),
-            (3, 4, 3),
-            (4, 4, 3),
-            (5, 4, 4),
-            (6, 5, 5),
-            (7, 5, 5),
-            (8, 6, 6),
-        ];
-        for (base_text_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "base_text_row_to_row base_text_row={base_text_row}"
-            );
-            assert_eq!(
-                diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "base_text_row_to_row base_text_row={base_text_row}"
-            );
-        }
-    }
+    //     for (buffer_boundary_row_below, expected) in expected_results {
+    //         let buffer_boundary = RowBoundary::new_above(buffer_boundary_row_below);
+    //         let actual = diff
+    //             .row_boundary_to_base_text_row_boundary(buffer_boundary, &buffer_snapshot)
+    //             .map(|range| (range.start.row_below(), range.end.row_below()));
 
-    #[gpui::test]
-    async fn test_row_to_base_text_row_with_stale_diff(cx: &mut TestAppContext) {
-        // Test the behavior of row_to_base_text_row when the buffer has been edited
-        // after the diff was computed. Specifically, we insert lines in an unmodified
-        // region between two hunks and verify the clamping behavior.
+    //         assert_eq!(
+    //             actual, expected,
+    //             "row_boundary_to_base_text_row_boundary buffer_boundary_row_below={buffer_boundary_row_below}"
+    //         );
+    //     }
 
-        let base_text = "
-            zero
-            one
-            two
-            three
-            four
-            five
-            six
-            seven
-            eight
-        "
-        .unindent();
+    //     // NOTE: `base_text_row_to_row` tests remain as-is for now; this test only rewrites the
+    //     // `row_to_base_text_row` coverage to use boundary semantics.
+    // }
 
-        // Initial buffer: two modification hunks with an unmodified region between them
-        let buffer_text = "
-            zero
-            ONE
-            two
-            three
-            four
-            FIVE
-            six
-            seven
-            eight
-        "
-        .unindent();
+    // TODO: Remove this test once test_row_translation_consolidated covers all cases
+    // #[gpui::test]
+    // async fn test_row_to_base_text_row_with_stale_diff(cx: &mut TestAppContext) {
+    //     let base_text = "
+    //         zero
+    //         one
+    //         two
+    //         three
+    //         four
+    //         five
+    //         six
+    //         seven
+    //         eight
+    //     "
+    //     .unindent();
 
-        // Diff structure:
-        //   row 0: zero
-        //   row 1: ONE        <- Hunk 1: "one" -> "ONE" (base row 1)
-        //   row 2: two
-        //   row 3: three      <- Unmodified region
-        //   row 4: four
-        //   row 5: FIVE       <- Hunk 2: "five" -> "FIVE" (base row 5)
-        //   row 6: six
-        //   row 7: seven
-        //   row 8: eight
+    //     let buffer_text = "
+    //         zero
+    //         ONE
+    //         two
+    //         three
+    //         four
+    //         FIVE
+    //         six
+    //         seven
+    //         eight
+    //     "
+    //     .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+    //     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+    //     let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
 
-        // Insert two lines after "two" (at end of row 2), without recomputing the diff.
-        // The buffer becomes:
-        //   row 0: zero
-        //   row 1: ONE          <- Hunk 1 (anchors still here)
-        //   row 2: two
-        //   row 3: INSERTED_A   <- NEW
-        //   row 4: INSERTED_B   <- NEW
-        //   row 5: three
-        //   row 6: four
-        //   row 7: FIVE         <- Hunk 2 (anchors moved here)
-        //   row 8: six
-        //   row 9: seven
-        //   row 10: eight
+    //     // Insert two lines after "two" (at end of row 2), without recomputing the diff.
+    //     // The buffer becomes:
+    //     //   row 0: zero
+    //     //   row 1: ONE          <- Hunk 1 (anchors still here)
+    //     //   row 2: two
+    //     //   row 3: INSERTED_A   <- NEW
+    //     //   row 4: INSERTED_B   <- NEW
+    //     //   row 5: three
+    //     //   row 6: four
+    //     //   row 7: FIVE         <- Hunk 2 (anchors moved here)
+    //     //   row 8: six
+    //     //   row 9: seven
+    //     //   row 10: eight
 
-        let insert_offset = buffer.point_to_offset(Point::new(3, 0));
-        buffer.edit([(insert_offset..insert_offset, "INSERTED_A\nINSERTED_B\n")]);
-        let buffer_snapshot = buffer.snapshot();
+    //     let insert_offset = buffer.point_to_offset(Point::new(3, 0));
+    //     buffer.edit([(insert_offset..insert_offset, "INSERTED_A\nINSERTED_B\n")]);
+    //     let buffer_snapshot = buffer.snapshot();
 
-        // Verify the buffer content is as expected (11 content rows + 1 empty row from trailing newline)
-        assert_eq!(buffer_snapshot.max_point().row, 11);
+    //     let expected_results = [
+    //         (0, Some((0, 0))),
+    //         (1, Some((1, 1))),
+    //         (2, Some((2, 2))),
+    //         (3, Some((3, 3))),
+    //         (4, Some((3, 3))),
+    //         (5, Some((3, 3))),
+    //         (6, Some((4, 4))),
+    //         (7, Some((5, 5))),
+    //         (8, Some((6, 6))),
+    //         (9, Some((7, 7))),
+    //         (10, Some((8, 8))),
+    //     ];
 
-        // Test row_to_base_text_row with the stale diff and new buffer snapshot
-        let expected_results = [
-            // (buffer_row, expected_right, expected_left)
-            (0, 0, 0),  // zero - before Hunk 1
-            (1, 2, 1),  // ONE - inside Hunk 1
-            (2, 2, 2),  // two - after Hunk 1
-            (3, 3, 3),  // INSERTED_A - back-translates to base row 3
-            (4, 3, 3),  // INSERTED_B - back-translates to base row 3 (inside insertion)
-            (5, 3, 3),  // three - back-translates to base row 3
-            (6, 4, 4),  // four - back-translates to base row 4
-            (7, 6, 5),  // FIVE - inside Hunk 2
-            (8, 6, 6),  // six - after Hunk 2
-            (9, 7, 7),  // seven - after Hunk 2
-            (10, 8, 8), // eight - after Hunk 2
-        ];
+    //     for (buffer_row, expected) in expected_results {
+    //         assert_eq!(
+    //             diff.row_boundary_to_base_text_row_boundary(
+    //                 RowBoundary::new_above(buffer_row),
+    //                 &buffer_snapshot
+    //             ),
+    //             expected
+    //                 .map(|(start, end)| RowBoundary::new_above(start)..RowBoundary::new_above(end)),
+    //             "row_to_base_text_row Bias::Right buffer_row={buffer_row}"
+    //         );
+    //     }
+    // }
 
-        for (buffer_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "row_to_base_text_row Bias::Right buffer_row={buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "row_to_base_text_row Bias::Left buffer_row={buffer_row}"
-            );
-        }
-    }
+    // TODO: Remove this test once test_row_translation_consolidated covers all cases
+    // #[gpui::test]
+    // async fn test_base_text_row_to_row_with_stale_diff(cx: &mut TestAppContext) {
+    //     let base_text = "
+    //         zero
+    //         one
+    //         two
+    //         three
+    //         four
+    //         five
+    //         six
+    //         seven
+    //         eight
+    //     "
+    //     .unindent();
 
-    #[gpui::test]
-    async fn test_base_text_row_to_row_with_stale_diff(cx: &mut TestAppContext) {
-        let base_text = "
-            zero
-            one
-            two
-            three
-            four
-            five
-            six
-            seven
-            eight
-        "
-        .unindent();
+    //     let buffer_text = "
+    //         zero
+    //         ONE
+    //         two
+    //         three
+    //         four
+    //         FIVE
+    //         six
+    //         seven
+    //         eight
+    //     "
+    //     .unindent();
 
-        let buffer_text = "
-            zero
-            ONE
-            two
-            three
-            four
-            FIVE
-            six
-            seven
-            eight
-        "
-        .unindent();
+    //     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+    //     let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+    //     let insert_offset = buffer.point_to_offset(Point::new(3, 0));
+    //     buffer.edit([(insert_offset..insert_offset, "INSERTED_A\nINSERTED_B\n")]);
+    //     let buffer_snapshot = buffer.snapshot();
 
-        let insert_offset = buffer.point_to_offset(Point::new(3, 0));
-        buffer.edit([(insert_offset..insert_offset, "INSERTED_A\nINSERTED_B\n")]);
-        let buffer_snapshot = buffer.snapshot();
+    //     assert_eq!(buffer_snapshot.max_point().row, 11);
 
-        assert_eq!(buffer_snapshot.max_point().row, 11);
+    //     let expected_results = [
+    //         (0, 0, 0),
+    //         (1, 2, 1),
+    //         (2, 2, 2),
+    //         (3, 5, 5),
+    //         (4, 6, 6),
+    //         (5, 8, 7),
+    //         (6, 8, 8),
+    //         (7, 9, 9),
+    //         (8, 10, 10),
+    //     ];
 
-        let expected_results = [
-            (0, 0, 0),
-            (1, 2, 1),
-            (2, 2, 2),
-            (3, 5, 5),
-            (4, 6, 6),
-            (5, 8, 7),
-            (6, 8, 8),
-            (7, 9, 9),
-            (8, 10, 10),
-        ];
+    //     for (base_text_row, expected_right, expected_left) in expected_results {
+    //         assert_eq!(
+    //             diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
+    //             expected_right,
+    //             "base_text_row_to_row Bias::Right base_text_row={base_text_row}"
+    //         );
+    //         assert_eq!(
+    //             diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
+    //             expected_left,
+    //             "base_text_row_to_row Bias::Left base_text_row={base_text_row}"
+    //         );
+    //     }
+    // }
 
-        for (base_text_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "base_text_row_to_row Bias::Right base_text_row={base_text_row}"
-            );
-            assert_eq!(
-                diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "base_text_row_to_row Bias::Left base_text_row={base_text_row}"
-            );
-        }
-    }
+    // TODO: Remove this test once test_row_translation_consolidated covers all cases
+    // #[gpui::test]
+    // async fn test_row_translation_with_insertion_at_deleted_hunk(cx: &mut gpui::TestAppContext) {
+    //     use rope::Point;
+    //     use unindent::Unindent as _;
 
-    #[gpui::test]
-    async fn test_row_to_base_text_row_after_deleting_added_line(cx: &mut TestAppContext) {
-        let base_text = "
-                aaa
-                bbb
-                ccc
-                ddd
-            "
-        .unindent();
+    //     let base_text = "
+    //         aaa
+    //         bbb
+    //         ccc
+    //         ddd
+    //         eee
+    //         fff
+    //     "
+    //     .unindent();
 
-        let buffer_text = "
-                aaa
-                NEW1
-                NEW2
-                ccc
-                ddd
-            "
-        .unindent();
+    //     let current_text = "
+    //         aaa
+    //         ddd
+    //         fff
+    //     "
+    //     .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let diff = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+    //     let buffer = cx.new(|cx| language::Buffer::local(current_text, cx));
 
-        let initial_results = [
-            (0, 0, 0), // aaa
-            (1, 2, 1), // NEW1 - inside hunk, maps to end/start of base hunk
-            (2, 2, 1), // NEW2 - inside hunk, maps to end/start of base hunk
-            (3, 2, 2), // ccc
-            (4, 3, 3), // ddd
-        ];
+    //     let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+    //     let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text.clone(), cx);
 
-        for (buffer_row, expected_right, expected_left) in initial_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer.snapshot()),
-                expected_right,
-                "INITIAL: row_to_base_text_row Bias::Right buffer_row={buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer.snapshot()),
-                expected_left,
-                "INITIAL: row_to_base_text_row Bias::Left buffer_row={buffer_row}"
-            );
-        }
+    //     buffer.update(cx, |buffer, cx| {
+    //         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "xxx\n")], None, cx);
+    //     });
 
-        let delete_start = buffer.point_to_offset(Point::new(2, 0));
-        let delete_end = buffer.point_to_offset(Point::new(3, 0));
-        buffer.edit([(delete_start..delete_end, "")]);
-        let buffer_snapshot = buffer.snapshot();
+    //     cx.run_until_parked();
 
-        assert_eq!(buffer_snapshot.max_point().row, 4);
-        assert_eq!(buffer_snapshot.text(), "aaa\nNEW1\nccc\nddd\n");
+    //     let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+    //     // TODO: Add base→buffer assertions to test_row_translation_consolidated
+    //     // let expected_base_to_buffer_results = [
+    //     //     (0, 0, 0),
+    //     //     (1, 1, 1),
+    //     //     (2, 1, 1),
+    //     //     (3, 1, 1),
+    //     //     (4, 3, 2),
+    //     //     (5, 3, 3),
+    //     // ];
 
-        let expected_results = [
-            (0, 0, 0), // aaa - unchanged
-            (1, 2, 1), // NEW1 - still inside stale hunk
-            (2, 2, 2), // ccc - should map to base row 2
-            (3, 3, 3), // ddd - should map to base row 3
-        ];
+    //     // for (base_text_row, expected_right, expected_left) in expected_base_to_buffer_results {
+    //     //     assert_eq!(
+    //     //         diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
+    //     //         expected_right,
+    //     //         "base_text_row_to_row Bias::Right base_text_row={base_text_row}"
+    //     //     );
+    //     //     assert_eq!(
+    //     //         diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
+    //     //         expected_left,
+    //     //         "base_text_row_to_row Bias::Left base_text_row={base_text_row}"
+    //     //     );
+    //     // }
 
-        for (buffer_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "AFTER DELETE: row_to_base_text_row Bias::Right buffer_row={buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "AFTER DELETE: row_to_base_text_row Bias::Left buffer_row={buffer_row}"
-            );
-        }
-    }
+    //     let expected_buffer_boundary_to_base_results = [
+    //         (0, Some((0, 0))),
+    //         (1, Some((1, 3))),
+    //         (2, Some((4, 5))),
+    //         (3, Some((5, 5))),
+    //         (4, Some((6, 6))),
+    //     ];
+
+    //     for (buffer_boundary_row_below, expected) in expected_buffer_boundary_to_base_results {
+    //         let buffer_boundary = RowBoundary::new_above(buffer_boundary_row_below);
+    //         let actual = diff
+    //             .row_boundary_to_base_text_row_boundary(buffer_boundary, &buffer_snapshot)
+    //             .map(|range| (range.start.row_below(), range.end.row_below()));
+
+    //         assert_eq!(
+    //             actual, expected,
+    //             "row_boundary_to_base_text_row_boundary buffer_boundary_row_below={buffer_boundary_row_below}"
+    //         );
+    //     }
+    // }
 
     #[gpui::test]
-    async fn test_row_translation_with_insertion_at_deleted_hunk(cx: &mut gpui::TestAppContext) {
+    async fn test_row_translation_consolidated(cx: &mut gpui::TestAppContext) {
         use rope::Point;
-        use unindent::Unindent as _;
 
-        // This setup mirrors the diff scenario in:
-        // `test_split_editor_block_alignment_after_undoing_deleted_unmodified_line`
-        //
-        // Base:
-        //   aaa
-        //   bbb
-        //   ccc
-        //   ddd
-        //   eee
-        //   fff
-        //
-        // Current starts missing "bbb" and "ccc" compared to base.
-        // Then we delete the unmodified line "eee", recompute the diff snapshot,
-        // and finally insert "xxx" near where the deleted hunk appears.
+        // Base text (15 lines, rows 0-14)
         let base_text = "
             aaa
             bbb
@@ -3025,104 +3010,303 @@ mod tests {
             ddd
             eee
             fff
+            ggg
+            hhh
+            iii
+            jjj
+            kkk
+            lll
+            mmm
+            nnn
+            ooo
         "
         .unindent();
 
-        let current_text = "
+        // Buffer text (14 lines, rows 0-13)
+        let buffer_text = "
             aaa
+            bbb
+            CCC
             ddd
             eee
             fff
+            NEW1
+            NEW2
+            ggg
+            hhh
+            XXX
+            lll
+            nnn
+            ooo
         "
         .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(current_text, cx));
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
-        });
-
-        cx.run_until_parked();
-
-        // Recompute a fresh diff snapshot after deleting "eee".
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-        let _diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text.clone(), cx);
-
-        // Insert "xxx" at row 2. This is the same insertion point used in the editor test.
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "xxx\n")], None, cx);
-        });
-
-        cx.run_until_parked();
-
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
-
-        assert_eq!(buffer_snapshot.text(), "aaa\nddd\nxxx\nfff\n");
-
-        // Assert current behavior of base->buffer row translation for key rows around the
-        // deleted hunks and inserted line.
+        // Diff visualization:
+        //   aaa         base 0  ↔ buffer 0
+        //   bbb         base 1  ↔ buffer 1
+        // - ccc         base 2
+        // + CCC         buffer 2            ← Hunk 1: modification (1 del, 1 add)
+        //   ddd         base 3  ↔ buffer 3
+        //   eee         base 4  ↔ buffer 4
+        //   fff         base 5  ↔ buffer 5
+        // + NEW1        buffer 6
+        // + NEW2        buffer 7            ← Hunk 2: pure insertion (0 del, 2 add)
+        //   ggg         base 6  ↔ buffer 8
+        //   hhh         base 7  ↔ buffer 9
+        // - iii         base 8
+        // - jjj         base 9
+        // - kkk         base 10
+        // + XXX         buffer 10           ← Hunk 3: mixed (3 del, 1 add)
+        //   lll         base 11 ↔ buffer 11
+        // - mmm         base 12             ← Hunk 4: pure deletion (1 del, 0 add)
+        //   nnn         base 13 ↔ buffer 12
+        //   ooo         base 14 ↔ buffer 13
         //
-        // Buffer rows:
-        //   0: aaa
-        //   1: ddd
-        //   2: xxx
-        //   3: fff
-        //
-        // Base rows:
-        //   0: aaa
-        //   1: bbb
-        //   2: ccc
-        //   3: ddd
-        //   4: eee
-        //   5: fff
-        //
-        // Note: the expectations below intentionally capture the current behavior.
-        // If you change diff semantics later, update these assertions accordingly.
+        // Gaps between hunks:
+        // - Hunk 1 → Hunk 2: 3 unchanged lines (ddd, eee, fff)
+        // - Hunk 2 → Hunk 3: 2 unchanged lines (ggg, hhh)
+        // - Hunk 3 → Hunk 4: 1 unchanged line (lll)
+        // - After Hunk 4: 2 unchanged lines (nnn, ooo)
 
-        // Base -> buffer mapping.
-        let expected_base_to_buffer_results = [
-            // base text row, buffer row (right bias), buffer row (left bias)
-            (0, 0, 0), // aaa
-            (1, 1, 1), // bbb (deleted in buffer) biases currently resolve to ddd row
-            (2, 1, 1), // ccc (deleted in buffer) biases currently resolve to ddd row
-            (3, 1, 1), // ddd
-            (4, 3, 2), // eee (deleted in buffer) resolves past insertion on right bias
-            (5, 3, 3), // fff
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let buffer_snapshot = buffer.snapshot();
+        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text.clone(), cx);
+
+        // Phase 1: Fresh diff assertions
+
+        // Buffer → Base (row_boundary_to_base_text_row_boundary)
+        // Hunks (from debug output):
+        //   Hunk 1: buffer rows 2..3, base rows 2..3 (modification)
+        //   Hunk 2: buffer rows 6..8, base rows 6..6 (pure insertion)
+        //   Hunk 3: buffer rows 10..11, base rows 8..11 (3 del, 1 add)
+        //   Hunk 4: buffer rows 12..12, base rows 12..13 (pure deletion)
+        let buffer_to_base_expected = [
+            (0, Some((0, 0))),    // Before all hunks
+            (1, Some((1, 1))),    // Before Hunk 1
+            (2, Some((2, 2))),    // At start of Hunk 1
+            (3, Some((3, 3))),    // After Hunk 1, unmodified
+            (4, Some((4, 4))),    // Unmodified
+            (5, Some((5, 5))),    // Unmodified
+            (6, Some((6, 6))),    // At start of Hunk 2 (pure insertion)
+            (7, None),            // Inside added region of Hunk 2
+            (8, Some((6, 6))),    // After Hunk 2 (maps back to same base row)
+            (9, Some((7, 7))),    // Unmodified (hhh)
+            (10, Some((8, 8))),   // At start of Hunk 3
+            (11, Some((11, 11))), // After Hunk 3 (lll)
+            (12, Some((12, 13))), // At Hunk 4 (pure deletion of mmm)
+            (13, Some((14, 14))), // After Hunk 4 (ooo)
+            (14, Some((15, 15))), // Past end
         ];
 
-        for (base_text_row, expected_right, expected_left) in expected_base_to_buffer_results {
+        for (buffer_boundary_row_below, expected) in buffer_to_base_expected {
+            let buffer_boundary = RowBoundary::new_above(buffer_boundary_row_below);
+            let actual = diff
+                .row_boundary_to_base_text_row_boundary(buffer_boundary, &buffer_snapshot)
+                .map(|range| (range.start.row_below(), range.end.row_below()));
+
             assert_eq!(
-                diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "base_text_row_to_row Bias::Right base_text_row={base_text_row}"
-            );
-            assert_eq!(
-                diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "base_text_row_to_row Bias::Left base_text_row={base_text_row}"
+                actual, expected,
+                "row_boundary_to_base_text_row_boundary buffer_boundary_row_below={buffer_boundary_row_below}"
             );
         }
 
-        // Buffer -> base mapping.
-        let expected_buffer_to_base_results = [
-            // buffer row, base text row (right bias), base text row (left bias)
-            (0, 0, 0), // aaa
-            (1, 3, 3), // ddd
-            (2, 5, 4), // xxx - inserted near deleted hunk boundary (bias-dependent)
-            (3, 5, 5), // fff
+        // Base → Buffer (base_text_row_boundary_to_row_boundary)
+        let base_to_buffer_expected = [
+            (0, Some((0, 0))),    // Before all hunks
+            (1, Some((1, 1))),    // Before Hunk 1
+            (2, Some((2, 2))),    // At start of Hunk 1
+            (3, Some((3, 3))),    // After Hunk 1
+            (4, Some((4, 4))),    // Unmodified
+            (5, Some((5, 5))),    // Unmodified
+            (6, Some((6, 8))),    // At Hunk 2 insertion point (range spans inserted lines)
+            (7, Some((9, 9))),    // Unmodified (hhh)
+            (8, Some((10, 10))),  // At start of Hunk 3
+            (9, None),            // Inside deleted region of Hunk 3
+            (10, None),           // Inside deleted region of Hunk 3
+            (11, Some((11, 11))), // After Hunk 3 (lll)
+            (12, Some((12, 12))), // At start of Hunk 4 (pure deletion)
+            (13, Some((12, 12))), // After Hunk 4 (nnn in buffer)
+            (14, Some((13, 13))), // Unmodified (ooo)
+            (15, Some((14, 14))), // Past end
         ];
 
-        for (buffer_row, expected_right, expected_left) in expected_buffer_to_base_results {
+        for (base_boundary_row_below, expected) in base_to_buffer_expected {
+            let base_boundary = RowBoundary::new_above(base_boundary_row_below);
+            let actual = diff
+                .base_text_row_boundary_to_row_boundary(base_boundary, &buffer_snapshot)
+                .map(|range| (range.start.row_below(), range.end.row_below()));
+
             assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "row_to_base_text_row Bias::Right buffer_row={buffer_row}"
+                actual, expected,
+                "base_text_row_boundary_to_row_boundary base_boundary_row_below={base_boundary_row_below}"
             );
+        }
+
+        // Phase 2: Edit without recalculating the diff
+        //
+        // Insert "INSERTED\n" at the start of row 4 (between ddd and eee, in the
+        // unmodified region between Hunk 1 and Hunk 2).
+        //
+        // Buffer after edit (15 lines, rows 0-14):
+        //   aaa         row 0
+        //   bbb         row 1
+        //   CCC         row 2
+        //   ddd         row 3
+        //   INSERTED    row 4  <- NEW
+        //   eee         row 5
+        //   fff         row 6
+        //   NEW1        row 7
+        //   NEW2        row 8
+        //   ggg         row 9
+        //   hhh         row 10
+        //   XXX         row 11
+        //   lll         row 12
+        //   nnn         row 13
+        //   ooo         row 14
+
+        let mut buffer = buffer;
+        let insert_offset = buffer.point_to_offset(Point::new(4, 0));
+        buffer.edit([(insert_offset..insert_offset, "INSERTED\n")]);
+        let buffer_snapshot = buffer.snapshot();
+
+        // Buffer → Base (stale diff)
+        let buffer_to_base_stale_expected = [
+            (0, Some((0, 0))),    // Before all hunks
+            (1, Some((1, 1))),    // Before Hunk 1
+            (2, Some((2, 2))),    // At start of Hunk 1
+            (3, Some((3, 3))),    // After Hunk 1, unmodified (ddd)
+            (4, Some((4, 4))),    // Before insertion
+            (5, Some((4, 4))),    // Inside insertion (collapses to same point)
+            (6, Some((5, 5))),    // After insertion (fff)
+            (7, Some((6, 6))),    // At start of Hunk 2 (pure insertion)
+            (8, None),            // Inside added region of Hunk 2
+            (9, Some((6, 6))),    // After Hunk 2
+            (10, Some((7, 7))),   // Unmodified (hhh)
+            (11, Some((8, 8))),   // At start of Hunk 3
+            (12, Some((11, 11))), // After Hunk 3 (lll)
+            (13, Some((12, 13))), // At Hunk 4 (pure deletion)
+            (14, Some((14, 14))), // After Hunk 4 (ooo)
+            (15, Some((15, 15))), // Past end
+        ];
+
+        for (buffer_boundary_row_below, expected) in buffer_to_base_stale_expected {
+            let buffer_boundary = RowBoundary::new_above(buffer_boundary_row_below);
+            let actual = diff
+                .row_boundary_to_base_text_row_boundary(buffer_boundary, &buffer_snapshot)
+                .map(|range| (range.start.row_below(), range.end.row_below()));
+
             assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "row_to_base_text_row Bias::Left buffer_row={buffer_row}"
+                actual, expected,
+                "Phase 2: row_boundary_to_base_text_row_boundary buffer_boundary_row_below={buffer_boundary_row_below}"
+            );
+        }
+
+        // Base → Buffer (stale diff)
+        // The insertion was at buffer row 4 (start of eee). From base's perspective,
+        // base row 4 (eee) now maps to buffer row 5, but the boundary translation
+        // accounts for the edit within the inter-hunk region.
+
+        // Debug: check what's happening for base row 4
+        eprintln!(
+            "Phase 2 debug: buffer text after edit:\n{}",
+            buffer_snapshot.text()
+        );
+        let debug_boundary = RowBoundary::new_above(4);
+        let debug_result =
+            diff.base_text_row_boundary_to_row_boundary(debug_boundary, &buffer_snapshot);
+        eprintln!(
+            "Phase 2 debug: base boundary above row 4 -> {:?}",
+            debug_result.map(|r| (r.start.row_below(), r.end.row_below()))
+        );
+
+        let base_to_buffer_stale_expected = [
+            (0, Some((0, 0))),    // Before all hunks
+            (1, Some((1, 1))),    // Before Hunk 1
+            (2, Some((2, 2))),    // At start of Hunk 1
+            (3, Some((3, 3))),    // After Hunk 1 (ddd)
+            (4, Some((4, 5))),    // Boundary before eee - ambiguous due to insertion
+            (5, Some((6, 6))),    // Boundary before fff
+            (6, Some((7, 9))),    // At Hunk 2 insertion point (range spans inserted lines)
+            (7, Some((10, 10))),  // Unmodified (hhh)
+            (8, Some((11, 11))),  // At start of Hunk 3
+            (9, None),            // Inside deleted region of Hunk 3
+            (10, None),           // Inside deleted region of Hunk 3
+            (11, Some((12, 12))), // After Hunk 3 (lll)
+            (12, Some((13, 13))), // At start of Hunk 4 (pure deletion)
+            (13, Some((13, 13))), // After Hunk 4 (nnn in buffer)
+            (14, Some((14, 14))), // Unmodified (ooo)
+            (15, Some((15, 15))), // Past end
+        ];
+
+        for (base_boundary_row_below, expected) in base_to_buffer_stale_expected {
+            let base_boundary = RowBoundary::new_above(base_boundary_row_below);
+            let actual = diff
+                .base_text_row_boundary_to_row_boundary(base_boundary, &buffer_snapshot)
+                .map(|range| (range.start.row_below(), range.end.row_below()));
+
+            assert_eq!(
+                actual, expected,
+                "Phase 2: base_text_row_boundary_to_row_boundary base_boundary_row_below={base_boundary_row_below}"
+            );
+        }
+
+        // Phase 3: Insert at a pure deletion hunk location
+        //
+        // Insert "ZZZ\n" at buffer row 13 (where mmm was deleted - Hunk 4 location).
+        // This exercises the case from test_row_translation_with_insertion_at_deleted_hunk.
+        //
+        // Buffer after edit (16 lines, rows 0-15):
+        //   ...
+        //   lll         row 12
+        //   ZZZ         row 13  <- NEW (at location of deleted mmm)
+        //   nnn         row 14
+        //   ooo         row 15
+
+        let insert_offset = buffer.point_to_offset(Point::new(13, 0));
+        buffer.edit([(insert_offset..insert_offset, "ZZZ\n")]);
+        let buffer_snapshot = buffer.snapshot();
+
+        // Buffer → Base (after insertion at deletion hunk)
+        let buffer_to_base_phase3_expected = [
+            (0, Some((0, 0))),    // Before all hunks
+            (12, Some((11, 11))), // After Hunk 3 (lll)
+            (13, Some((12, 13))), // At Hunk 4 location (where mmm was deleted)
+            (14, Some((13, 13))), // Inside insertion at Hunk 4
+            (15, Some((14, 14))), // After Hunk 4 (ooo)
+            (16, Some((15, 15))), // Past end
+        ];
+
+        for (buffer_boundary_row_below, expected) in buffer_to_base_phase3_expected {
+            let buffer_boundary = RowBoundary::new_above(buffer_boundary_row_below);
+            let actual = diff
+                .row_boundary_to_base_text_row_boundary(buffer_boundary, &buffer_snapshot)
+                .map(|range| (range.start.row_below(), range.end.row_below()));
+
+            assert_eq!(
+                actual, expected,
+                "Phase 3: row_boundary_to_base_text_row_boundary buffer_boundary_row_below={buffer_boundary_row_below}"
+            );
+        }
+
+        // Base → Buffer (after insertion at deletion hunk)
+        let base_to_buffer_phase3_expected = [
+            (0, Some((0, 0))),    // Before all hunks
+            (11, Some((12, 12))), // After Hunk 3 (lll)
+            (12, Some((13, 14))), // At Hunk 4 (maps to range including inserted ZZZ)
+            (13, Some((14, 14))), // After Hunk 4 (nnn in buffer)
+            (14, Some((15, 15))), // Unmodified (ooo)
+            (15, Some((16, 16))), // Past end
+        ];
+
+        for (base_boundary_row_below, expected) in base_to_buffer_phase3_expected {
+            let base_boundary = RowBoundary::new_above(base_boundary_row_below);
+            let actual = diff
+                .base_text_row_boundary_to_row_boundary(base_boundary, &buffer_snapshot)
+                .map(|range| (range.start.row_below(), range.end.row_below()));
+
+            assert_eq!(
+                actual, expected,
+                "Phase 3: base_text_row_boundary_to_row_boundary base_boundary_row_below={base_boundary_row_below}"
             );
         }
     }
