@@ -14782,6 +14782,7 @@ impl Editor {
                     scroll_anchor: scroll_state,
                     scroll_top_row,
                 }),
+                Some(cursor_position.row),
                 cx,
             );
             cx.emit(EditorEvent::PushedToNavHistory {
