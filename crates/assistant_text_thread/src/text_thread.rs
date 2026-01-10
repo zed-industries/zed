@@ -2078,7 +2078,8 @@ impl TextThread {
                                         );
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
-                                    LanguageModelCompletionEvent::ReasoningDetails(_) => {
+                                    LanguageModelCompletionEvent::ReasoningDetails(_)
+                                    |  LanguageModelCompletionEvent::ReasoningDetailsAccumulable(_) => {
                                         // ReasoningDetails are metadata (signatures, encrypted data, format info)
                                         // used for request/response validation, not UI content.
                                         // The displayable thinking text is already handled by the Thinking event.

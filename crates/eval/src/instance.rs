@@ -1270,7 +1270,8 @@ pub fn response_events_to_markdown(
                 | LanguageModelCompletionEvent::UsageUpdated { .. }
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Started
-                | LanguageModelCompletionEvent::ReasoningDetails(_),
+                | LanguageModelCompletionEvent::ReasoningDetails(_)
+                | LanguageModelCompletionEvent::ReasoningDetailsAccumulable(_)
             ) => {}
             Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                 json_parse_error, ..
@@ -1357,6 +1358,7 @@ impl ThreadDialog {
                 | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
+                | Ok(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(_))
                 | Ok(LanguageModelCompletionEvent::Stop(_))
                 | Ok(LanguageModelCompletionEvent::Queued { .. })
                 | Ok(LanguageModelCompletionEvent::Started)
