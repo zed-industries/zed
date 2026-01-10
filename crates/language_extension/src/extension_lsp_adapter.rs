@@ -421,15 +421,16 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[(String, lsp::SymbolKind, Option<String>)],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let symbols = symbols
             .iter()
             .cloned()
-            .map(|(name, kind)| extension::Symbol {
+            .map(|(name, kind, container_name)| extension::Symbol {
                 name,
                 kind: lsp_symbol_kind_to_extension(kind),
+                container_name,
             })
             .collect::<Vec<_>>();
 
