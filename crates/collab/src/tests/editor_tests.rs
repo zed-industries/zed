@@ -67,7 +67,7 @@ async fn test_host_disconnect(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
@@ -76,7 +76,7 @@ async fn test_host_disconnect(
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_id = active_call_a
