@@ -327,6 +327,8 @@ pub struct ProjectGitSettings {
 #[with_fallible_options]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    #[serde(flatten)]
+    pub project: ProjectGitSettings,
     /// Whether or not to enable git integration.
     ///
     /// Default: true

@@ -6199,6 +6199,7 @@ fn version_control_page() -> SettingsPage {
                         settings_content
                             .git
                             .get_or_insert_default()
+                            .project
                             .inline_blame
                             .get_or_insert_default()
                             .enabled = value;
@@ -6223,6 +6224,7 @@ fn version_control_page() -> SettingsPage {
                         settings_content
                             .git
                             .get_or_insert_default()
+                            .project
                             .inline_blame
                             .get_or_insert_default()
                             .delay_ms = value;
@@ -6247,6 +6249,7 @@ fn version_control_page() -> SettingsPage {
                         settings_content
                             .git
                             .get_or_insert_default()
+                            .project
                             .inline_blame
                             .get_or_insert_default()
                             .padding = value;
@@ -6271,6 +6274,7 @@ fn version_control_page() -> SettingsPage {
                         settings_content
                             .git
                             .get_or_insert_default()
+                            .project
                             .inline_blame
                             .get_or_insert_default()
                             .min_column = value;
@@ -6295,6 +6299,7 @@ fn version_control_page() -> SettingsPage {
                         settings_content
                             .git
                             .get_or_insert_default()
+                            .project
                             .inline_blame
                             .get_or_insert_default()
                             .show_commit_summary = value;

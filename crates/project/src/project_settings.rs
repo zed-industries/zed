@@ -453,7 +453,11 @@ impl settings::Settings for GitSettings {
         project_content.merge_from_option(content.project.git.as_ref());
         GitSettings {
             enabled: GitEnabledSettings {
-                status: user_content.enabled.as_ref().unwrap().is_git_status_enabled(),
+                status: user_content
+                    .enabled
+                    .as_ref()
+                    .unwrap()
+                    .is_git_status_enabled(),
                 diff: user_content.enabled.as_ref().unwrap().is_git_diff_enabled(),
             },
             git_gutter: user_content.git_gutter.unwrap(),
