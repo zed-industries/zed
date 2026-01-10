@@ -118,23 +118,16 @@ pub use window::*;
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait AppContext {
-    /// The result type for this context, used for async contexts that
-    /// can't hold a direct reference to the application context.
-    type Result<T>;
-
     /// Create a new entity in the app context.
     #[expect(
         clippy::wrong_self_convention,
         reason = "`App::new` is an ubiquitous function for creating entities"
     )]
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T>;
 
     /// Reserve a slot for a entity to be inserted later.
     /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T>;
 
     /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
     ///
@@ -143,28 +136,24 @@ pub trait AppContext {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    ) -> Entity<T>;
 
     /// Update a entity in the app context.
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> Self::Result<R>
+    ) -> R
     where
         T: 'static;
 
     /// Update a entity in the app context.
-    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
     where
         T: 'static;
 
     /// Read a entity from the app context.
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static;
 
@@ -188,7 +177,7 @@ pub trait AppContext {
         R: Send + 'static;
 
     /// Read a global from this app context
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global;
 }
@@ -207,6 +196,9 @@ impl<T: 'static> Reservation<T> {
 /// This trait is used for the different visual contexts in GPUI that
 /// require a window to be present.
 pub trait VisualContext: AppContext {
+    /// The result type for window operations.
+    type Result<T>;
+
     /// Returns the handle of the window associated with this context.
     fn window_handle(&self) -> AnyWindowHandle;
 
@@ -281,24 +273,6 @@ where
     {
         self.borrow_mut().default_global::<G>();
         self.update_global(f)
-    }
-}
-
-/// A flatten equivalent for anyhow `Result`s.
-pub trait Flatten<T> {
-    /// Convert this type into a simple `Result<T>`.
-    fn flatten(self) -> Result<T>;
-}
-
-impl<T> Flatten<T> for Result<Result<T>> {
-    fn flatten(self) -> Result<T> {
-        self?
-    }
-}
-
-impl<T> Flatten<T> for Result<T> {
-    fn flatten(self) -> Result<T> {
-        self
     }
 }
 

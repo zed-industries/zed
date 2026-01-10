@@ -375,18 +375,16 @@ impl ToolCall {
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;
-        let position = buffer
-            .update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                if let Some(row) = location.line {
-                    let column = snapshot.indent_size_for_line(row).len;
-                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
-                    snapshot.anchor_before(point)
-                } else {
-                    Anchor::min_for_buffer(snapshot.remote_id())
-                }
-            })
-            .ok()?;
+        let position = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            if let Some(row) = location.line {
+                let column = snapshot.indent_size_for_line(row).len;
+                let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                snapshot.anchor_before(point)
+            } else {
+                Anchor::min_for_buffer(snapshot.remote_id())
+            }
+        });
 
         Some(ResolvedLocation { buffer, position })
     }
@@ -483,6 +481,7 @@ pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
     ResourceLink { resource_link: acp::ResourceLink },
+    Image { image: Arc<gpui::Image> },
 }
 
 impl ContentBlock {
@@ -517,29 +516,50 @@ impl ContentBlock {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        if matches!(self, ContentBlock::Empty)
-            && let acp::ContentBlock::ResourceLink(resource_link) = block
-        {
-            *self = ContentBlock::ResourceLink { resource_link };
-            return;
-        }
-
-        let new_content = self.block_string_contents(block, path_style);
-
-        match self {
-            ContentBlock::Empty => {
+        match (&mut *self, &block) {
+            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
+                *self = ContentBlock::ResourceLink {
+                    resource_link: resource_link.clone(),
+                };
+            }
+            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
+                if let Some(image) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image };
+                } else {
+                    let new_content = Self::image_md(image_content);
+                    *self = Self::create_markdown_block(new_content, language_registry, cx);
+                }
+            }
+            (ContentBlock::Empty, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
-            ContentBlock::Markdown { markdown } => {
+            (ContentBlock::Markdown { markdown }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
-            ContentBlock::ResourceLink { resource_link } => {
+            (ContentBlock::ResourceLink { resource_link }, _) => {
                 let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
-
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+            (ContentBlock::Image { .. }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("`Image`\n{}", new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
         }
+    }
+
+    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+        use base64::Engine as _;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(image_content.data.as_bytes())
+            .ok()?;
+        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
     }
 
     fn create_markdown_block(
@@ -553,9 +573,9 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: acp::ContentBlock, path_style: PathStyle) -> String {
+    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
-            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
                 Self::resource_link_md(&resource_link.uri, path_style)
             }
@@ -566,8 +586,8 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_md(&uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(&image),
+            }) => Self::resource_link_md(uri, path_style),
+            acp::ContentBlock::Image(image) => Self::image_md(image),
             _ => String::new(),
         }
     }
@@ -589,6 +609,7 @@ impl ContentBlock {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
             ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
+            ContentBlock::Image { .. } => "`Image`",
         }
     }
 
@@ -597,12 +618,20 @@ impl ContentBlock {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
             ContentBlock::ResourceLink { .. } => None,
+            ContentBlock::Image { .. } => None,
         }
     }
 
     pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
         match self {
             ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            ContentBlock::Image { image } => Some(image),
             _ => None,
         }
     }
@@ -684,6 +713,13 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            Self::ContentBlock(content) => content.image(),
+            _ => None,
         }
     }
 }
@@ -799,6 +835,7 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub output_tokens: u64,
 }
 
 impl TokenUsage {
@@ -1141,6 +1178,23 @@ impl AcpThread {
                         ..
                     },
                 ) if call.diffs().next().is_some() => {
+                    return true;
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
+    pub fn has_in_progress_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
+                    ..
+                }) => {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
@@ -1765,7 +1819,7 @@ impl AcpThread {
             .ok();
 
             let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))?
+                .update(cx, |git, cx| git.checkpoint(cx))
                 .await
                 .context("failed to get old checkpoint")
                 .log_err();
@@ -1945,7 +1999,7 @@ impl AcpThread {
             rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
                     .await?;
             }
 
@@ -1963,7 +2017,7 @@ impl AcpThread {
 
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
+            cx.update(|cx| truncate.run(id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     // Collect all terminals from entries that will be removed
@@ -2022,7 +2076,7 @@ impl AcpThread {
             let equal = git_store
                 .update(cx, |git, cx| {
                     git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                })?
+                })
                 .await
                 .unwrap_or(true);
 
@@ -2081,17 +2135,14 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project
-                .update(cx, |project, cx| {
-                    let path = project
-                        .project_path_for_absolute_path(&path, cx)
-                        .ok_or_else(|| {
-                            acp::Error::resource_not_found(Some(path.display().to_string()))
-                        })?;
-                    Ok(project.open_buffer(path, cx))
-                })
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))
-                .flatten()?;
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .ok_or_else(|| {
+                        acp::Error::resource_not_found(Some(path.display().to_string()))
+                    })?;
+                Ok::<_, acp::Error>(project.open_buffer(path, cx))
+            })?;
 
             let buffer = load.await?;
 
@@ -2110,9 +2161,9 @@ impl AcpThread {
             } else {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
                     this.shared_buffers.insert(buffer.clone(), snapshot.clone());
                 })?;
@@ -2141,7 +2192,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2162,7 +2213,7 @@ impl AcpThread {
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
-            let buffer = load??.await?;
+            let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
                     .get(&buffer)
@@ -2197,7 +2248,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
@@ -2219,7 +2270,7 @@ impl AcpThread {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
                 format_on_save
-            })?;
+            });
 
             if format_on_save {
                 let format_task = project.update(cx, |project, cx| {
@@ -2230,16 +2281,16 @@ impl AcpThread {
                         FormatTrigger::Save,
                         cx,
                     )
-                })?;
+                });
                 format_task.await.log_err();
 
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
-                })?;
+                });
             }
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))
                 .await
         })
     }
@@ -2285,7 +2336,7 @@ impl AcpThread {
                         project
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
-                    })?
+                    })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
@@ -2303,10 +2354,10 @@ impl AcpThread {
                             },
                             cx,
                         )
-                    })?
+                    })
                     .await?;
 
-                cx.new(|cx| {
+                anyhow::Ok(cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
                         &format!("{} {}", command, args.join(" ")),
@@ -2316,7 +2367,7 @@ impl AcpThread {
                         language_registry,
                         cx,
                     )
-                })
+                }))
             }
         });
 
@@ -2607,6 +2658,128 @@ mod tests {
         assert!(
             content.contains("pre-exit data"),
             "expected pre-exit data to render, got: {content}"
+        );
+    }
+
+    /// Test that killing a terminal via Terminal::kill properly:
+    /// 1. Causes wait_for_exit to complete (doesn't hang forever)
+    /// 2. The underlying terminal still has the output that was written before the kill
+    ///
+    /// This test verifies that the fix to kill_active_task (which now also kills
+    /// the shell process in addition to the foreground process) properly allows
+    /// wait_for_exit to complete instead of hanging indefinitely.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        use std::collections::HashMap;
+        use task::Shell;
+        use util::shell_builder::ShellBuilder;
+
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project.clone(), Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+
+        // Create a real PTY terminal that runs a command which prints output then sleeps
+        // We use printf instead of echo and chain with && sleep to ensure proper execution
+        let (completion_tx, _completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+            Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
+            &[],
+        );
+
+        let builder = cx
+            .update(|cx| {
+                ::terminal::TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    ::terminal::terminal_settings::CursorShape::default(),
+                    ::terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+
+        let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+
+        // Create the acp_thread Terminal wrapper
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "printf output_before_kill && sleep 60".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower_terminal.clone(),
+                },
+                cx,
+            );
+        });
+
+        // Wait for the printf command to execute and produce output
+        smol::Timer::after(Duration::from_millis(500)).await;
+
+        // Get the acp_thread Terminal and kill it
+        let wait_for_exit = thread.update(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            let wait_for_exit = term.read(cx).wait_for_exit();
+            term.update(cx, |term, cx| {
+                term.kill(cx);
+            });
+            wait_for_exit
+        });
+
+        // KEY ASSERTION: wait_for_exit should complete within a reasonable time (not hang).
+        // Before the fix to kill_active_task, this would hang forever because
+        // only the foreground process was killed, not the shell, so the PTY
+        // child never exited and wait_for_completed_task never completed.
+        let exit_result = futures::select! {
+            result = futures::FutureExt::fuse(wait_for_exit) => Some(result),
+            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => None,
+        };
+
+        assert!(
+            exit_result.is_some(),
+            "wait_for_exit should complete after kill, but it timed out. \
+            This indicates kill_active_task is not properly killing the shell process."
+        );
+
+        // Give the system a chance to process any pending updates
+        cx.run_until_parked();
+
+        // Verify that the underlying terminal still has the output that was
+        // written before the kill. This verifies that killing doesn't lose output.
+        let inner_content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            term.read(cx).inner().read(cx).get_content()
+        });
+
+        assert!(
+            inner_content.contains("output_before_kill"),
+            "Underlying terminal should contain output from before kill, got: {}",
+            inner_content
         );
     }
 
@@ -3773,6 +3946,9 @@ mod tests {
                         ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
+                        }
+                        ContentBlock::Image { .. } => {
+                            panic!("Expected markdown content, got image")
                         }
                     }
                 } else {

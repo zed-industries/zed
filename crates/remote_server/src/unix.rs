@@ -242,7 +242,7 @@ fn start_server(
                         // when calling quit, but it should be.
                         cx.shutdown();
                         cx.quit();
-                    })?;
+                    });
                     break;
                 }
                 _ = app_quit_rx.next().fuse() => {
@@ -939,7 +939,7 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(async move |cx| {
         while let Some(server_settings_content) = server_settings_file.next().await {
-            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_server_settings(&server_settings_content, cx);
                 if let Err(err) = &result {
                     log::error!("Failed to load server settings: {err}");
@@ -947,9 +947,6 @@ pub fn handle_settings_file_changes(
                 settings_changed(result.err(), cx);
                 cx.refresh_windows();
             });
-            if result.is_err() {
-                break; // App dropped
-            }
         }
     })
     .detach();

@@ -1,11 +1,17 @@
-use anyhow::Result;
+use crate::{
+    CurrentEditPrediction, DebugEvent, EditPrediction, EditPredictionFinishedDebugEvent,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore, UserActionRecord, UserActionType, prediction::EditPredictionResult,
+};
+use anyhow::{Result, bail};
 use client::Client;
-use futures::AsyncReadExt as _;
+use edit_prediction_types::SuggestionDisplayType;
+use futures::{AsyncReadExt as _, channel::mpsc};
 use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Anchor, BufferSnapshot, Point, ToOffset as _};
+use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
 use serde::{Deserialize, Serialize};
@@ -16,12 +22,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-
-use crate::{
-    CurrentEditPrediction, EditPrediction, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStore, prediction::EditPredictionResult,
-};
-use edit_prediction_types::SuggestionDisplayType;
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
@@ -48,6 +48,10 @@ impl SweepAi {
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
         });
+
+        let buffer = inputs.buffer.clone();
+        let debug_tx = inputs.debug_tx.clone();
+
         let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
@@ -64,6 +68,7 @@ impl SweepAi {
             .unwrap_or("untitled")
             .into();
         let offset = inputs.position.to_offset(&inputs.snapshot);
+        let buffer_entity_id = inputs.buffer.entity_id();
 
         let recent_buffers = inputs.recent_paths.iter().cloned();
         let http_client = cx.http_client();
@@ -167,6 +172,14 @@ impl SweepAi {
                 });
             }
 
+            let file_path_str = full_path.display().to_string();
+            let recent_user_actions = inputs
+                .user_actions
+                .iter()
+                .filter(|r| r.buffer_id == buffer_entity_id)
+                .map(|r| to_sweep_user_action(r, &file_path_str))
+                .collect();
+
             let request_body = AutocompleteRequest {
                 debug_info,
                 repo_name,
@@ -180,7 +193,7 @@ impl SweepAi {
                 branch: None,
                 file_chunks,
                 retrieval_chunks,
-                recent_user_actions: vec![],
+                recent_user_actions,
                 use_bytes: true,
                 // TODO
                 privacy_mode_enabled: false,
@@ -195,11 +208,18 @@ impl SweepAi {
                 events: inputs.events,
                 related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
-                cursor_excerpt: request_body.file_contents.into(),
+                cursor_excerpt: request_body.file_contents.clone().into(),
                 // we actually don't know
                 editable_range_in_excerpt: 0..inputs.snapshot.len(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
             };
+
+            send_started_event(
+                &debug_tx,
+                &buffer,
+                inputs.position,
+                serde_json::to_string(&request_body).unwrap_or_default(),
+            );
 
             let request = http_client::Request::builder()
                 .uri(SWEEP_API_URL)
@@ -212,19 +232,23 @@ impl SweepAi {
 
             let mut response = http_client.send(request).await?;
 
-            let mut body: Vec<u8> = Vec::new();
-            response.body_mut().read_to_end(&mut body).await?;
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
 
             let response_received_at = Instant::now();
             if !response.status().is_success() {
-                anyhow::bail!(
+                let message = format!(
                     "Request failed with status: {:?}\nBody: {}",
                     response.status(),
-                    String::from_utf8_lossy(&body),
+                    body,
                 );
+                send_finished_event(&debug_tx, &buffer, inputs.position, message.clone());
+                bail!(message);
             };
 
-            let response: AutocompleteResponse = serde_json::from_slice(&body)?;
+            let response: AutocompleteResponse = serde_json::from_str(&body)?;
+
+            send_finished_event(&debug_tx, &buffer, inputs.position, body);
 
             let old_text = inputs
                 .snapshot
@@ -272,6 +296,40 @@ impl SweepAi {
                 .await,
             ))
         })
+    }
+}
+
+fn send_started_event(
+    debug_tx: &Option<mpsc::UnboundedSender<DebugEvent>>,
+    buffer: &Entity<Buffer>,
+    position: Anchor,
+    prompt: String,
+) {
+    if let Some(debug_tx) = debug_tx {
+        _ = debug_tx.unbounded_send(DebugEvent::EditPredictionStarted(
+            EditPredictionStartedDebugEvent {
+                buffer: buffer.downgrade(),
+                position,
+                prompt: Some(prompt),
+            },
+        ));
+    }
+}
+
+fn send_finished_event(
+    debug_tx: &Option<mpsc::UnboundedSender<DebugEvent>>,
+    buffer: &Entity<Buffer>,
+    position: Anchor,
+    model_output: String,
+) {
+    if let Some(debug_tx) = debug_tx {
+        _ = debug_tx.unbounded_send(DebugEvent::EditPredictionFinished(
+            EditPredictionFinishedDebugEvent {
+                buffer: buffer.downgrade(),
+                position,
+                model_output: Some(model_output),
+            },
+        ));
     }
 }
 
@@ -337,7 +395,6 @@ struct UserAction {
     pub timestamp: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ActionType {
@@ -346,6 +403,22 @@ enum ActionType {
     DeleteChar,
     InsertSelection,
     DeleteSelection,
+}
+
+fn to_sweep_user_action(record: &UserActionRecord, file_path: &str) -> UserAction {
+    UserAction {
+        action_type: match record.action_type {
+            UserActionType::InsertChar => ActionType::InsertChar,
+            UserActionType::InsertSelection => ActionType::InsertSelection,
+            UserActionType::DeleteChar => ActionType::DeleteChar,
+            UserActionType::DeleteSelection => ActionType::DeleteSelection,
+            UserActionType::CursorMovement => ActionType::CursorMovement,
+        },
+        line_number: record.line_number as usize,
+        offset: record.offset,
+        file_path: file_path.to_string(),
+        timestamp: record.timestamp_epoch_ms,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

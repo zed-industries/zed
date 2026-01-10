@@ -27,6 +27,7 @@ collections.workspace = true
 credentials_provider.workspace = true
 derive_more.workspace = true
 feature_flags.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
