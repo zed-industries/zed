@@ -503,7 +503,10 @@ impl ThreadsDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{DateTime, TimeZone, Utc};
+    use collections::HashMap;
+    use gpui::TestAppContext;
+    use std::sync::Arc;
 
     #[test]
     fn test_shared_thread_roundtrip() {
@@ -538,6 +541,90 @@ mod tests {
         assert!(
             !db_thread.imported,
             "Legacy threads without imported field should default to false"
+        );
+    }
+
+    fn session_id(value: &str) -> acp::SessionId {
+        acp::SessionId::new(Arc::<str>::from(value))
+    }
+
+    fn make_thread(title: &str, updated_at: DateTime<Utc>) -> DbThread {
+        DbThread {
+            title: title.to_string().into(),
+            messages: Vec::new(),
+            updated_at,
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: HashMap::default(),
+            model: None,
+            completion_mode: None,
+            profile: None,
+            imported: false,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_list_threads_orders_by_updated_at(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let older_id = session_id("thread-a");
+        let newer_id = session_id("thread-b");
+
+        let older_thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let newer_thread = make_thread(
+            "Thread B",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(older_id.clone(), older_thread)
+            .await
+            .unwrap();
+        database
+            .save_thread(newer_id.clone(), newer_thread)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, newer_id);
+        assert_eq!(entries[1].id, older_id);
+    }
+
+    #[gpui::test]
+    async fn test_save_thread_replaces_metadata(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-a");
+        let original_thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let updated_thread = make_thread(
+            "Thread B",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), original_thread)
+            .await
+            .unwrap();
+        database
+            .save_thread(thread_id.clone(), updated_thread)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, thread_id);
+        assert_eq!(entries[0].title.as_ref(), "Thread B");
+        assert_eq!(
+            entries[0].updated_at,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
         );
     }
 }

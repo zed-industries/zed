@@ -199,7 +199,7 @@ impl ProjectDiff {
         let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
             return Task::ready(Err(anyhow!("No active repository")));
         };
-        let main_branch = repo.update(cx, |repo, _| repo.default_branch());
+        let main_branch = repo.update(cx, |repo, _| repo.default_branch(true));
         window.spawn(cx, async move |cx| {
             let main_branch = main_branch
                 .await??
@@ -716,8 +716,7 @@ impl ProjectDiff {
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
     let settings = GitPanelSettings::get_global(cx);
 
-    // Tree view can only sort by path
-    if settings.sort_by_path || settings.tree_view {
+    if settings.sort_by_path && !settings.tree_view {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
         CONFLICT_SORT_PREFIX

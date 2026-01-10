@@ -229,7 +229,7 @@ impl LogStore {
                 if let Some(log_store) = log_store.upgrade() {
                     log_store.update(cx, |log_store, cx| {
                         log_store.on_io(server_id, io_kind, &message, cx);
-                    })?;
+                    });
                 }
             }
             anyhow::Ok(())

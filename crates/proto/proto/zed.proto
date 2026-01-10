@@ -244,7 +244,6 @@ message Envelope {
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
 
         FindSearchCandidates find_search_candidates = 243;
-        FindSearchCandidatesResponse find_search_candidates_response = 244;
 
         CloseBuffer close_buffer = 245;
 
@@ -453,14 +452,17 @@ message Envelope {
         GetSharedAgentThread get_shared_agent_thread = 407;
         GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
 
-        GitCheckpoint git_checkpoint = 409;
-        GitCheckpointResponse git_checkpoint_response = 410;
-        GitRestoreCheckpoint git_restore_checkpoint = 411;
-        GitRestoreCheckpointResponse git_restore_checkpoint_response = 412;
-        GitCompareCheckpoints git_compare_checkpoints = 413;
-        GitCompareCheckpointsResponse git_compare_checkpoints_response = 414;
-        GitDiffCheckpoints git_diff_checkpoints = 415;
-        GitDiffCheckpointsResponse git_diff_checkpoints_response = 416; // current max
+        FindSearchCandidatesChunk find_search_candidates_chunk = 409;
+        FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
+
+        GitCheckpoint git_checkpoint = 411;
+        GitCheckpointResponse git_checkpoint_response = 412;
+        GitRestoreCheckpoint git_restore_checkpoint = 413;
+        GitRestoreCheckpointResponse git_restore_checkpoint_response = 414;
+        GitCompareCheckpoints git_compare_checkpoints = 415;
+        GitCompareCheckpointsResponse git_compare_checkpoints_response = 416;
+        GitDiffCheckpoints git_diff_checkpoints = 417;
+        GitDiffCheckpointsResponse git_diff_checkpoints_response = 418; // current max
     }
 
     reserved 87 to 88;
@@ -478,6 +480,7 @@ message Envelope {
     reserved 224 to 231;
     reserved 234 to 236;
     reserved 239 to 240;
+    reserved 244;
     reserved 246 to 256;
     reserved 259;
     reserved 270;

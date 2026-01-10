@@ -66,7 +66,7 @@ impl DockerExecConnection {
                 AppVersion::global(cx),
                 AppCommitSha::try_global(cx),
             )
-        })?;
+        });
         let remote_platform = this.check_remote_platform().await?;
 
         this.path_style = match remote_platform.os {
@@ -153,7 +153,7 @@ impl DockerExecConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&remote_platform, delegate.as_ref(), cx).await?
         {
@@ -200,7 +200,7 @@ impl DockerExecConnection {
                 )
             }
             _ => Ok(Some(AppVersion::global(cx))),
-        })??;
+        })?;
 
         let tmp_path_gz = paths::remote_server_dir_relative().join(
             RelPath::unix(&format!(

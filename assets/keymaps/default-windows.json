@@ -202,8 +202,8 @@
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
       "ctrl-shift-r": "agent::OpenAgentDiff",
@@ -213,8 +213,8 @@
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
     },
@@ -262,13 +262,6 @@
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
       "shift-alt-z": "agent::RejectOnce",
-    },
-  },
-  {
-    "context": "AgentPanel > NavigationMenu",
-    "use_key_equivalents": true,
-    "bindings": {
-      "shift-backspace": "agent::DeleteRecentlyOpenThread",
     },
   },
   {

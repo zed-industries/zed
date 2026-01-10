@@ -207,8 +207,8 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                     updater
                         .set_should_show_update_notification(false, cx)
                         .detach_and_log_err(cx);
-                })
-            })?;
+                });
+            });
         }
         anyhow::Ok(())
     })

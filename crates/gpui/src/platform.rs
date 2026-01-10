@@ -20,6 +20,9 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -89,6 +92,9 @@ pub use linux::layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test::VisualTestPlatform;
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
