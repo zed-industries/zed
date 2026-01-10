@@ -343,6 +343,7 @@ enum ReservedSpace {
     None,
     Thumb,
     Track,
+    StableTrack,
 }
 
 impl ReservedSpace {
@@ -352,6 +353,14 @@ impl ReservedSpace {
 
     fn needs_scroll_track(&self) -> bool {
         *self == ReservedSpace::Track
+    }
+
+    fn needs_space_reserved(&self, max_offset: Pixels) -> bool {
+        match self {
+            Self::StableTrack => true,
+            Self::Track => !max_offset.is_zero(),
+            _ => false,
+        }
     }
 }
 
@@ -471,6 +480,12 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn with_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::Track);
+        self.track_color = Some(background_color);
+        self
+    }
+
+    pub fn with_stable_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
+        self.visibility = along.apply_to(self.visibility, ReservedSpace::StableTrack);
         self.track_color = Some(background_color);
         self
     }
@@ -709,13 +724,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
 
     fn space_to_reserve_for(&self, axis: ScrollbarAxis) -> Option<Pixels> {
         (self.show_state.is_disabled().not()
-            && self.visibility.along(axis).needs_scroll_track()
             && self
-                .scroll_handle()
-                .max_offset()
+                .visibility
                 .along(axis)
-                .is_zero()
-                .not())
+                .needs_space_reserved(self.scroll_handle().max_offset().along(axis)))
         .then(|| self.space_to_reserve())
     }
 

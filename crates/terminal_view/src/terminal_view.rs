@@ -1131,7 +1131,7 @@ impl Render for TerminalView {
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
-                                .with_track_along(
+                                .with_stable_track_along(
                                     ScrollAxes::Vertical,
                                     cx.theme().colors().editor_background,
                                 )
