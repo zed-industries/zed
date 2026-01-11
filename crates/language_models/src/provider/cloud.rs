@@ -822,15 +822,6 @@ impl LanguageModel for CloudLanguageModel {
             }
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
-                let request = into_open_ai(
-                    request,
-                    &self.model.id.0,
-                    self.model.supports_parallel_tool_calls,
-                    true,
-                    None,
-                    None,
-                    settings::ThinkingMode::default(),
-                );
                 let llm_api_token = self.llm_api_token.clone();
 
                 if use_responses_api {
@@ -841,6 +832,7 @@ impl LanguageModel for CloudLanguageModel {
                         true,
                         None,
                         None,
+                        settings::ThinkingMode::default(),
                     );
                     let future = self.request_limiter.stream(async move {
                         let PerformLlmCompletionResponse {
@@ -885,6 +877,7 @@ impl LanguageModel for CloudLanguageModel {
                         true,
                         None,
                         None,
+                        settings::ThinkingMode::default(),
                     );
                     let future = self.request_limiter.stream(async move {
                         let PerformLlmCompletionResponse {
