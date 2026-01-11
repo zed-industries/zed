@@ -2924,3 +2924,131 @@ async fn test_refresh_entries_for_paths_creates_ancestors(cx: &mut TestAppContex
         );
     });
 }
+
+#[gpui::test]
+async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
+    // Tests that files created in symlinked directories are detected by the file watcher
+    // and show up in the worktree. This reproduces issue #35173.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    
+    // Create a directory structure with a symlinked directory
+    fs.insert_tree(
+        "/root",
+        json!({
+            "project": {
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            },
+            "external": {
+                "lib.rs": "pub fn hello() {}",
+            }
+        }),
+    )
+    .await;
+
+    // Create a symlink from project/linked to external
+    fs.create_symlink(
+        Path::new("/root/project/linked"),
+        PathBuf::from("../external"),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Set up event tracking
+    let events = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |_, cx| {
+        let events = events.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedEntries(update) = event {
+                events.lock().extend(
+                    update
+                        .iter()
+                        .map(|(path, _, change)| (path.clone(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+
+    // Verify initial state - the symlinked directory should be visible
+    tree.read_with(cx, |tree, _| {
+        let linked_entry = tree.entry_for_path(rel_path("linked")).unwrap();
+        assert!(linked_entry.is_external, "symlinked dir should be marked external");
+        assert_eq!(linked_entry.kind, EntryKind::UnloadedDir);
+        
+        // Initially we should see the symlink but not its contents
+        assert!(tree.entry_for_path(rel_path("linked/lib.rs")).is_none());
+    });
+
+    // Load the symlinked directory by reading a file in it
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("linked/lib.rs"), cx)
+    })
+    .await
+    .unwrap();
+
+    tree.read_with(cx, |tree, _| {
+        let linked_entry = tree.entry_for_path(rel_path("linked")).unwrap();
+        assert_eq!(linked_entry.kind, EntryKind::Dir, "linked dir should now be loaded");
+        assert!(tree.entry_for_path(rel_path("linked/lib.rs")).is_some());
+    });
+
+    // Clear any events from the initial load
+    events.lock().clear();
+
+    // Now create a new file in the symlinked directory
+    // The key issue: when created via the canonical path, the file watcher
+    // reports the canonical path, but the worktree is watching the symlink path.
+    // This causes the event to be filtered out or not detected.
+    fs.insert_file("/root/external/new_file.rs", "pub fn new() {}".into())
+        .await;
+
+    // Emit the file system event using the canonical path (the real location)
+    // This simulates what happens when the OS filesystem watcher reports the event
+    fs.emit_fs_event("/root/external/new_file.rs", Some(fs::PathEventKind::Created));
+    
+    tree.flush_fs_events(cx).await;
+
+    // Verify the new file appears in the worktree under the symlinked path
+    tree.read_with(cx, |tree, _| {
+        let new_file_entry = tree.entry_for_path(rel_path("linked/new_file.rs"));
+        assert!(
+            new_file_entry.is_some(),
+            "new file created in symlinked directory should be visible in worktree.\n\
+             This test reproduces issue #35173: files created in symlinked directories\n\
+             are not detected because the filesystem watcher reports events using the\n\
+             canonical path, but the worktree is watching the symlink path."
+        );
+        
+        if let Some(entry) = new_file_entry {
+            assert!(entry.is_external, "file in symlinked dir should be marked external");
+        }
+    });
+
+    // Verify we received an update event for the new file
+    let captured_events = events.lock().clone();
+    assert!(
+        captured_events.iter().any(|(path, change)| {
+            path.as_ref() == rel_path("linked/new_file.rs") 
+                && matches!(change, PathChange::Added | PathChange::AddedOrUpdated)
+        }),
+        "should have received an event for the new file. Events: {:#?}",
+        captured_events
+    );
+}
