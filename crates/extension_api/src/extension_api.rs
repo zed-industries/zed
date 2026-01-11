@@ -17,7 +17,7 @@ pub use serde_json;
 pub use wit::{
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
-    make_file_executable,
+    log_debug, log_error, log_info, log_trace, log_warn, make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
