@@ -1255,9 +1255,9 @@ impl SerializableItem for Editor {
         let project = self.project.clone()?;
 
         let serialize_dirty_buffers = match buffer_serialization {
-            // If we don't have a worktree, we don't serialize, because
-            // projects without worktrees aren't deserialized.
-            BufferSerialization::All => project.read(cx).visible_worktrees(cx).next().is_some(),
+            // Always serialize dirty buffers, including for worktree-less windows.
+            // This enables hot-exit functionality for empty windows and single files.
+            BufferSerialization::All => true,
             BufferSerialization::NonDirtyBuffers => false,
         };
 
