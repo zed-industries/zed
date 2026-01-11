@@ -1772,7 +1772,12 @@ impl Window {
         })
     }
 
-    fn bounds_changed(&mut self, cx: &mut App) {
+    /// Notify the window that its bounds have changed.
+    ///
+    /// This updates internal state like `viewport_size` and `scale_factor` from
+    /// the platform window, then notifies observers. Normally called automatically
+    /// by the platform's resize callback, but exposed publicly for test infrastructure.
+    pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());

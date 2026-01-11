@@ -80,10 +80,11 @@ impl TestPlatformWindow {
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let scale_factor = self.scale_factor();
         let mut lock = self.0.lock();
+        // Always update bounds, even if no callback is registered
+        lock.bounds.size = size;
         let Some(mut callback) = lock.resize_callback.take() else {
             return;
         };
-        lock.bounds.size = size;
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);

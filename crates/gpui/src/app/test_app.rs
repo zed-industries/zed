@@ -450,13 +450,24 @@ impl<V: 'static + Render> TestWindow<V> {
     /// Automatically draws the window after the resize.
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let window_id = self.handle.window_id();
-        let mut app = self.app.borrow_mut();
-        if let Some(Some(window)) = app.windows.get_mut(window_id) {
-            if let Some(test_window) = window.platform_window.as_test() {
-                test_window.simulate_resize(size);
+        {
+            let mut app = self.app.borrow_mut();
+            if let Some(Some(window)) = app.windows.get_mut(window_id) {
+                if let Some(test_window) = window.platform_window.as_test() {
+                    test_window.simulate_resize(size);
+                }
             }
         }
-        drop(app);
+        // Directly notify the window that bounds changed, since the async callback
+        // from the platform window may not execute reliably in tests.
+        {
+            let mut app = self.app.borrow_mut();
+            let any_handle: AnyWindowHandle = self.handle.into();
+            app.update_window(any_handle, |_, window, cx| {
+                window.bounds_changed(cx);
+            })
+            .ok();
+        }
         self.background_executor.run_until_parked();
         self.draw();
     }
