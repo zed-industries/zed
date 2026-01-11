@@ -1,5 +1,6 @@
 use collections::HashSet;
 use futures::StreamExt;
+use std::cell::RefCell;
 use std::ops::Range;
 use std::pin::pin;
 use std::sync::Arc;
@@ -10,7 +11,8 @@ use crate::{
     ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use editor::EditorSettings;
-use editor::{Editor, EditorEvent};
+use editor::{Editor, EditorEvent, EditorMode};
+use language::language_settings::SoftWrap;
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
@@ -188,15 +190,10 @@ impl QuickSearch {
             replace_editor.clone(),
             include_editor.clone(),
             exclude_editor.clone(),
+            get_recent_query(cx),
             cx,
         );
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
-
-        if let Some(recent_query) = get_recent_query(cx) {
-            picker.update(cx, |picker, cx| {
-                picker.set_query(recent_query, window, cx);
-            });
-        }
 
         let subscriptions = vec![
             cx.subscribe_in(&picker, window, |_, _, _: &DismissEvent, _, cx| {
@@ -756,6 +753,7 @@ pub struct QuickSearchDelegate {
     last_confirm_time: Option<std::time::Instant>,
     search_options: SearchOptions,
     search_in_progress: bool,
+    pending_initial_query: RefCell<Option<String>>,
 }
 
 impl QuickSearchDelegate {
@@ -766,6 +764,7 @@ impl QuickSearchDelegate {
         replace_editor: Entity<Editor>,
         include_editor: Entity<Editor>,
         exclude_editor: Entity<Editor>,
+        initial_query: Option<String>,
         cx: &App,
     ) -> Self {
         Self {
@@ -785,6 +784,7 @@ impl QuickSearchDelegate {
             last_confirm_time: None,
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
+            pending_initial_query: RefCell::new(initial_query),
         }
     }
 
@@ -1023,25 +1023,54 @@ impl PickerDelegate for QuickSearchDelegate {
     fn render_editor(
         &self,
         editor: &Entity<Editor>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let search_options = self.search_options;
         let focus_handle = editor.focus_handle(cx);
 
+        let pending_query = self.pending_initial_query.borrow_mut().take();
+
+        editor.update(cx, |editor, cx| {
+            if matches!(editor.mode(), EditorMode::SingleLine) {
+                editor.set_mode(EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(4),
+                });
+                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            }
+            // Set pending query after mode is changed (so newlines display correctly)
+            if let Some(query) = pending_query {
+                editor.set_text(query, window, cx);
+            }
+        });
+
         v_flex()
             .child(
                 h_flex()
                     .flex_none()
-                    .h_9()
+                    .min_h_9()
                     .px_2p5()
                     .gap_1()
-                    .child(div().flex_1().overflow_hidden().child(editor.clone()))
+                    .items_start()
+                    .child(div().flex_1().overflow_hidden().py_1p5().child(editor.clone()))
                     .child({
                         let focus_handle = focus_handle.clone();
                         h_flex()
                             .flex_none()
                             .gap_0p5()
+                            .pt_1()
+                            .child({
+                                let editor_for_click = editor.clone();
+                                IconButton::new("insert-newline", IconName::Return)
+                                    .size(ButtonSize::Compact)
+                                    .tooltip(Tooltip::text("Insert New Line"))
+                                    .on_click(move |_, window, cx| {
+                                        editor_for_click.update(cx, |editor, cx| {
+                                            editor.insert("\n", window, cx);
+                                        });
+                                    })
+                            })
                             .child({
                                 let focus_handle = focus_handle.clone();
                                 IconButton::new(
