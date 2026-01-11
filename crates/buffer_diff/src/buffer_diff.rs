@@ -1312,21 +1312,29 @@ impl BufferDiff {
             cx,
         );
 
-        cx.background_executor().spawn(async move {
-            let base_text_rope = if let Some(base_text) = &base_text {
-                if base_text_changed {
-                    Rope::from(base_text.as_ref())
-                } else {
-                    prev_base_text
-                }
+        let base_text_rope = if let Some(base_text) = &base_text {
+            if base_text_changed {
+                Rope::from(base_text.as_ref())
             } else {
-                Rope::new()
-            };
+                prev_base_text
+            }
+        } else {
+            Rope::new()
+        };
+
+        // TODO: understand how to replicate this inside the inner buffer
+        // to avoid double parsing
+        let base_snapshot =
+            language::Buffer::build_snapshot(base_text_rope.clone(), language, None, cx);
+
+        cx.background_executor().spawn(async move {
+            let base_snapshot = base_snapshot.await;
             let base_text_exists = base_text.is_some();
             let hunks = compute_hunks(
                 base_text
                     .clone()
                     .map(|base_text| (base_text, base_text_rope.clone())),
+                base_snapshot,
                 buffer.clone(),
                 diff_options,
             );
