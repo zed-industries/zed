@@ -19948,7 +19948,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
             (buffer_3.clone(), base_text_3),
         ] {
             let diff = cx.new(|cx| {
-                BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
+                BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).snapshot(), cx)
             });
             editor
                 .buffer
@@ -20575,7 +20575,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
                 (buffer_3.clone(), file_3_old),
             ] {
                 let diff = cx.new(|cx| {
-                    BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
+                    BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).snapshot(), cx)
                 });
                 editor
                     .buffer
@@ -20682,9 +20682,8 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
-            let diff = cx.new(|cx| {
-                BufferDiff::new_with_base_text(base, &buffer.read(cx).text_snapshot(), cx)
-            });
+            let diff =
+                cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer.read(cx).snapshot(), cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
@@ -22119,7 +22118,7 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut TestAppContext) {
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
             let diff = cx.new(|cx| {
-                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).snapshot(), cx)
             });
 
             multibuffer.set_all_diff_hunks_expanded(cx);

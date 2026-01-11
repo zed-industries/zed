@@ -313,7 +313,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
-        word_diffs: Vec<Range<MultiBufferOffset>>,
+        diffs: Vec<Range<MultiBufferOffset>>,
     },
 }
 
@@ -20074,10 +20074,10 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
-                        // We don't need to pass in word diffs here because they're only used for rendering and
+                        // We don't need to pass in diffs here because they're only used for rendering and
                         // this function changes internal state
-                        base_word_diffs: Vec::default(),
-                        buffer_word_diffs: Vec::default(),
+                        base_diffs: Vec::default(),
+                        buffer_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.status.secondary,
@@ -25340,7 +25340,7 @@ impl EditorSnapshot {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
-                        word_diffs: hunk.word_diffs,
+                        diffs: hunk.diffs,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(
                             hunk.excerpt_id,

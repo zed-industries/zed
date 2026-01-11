@@ -438,17 +438,44 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
-    /// Whether to enable word diff highlighting in the editor.
+    /// Controls how diffs are displayed in the editor.
     ///
-    /// When enabled, changed words within modified lines are highlighted
-    /// to show exactly what changed.
+    /// - "line": Show only line-level diffs without any word or syntax highlighting.
+    /// - "word": Highlight changed words within modified lines.
+    /// - "syntax": Use AST-based diff highlighting for more precise change detection.
     ///
-    /// Default: true
-    pub word_diff_enabled: Option<bool>,
+    /// Default: "word"
+    pub diff_strategy: Option<DiffStrategy>,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     ///
     /// Default: false
     pub colorize_brackets: Option<bool>,
+}
+
+/// Controls how diffs are displayed in the editor.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffStrategy {
+    /// Show only line-level diffs without any word or syntax highlighting.
+    Line,
+    /// Highlight changed words within modified lines.
+    #[default]
+    Word,
+    /// Use AST-based diff highlighting for more precise change detection.
+    Syntax,
 }
 
 /// Controls how whitespace should be displayedin the editor.
