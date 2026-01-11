@@ -24,9 +24,11 @@ use gpui::{
     Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
     actions, anchored, deferred, prelude::*,
+    Hsla, Styled,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
+use project::DiagnosticSummary;
 use parking_lot::Mutex;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
@@ -49,8 +51,10 @@ use theme::ThemeSettings;
 use ui::{
     ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
     IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
-    Tooltip, prelude::*, right_click_menu,
+    Tooltip, Chip, prelude::*, right_click_menu,
 };
+use settings::TabFilenameTint;
+use git::status::FileStatus;
 use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
 /// A selected entry in e.g. project panel.
@@ -412,7 +416,12 @@ pub struct Pane {
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
-    diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
+    /// A map of diagnostic summaries by project path. Each summary contains the
+    /// number of errors and warnings reported for a given file. We use the
+    /// summary rather than only the highest severity so that we can display
+    /// counts for both errors and warnings on the tab bar when space
+    /// permits.
+    diagnostics: HashMap<ProjectPath, DiagnosticSummary>,
     zoom_out_on_close: bool,
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
@@ -708,25 +717,28 @@ impl Pane {
             return;
         };
         let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
+        // If diagnostics are enabled, gather full summaries (error and warning counts) for each
+        // open file. This allows us to render both counts on the tab bar when space permits.
+        // When diagnostics are disabled, clear the map entirely.
         self.diagnostics = if show_diagnostics != ShowDiagnostics::Off {
             project
                 .read(cx)
                 .diagnostic_summaries(false, cx)
-                .filter_map(|(project_path, _, diagnostic_summary)| {
-                    if diagnostic_summary.error_count > 0 {
-                        Some((project_path, DiagnosticSeverity::ERROR))
-                    } else if diagnostic_summary.warning_count > 0
-                        && show_diagnostics != ShowDiagnostics::Errors
-                    {
-                        Some((project_path, DiagnosticSeverity::WARNING))
-                    } else {
-                        None
+                .filter_map(|(project_path, _, summary)| {
+                    // Skip files without diagnostics entirely. When the user only wants to see
+                    // errors, skip files that have only warnings.
+                    if summary.error_count == 0 && summary.warning_count == 0 {
+                        return None;
                     }
+                    if show_diagnostics == ShowDiagnostics::Errors && summary.error_count == 0 {
+                        return None;
+                    }
+                    Some((project_path, summary))
                 })
                 .collect()
         } else {
             HashMap::default()
-        }
+        };
     }
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2622,44 +2634,56 @@ impl Pane {
 
         let item_diagnostic = item
             .project_path(cx)
-            .map_or(None, |project_path| self.diagnostics.get(&project_path));
+            .map(|project_path| self.diagnostics.get(&project_path))
+            .flatten();
 
-        let decorated_icon = item_diagnostic.map_or(None, |diagnostic| {
-            let icon = match item.tab_icon(window, cx) {
-                Some(icon) => icon,
-                None => return None,
-            };
-
-            let knockout_item_color = if is_active {
-                cx.theme().colors().tab_active_background
+        // Compute a decorated file icon overlay when diagnostics are present. We overlay an
+        // 'X' or triangle decoration on the file icon to indicate the highest diagnostic
+        // severity (errors take precedence over warnings). When there are no diagnostics
+        // or there is no file icon, no decoration is applied.
+        let decorated_icon = if let Some(summary) = item_diagnostic {
+            // Skip decoration if there is neither error nor warning.
+            if summary.error_count == 0 && summary.warning_count == 0 {
+                None
             } else {
-                cx.theme().colors().tab_bar_background
-            };
+                // Use the base file icon to apply a diagnostic decoration. If no file icon
+                // exists, we simply do not decorate anything.
+                if let Some(icon) = item.tab_icon(window, cx) {
+                    let knockout_item_color = if is_active {
+                        cx.theme().colors().tab_active_background
+                    } else {
+                        cx.theme().colors().tab_bar_background
+                    };
 
-            let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR)
-            {
-                (IconDecorationKind::X, Color::Error)
-            } else {
-                (IconDecorationKind::Triangle, Color::Warning)
-            };
+                    let (icon_decoration, icon_color) = if summary.error_count > 0 {
+                        (IconDecorationKind::X, Color::Error)
+                    } else {
+                        (IconDecorationKind::Triangle, Color::Warning)
+                    };
 
-            Some(DecoratedIcon::new(
-                icon.size(IconSize::Small).color(Color::Muted),
-                Some(
-                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
-                        .color(icon_color.color(cx))
-                        .position(Point {
-                            x: px(-2.),
-                            y: px(-2.),
-                        }),
-                ),
-            ))
-        });
+                    Some(DecoratedIcon::new(
+                        icon.size(IconSize::Small).color(Color::Muted),
+                        Some(
+                            IconDecoration::new(icon_decoration, knockout_item_color, cx)
+                                .color(icon_color.color(cx))
+                                .position(Point { x: px(-2.), y: px(-2.) }),
+                        ),
+                    ))
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
+        // If we didn't decorate the icon, decide whether to show the plain file icon based on
+        // diagnostics. When diagnostics are present, the base file icon is suppressed so that
+        // the decoration stands out. When no diagnostics are present, we show the file icon as
+        // usual. If no file icon exists, we leave this as `None`.
         let icon = if decorated_icon.is_none() {
             match item_diagnostic {
-                Some(&DiagnosticSeverity::ERROR) => None,
-                Some(&DiagnosticSeverity::WARNING) => None,
+                Some(summary) if summary.error_count > 0 || summary.warning_count > 0 => None,
                 _ => item
                     .tab_icon(window, cx)
                     .map(|icon| icon.color(Color::Muted)),
@@ -2670,6 +2694,181 @@ impl Pane {
         };
 
         let settings = ItemSettings::get_global(cx);
+
+        // Extract diagnostic counts for this tab. If diagnostics are present, we
+        // determine how many errors and warnings exist for the file. These
+        // counts are later used when rendering the diagnostic chips on the
+        // tab and to compute the overall severity used for coloring.
+        let (error_count, warning_count) = if let Some(summary) = item_diagnostic {
+            (summary.error_count, summary.warning_count)
+        } else {
+            (0usize, 0usize)
+        };
+
+        // Determine which diagnostic severity applies. Errors take precedence
+        // over warnings. If neither are present, there is no severity.
+        let diagnostic_severity = if error_count > 0 {
+            Some(DiagnosticSeverity::ERROR)
+        } else if warning_count > 0 {
+            Some(DiagnosticSeverity::WARNING)
+        } else {
+            None
+        };
+
+        // Build diagnostic chips. Depending on user settings, these chips may include an icon
+        // and/or a count. Each chip is color-coded according to its severity. We render
+        // error and warning chips whenever counts are non-zero, or when zero-count display
+        // is enabled. When diagnostic_tab_counts is disabled, no chips are shown.
+        let mut diagnostic_chips: Vec<AnyElement> = Vec::new();
+        if settings.diagnostic_tab_counts {
+            // Determine whether to show the error and warning chips.
+            let show_error = error_count > 0 || settings.diagnostic_tab_show_zero_counts;
+            let show_warning = warning_count > 0 || settings.diagnostic_tab_show_zero_counts;
+            // Render in order: errors first, then warnings.
+            let severities: &[(bool, usize)] = &[(true, error_count), (false, warning_count)];
+            for &(is_error, count) in severities {
+                let should_show = if is_error { show_error } else { show_warning };
+                if !should_show {
+                    continue;
+                }
+                let icon_name = if is_error { IconName::XCircle } else { IconName::Warning };
+                let fg_color = if is_error { Color::Error } else { Color::Warning };
+                let bg_color = if is_error {
+                    cx.theme().status().error_background
+                } else {
+                    cx.theme().status().warning_background
+                };
+                let text = count.to_string();
+                let chip: AnyElement = if settings.diagnostic_tab_icons {
+                    // Render chip with both icon and count.
+                    h_flex()
+                        .gap_1()
+                        .min_w_0()
+                        .flex_initial()
+                        .px_1()
+                        .border_1()
+                        .rounded_sm()
+                        .border_color(cx.theme().colors().border)
+                        .bg(bg_color)
+                        .children(vec![
+                            Icon::new(icon_name)
+                                .color(fg_color)
+                                .size(IconSize::Indicator)
+                                .into_any_element(),
+                            Label::new(text.clone())
+                                .size(LabelSize::XSmall)
+                                .color(fg_color)
+                                .buffer_font(cx)
+                                .into_any_element(),
+                        ])
+                        .into_any_element()
+                } else {
+                    // No icon; just a count chip colored appropriately.
+                    Chip::new(text)
+                        .label_color(fg_color)
+                        .label_size(LabelSize::XSmall)
+                        .bg_color(bg_color)
+                        .into_any_element()
+                };
+                diagnostic_chips.push(chip);
+            }
+        }
+
+        // Determine diagnostic-based background and text colours. In earlier
+        // versions of Zed these colours could be enabled via the
+        // `diagnostic_tab_coloring` setting. However, tab colouring by
+        // diagnostics is not part of the current specification, so we
+        // deliberately ignore this setting and leave both colours unset.
+        // Leaving these values as `None` ensures that diagnostic severity
+        // does not tint the tab's background or text globally. Any colour
+        // applied to the filename text is handled separately via
+        // `filename_tint_color` below.
+        let (tab_bg_color, tab_text_color): (Option<Hsla>, Option<Hsla>) = (None, None);
+
+        // Compute the desired filename text color based on tint settings. We support
+        // multiple modes: off, git, diagnostics, prefer_git, prefer_diagnostics. The
+        // legacy boolean setting `diagnostic_tab_text_use_diagnostics` is honoured when
+        // `tab_filename_tint` is Off.
+        // We may tint the filename text separately from the tab background/text. Compute a
+        // diagnostic-based color and a git-based color up front, then decide which to use based
+        // on the `tab_filename_tint` setting. We store the selected color in
+        // `filename_tint_color` so we can apply it later at the container level.
+        let mut filename_tint_color: Option<Hsla> = None;
+        {
+            // Determine a diagnostic-based text color, if any.
+            let diagnostic_label_color: Option<Hsla> = match diagnostic_severity {
+                Some(DiagnosticSeverity::ERROR) => Some(cx.theme().status().error),
+                Some(DiagnosticSeverity::WARNING) => Some(cx.theme().status().warning),
+                _ => None,
+            };
+
+            // Determine a git-based text color, if any. Only compute this when the tint
+            // mode might use git. We consult the git status for the file via the project's
+            // git store. If there is no project attached, no nav history path, or no git
+            // information available, this remains `None`.
+            let mut git_label_color: Option<Hsla> = None;
+            match settings.tab_filename_tint {
+                TabFilenameTint::Git | TabFilenameTint::PreferGit | TabFilenameTint::PreferDiagnostics => {
+                    if let Some(project) = self.project.upgrade() {
+                        if let Some((project_path, _abs_path)) = self.nav_history.path_for_item(item.item_id()) {
+                            let project_read = project.read(cx);
+                            // Acquire a read lock on the git store.
+                            let git_store = project_read.git_store().read(cx);
+                            // Resolve the repository and repo-relative path for this project path.
+                            if let Some((repository, repo_path)) = git_store.repository_and_path_for_project_path(&project_path, cx) {
+                                // Acquire the current status entry for the repository and file path.
+                                if let Some(status_entry) = repository.read(cx).status_for_path(&repo_path) {
+                                    let status = status_entry.status;
+                                    // Map the git file status to an HSLA color derived from the theme's
+                                    // status colors. Conflicted files take precedence, then modified,
+                                    // then created/untracked, then ignored. If no category matches,
+                                    // leave as None.
+                                    git_label_color = if status.is_conflicted() {
+                                        Some(cx.theme().status().conflict)
+                                    } else if status.is_modified() {
+                                        Some(cx.theme().status().modified)
+                                    } else if status.is_created() {
+                                        Some(cx.theme().status().created)
+                                    } else if matches!(status, FileStatus::Untracked) {
+                                        Some(cx.theme().status().created)
+                                    } else if matches!(status, FileStatus::Ignored) {
+                                        Some(cx.theme().status().ignored)
+                                    } else {
+                                        None
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            // Choose the filename tint color based on the configured mode and fallback logic.
+            let mut chosen_color: Option<Hsla> = match settings.tab_filename_tint {
+                TabFilenameTint::Off => None,
+                TabFilenameTint::Git => git_label_color,
+                TabFilenameTint::Diagnostics => diagnostic_label_color,
+                TabFilenameTint::PreferGit => git_label_color.or(diagnostic_label_color),
+                TabFilenameTint::PreferDiagnostics => diagnostic_label_color.or(git_label_color),
+            };
+            // In previous versions, Zed supported a boolean `diagnostic_tab_text_use_diagnostics`
+            // that would tint the filename based on diagnostics even when no explicit
+            // tint mode was selected. We deliberately omit this fallback here so
+            // that when the tint mode is set to `Off`, no tint is applied. Any
+            // migration from the old boolean to the new enum is handled in
+            // `ItemSettings::from_settings`.
+            filename_tint_color = chosen_color;
+        }
+
+        // Compute the final text color to apply to the tab content. If a filename tint
+        // color has been selected, it takes precedence over the diagnostic text color
+        // computed earlier (`tab_text_color`). Otherwise we fall back to the diagnostic
+        // text color when one is provided.
+        let effective_tab_text_color: Option<Hsla> = match filename_tint_color {
+            Some(color) => Some(color),
+            None => tab_text_color,
+        };
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -2833,9 +3032,19 @@ impl Pane {
                 this.end_slot(end_slot)
             })
             .child(
+                // Build the inner flex for the tab content. This flex holds the file
+                // icon (if any), the filename label, and the diagnostic chips. We
+                // construct a tinted label manually when a filename tint colour has
+                // been selected. Otherwise we fall back to the original
+                // `tab_content` provided by the item.
                 h_flex()
                     .id(("pane-tab-content", ix))
                     .gap_1()
+                    // Allow the tab content to grow to fit its contents. Without these calls
+                    // the tab will not expand when diagnostic chips are added.
+                    .min_w_0()
+                    .flex_initial()
+                    // Render an optional file icon or decorated icon at the start of the tab.
                     .children(if let Some(decorated_icon) = decorated_icon {
                         Some(decorated_icon.into_any_element())
                     } else if let Some(icon) = icon {
@@ -2845,7 +3054,41 @@ impl Pane {
                     } else {
                         None
                     })
-                    .child(label)
+                    // Build the main label for the tab (file name). If a filename tint
+                    // colour was chosen, construct a fresh `Label` with the tinted
+                    // colour applied at the label level. Otherwise, use the original
+                    // tab content returned by the item. We use
+                    // `tab_content_text` here to preserve the original text.
+                    .child({
+                        // Clone the tint option here to avoid moving it, as we'll
+                        // reference `filename_tint_color` again later in this closure.
+                        let tint_opt = filename_tint_color.clone();
+                        if let Some(tint) = tint_opt {
+                            let text = item.tab_content_text(detail, cx);
+                            Label::new(text)
+                                .color(Color::from(tint))
+                                .buffer_font(cx)
+                                .into_any_element()
+                        } else {
+                            label
+                        }
+                    })
+                    // Add diagnostic chips (error/warning counts and icons) after the label.
+                    .children(diagnostic_chips)
+                    // Apply diagnostic-based background and text colour when provided. Since
+                    // diagnostic-based colouring is disabled globally, these values will
+                    // always be `None`, but we retain this closure for completeness in
+                    // case future changes reinstate these colours.
+                    .map(|this| {
+                        let mut this = this;
+                        if let Some(bg) = tab_bg_color {
+                            this = this.bg(bg);
+                        }
+                        if let Some(fg) = effective_tab_text_color {
+                            this = this.text_color(fg);
+                        }
+                        this
+                    })
                     .map(|this| match tab_tooltip_content {
                         Some(TabTooltipContent::Text(text)) => {
                             if capability.editable() {
@@ -2862,6 +3105,8 @@ impl Pane {
                         }
                         None => this,
                     })
+                    // When the file is read-only and there is a file icon, show the lock icon
+                    // at the end of the tab.
                     .when(capability == Capability::Read && has_file_icon, |this| {
                         this.child(read_only_toggle(true))
                     }),

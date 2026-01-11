@@ -146,6 +146,54 @@ pub struct ItemSettingsContent {
     ///
     /// Default: false
     pub show_close_button: Option<ShowCloseButton>,
+
+    /// When true, tabs will be tinted based on their diagnostic severity. Errors and
+    /// warnings will use the theme's status colors for background and text.
+    ///
+    /// Default: true
+    pub diagnostic_tab_coloring: Option<bool>,
+    /// When true, the number of errors and warnings for a file will be displayed on
+    /// its tab. When enabled, both error and warning counts are rendered (subject
+    /// to the `diagnostic_tab_show_zero_counts` setting controlling whether zero
+    /// counts are displayed). When disabled, diagnostic counts are hidden entirely.
+    ///
+    /// Default: true
+    pub diagnostic_tab_counts: Option<bool>,
+    /// When true, diagnostic icons (e.g. an 'X' for errors or a triangle for warnings)
+    /// will be displayed in the tab alongside their respective counts. When false, only the
+    /// counts are shown.
+    ///
+    /// Default: true
+    pub diagnostic_tab_icons: Option<bool>,
+
+    /// When true, diagnostic chips showing the number of errors and warnings will also
+    /// appear when a file has zero diagnostics. This results in a `0` being displayed
+    /// for each severity level. When false, zero counts are omitted entirely (no
+    /// diagnostic chips are shown for a file with no diagnostics).
+    ///
+    /// Default: false
+    pub diagnostic_tab_show_zero_counts: Option<bool>,
+    /// When true, the filename text color of a tab will be overridden based on the diagnostic
+    /// severity for that file (error takes precedence over warning). When false, the default
+    /// filename color is used.
+    ///
+    /// Default: false
+    pub diagnostic_tab_text_use_diagnostics: Option<bool>,
+
+    /// Controls how the tab filename text is tinted. Supported values:
+    ///
+    /// * `off` – Do not tint the filename; rely on the default text colors.
+    /// * `git` – Tint solely by the file’s Git status.
+    /// * `diagnostics` – Tint solely by the most severe diagnostic for the file.
+    /// * `prefer_git` – When both Git status and diagnostics are available, use
+    ///   the Git status color; fall back to diagnostics if there is no Git information.
+    /// * `prefer_diagnostics` – When both diagnostics and Git status are available,
+    ///   use the diagnostic color; fall back to Git colors if there are no diagnostics.
+    ///
+    /// When unset, this setting defaults to `off`.
+    ///
+    /// Default: off
+    pub tab_filename_tint: Option<TabFilenameTint>,
 }
 
 #[with_fallible_options]
@@ -244,6 +292,43 @@ pub enum ShowDiagnostics {
     Off,
     Errors,
     All,
+}
+
+/// Controls how the filename text of a tab is tinted.
+///
+/// The possible values are:
+///
+/// * `off` – Do not tint the filename; rely on the default text colors for selected and unselected tabs.
+/// * `git` – Tint the filename based solely on the file’s Git status (e.g. modified, added, ignored or in conflict).
+/// * `diagnostics` – Tint the filename based solely on the most severe diagnostic for that file (errors take precedence over warnings).
+/// * `prefer_git` – Use the Git status for tinting when both Git status and diagnostics are present; fall back to diagnostics if no Git information exists.
+/// * `prefer_diagnostics` – Use diagnostic severity for tinting when both diagnostics and Git status are present; fall back to Git colors if there are no diagnostics.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TabFilenameTint {
+    /// Do not tint the filename; use default colors.
+    #[default]
+    Off,
+    /// Tint solely by Git status.
+    Git,
+    /// Tint solely by diagnostic severity.
+    Diagnostics,
+    /// Prefer Git status when both Git and diagnostics are available.
+    PreferGit,
+    /// Prefer diagnostic severity when both diagnostics and Git are available.
+    PreferDiagnostics,
 }
 
 #[derive(

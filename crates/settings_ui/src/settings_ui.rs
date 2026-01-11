@@ -459,6 +459,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
         .add_basic_renderer::<settings::GoToDefinitionFallback>(render_dropdown)
         .add_basic_renderer::<settings::ActivateOnClose>(render_dropdown)
+        // Register a renderer for the TabFilenameTint enum so it displays in the UI
+        .add_basic_renderer::<settings::TabFilenameTint>(render_dropdown)
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
