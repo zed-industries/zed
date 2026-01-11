@@ -3,7 +3,7 @@ use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
+    kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
     },
@@ -648,51 +648,6 @@ impl Session {
         }
     }
 
-    pub fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
-        let parent_message_id = match message.parent_header.as_ref() {
-            Some(header) => &header.msg_id,
-            None => return,
-        };
-
-        match &message.content {
-            JupyterMessageContent::Status(status) => {
-                self.kernel.set_execution_state(&status.execution_state);
-
-                telemetry::event!(
-                    "Kernel Status Changed",
-                    kernel_language = self.kernel_specification.language(),
-                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
-                    repl_session_id = cx.entity_id().to_string(),
-                );
-
-                cx.notify();
-            }
-            JupyterMessageContent::KernelInfoReply(reply) => {
-                self.kernel.set_kernel_info(reply);
-                cx.notify();
-            }
-            JupyterMessageContent::UpdateDisplayData(update) => {
-                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
-                    display_id
-                } else {
-                    return;
-                };
-
-                self.blocks.iter_mut().for_each(|(_, block)| {
-                    block.execution_view.update(cx, |execution_view, cx| {
-                        execution_view.update_display_data(&update.data, &display_id, window, cx);
-                    });
-                });
-                return;
-            }
-            _ => {}
-        }
-
-        if let Some(block) = self.blocks.get_mut(parent_message_id) {
-            block.handle_message(message, window, cx);
-        }
-    }
-
     pub fn interrupt(&mut self, cx: &mut Context<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
@@ -859,5 +814,56 @@ impl Render for Session {
                     })),
             )
             .buttons(interrupt_button)
+    }
+}
+
+impl KernelSession for Session {
+    fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
+        let parent_message_id = match message.parent_header.as_ref() {
+            Some(header) => &header.msg_id,
+            None => return,
+        };
+
+        match &message.content {
+            JupyterMessageContent::Status(status) => {
+                self.kernel.set_execution_state(&status.execution_state);
+
+                telemetry::event!(
+                    "Kernel Status Changed",
+                    kernel_language = self.kernel_specification.language(),
+                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
+                    repl_session_id = cx.entity_id().to_string(),
+                );
+
+                cx.notify();
+            }
+            JupyterMessageContent::KernelInfoReply(reply) => {
+                self.kernel.set_kernel_info(reply);
+                cx.notify();
+            }
+            JupyterMessageContent::UpdateDisplayData(update) => {
+                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
+                    display_id
+                } else {
+                    return;
+                };
+
+                self.blocks.iter_mut().for_each(|(_, block)| {
+                    block.execution_view.update(cx, |execution_view, cx| {
+                        execution_view.update_display_data(&update.data, &display_id, window, cx);
+                    });
+                });
+                return;
+            }
+            _ => {}
+        }
+
+        if let Some(block) = self.blocks.get_mut(parent_message_id) {
+            block.handle_message(message, window, cx);
+        }
+    }
+
+    fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>) {
+        self.kernel_errored(error_message, cx);
     }
 }
