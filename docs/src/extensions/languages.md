@@ -75,6 +75,11 @@ several features:
 The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
 
+Note that user-defined queries may also be defined in `~/.config/zed/languages` (macOS and Linux) or `%USERPROFILE%\AppData\Roaming\Zed\languages\` (Windows).
+If found, the queries will be appended to builtin queries or queries from extensions.
+
+For example, to add a new language injection to Rust, create a query file at `~/.config/zed/languages/rust/injections.scm`. Note that Zed may need to be restarted for these changes to take effect.
+
 ### Syntax highlighting
 
 In Tree-sitter, the `highlights.scm` file defines syntax highlighting rules for a particular syntax.
