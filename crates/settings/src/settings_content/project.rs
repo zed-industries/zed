@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -8,7 +8,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
-    SlashCommandSettings,
+    SearchPreset, SlashCommandSettings,
 };
 
 #[with_fallible_options]
@@ -68,6 +68,10 @@ pub struct ProjectSettingsContent {
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
+
+    /// Saved presets for project search filters.
+    /// Each preset has a name and can specify include/exclude glob patterns.
+    pub project_search_presets: Option<IndexMap<String, SearchPreset>>,
 }
 
 #[with_fallible_options]

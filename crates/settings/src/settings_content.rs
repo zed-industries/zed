@@ -299,6 +299,16 @@ pub struct TitleBarSettingsContent {
     pub show_menus: Option<bool>,
 }
 
+/// A saved preset for search filters.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct SearchPreset {
+    /// Comma-separated glob patterns for files to include in search.
+    pub include: Option<String>,
+    /// Comma-separated glob patterns for files to exclude from search.
+    pub exclude: Option<String>,
+}
+
 /// Configuration of audio in Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
