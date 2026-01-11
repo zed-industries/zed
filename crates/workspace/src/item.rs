@@ -15,7 +15,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
     SharedString, Task, WeakEntity, Window,
 };
-use language::Capability;
+use language::{Capability, DiagnosticSeverity};
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -59,6 +59,7 @@ pub struct ItemSettings {
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
     pub show_diagnostics: ShowDiagnostics,
+    pub diagnostic_color: bool,
     pub show_close_button: ShowCloseButton,
 }
 
@@ -88,6 +89,7 @@ impl Settings for ItemSettings {
             activate_on_close: tabs.activate_on_close.unwrap(),
             file_icons: tabs.file_icons.unwrap(),
             show_diagnostics: tabs.show_diagnostics.unwrap(),
+            diagnostic_color: tabs.diagnostic_color.unwrap(),
             show_close_button: tabs.show_close_button.unwrap(),
         }
     }
@@ -139,6 +141,8 @@ pub struct TabContentParams {
     pub preview: bool,
     /// Tab content should be deemphasized when active pane does not have focus.
     pub deemphasized: bool,
+    /// The diagnostic severity for the tab, if any. This is used to color the tab label based on diagnostic severity.
+    pub diagnostic_severity: Option<DiagnosticSeverity>,
 }
 
 impl TabContentParams {
@@ -155,6 +159,15 @@ impl TabContentParams {
         } else {
             Color::Muted
         }
+    }
+    
+    /// Returns the diagnostic color if there is a diagnostic severity set.
+    pub fn diagnostic_color(&self) -> Option<Color> {
+        self.diagnostic_severity.map(|severity| match severity {
+            DiagnosticSeverity::ERROR => Color::Error,
+            DiagnosticSeverity::WARNING => Color::Warning,
+            _ => self.text_color(),
+        })
     }
 }
 

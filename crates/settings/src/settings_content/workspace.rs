@@ -142,6 +142,12 @@ pub struct ItemSettingsContent {
     ///
     /// Default: off
     pub show_diagnostics: Option<ShowDiagnostics>,
+    /// Whether to color the tab label based on diagnostic severity.
+    /// When enabled, tab labels will be colored red for errors and yellow for warnings.
+    /// Requires `show_diagnostics` to be set to "errors" or "all".
+    ///
+    /// Default: false
+    pub diagnostic_color: Option<bool>,
     /// Whether to always show the close button on tabs.
     ///
     /// Default: false

@@ -1218,6 +1218,10 @@
     // 3. Mark files with errors and warnings:
     //    "all"
     "show_diagnostics": "off",
+    // Whether to color the tab label based on diagnostic severity.
+    // When enabled, tab labels will be colored red for errors and yellow for warnings.
+    // Requires `show_diagnostics` to be set to "errors" or "all".
+    "diagnostic_color": false,
   },
   // Settings related to preview tabs.
   "preview_tabs": {
