@@ -3,12 +3,9 @@
 #![allow(non_snake_case)]
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RealtimePriority, RunnableMeta,
-    RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant,
+    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
 };
-
-use anyhow::Context;
-use async_task::Runnable;
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -19,6 +16,9 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
+use util::ResultExt;
+
+use async_task::Runnable;
 use objc::{
     class, msg_send,
     runtime::{BOOL, YES},
@@ -26,11 +26,9 @@ use objc::{
 };
 use std::{
     ffi::c_void,
-    mem::MaybeUninit,
     ptr::{NonNull, addr_of},
     time::{Duration, Instant},
 };
-use util::ResultExt;
 
 /// All items in the generated file are marked as pub, so we're gonna wrap it in a separate mod to prevent
 /// these pub items from leaking into public API.
@@ -44,6 +42,12 @@ pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
 }
 
 pub(crate) struct MacDispatcher;
+
+impl MacDispatcher {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 impl PlatformDispatcher for MacDispatcher {
     fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
@@ -69,20 +73,13 @@ impl PlatformDispatcher for MacDispatcher {
         is_main_thread == YES
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
-        let (context, trampoline) = match runnable {
-            RunnableVariant::Meta(runnable) => (
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
-            ),
-            RunnableVariant::Compat(runnable) => (
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
-            ),
-        };
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
 
         let queue_priority = match priority {
-            Priority::Realtime(_) => unreachable!(),
+            Priority::RealtimeAudio => {
+                panic!("RealtimeAudio priority should use spawn_realtime, not dispatch")
+            }
             Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH as isize,
             Priority::Medium => DISPATCH_QUEUE_PRIORITY_DEFAULT as isize,
             Priority::Low => DISPATCH_QUEUE_PRIORITY_LOW as isize,
@@ -92,74 +89,43 @@ impl PlatformDispatcher for MacDispatcher {
             dispatch_async_f(
                 dispatch_get_global_queue(queue_priority, 0),
                 context,
-                trampoline,
+                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
             );
         }
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        let (context, trampoline) = match runnable {
-            RunnableVariant::Meta(runnable) => (
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
-            ),
-            RunnableVariant::Compat(runnable) => (
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
-            ),
-        };
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
-            dispatch_async_f(dispatch_get_main_queue(), context, trampoline);
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                context,
+                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
+            );
         }
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        let (context, trampoline) = match runnable {
-            RunnableVariant::Meta(runnable) => (
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
-            ),
-            RunnableVariant::Compat(runnable) => (
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
-            ),
-        };
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
             let queue =
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
             let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
-            dispatch_after_f(when, queue, context, trampoline);
+            dispatch_after_f(
+                when,
+                queue,
+                context,
+                Some(trampoline as unsafe extern "C" fn(*mut c_void)),
+            );
         }
     }
 
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
-            match priority {
-                RealtimePriority::Audio => set_audio_thread_priority(),
-                RealtimePriority::Other => set_high_thread_priority(),
-            }
-            .context(format!("for priority {:?}", priority))
-            .log_err();
-
+            set_audio_thread_priority().log_err();
             f();
         });
     }
-}
-
-fn set_high_thread_priority() -> anyhow::Result<()> {
-    // SAFETY: always safe to call
-    let thread_id = unsafe { libc::pthread_self() };
-
-    // SAFETY: all sched_param members are valid when initialized to zero.
-    let mut sched_param = unsafe { MaybeUninit::<libc::sched_param>::zeroed().assume_init() };
-    sched_param.sched_priority = 45;
-
-    let result = unsafe { libc::pthread_setschedparam(thread_id, libc::SCHED_FIFO, &sched_param) };
-    if result != 0 {
-        anyhow::bail!("failed to set realtime thread priority")
-    }
-
-    Ok(())
 }
 
 fn set_audio_thread_priority() -> anyhow::Result<()> {
@@ -247,18 +213,19 @@ fn set_audio_thread_priority() -> anyhow::Result<()> {
     Ok(())
 }
 
-extern "C" fn trampoline(runnable: *mut c_void) {
-    let task =
-        unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
+extern "C" fn trampoline(context: *mut c_void) {
+    let runnable =
+        unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
-    let metadata = task.metadata();
-    let location = metadata.location;
+    let metadata = runnable.metadata();
 
-    if !metadata.is_app_alive() {
-        drop(task);
+    // Check if the executor that spawned this task was closed
+    if metadata.is_closed() {
         return;
     }
 
+    let location = metadata.location;
+
     let start = Instant::now();
     let timing = TaskTiming {
         location,
@@ -278,43 +245,7 @@ extern "C" fn trampoline(runnable: *mut c_void) {
         timings.push_back(timing);
     });
 
-    task.run();
-    let end = Instant::now();
-
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        let Some(last_timing) = timings.iter_mut().rev().next() else {
-            return;
-        };
-        last_timing.end = Some(end);
-    });
-}
-
-extern "C" fn trampoline_compat(runnable: *mut c_void) {
-    let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
-
-    let location = core::panic::Location::caller();
-
-    let start = Instant::now();
-    let timing = TaskTiming {
-        location,
-        start,
-        end: None,
-    };
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                return;
-            }
-        }
-
-        timings.push_back(timing);
-    });
-
-    task.run();
+    runnable.run();
     let end = Instant::now();
 
     THREAD_TIMINGS.with(|timings| {

@@ -2,6 +2,7 @@ use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::FxHashSet;
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use language::Buffer;
 use project::Project;
@@ -139,11 +140,18 @@ impl AgentTool for SaveFileTool {
                 let open_buffer_task =
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-                let buffer = match open_buffer_task.await {
-                    Ok(buffer) => buffer,
-                    Err(error) => {
-                        open_errors.push((path, error.to_string()));
-                        continue;
+                let buffer = futures::select! {
+                    result = open_buffer_task.fuse() => {
+                        match result {
+                            Ok(buffer) => buffer,
+                            Err(error) => {
+                                open_errors.push((path, error.to_string()));
+                                continue;
+                            }
+                        }
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Save cancelled by user");
                     }
                 };
 
@@ -170,7 +178,13 @@ impl AgentTool for SaveFileTool {
 
                 let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
 
-                if let Err(error) = save_task.await {
+                let save_result = futures::select! {
+                    result = save_task.fuse() => result,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Save cancelled by user");
+                    }
+                };
+                if let Err(error) = save_result {
                     save_errors.push((path_for_buffer, error.to_string()));
                 }
             }

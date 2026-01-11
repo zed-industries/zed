@@ -5,7 +5,7 @@ use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
@@ -136,7 +136,16 @@ impl AgentTool for DeletePathTool {
                 authorize.await?;
             }
 
-            while let Some(path) = paths_rx.next().await {
+            loop {
+                let path_result = futures::select! {
+                    path = paths_rx.next().fuse() => path,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Delete cancelled by user");
+                    }
+                };
+                let Some(path) = path_result else {
+                    break;
+                };
                 if let Ok(buffer) = project
                     .update(cx, |project, cx| project.open_buffer(path, cx))
                     .await
@@ -154,9 +163,15 @@ impl AgentTool for DeletePathTool {
                 .with_context(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;
-            deletion_task
-                .await
-                .with_context(|| format!("Deleting {path}"))?;
+
+            futures::select! {
+                result = deletion_task.fuse() => {
+                    result.with_context(|| format!("Deleting {path}"))?;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Delete cancelled by user");
+                }
+            }
             Ok(format!("Deleted {path}"))
         })
     }

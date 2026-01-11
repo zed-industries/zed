@@ -1,6 +1,7 @@
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -102,9 +103,14 @@ impl AgentTool for CreateDirectoryTool {
                 authorize.await?;
             }
 
-            create_entry
-                .await
-                .with_context(|| format!("Creating directory {destination_path}"))?;
+            futures::select! {
+                result = create_entry.fuse() => {
+                    result.with_context(|| format!("Creating directory {destination_path}"))?;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Create directory cancelled by user");
+                }
+            }
 
             Ok(format!("Created directory {destination_path}"))
         })

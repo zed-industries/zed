@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
-use agent::{HistoryEntry, HistoryStore};
+use agent::{DbThreadMetadata, ThreadStore};
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
-use gpui::{App, Entity, Task, WeakEntity};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use ordered_float::OrderedFloat;
@@ -132,8 +132,8 @@ impl PromptContextType {
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(HistoryEntry),
-    RecentThread(HistoryEntry),
+    Thread(DbThreadMetadata),
+    RecentThread(DbThreadMetadata),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
@@ -156,6 +156,14 @@ impl Match {
 pub struct EntryMatch {
     mat: Option<StringMatch>,
     entry: PromptContextEntry,
+}
+
+fn thread_title(thread: &DbThreadMetadata) -> SharedString {
+    if thread.title.is_empty() {
+        "New Thread".into()
+    } else {
+        thread.title.clone()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -186,7 +194,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -196,7 +204,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -205,7 +213,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            history_store,
+            thread_store,
             prompt_store,
         }
     }
@@ -246,7 +254,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn completion_for_thread(
-        thread_entry: HistoryEntry,
+        thread_entry: DbThreadMetadata,
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
@@ -255,7 +263,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let uri = thread_entry.mention_uri();
+        let title = thread_title(&thread_entry);
+        let uri = MentionUri::Thread {
+            id: thread_entry.id,
+            name: title.to_string(),
+        };
 
         let icon_for_completion = if recent {
             IconName::HistoryRerun.path().into()
@@ -269,7 +281,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(thread_entry.title().to_string(), None),
+            label: CodeLabel::plain(title.to_string(), None),
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -277,7 +289,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
-                thread_entry.title().clone(),
+                title,
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -637,7 +649,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             Some(PromptContextType::Thread) => {
                 let search_threads_task =
-                    search_threads(query, cancellation_flag, &self.history_store, cx);
+                    search_threads(query, cancellation_flag, &self.thread_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -800,11 +812,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         if self.source.supports_context(PromptContextType::Thread, cx) {
             const RECENT_COUNT: usize = 2;
             let threads = self
-                .history_store
+                .thread_store
                 .read(cx)
-                .recently_opened_entries(cx)
-                .into_iter()
-                .filter(|thread| !mentions.contains(&thread.mention_uri()))
+                .entries()
+                .filter(|thread| {
+                    let uri = MentionUri::Thread {
+                        id: thread.id.clone(),
+                        name: thread_title(thread).to_string(),
+                    };
+                    !mentions.contains(&uri)
+                })
                 .take(RECENT_COUNT)
                 .collect::<Vec<_>>();
 
@@ -1484,7 +1501,7 @@ pub(crate) fn search_symbols(
             });
 
         const MAX_MATCHES: usize = 100;
-        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &visible_match_candidates,
             &query,
             false,
@@ -1493,7 +1510,7 @@ pub(crate) fn search_symbols(
             &cancellation_flag,
             cx.background_executor().clone(),
         ));
-        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &external_match_candidates,
             &query,
             false,
@@ -1529,9 +1546,9 @@ pub(crate) fn search_symbols(
 pub(crate) fn search_threads(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    thread_store: &Entity<HistoryStore>,
+    thread_store: &Entity<ThreadStore>,
     cx: &mut App,
-) -> Task<Vec<HistoryEntry>> {
+) -> Task<Vec<DbThreadMetadata>> {
     let threads = thread_store.read(cx).entries().collect();
     if query.is_empty() {
         return Task::ready(threads);
@@ -1542,7 +1559,7 @@ pub(crate) fn search_threads(
         let candidates = threads
             .iter()
             .enumerate()
-            .map(|(id, thread)| StringMatchCandidate::new(id, thread.title()))
+            .map(|(id, thread)| StringMatchCandidate::new(id, thread_title(thread).as_ref()))
             .collect::<Vec<_>>();
         let matches = fuzzy::match_strings(
             &candidates,
