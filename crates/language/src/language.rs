@@ -2095,8 +2095,11 @@ impl Language {
         if let Some(grammar) = self.grammar.as_ref()
             && let Some(highlights_config) = &grammar.highlights_config
         {
-            *grammar.highlight_map.lock() =
-                HighlightMap::new(highlights_config.query.capture_names(), theme);
+            *grammar.highlight_map.lock() = HighlightMap::new(
+                highlights_config.query.capture_names(),
+                self.config.grammar.as_deref(),
+                theme,
+            );
         }
     }
 
