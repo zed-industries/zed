@@ -860,6 +860,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     fn remove(&self, key: &AtlasKey);
 }
 
+#[allow(dead_code)]
 struct FreedTextureInfo {
     key: AtlasKey,
     location: &'static Location<'static>,
