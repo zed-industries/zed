@@ -955,7 +955,7 @@ fn into_copilot_chat(
     Ok(CopilotChatRequest {
         n: 1,
         stream: model.uses_streaming(),
-        temperature: temperature.map(|t| t as f32).unwrap_or(0.1),
+        temperature: temperature.unwrap_or(0.1),
         model: model.id().to_string(),
         messages,
         tools,
