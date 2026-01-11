@@ -7,11 +7,9 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::{
-    EditPredictionStore,
-    zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
-};
+use edit_prediction::{EditPredictionStore, zeta2::zeta2_prompt_input};
 use gpui::{AsyncApp, Entity};
+use similar::DiffableStr;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use zeta_prompt::format_zeta_prompt;
@@ -96,6 +94,22 @@ pub async fn run_format_prompt(
         }
     };
     Ok(())
+}
+
+pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+    let mut old_editable_region =
+        input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
+
+    if !old_editable_region.ends_with_newline() {
+        old_editable_region.push('\n');
+    }
+
+    edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region).with_context(|| {
+        format!(
+            "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+            patch, old_editable_region
+        )
+    })
 }
 
 pub struct TeacherPrompt;

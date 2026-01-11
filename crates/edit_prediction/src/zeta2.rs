@@ -277,10 +277,3 @@ pub(crate) fn edit_prediction_accepted(
     })
     .detach_and_log_err(cx);
 }
-
-#[cfg(feature = "cli-support")]
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
-    let old_editable_region = &input.cursor_excerpt[input.editable_range_in_excerpt.clone()];
-    let new_editable_region = crate::udiff::apply_diff_to_string(patch, old_editable_region)?;
-    Ok(new_editable_region)
-}
