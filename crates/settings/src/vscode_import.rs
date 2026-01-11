@@ -407,6 +407,7 @@ impl VsCodeSettings {
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
+            project_search_presets: None,
         }
     }
 
