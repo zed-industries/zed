@@ -72,9 +72,9 @@ pub fn init(cx: &mut App) {
 pub struct SearchMatch {
     pub path: ProjectPath,
     pub buffer: Entity<Buffer>,
-    pub anchor_ranges: Vec<Range<Anchor>>,
-    pub ranges: Vec<Range<usize>>,
-    pub relative_ranges: Vec<Range<usize>>,
+    pub anchor_range: Range<Anchor>,
+    pub range: Range<usize>,
+    pub relative_range: Range<usize>,
     pub line_text: String,
     pub line_number: u32,
 }
@@ -279,14 +279,9 @@ impl QuickSearch {
         };
 
         let replacement = self.replacement_text(cx);
-
-        if selected_match.anchor_ranges.is_empty() {
-            return;
-        }
-
         let buffer = selected_match.buffer.clone();
         let project = delegate.project.clone();
-        let anchor_range = selected_match.anchor_ranges[0].clone();
+        let anchor_range = selected_match.anchor_range.clone();
 
         buffer.update(cx, |buffer, cx| {
             let snapshot = buffer.snapshot();
@@ -322,13 +317,11 @@ impl QuickSearch {
 
         for m in &matches {
             let buffer_id = m.buffer.entity_id();
-            for anchor_range in &m.anchor_ranges {
-                buffer_edits
-                    .entry(buffer_id)
-                    .or_insert_with(|| (m.buffer.clone(), Vec::new()))
-                    .1
-                    .push(anchor_range.clone());
-            }
+            buffer_edits
+                .entry(buffer_id)
+                .or_insert_with(|| (m.buffer.clone(), Vec::new()))
+                .1
+                .push(m.anchor_range.clone());
         }
 
         let mut edited_buffers: HashSet<Entity<Buffer>> = HashSet::default();
@@ -812,9 +805,8 @@ impl QuickSearchDelegate {
         };
 
         let buffer = selected_match.buffer.clone();
-        let match_row = selected_match.line_number.saturating_sub(1);
-        let ranges = selected_match.ranges.clone();
-        let anchor_ranges = selected_match.anchor_ranges.clone();
+        let range = selected_match.range.clone();
+        let anchor_range = selected_match.anchor_range.clone();
 
         self.preview_editor.update(cx, |editor, cx| {
             let multi_buffer = editor.buffer().clone();
@@ -824,14 +816,9 @@ impl QuickSearchDelegate {
             let context_start = buffer_snapshot.anchor_before(Point::new(0, 0));
             let context_end = buffer_snapshot.anchor_after(max_point);
 
-            let primary_range = if let Some(range) = ranges.first() {
+            let primary_range = {
                 let start = buffer_snapshot.anchor_before(range.start);
                 let end = buffer_snapshot.anchor_after(range.end);
-                start..end
-            } else {
-                let start = buffer_snapshot.anchor_before(Point::new(match_row, 0));
-                let end = buffer_snapshot
-                    .anchor_after(Point::new(match_row, buffer_snapshot.line_len(match_row)));
                 start..end
             };
 
@@ -849,27 +836,21 @@ impl QuickSearchDelegate {
 
             let multi_buffer_snapshot = multi_buffer.read(cx);
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
-                let highlight_ranges: Vec<_> = anchor_ranges
-                    .iter()
-                    .map(|range| editor::Anchor::range_in_buffer(excerpt_id, range.clone()))
-                    .collect();
+                let highlight_range =
+                    editor::Anchor::range_in_buffer(excerpt_id, anchor_range.clone());
 
                 editor.highlight_background::<SearchMatchHighlight>(
-                    &highlight_ranges,
+                    &[highlight_range],
                     |_, theme| theme.colors().search_match_background,
                     cx,
                 );
             }
 
-            if let Some(range) = ranges.first() {
-                let start = multi_buffer::MultiBufferOffset(range.start);
-                let end = multi_buffer::MultiBufferOffset(range.end);
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges([start..end]);
-                });
-            } else {
-                editor.go_to_singleton_buffer_point(Point::new(match_row, 0), window, cx);
-            }
+            let start = multi_buffer::MultiBufferOffset(range.start);
+            let end = multi_buffer::MultiBufferOffset(range.end);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([start..end]);
+            });
         });
     }
 
@@ -963,9 +944,9 @@ impl QuickSearchDelegate {
             let text = buf.text();
 
             let mut result = Vec::new();
-            for range in ranges {
-                let start_offset: usize = buf.summary_for_anchor(&range.start);
-                let end_offset: usize = buf.summary_for_anchor(&range.end);
+            for anchor_range in ranges {
+                let start_offset: usize = buf.summary_for_anchor(&anchor_range.start);
+                let end_offset: usize = buf.summary_for_anchor(&anchor_range.end);
                 let match_row = buf.offset_to_point(start_offset).row;
                 let line_number = match_row + 1;
                 let line_start = text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -977,39 +958,23 @@ impl QuickSearchDelegate {
 
                 let relative_start = start_offset - line_start;
                 let relative_end = end_offset - line_start;
-                let relative_range = relative_start..relative_end;
 
                 if let Some(path) = &path {
-                    result.push((
-                        path.clone(),
-                        range.clone(),
-                        start_offset..end_offset,
-                        relative_range,
+                    result.push(SearchMatch {
+                        path: path.clone(),
+                        buffer: buffer.clone(),
+                        anchor_range: anchor_range.clone(),
+                        range: start_offset..end_offset,
+                        relative_range: relative_start..relative_end,
                         line_text,
                         line_number,
-                        buffer.clone(),
-                    ));
+                    });
                 }
             }
             result
         });
 
         buffer_data
-            .into_iter()
-            .map(
-                |(path, anchor_range, range, relative_range, line_text, line_number, buffer)| {
-                    SearchMatch {
-                        path,
-                        buffer,
-                        anchor_ranges: vec![anchor_range],
-                        ranges: vec![range],
-                        relative_ranges: vec![relative_range],
-                        line_text,
-                        line_number,
-                    }
-                },
-            )
-            .collect()
     }
 }
 
@@ -1484,34 +1449,38 @@ impl PickerDelegate for QuickSearchDelegate {
         let trim_offset = original_line.len() - line_text.len();
         let line_text_string = line_text.to_string();
 
-        // Build search match ranges first (these take precedence)
+        // Build search match range (takes precedence over syntax highlighting)
         let search_match_style = HighlightStyle {
             background_color: Some(cx.theme().colors().search_match_background),
             font_weight: Some(gpui::FontWeight::BOLD),
             ..Default::default()
         };
-        let mut search_ranges: Vec<Range<usize>> = Vec::new();
-        for range in &search_match.relative_ranges {
-            if range.end > trim_offset && range.start < trim_offset + line_text_string.len() {
-                let start = range.start.saturating_sub(trim_offset);
-                let end = range.end.saturating_sub(trim_offset).min(line_text_string.len());
-                if start < end
-                    && line_text_string.is_char_boundary(start)
-                    && line_text_string.is_char_boundary(end)
-                {
-                    search_ranges.push(start..end);
-                }
+        let relative_range = &search_match.relative_range;
+        let search_range = if relative_range.end > trim_offset
+            && relative_range.start < trim_offset + line_text_string.len()
+        {
+            let start = relative_range.start.saturating_sub(trim_offset);
+            let end = relative_range
+                .end
+                .saturating_sub(trim_offset)
+                .min(line_text_string.len());
+            if start < end
+                && line_text_string.is_char_boundary(start)
+                && line_text_string.is_char_boundary(end)
+            {
+                Some(start..end)
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
 
         // Get syntax highlighting from the buffer
-        if let (Some(first_range), Some(first_relative)) = (
-            search_match.ranges.first(),
-            search_match.relative_ranges.first(),
-        ) {
-            let line_start = first_range.start - first_relative.start;
+        {
+            let line_start = search_match.range.start - search_match.relative_range.start;
             let line_end = line_start + original_line.len();
 
             let syntax_theme = cx.theme().syntax().clone();
@@ -1534,30 +1503,29 @@ impl PickerDelegate for QuickSearchDelegate {
                             && line_text_string.is_char_boundary(start)
                             && line_text_string.is_char_boundary(end)
                         {
-                            // Split syntax highlight around search matches
-                            let mut current_start = start;
-                            for search_range in &search_ranges {
-                                if search_range.start > current_start && search_range.start < end {
+                            // Split syntax highlight around search match
+                            if let Some(ref sr) = search_range {
+                                let mut current_start = start;
+                                if sr.start > current_start && sr.start < end {
                                     // Add portion before search match
                                     if line_text_string.is_char_boundary(current_start)
-                                        && line_text_string.is_char_boundary(search_range.start)
+                                        && line_text_string.is_char_boundary(sr.start)
                                     {
-                                        highlights
-                                            .push((current_start..search_range.start, style));
+                                        highlights.push((current_start..sr.start, style));
                                     }
-                                    current_start = search_range.end.min(end);
-                                } else if search_range.start <= current_start
-                                    && search_range.end > current_start
-                                {
-                                    current_start = search_range.end.min(end);
+                                    current_start = sr.end.min(end);
+                                } else if sr.start <= current_start && sr.end > current_start {
+                                    current_start = sr.end.min(end);
                                 }
-                            }
-                            // Add remaining portion after all search matches
-                            if current_start < end
-                                && line_text_string.is_char_boundary(current_start)
-                                && line_text_string.is_char_boundary(end)
-                            {
-                                highlights.push((current_start..end, style));
+                                // Add remaining portion after search match
+                                if current_start < end
+                                    && line_text_string.is_char_boundary(current_start)
+                                    && line_text_string.is_char_boundary(end)
+                                {
+                                    highlights.push((current_start..end, style));
+                                }
+                            } else {
+                                highlights.push((start..end, style));
                             }
                         }
                     }
@@ -1566,8 +1534,8 @@ impl PickerDelegate for QuickSearchDelegate {
             }
         }
 
-        // Add search match highlights
-        for range in search_ranges {
+        // Add search match highlight
+        if let Some(range) = search_range {
             highlights.push((range, search_match_style));
         }
 
