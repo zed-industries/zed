@@ -5,6 +5,31 @@ set -euo pipefail
 AGPL_CRATES=("collab")
 RELEASE_CRATES=("cli" "remote_server" "zed")
 
+check_symlink_target () {
+    local symlink_path="$1"
+    local license_name="$2"
+
+    local target=$(readlink "$symlink_path")
+
+    local dir=$(dirname "$symlink_path")
+    local depth=$(echo "$dir" | tr '/' '\n' | wc -l)
+    local expected_prefix=""
+    for ((i = 0; i < depth; i++)); do
+        expected_prefix="../$expected_prefix"
+    done
+    local expected_target="${expected_prefix}${license_name}"
+
+    if [[ "$target" != "$expected_target" ]]; then
+        echo "Error: $symlink_path points to '$target' but should point to '$expected_target'"
+        exit 1
+    fi
+
+    if [[ ! -e "$symlink_path" ]]; then
+        echo "Error: $symlink_path is a broken symlink (target '$target' does not exist)"
+        exit 1
+    fi
+}
+
 check_license () {
     local dir="$1"
     local allowed_licenses=()
@@ -25,6 +50,7 @@ check_license () {
 
     for license in "${allowed_licenses[@]}"; do
         if [[ -L "$dir/$license" ]]; then
+            check_symlink_target "$dir/$license" "$license"
             return 0
         elif [[ -e "$dir/$license" ]]; then
             echo "Error: $dir/$license exists but is not a symlink."
