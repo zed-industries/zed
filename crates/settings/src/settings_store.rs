@@ -1,25 +1,25 @@
 use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
-use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{
     FutureExt, StreamExt,
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
+use gpui::{
+    App, AppContext, AsyncApp, BorrowAppContext, Entity, Global, SharedString, Task, UpdateGlobal,
+};
 
-use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
+use paths::{local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
 use serde_json::Value;
-use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
     fmt::Debug,
     ops::Range,
     path::PathBuf,
     rc::Rc,
-    str::{self, FromStr},
+    str,
     sync::Arc,
 };
 use util::{
@@ -28,8 +28,7 @@ use util::{
     schemars::{AllowTrailingCommas, DefaultDenyUnknownFields, replace_subschema},
 };
 
-pub type EditorconfigProperties = ec4rs::Properties;
-
+use crate::editorconfig_store::EditorconfigStore;
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
@@ -153,7 +152,7 @@ pub struct SettingsStore {
     merged_settings: Rc<SettingsContent>,
 
     local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
-    raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<RelPath>), (String, Option<Editorconfig>)>,
+    pub editorconfig_store: Entity<EditorconfigStore>,
 
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
@@ -201,26 +200,6 @@ impl Ord for SettingsFile {
     }
 }
 
-#[derive(Clone)]
-pub struct Editorconfig {
-    pub is_root: bool,
-    pub sections: SmallVec<[Section; 5]>,
-}
-
-impl FromStr for Editorconfig {
-    type Err = anyhow::Error;
-
-    fn from_str(contents: &str) -> Result<Self, Self::Err> {
-        let parser = ConfigParser::new_buffered(contents.as_bytes())
-            .context("creating editorconfig parser")?;
-        let is_root = parser.is_root;
-        let sections = parser
-            .collect::<Result<SmallVec<_>, _>>()
-            .context("parsing editorconfig sections")?;
-        Ok(Self { is_root, sections })
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LocalSettingsKind {
     Settings,
@@ -263,7 +242,7 @@ pub struct SettingsJsonSchemaParams<'a> {
 }
 
 impl SettingsStore {
-    pub fn new(cx: &App, default_settings: &str) -> Self {
+    pub fn new(cx: &mut App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let default_settings: Rc<SettingsContent> =
             parse_json_with_comments(default_settings).unwrap();
@@ -277,7 +256,7 @@ impl SettingsStore {
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
-            raw_editorconfig_settings: BTreeMap::default(),
+            editorconfig_store: cx.new(|_| EditorconfigStore::default()),
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
@@ -871,8 +850,9 @@ impl SettingsStore {
                     .remove(&SettingsFile::Project((root_id, directory_path.clone())));
             }
             (LocalSettingsKind::Editorconfig, None) => {
-                self.raw_editorconfig_settings
-                    .remove(&(root_id, directory_path.clone()));
+                self.editorconfig_store.update(cx, |store, _cx| {
+                    store.set_local_internal_configs(root_id, directory_path.clone(), None)
+                })?;
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
                 let (new_settings, parse_result) = self
@@ -909,44 +889,13 @@ impl SettingsStore {
                 }
             }
             (LocalSettingsKind::Editorconfig, Some(editorconfig_contents)) => {
-                match self
-                    .raw_editorconfig_settings
-                    .entry((root_id, directory_path.clone()))
-                {
-                    btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
-                        Ok(new_contents) => {
-                            v.insert((editorconfig_contents.to_owned(), Some(new_contents)));
-                        }
-                        Err(e) => {
-                            v.insert((editorconfig_contents.to_owned(), None));
-                            return Err(InvalidSettingsError::Editorconfig {
-                                message: e.to_string(),
-                                path: directory_path
-                                    .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
-                            });
-                        }
-                    },
-                    btree_map::Entry::Occupied(mut o) => {
-                        if o.get().0 != editorconfig_contents {
-                            match editorconfig_contents.parse() {
-                                Ok(new_contents) => {
-                                    o.insert((
-                                        editorconfig_contents.to_owned(),
-                                        Some(new_contents),
-                                    ));
-                                }
-                                Err(e) => {
-                                    o.insert((editorconfig_contents.to_owned(), None));
-                                    return Err(InvalidSettingsError::Editorconfig {
-                                        message: e.to_string(),
-                                        path: directory_path
-                                            .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
+                self.editorconfig_store.update(cx, |store, _cx| {
+                    store.set_local_internal_configs(
+                        root_id,
+                        directory_path.clone(),
+                        Some(editorconfig_contents),
+                    )
+                })?;
             }
         };
 
@@ -976,8 +925,10 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
-        self.raw_editorconfig_settings
-            .retain(|(worktree_id, _), _| worktree_id != &root_id);
+
+        self.editorconfig_store
+            .update(cx, |store, _cx| store.remove_worktree(root_id));
+
         for setting_value in self.setting_values.values_mut() {
             setting_value.clear_local_values(root_id);
         }
@@ -998,23 +949,6 @@ impl SettingsStore {
                     ),
             )
             .map(|((_, path), content)| (path.clone(), &content.project))
-    }
-
-    pub fn local_editorconfig_settings(
-        &self,
-        root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
-        self.raw_editorconfig_settings
-            .range(
-                (root_id, RelPath::empty().into())
-                    ..(
-                        WorktreeId::from_usize(root_id.to_usize() + 1),
-                        RelPath::empty().into(),
-                    ),
-            )
-            .map(|((_, path), (content, parsed_content))| {
-                (path.clone(), content.clone(), parsed_content.clone())
-            })
     }
 
     pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
@@ -1176,35 +1110,6 @@ impl SettingsStore {
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
-    }
-
-    pub fn editorconfig_properties(
-        &self,
-        for_worktree: WorktreeId,
-        for_path: &RelPath,
-    ) -> Option<EditorconfigProperties> {
-        let mut properties = EditorconfigProperties::new();
-
-        for (directory_with_config, _, parsed_editorconfig) in
-            self.local_editorconfig_settings(for_worktree)
-        {
-            if !for_path.starts_with(&directory_with_config) {
-                properties.use_fallbacks();
-                return Some(properties);
-            }
-            let parsed_editorconfig = parsed_editorconfig?;
-            if parsed_editorconfig.is_root {
-                properties = EditorconfigProperties::new();
-            }
-            for section in parsed_editorconfig.sections {
-                section
-                    .apply_to(&mut properties, for_path.as_std_path())
-                    .log_err()?;
-            }
-        }
-
-        properties.use_fallbacks();
-        Some(properties)
     }
 }
 

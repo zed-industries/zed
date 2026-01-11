@@ -796,9 +796,9 @@ impl SettingsObserver {
         self.project_id = project_id;
         self.downstream_client = Some(downstream_client.clone());
 
-        let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
+            let store = cx.global::<SettingsStore>();
             for (path, content) in store.local_settings(worktree.read(cx).id()) {
                 let content = serde_json::to_string(&content).unwrap();
                 downstream_client
@@ -813,7 +813,11 @@ impl SettingsObserver {
                     })
                     .log_err();
             }
-            for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
+            let editorconfig_store = cx.global::<SettingsStore>().editorconfig_store.clone();
+            for (path, content, _) in editorconfig_store
+                .read(cx)
+                .local_internal_configs(worktree.read(cx).id())
+            {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -889,13 +893,14 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) {
         match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
-                .subscribe(worktree, |this, worktree, event, cx| {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                cx.subscribe(worktree, |this, worktree, event, cx| {
                     if let worktree::Event::UpdatedEntries(changes) = event {
                         this.update_local_worktree_settings(&worktree, changes, cx)
                     }
                 })
-                .detach(),
+                .detach();
+            }
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     store.clear_local_settings(*worktree_id, cx).log_err();
@@ -1070,6 +1075,7 @@ impl SettingsObserver {
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
+        let worktree_abs_path = worktree.read(cx).abs_path();
         let task_store = self.task_store.clone();
         let can_trust_worktree = OnceCell::new();
         for (directory, kind, file_content) in settings_contents {
@@ -1095,7 +1101,19 @@ impl SettingsObserver {
                     }
                 }
                 LocalSettingsKind::Editorconfig => {
-                    apply_local_settings(worktree_id, &directory, kind, &file_content, cx)
+                    apply_local_settings(worktree_id, &directory, kind, &file_content, cx);
+                    if let SettingsObserverMode::Local(fs) = &self.mode {
+                        let editorconfig_store =
+                            cx.global::<SettingsStore>().editorconfig_store.clone();
+                        editorconfig_store.update(cx, |store, cx| {
+                            store.load_external_configs(
+                                worktree_id,
+                                worktree_abs_path.clone(),
+                                fs.clone(),
+                                cx,
+                            );
+                        });
+                    }
                 }
                 LocalSettingsKind::Tasks => {
                     let result = task_store.update(cx, |task_store, cx| {

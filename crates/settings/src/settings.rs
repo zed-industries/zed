@@ -1,5 +1,6 @@
 mod base_keymap_setting;
 mod editable_setting_control;
+mod editorconfig_store;
 mod fallible_options;
 mod keymap_file;
 pub mod merge_from;
@@ -18,13 +19,14 @@ pub mod private {
     pub use inventory;
 }
 
-use gpui::{App, Global};
+use gpui::{App, BorrowAppContext, Global};
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
+pub use editorconfig_store::{Editorconfig, EditorconfigProperties, EditorconfigStore};
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -89,7 +91,14 @@ pub struct SettingsAssets;
 
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());
+    let editorconfig_store = settings.editorconfig_store.clone();
     cx.set_global(settings);
+
+    cx.subscribe(&editorconfig_store, |_store, _event: &(), cx| {
+        cx.update_global::<SettingsStore, _>(|_store, _cx| {});
+    })
+    .detach();
+
     SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 
