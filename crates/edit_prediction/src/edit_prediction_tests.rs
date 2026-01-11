@@ -1352,6 +1352,7 @@ fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Re
             message: open_ai::RequestMessage::Assistant {
                 content: Some(open_ai::MessageContent::Plain(new_excerpt)),
                 tool_calls: vec![],
+                reasoning_content: None,
             },
             finish_reason: None,
         }],
@@ -2216,6 +2217,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
                                             .to_string(),
                                         )),
                                         tool_calls: vec![],
+                                        reasoning_content: None,
                                     },
                                     finish_reason: Some("stop".to_string()),
                                 }],

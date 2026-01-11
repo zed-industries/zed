@@ -832,6 +832,7 @@ impl LanguageModel for CloudLanguageModel {
                         true,
                         None,
                         None,
+                        settings::ThinkingMode::default(),
                     );
                     let future = self.request_limiter.stream(async move {
                         let PerformLlmCompletionResponse {
@@ -876,6 +877,7 @@ impl LanguageModel for CloudLanguageModel {
                         true,
                         None,
                         None,
+                        settings::ThinkingMode::default(),
                     );
                     let future = self.request_limiter.stream(async move {
                         let PerformLlmCompletionResponse {
@@ -923,6 +925,7 @@ impl LanguageModel for CloudLanguageModel {
                     false,
                     None,
                     None,
+                    settings::ThinkingMode::default(),
                 );
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
