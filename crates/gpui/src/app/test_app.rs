@@ -25,13 +25,13 @@
 //! ```
 
 use crate::{
-    AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
-    Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
-    SceneSnapshot, Size, Task, TestDispatcher, TestPlatform, TextSystem, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode,
+    app::GpuiMode, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor,
+    BorrowAppContext, Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global,
+    InputEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Platform, Point, Render, SceneSnapshot, Size, Task, TestDispatcher, TestPlatform, TextSystem,
+    Window, WindowBounds, WindowHandle, WindowOptions,
 };
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, SeedableRng};
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 /// A test application context with a clean API.
@@ -483,13 +483,27 @@ impl<V: 'static + Render> TestWindow<V> {
         window.rendered_frame.scene.snapshot()
     }
 
-    /// Get the named diagnostic quads recorded during imperative paint, without inspecting the
+    /// Get the named diagnostics recorded during imperative paint, without inspecting the
     /// rest of the scene snapshot.
     ///
     /// This is useful for tests that want a stable, semantic view of layout/paint geometry without
     /// coupling to the low-level quad/glyph output.
-    pub fn diagnostic_quads(&self) -> Vec<crate::scene::test_scene::DiagnosticQuad> {
-        self.scene_snapshot().diagnostic_quads
+    pub fn diagnostics(&self) -> Vec<crate::scene::test_scene::Diagnostic<()>> {
+        self.scene_snapshot().diagnostics
+    }
+
+    /// Get the typed diagnostics recorded during imperative paint for a specific payload type,
+    /// without inspecting the rest of the scene snapshot.
+    ///
+    /// This is useful for tests that want to attach structured telemetry to paint/layout logic.
+    pub fn typed_diagnostics<T: 'static + Clone>(
+        &self,
+    ) -> Vec<crate::scene::test_scene::Diagnostic<T>> {
+        self.scene_snapshot()
+            .typed_diagnostics
+            .iter()
+            .filter_map(|diagnostic| diagnostic.downcast_clone::<T>())
+            .collect()
     }
 }
 
@@ -507,7 +521,7 @@ impl<V> Clone for TestWindow<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FocusHandle, Focusable, div, prelude::*};
+    use crate::{div, prelude::*, FocusHandle, Focusable};
 
     struct Counter {
         count: usize,

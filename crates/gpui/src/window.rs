@@ -3000,12 +3000,12 @@ impl Window {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    /// Record a named diagnostic quad for test/debug snapshots.
+    /// Record a named diagnostic for test/debug snapshots.
     ///
     /// This is intended for debugging and asserting against imperative painting logic. The
-    /// recorded quad does not affect rendering; it is captured alongside the rendered scene and
+    /// recorded diagnostic does not affect rendering; it is captured alongside the rendered scene and
     /// exposed via `scene_snapshot()`.
-    pub fn record_diagnostic_quad(
+    pub fn record_diagnostic(
         &mut self,
         name: impl Into<SharedString>,
         bounds: Bounds<Pixels>,
@@ -3013,23 +3013,62 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame.scene.diagnostic_quads.push(crate::test_scene::DiagnosticQuad {
+        self.next_frame.scene.diagnostics.push(crate::test_scene::Diagnostic {
             name: name.into(),
             bounds,
             color,
+            payload: (),
         });
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
     #[inline]
-    /// Record a named diagnostic quad for test/debug snapshots.
+    /// Record a named diagnostic for test/debug snapshots.
     ///
     /// This is a no-op unless tests or the `test-support` feature are enabled.
-    pub fn record_diagnostic_quad(
+    pub fn record_diagnostic(
         &mut self,
         _name: impl Into<SharedString>,
         _bounds: Bounds<Pixels>,
         _color: Option<Hsla>,
+    ) {
+    }
+
+    /// Record a named diagnostic with a typed payload for test/debug snapshots.
+    ///
+    /// The payload is stored type-erased and can be retrieved in tests via `TestWindow`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn record_typed_diagnostic<T: 'static + Clone + Send + Sync>(
+        &mut self,
+        name: impl Into<SharedString>,
+        bounds: Bounds<Pixels>,
+        color: Option<Hsla>,
+        payload: T,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        self.next_frame
+            .scene
+            .typed_diagnostics
+            .push(crate::test_scene::ErasedTypedDiagnostic::new(
+                name.into(),
+                bounds,
+                color,
+                payload,
+            ));
+    }
+
+    /// Record a named diagnostic with a typed payload for test/debug snapshots.
+    ///
+    /// This is a no-op unless tests or the `test-support` feature are enabled.
+    #[cfg(not(any(test, feature = "test-support")))]
+    #[inline]
+    pub fn record_typed_diagnostic<T: 'static + Clone + Send + Sync>(
+        &mut self,
+        _name: impl Into<SharedString>,
+        _bounds: Bounds<Pixels>,
+        _color: Option<Hsla>,
+        _payload: T,
     ) {
     }
 

@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Background, Bounds, ContentMask,
+    Corners, Edges, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{
     fmt::Debug,
@@ -24,6 +24,10 @@ pub(crate) type DrawOrder = u32;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_scene {
     use crate::{Bounds, Hsla, Pixels, Point, ScaledPixels, SharedString};
+    use std::{
+        any::{Any, TypeId},
+        sync::Arc,
+    };
 
     /// A rendered quad (background, border, cursor, selection, etc.)
     #[derive(Debug, Clone)]
@@ -36,17 +40,85 @@ pub mod test_scene {
         pub border_color: Hsla,
     }
 
-    /// A named diagnostic quad for tests and debugging of imperative paint logic.
+    /// A named diagnostic entry for tests and debugging of imperative paint logic.
     ///
-    /// This is not necessarily a "real" painted quad; it is metadata recorded alongside a scene.
+    /// This is not necessarily a "real" painted primitive; it is metadata recorded alongside a scene.
+    ///
+    /// When used as `Diagnostic<()>`, this matches the untyped/legacy diagnostic API.
     #[derive(Debug, Clone)]
-    pub struct DiagnosticQuad {
+    pub struct Diagnostic<T = ()> {
         /// A stable name that test code can filter by.
         pub name: SharedString,
         /// Bounds in logical pixels (not scaled).
         pub bounds: Bounds<Pixels>,
         /// Optional color hint (useful when visualizing).
         pub color: Option<Hsla>,
+        /// Optional typed payload. For untyped diagnostics, this will be `()`.
+        pub payload: T,
+    }
+
+    /// A named typed diagnostic entry with an erased payload.
+    ///
+    /// This stores the payload as type-erased data (plus its `TypeId`) so tests can later
+    /// retrieve only the diagnostics for a specific payload type.
+    #[derive(Clone)]
+    pub struct ErasedTypedDiagnostic {
+        /// A stable name that test code can filter by.
+        pub name: SharedString,
+        /// Bounds in logical pixels (not scaled).
+        pub bounds: Bounds<Pixels>,
+        /// Optional color hint (useful when visualizing).
+        pub color: Option<Hsla>,
+        /// The concrete payload type stored in `payload`.
+        pub payload_type: TypeId,
+        /// The type-erased payload (typically a `T` recorded via `Window::record_typed_diagnostic`).
+        pub payload: Arc<dyn Any + Send + Sync>,
+    }
+
+    impl std::fmt::Debug for ErasedTypedDiagnostic {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ErasedTypedDiagnostic")
+                .field("name", &self.name)
+                .field("bounds", &self.bounds)
+                .field("color", &self.color)
+                .field("payload_type", &self.payload_type)
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl ErasedTypedDiagnostic {
+        /// Create a new erased typed diagnostic for payload type `T`.
+        pub fn new<T: 'static + Clone + Send + Sync>(
+            name: SharedString,
+            bounds: Bounds<Pixels>,
+            color: Option<Hsla>,
+            payload: T,
+        ) -> Self {
+            Self {
+                name,
+                bounds,
+                color,
+                payload_type: TypeId::of::<T>(),
+                payload: Arc::new(payload),
+            }
+        }
+
+        /// Attempt to downcast the stored payload to `T` and clone it out into a typed diagnostic.
+        ///
+        /// Returns `None` if this diagnostic's payload type is not `T`.
+        pub fn downcast_clone<T: 'static + Clone>(&self) -> Option<Diagnostic<T>> {
+            if self.payload_type != TypeId::of::<T>() {
+                return None;
+            }
+
+            let payload = self.payload.as_ref().downcast_ref::<T>()?.clone();
+            Some(Diagnostic {
+                name: self.name.clone(),
+                bounds: self.bounds,
+                color: self.color,
+                payload,
+            })
+        }
     }
 
     /// A rendered text glyph.
@@ -67,8 +139,12 @@ pub mod test_scene {
         pub quads: Vec<RenderedQuad>,
         /// All rendered text glyphs.
         pub glyphs: Vec<RenderedGlyph>,
-        /// Named diagnostic quads recorded by imperative drawing code for tests/debugging.
-        pub diagnostic_quads: Vec<DiagnosticQuad>,
+        /// Named diagnostics recorded by imperative drawing code for tests/debugging.
+        ///
+        /// This is the untyped diagnostic stream (`payload = ()`).
+        pub diagnostics: Vec<Diagnostic<()>>,
+        /// Named typed diagnostics recorded by imperative drawing code for tests/debugging.
+        pub typed_diagnostics: Vec<ErasedTypedDiagnostic>,
         /// Number of shadow primitives.
         pub shadow_count: usize,
         /// Number of path primitives.
@@ -123,10 +199,10 @@ pub mod test_scene {
         /// Debug summary string.
         pub fn summary(&self) -> String {
             format!(
-                "quads: {}, glyphs: {}, diagnostic_quads: {}, shadows: {}, paths: {}, underlines: {}, polychrome: {}, surfaces: {}",
+                "quads: {}, glyphs: {}, diagnostics: {}, shadows: {}, paths: {}, underlines: {}, polychrome: {}, surfaces: {}",
                 self.quads.len(),
                 self.glyphs.len(),
-                self.diagnostic_quads.len(),
+                self.diagnostics.len(),
                 self.shadow_count,
                 self.path_count,
                 self.underline_count,
@@ -153,7 +229,9 @@ pub(crate) struct Scene {
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) surfaces: Vec<PaintSurface>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) diagnostic_quads: Vec<test_scene::DiagnosticQuad>,
+    pub(crate) diagnostics: Vec<test_scene::Diagnostic<()>>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) typed_diagnostics: Vec<test_scene::ErasedTypedDiagnostic>,
 }
 
 impl Scene {
@@ -169,7 +247,9 @@ impl Scene {
         self.polychrome_sprites.clear();
         self.surfaces.clear();
         #[cfg(any(test, feature = "test-support"))]
-        self.diagnostic_quads.clear();
+        self.diagnostics.clear();
+        #[cfg(any(test, feature = "test-support"))]
+        self.typed_diagnostics.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -274,7 +354,8 @@ impl Scene {
         SceneSnapshot {
             quads,
             glyphs,
-            diagnostic_quads: self.diagnostic_quads.clone(),
+            diagnostics: self.diagnostics.clone(),
+            typed_diagnostics: self.typed_diagnostics.clone(),
             shadow_count: self.shadows.len(),
             path_count: self.paths.len(),
             underline_count: self.underlines.len(),
@@ -295,7 +376,11 @@ impl Scene {
         self.surfaces.sort_by_key(|surface| surface.order);
 
         #[cfg(any(test, feature = "test-support"))]
-        self.diagnostic_quads
+        self.diagnostics
+            .sort_by(|a, b| a.name.as_ref().cmp(b.name.as_ref()));
+
+        #[cfg(any(test, feature = "test-support"))]
+        self.typed_diagnostics
             .sort_by(|a, b| a.name.as_ref().cmp(b.name.as_ref()));
     }
 
