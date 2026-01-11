@@ -3393,6 +3393,26 @@ Non-negative `integer` values
 2. `selection` only populate the search query when there is text selected
 3. `never` never populate the search query
 
+## Project Search Presets
+
+- Description: Saved presets for project search filters. Each preset can specify include and exclude glob patterns. This setting is only available in project settings (`.zed/settings.json`).
+- Setting: `project_search_presets`
+- Default: `{}`
+
+```json [settings]
+"project_search_presets": {
+  "source_only": {
+    "include": "src/**",
+    "exclude": "**/*.test.ts"
+  },
+  "docs": {
+    "include": "docs/**/*.md"
+  }
+}
+```
+
+To use a preset, run {#action project_search::SearchWithPreset} from the command palette and select from the list.
+
 ## Use Smartcase Search
 
 - Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
