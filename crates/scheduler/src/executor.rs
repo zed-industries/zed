@@ -1,5 +1,4 @@
-use crate::{Scheduler, SessionId, Timer};
-use futures::FutureExt as _;
+use crate::{Priority, RunnableMeta, Scheduler, SessionId, Timer};
 use std::{
     future::Future,
     marker::PhantomData,
@@ -7,16 +6,20 @@ use std::{
     panic::Location,
     pin::Pin,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
     thread::{self, ThreadId},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,
+    closed: Arc<AtomicBool>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -25,8 +28,27 @@ impl ForegroundExecutor {
         Self {
             session_id,
             scheduler,
+            closed: Arc::new(AtomicBool::new(false)),
             not_send: PhantomData,
         }
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
+        &self.scheduler
+    }
+
+    /// Returns the closed flag for this executor.
+    pub fn closed(&self) -> &Arc<AtomicBool> {
+        &self.closed
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
     }
 
     #[track_caller]
@@ -37,67 +59,132 @@ impl ForegroundExecutor {
     {
         let session_id = self.session_id;
         let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
-            scheduler.schedule_foreground(session_id, runnable);
-        });
+        let location = Location::caller();
+        let closed = self.closed.clone();
+        let (runnable, task) = spawn_local_with_source_location(
+            future,
+            move |runnable| {
+                scheduler.schedule_foreground(session_id, runnable);
+            },
+            RunnableMeta { location, closed },
+        );
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
 
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut output = None;
-        self.scheduler.block(
-            Some(self.session_id),
-            async { output = Some(future.await) }.boxed_local(),
-            None,
-        );
-        output.unwrap()
+        use std::cell::Cell;
+
+        let output = Cell::new(None);
+        let future = async {
+            output.set(Some(future.await));
+        };
+        let mut future = std::pin::pin!(future);
+
+        self.scheduler
+            .block(Some(self.session_id), future.as_mut(), None);
+
+        output.take().expect("block_on future did not complete")
     }
 
-    pub fn block_with_timeout<Fut: Unpin + Future>(
+    /// Block until the future completes or timeout occurs.
+    /// Returns Ok(output) if completed, Err(future) if timed out.
+    pub fn block_with_timeout<Fut: Future>(
         &self,
         timeout: Duration,
-        mut future: Fut,
-    ) -> Result<Fut::Output, Fut> {
-        let mut output = None;
-        self.scheduler.block(
-            Some(self.session_id),
-            async { output = Some((&mut future).await) }.boxed_local(),
-            Some(timeout),
-        );
-        output.ok_or(future)
+        future: Fut,
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
+        use std::cell::Cell;
+
+        let output = Cell::new(None);
+        let mut future = Box::pin(future);
+
+        {
+            let future_ref = &mut future;
+            let wrapper = async {
+                output.set(Some(future_ref.await));
+            };
+            let mut wrapper = std::pin::pin!(wrapper);
+
+            self.scheduler
+                .block(Some(self.session_id), wrapper.as_mut(), Some(timeout));
+        }
+
+        match output.take() {
+            Some(value) => Ok(value),
+            None => Err(future),
+        }
     }
 
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
+    }
+
+    pub fn now(&self) -> Instant {
+        self.scheduler.clock().now()
     }
 }
 
 #[derive(Clone)]
 pub struct BackgroundExecutor {
     scheduler: Arc<dyn Scheduler>,
+    closed: Arc<AtomicBool>,
 }
 
 impl BackgroundExecutor {
     pub fn new(scheduler: Arc<dyn Scheduler>) -> Self {
-        Self { scheduler }
+        Self {
+            scheduler,
+            closed: Arc::new(AtomicBool::new(false)),
+        }
     }
 
+    /// Returns the closed flag for this executor.
+    pub fn closed(&self) -> &Arc<AtomicBool> {
+        &self.closed
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
+
+    #[track_caller]
     pub fn spawn<F>(&self, future: F) -> Task<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
+        self.spawn_with_priority(Priority::default(), future)
+    }
+
+    #[track_caller]
+    pub fn spawn_with_priority<F>(&self, priority: Priority, future: F) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
         let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = async_task::spawn(future, move |runnable| {
-            scheduler.schedule_background(runnable);
-        });
+        let location = Location::caller();
+        let closed = self.closed.clone();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location, closed })
+            .spawn(
+                move |_| future,
+                move |runnable| {
+                    scheduler.schedule_background_with_priority(runnable, priority);
+                },
+            );
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
 
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
+    }
+
+    pub fn now(&self) -> Instant {
+        self.scheduler.clock().now()
     }
 
     pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
@@ -121,13 +208,18 @@ enum TaskState<T> {
     Ready(Option<T>),
 
     /// A task that is currently running.
-    Spawned(async_task::Task<T>),
+    Spawned(async_task::Task<T, RunnableMeta>),
 }
 
 impl<T> Task<T> {
     /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
         Task(TaskState::Ready(Some(val)))
+    }
+
+    /// Creates a Task from an async_task::Task
+    pub fn from_async_task(task: async_task::Task<T, RunnableMeta>) -> Self {
+        Task(TaskState::Spawned(task))
     }
 
     pub fn is_ready(&self) -> bool {
@@ -144,6 +236,63 @@ impl<T> Task<T> {
             Task(TaskState::Spawned(task)) => task.detach(),
         }
     }
+
+    /// Converts this task into a fallible task that returns `Option<T>`.
+    pub fn fallible(self) -> FallibleTask<T> {
+        FallibleTask(match self.0 {
+            TaskState::Ready(val) => FallibleTaskState::Ready(val),
+            TaskState::Spawned(task) => FallibleTaskState::Spawned(task.fallible()),
+        })
+    }
+}
+
+/// A task that returns `Option<T>` instead of panicking when cancelled.
+#[must_use]
+pub struct FallibleTask<T>(FallibleTaskState<T>);
+
+enum FallibleTaskState<T> {
+    /// A task that is ready to return a value
+    Ready(Option<T>),
+
+    /// A task that is currently running (wraps async_task::FallibleTask).
+    Spawned(async_task::FallibleTask<T, RunnableMeta>),
+}
+
+impl<T> FallibleTask<T> {
+    /// Creates a new fallible task that will resolve with the value.
+    pub fn ready(val: T) -> Self {
+        FallibleTask(FallibleTaskState::Ready(Some(val)))
+    }
+
+    /// Detaching a task runs it to completion in the background.
+    pub fn detach(self) {
+        match self.0 {
+            FallibleTaskState::Ready(_) => {}
+            FallibleTaskState::Spawned(task) => task.detach(),
+        }
+    }
+}
+
+impl<T> Future for FallibleTask<T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            FallibleTask(FallibleTaskState::Ready(val)) => Poll::Ready(val.take()),
+            FallibleTask(FallibleTaskState::Spawned(task)) => Pin::new(task).poll(cx),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for FallibleTask<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            FallibleTaskState::Ready(_) => f.debug_tuple("FallibleTask::Ready").finish(),
+            FallibleTaskState::Spawned(task) => {
+                f.debug_tuple("FallibleTask::Spawned").field(task).finish()
+            }
+        }
+    }
 }
 
 impl<T> Future for Task<T> {
@@ -158,18 +307,19 @@ impl<T> Future for Task<T> {
 }
 
 /// Variant of `async_task::spawn_local` that includes the source location of the spawn in panics.
-///
-/// Copy-modified from:
-/// <https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405>
 #[track_caller]
 fn spawn_local_with_source_location<Fut, S>(
     future: Fut,
     schedule: S,
-) -> (async_task::Runnable, async_task::Task<Fut::Output, ()>)
+    metadata: RunnableMeta,
+) -> (
+    async_task::Runnable<RunnableMeta>,
+    async_task::Task<Fut::Output, RunnableMeta>,
+)
 where
     Fut: Future + 'static,
     Fut::Output: 'static,
-    S: async_task::Schedule + Send + Sync + 'static,
+    S: async_task::Schedule<RunnableMeta> + Send + Sync + 'static,
 {
     #[inline]
     fn thread_id() -> ThreadId {
@@ -212,12 +362,18 @@ where
         }
     }
 
-    // Wrap the future into one that checks which thread it's on.
-    let future = Checked {
-        id: thread_id(),
-        inner: ManuallyDrop::new(future),
-        location: Location::caller(),
-    };
+    let location = metadata.location;
 
-    unsafe { async_task::spawn_unchecked(future, schedule) }
+    unsafe {
+        async_task::Builder::new()
+            .metadata(metadata)
+            .spawn_unchecked(
+                move |_| Checked {
+                    id: thread_id(),
+                    inner: ManuallyDrop::new(future),
+                    location,
+                },
+                schedule,
+            )
+    }
 }

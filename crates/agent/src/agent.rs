@@ -1,6 +1,5 @@
 mod db;
 mod edit_agent;
-mod history_store;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
@@ -8,14 +7,17 @@ mod templates;
 #[cfg(test)]
 mod tests;
 mod thread;
+mod thread_store;
+mod tool_permissions;
 mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
-pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
 pub use templates::*;
 pub use thread::*;
+pub use thread_store::*;
+pub use tool_permissions::*;
 pub use tools::*;
 
 use acp_thread::{AcpThread, AgentModelSelector, UserMessageId};
@@ -222,7 +224,7 @@ impl LanguageModels {
 pub struct NativeAgent {
     /// Session ID -> Session mapping
     sessions: HashMap<acp::SessionId, Session>,
-    history: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     /// Shared project context for all threads
     project_context: Entity<ProjectContext>,
     project_context_needs_refresh: watch::Sender<()>,
@@ -241,7 +243,7 @@ pub struct NativeAgent {
 impl NativeAgent {
     pub async fn new(
         project: Entity<Project>,
-        history: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         templates: Arc<Templates>,
         prompt_store: Option<Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
@@ -281,7 +283,7 @@ impl NativeAgent {
                 watch::channel(());
             Self {
                 sessions: HashMap::default(),
-                history,
+                thread_store,
                 project_context: cx.new(|_| project_context),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
                 _maintain_project_context: cx.spawn(async move |this, cx| {
@@ -806,14 +808,14 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        let history = self.history.clone();
+        let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return;
             };
             let db_thread = db_thread.await;
             database.save_thread(id, db_thread).await.log_err();
-            history.update(cx, |history, cx| history.reload(cx));
+            thread_store.update(cx, |store, cx| store.reload(cx));
         });
     }
 
@@ -1309,7 +1311,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
             if let Some(agent) = agent.sessions.get(session_id) {
-                agent.thread.update(cx, |thread, cx| thread.cancel(cx));
+                agent
+                    .thread
+                    .update(cx, |thread, cx| thread.cancel(cx))
+                    .detach();
             }
         });
     }
@@ -1499,8 +1504,6 @@ impl TerminalHandle for AcpTerminalHandle {
 
 #[cfg(test)]
 mod internal_tests {
-    use crate::HistoryEntryId;
-
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use fs::FakeFs;
@@ -1523,12 +1526,10 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let text_thread_store =
-            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = NativeAgent::new(
             project.clone(),
-            history_store,
+            thread_store,
             Templates::new(),
             None,
             fs.clone(),
@@ -1585,13 +1586,11 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let text_thread_store =
-            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let connection = NativeAgentConnection(
             NativeAgent::new(
                 project.clone(),
-                history_store,
+                thread_store,
                 Templates::new(),
                 None,
                 fs.clone(),
@@ -1663,14 +1662,12 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let text_thread_store =
-            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
         // Create the agent and connection
         let agent = NativeAgent::new(
             project.clone(),
-            history_store,
+            thread_store,
             Templates::new(),
             None,
             fs.clone(),
@@ -1736,12 +1733,10 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
-        let text_thread_store =
-            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = NativeAgent::new(
             project.clone(),
-            history_store.clone(),
+            thread_store.clone(),
             Templates::new(),
             None,
             fs.clone(),
@@ -1772,7 +1767,7 @@ mod internal_tests {
             thread.set_summarization_model(Some(summary_model.clone()), cx);
         });
         cx.run_until_parked();
-        assert_eq!(history_entries(&history_store, cx), vec![]);
+        assert_eq!(thread_entries(&thread_store, cx), vec![]);
 
         let send = acp_thread.update(cx, |thread, cx| {
             thread.send(
@@ -1835,9 +1830,9 @@ mod internal_tests {
 
         // Ensure the thread can be reloaded from disk.
         assert_eq!(
-            history_entries(&history_store, cx),
+            thread_entries(&thread_store, cx),
             vec![(
-                HistoryEntryId::AcpThread(session_id.clone()),
+                session_id.clone(),
                 format!("Explaining {}", path!("/a/b.md"))
             )]
         );
@@ -1862,14 +1857,14 @@ mod internal_tests {
         });
     }
 
-    fn history_entries(
-        history: &Entity<HistoryStore>,
+    fn thread_entries(
+        thread_store: &Entity<ThreadStore>,
         cx: &mut TestAppContext,
-    ) -> Vec<(HistoryEntryId, String)> {
-        history.read_with(cx, |history, _| {
-            history
+    ) -> Vec<(acp::SessionId, String)> {
+        thread_store.read_with(cx, |store, _| {
+            store
                 .entries()
-                .map(|e| (e.id(), e.title().to_string()))
+                .map(|entry| (entry.id.clone(), entry.title.to_string()))
                 .collect::<Vec<_>>()
         })
     }

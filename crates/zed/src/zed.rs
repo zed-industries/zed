@@ -6,6 +6,7 @@ mod migrate;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
+pub mod telemetry_log;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub mod visual_tests;
 #[cfg(target_os = "windows")]
@@ -192,11 +193,6 @@ pub fn init(cx: &mut App) {
                 window,
                 cx,
             );
-        });
-    })
-    .on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
-            open_telemetry_log_file(workspace, window, cx);
         });
     })
     .on_action(|&zed_actions::OpenKeymapFile, cx| {
@@ -1224,6 +1220,9 @@ fn initialize_pane(
             toolbar.add_item(dap_log_item, window, cx);
             let acp_tools_item = cx.new(|_| acp_tools::AcpToolsToolbarItemView::new());
             toolbar.add_item(acp_tools_item, window, cx);
+            let telemetry_log_item =
+                cx.new(|cx| telemetry_log::TelemetryLogToolbarItemView::new(window, cx));
+            toolbar.add_item(telemetry_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
@@ -1530,12 +1529,12 @@ pub fn handle_settings_file_changes(
 
     // Initial load of both settings files
     let global_content = cx
-        .background_executor()
-        .block(global_settings_file_rx.next())
+        .foreground_executor()
+        .block_on(global_settings_file_rx.next())
         .unwrap();
     let user_content = cx
-        .background_executor()
-        .block(user_settings_file_rx.next())
+        .foreground_executor()
+        .block_on(user_settings_file_rx.next())
         .unwrap();
 
     SettingsStore::update_global(cx, |store, cx| {
@@ -1982,74 +1981,6 @@ fn open_local_file(
     }
 }
 
-fn open_telemetry_log_file(
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    const HEADER: &str = concat!(
-        "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-        "// Telemetry can be disabled via the `settings.json` file.\n",
-        "// Here is the data that has been reported for the current session:\n",
-    );
-    workspace
-        .with_local_workspace(window, cx, move |workspace, window, cx| {
-            let app_state = workspace.app_state().clone();
-            cx.spawn_in(window, async move |workspace, cx| {
-                async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                    let path = client::telemetry::Telemetry::log_file_path();
-                    app_state.fs.load(&path).await.log_err()
-                }
-
-                let log = fetch_log_string(&app_state)
-                    .await
-                    .unwrap_or_else(|| "// No data has been collected yet".to_string());
-
-                const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
-                let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
-                if let Some(newline_offset) = log[start_offset..].find('\n') {
-                    start_offset += newline_offset + 1;
-                }
-                let log_suffix = &log[start_offset..];
-                let content = format!("{}\n{}", HEADER, log_suffix);
-                let json = app_state
-                    .languages
-                    .language_for_name("JSON")
-                    .await
-                    .log_err();
-
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        let project = workspace.project().clone();
-                        let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer(&content, json, false, cx)
-                        });
-                        let buffer = cx.new(|cx| {
-                            MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
-                        });
-                        workspace.add_item_to_active_pane(
-                            Box::new(cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_multibuffer(buffer, Some(project), window, cx);
-                                editor.set_read_only(true);
-                                editor.set_breadcrumb_header("Telemetry Log".into());
-                                editor
-                            })),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
-                    })
-                    .log_err()?;
-
-                Some(())
-            })
-            .detach();
-        })
-        .detach();
-}
-
 fn open_bundled_file(
     workspace: &Workspace,
     text: Cow<'static, str>,
@@ -2264,7 +2195,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
         return;
     }
 
-    executor.block(executor.scoped(|scope| {
+    cx.foreground_executor().block_on(executor.scoped(|scope| {
         for load_target in themes_to_load {
             let theme_registry = &theme_registry;
             let reload_tasks = &reload_tasks;

@@ -14,6 +14,7 @@ mod reorder_patch;
 mod retrieve_context;
 mod score;
 mod split_commit;
+mod split_dataset;
 mod synthesize;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
@@ -34,12 +35,13 @@ use crate::distill::run_distill;
 use crate::example::{Example, group_examples_by_repo, read_example_files};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
-use crate::paths::FAILED_EXAMPLES_DIR;
+use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
+use crate::split_dataset::SplitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
 
 #[derive(Parser, Debug)]
@@ -67,6 +69,21 @@ struct EpArgs {
     in_place: bool,
     #[arg(long, short, global = true)]
     failfast: bool,
+    /// How to handle failed examples in output: keep them or skip them.
+    /// Failed examples are always logged to the run's failed directory.
+    #[arg(long, global = true, default_value = "keep")]
+    failed: FailedHandling,
+}
+
+/// Controls whether failed examples are included in the main output.
+/// Failed examples are always logged to the run's failed/ directory regardless of this setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum FailedHandling {
+    /// Include failed examples in the main output (default)
+    #[default]
+    Keep,
+    /// Exclude failed examples from the main output
+    Skip,
 }
 
 const INPUTS_HELP: &str = r#"
@@ -124,6 +141,8 @@ enum Command {
     Clean,
     /// Generate an evaluation example by splitting a chronologically-ordered commit
     SplitCommit(SplitCommitArgs),
+    /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
+    Split(SplitArgs),
 }
 
 impl Display for Command {
@@ -178,13 +197,14 @@ impl Display for Command {
             }
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
+            Command::Split(_) => write!(f, "split"),
         }
     }
 }
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
-    #[clap(long)]
+    #[clap(long, short('p'))]
     prompt_format: PromptFormat,
 }
 
@@ -416,6 +436,13 @@ fn main() {
             }
             return;
         }
+        Command::Split(split_args) => {
+            if let Err(error) = split_dataset::run_split(split_args, &args.inputs) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -431,8 +458,11 @@ fn main() {
                 let mut examples =
                     load_examples(app_state.client.http_client(), &args, output.as_ref()).await?;
 
-                if let Command::Predict(args) = &command {
-                    predict::sync_batches(&args.provider).await?;
+                match &command {
+                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                        predict::sync_batches(&args.provider).await?;
+                    }
+                    _ => (),
                 }
 
                 let failfast_on_single_example = examples.len() == 1;
@@ -509,7 +539,8 @@ fn main() {
                                     }
                                     Command::Clean
                                     | Command::Synthesize(_)
-                                    | Command::SplitCommit(_) => {
+                                    | Command::SplitCommit(_)
+                                    | Command::Split(_) => {
                                         unreachable!()
                                     }
                                 }
@@ -517,7 +548,7 @@ fn main() {
                             }
                             .await;
 
-                            if let Err(error) = result {
+                            let failed = if let Err(error) = result {
                                 handle_error(
                                     error,
                                     &args,
@@ -527,18 +558,25 @@ fn main() {
                                     example,
                                 )
                                 .await;
-                            }
+                                true
+                            } else {
+                                false
+                            };
 
-                            if let Some(ref mut sender) = output_sender.clone() {
-                                let line = serde_json::to_string(example).unwrap();
-                                sender
-                                    .send(line)
-                                    .await
-                                    .expect("Failed to send to output writer");
-                            } else if args.output.is_none() && !matches!(command, Command::Eval(_))
-                            {
-                                let line = serde_json::to_string(example).unwrap();
-                                println!("{}", line);
+                            let should_write = !failed || args.failed == FailedHandling::Keep;
+                            if should_write {
+                                if let Some(ref mut sender) = output_sender.clone() {
+                                    let line = serde_json::to_string(example).unwrap();
+                                    sender
+                                        .send(line)
+                                        .await
+                                        .expect("Failed to send to output writer");
+                                } else if args.output.is_none()
+                                    && !matches!(command, Command::Eval(_))
+                                {
+                                    let line = serde_json::to_string(example).unwrap();
+                                    println!("{}", line);
+                                }
                             }
                         }
                     });
@@ -548,7 +586,13 @@ fn main() {
                 Progress::global().finalize();
 
                 match &command {
-                    Command::Predict(args) => predict::sync_batches(&args.provider).await?,
+                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                        predict::sync_batches(&args.provider).await?;
+                    }
+                    _ => (),
+                }
+
+                match &command {
                     Command::Eval(_) => score::print_report(&examples),
                     _ => (),
                 };
@@ -593,7 +637,16 @@ async fn handle_error(
         .await
         .unwrap();
 
-    let file_path = example
+    let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&failed_jsonl_path)
+        .expect("Failed to open failed.jsonl");
+    writeln!(file, "{}", serde_json::to_string(example).unwrap())
+        .expect("Failed to write to failed.jsonl");
+
+    let cursor_path = example
         .repo_name()
         .unwrap()
         .worktree_path()
@@ -603,23 +656,18 @@ async fn handle_error(
         indoc::indoc! {"
             While processing \"{}\":
 
-            {:?}
+            \x1b[31m{:?}\x1b[0m
 
-            Written to: \x1b[36m{}\x1b[0m
-
-            Cursor File: \x1b[36m{}\x1b[0m
-
-            Explore this example data with:
-            fx \x1b[36m{}\x1b[0m
-
-            Re-run this example with:
-            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+            Example:        \x1b[36m{}\x1b[0m
+            Error file:     \x1b[36m{}\x1b[0m
+            Cursor file:    \x1b[36m{}\x1b[0m
+            Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
         "},
         example.spec.name,
         error,
-        err_path.display(),
-        file_path.display(),
         failed_example_path.display(),
+        err_path.display(),
+        cursor_path.display(),
         command,
         failed_example_path.display(),
     );

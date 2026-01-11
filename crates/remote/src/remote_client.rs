@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "test-support"))]
+use crate::transport::mock::ConnectGuard;
 use crate::{
     SshConnectionOptions,
     protocol::MessageId,
@@ -491,7 +493,7 @@ impl RemoteClient {
         executor: BackgroundExecutor,
     ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.take()?;
-        log::info!("shutting down ssh processes");
+        log::info!("shutting down remote processes");
 
         let State::Connected {
             multiplex_task,
@@ -958,71 +960,62 @@ impl RemoteClient {
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
         client_cx.spawn(async move |cx| {
-            let connection = cx
-                .update_global(|c: &mut ConnectionPool, _| {
-                    if let Some(ConnectionPoolEntry::Connecting(c)) = c.connections.get(&opts) {
-                        c.clone()
+            let connection = cx.update_global(|c: &mut ConnectionPool, _| {
+                if let Some(ConnectionPoolEntry::Connected(c)) = c.connections.get(&opts) {
+                    if let Some(connection) = c.upgrade() {
+                        connection
                     } else {
-                        panic!("missing test connection")
+                        panic!("connection was dropped")
                     }
-                })
-                .await
-                .unwrap();
+                } else {
+                    panic!("missing test connection")
+                }
+            });
 
             connection.simulate_disconnect(cx);
         })
     }
 
+    /// Creates a mock connection pair for testing.
+    ///
+    /// This is the recommended way to create mock remote connections for tests.
+    /// It returns the `MockConnectionOptions` (which can be passed to create a
+    /// `HeadlessProject`), an `AnyProtoClient` for the server side and a
+    /// `ConnectGuard` for the client side which blocks the connection from
+    /// being established until dropped.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+    /// // Set up HeadlessProject with server_session...
+    /// drop(connect_guard);
+    /// let client = RemoteClient::fake_client(opts, cx).await;
+    /// ```
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_server(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (RemoteConnectionOptions, AnyProtoClient) {
-        use crate::transport::ssh::SshConnectionHost;
-
-        let port = client_cx
-            .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
-        let opts = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: SshConnectionHost::from("<fake>".to_string()),
-            port: Some(port),
-            ..Default::default()
-        });
-        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
-        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let server_client = server_cx
-            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server", false));
-        let connection: Arc<dyn RemoteConnection> = Arc::new(fake::FakeRemoteConnection {
-            connection_options: opts.clone(),
-            server_cx: fake::SendableCx::new(server_cx),
-            server_channel: server_client.clone(),
-        });
-
-        client_cx.update(|cx| {
-            cx.update_default_global(|c: &mut ConnectionPool, cx| {
-                c.connections.insert(
-                    opts.clone(),
-                    ConnectionPoolEntry::Connecting(
-                        cx.background_spawn({
-                            let connection = connection.clone();
-                            async move { Ok(connection.clone()) }
-                        })
-                        .shared(),
-                    ),
-                );
-            })
-        });
-
-        (opts, server_client.into())
+    ) -> (RemoteConnectionOptions, AnyProtoClient, ConnectGuard) {
+        use crate::transport::mock::MockConnection;
+        let (opts, server_client, connect_guard) = MockConnection::new(client_cx, server_cx);
+        (opts.into(), server_client, connect_guard)
     }
 
+    /// Creates a `RemoteClient` connected to a mock server.
+    ///
+    /// Call `fake_server` first to get the connection options, set up the
+    /// `HeadlessProject` with the server session, then call this method
+    /// to create the client.
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn fake_client(
+    pub async fn connect_mock(
         opts: RemoteConnectionOptions,
         client_cx: &mut gpui::TestAppContext,
     ) -> Entity<Self> {
+        assert!(matches!(opts, RemoteConnectionOptions::Mock(..)));
+        use crate::transport::mock::MockDelegate;
         let (_tx, rx) = oneshot::channel();
         let mut cx = client_cx.to_async();
-        let connection = connect(opts, Arc::new(fake::Delegate), &mut cx)
+        let connection = connect(opts, Arc::new(MockDelegate), &mut cx)
             .await
             .unwrap();
         client_cx
@@ -1031,7 +1024,7 @@ impl RemoteClient {
                     ConnectionIdentifier::setup(),
                     connection,
                     rx,
-                    Arc::new(fake::Delegate),
+                    Arc::new(MockDelegate),
                     cx,
                 )
             })
@@ -1060,7 +1053,7 @@ struct ConnectionPool {
 impl Global for ConnectionPool {}
 
 impl ConnectionPool {
-    pub fn connect(
+    fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
@@ -1107,6 +1100,16 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        #[cfg(any(test, feature = "test-support"))]
+                        RemoteConnectionOptions::Mock(opts) => match cx.update(|cx| {
+                            cx.default_global::<crate::transport::mock::MockConnectionRegistry>()
+                                .take(&opts)
+                        }) {
+                            Some(connection) => Ok(connection.await as Arc<dyn RemoteConnection>),
+                            None => Err(anyhow!(
+                                "Mock connection not found. Call MockConnection::new() first."
+                            )),
+                        },
                     };
 
                     cx.update_global(|pool: &mut Self, _| {
@@ -1143,6 +1146,8 @@ pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
     Docker(DockerConnectionOptions),
+    #[cfg(any(test, feature = "test-support"))]
+    Mock(crate::transport::mock::MockConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
@@ -1151,6 +1156,8 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
     }
 }
@@ -1164,6 +1171,13 @@ impl From<SshConnectionOptions> for RemoteConnectionOptions {
 impl From<WslConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: WslConnectionOptions) -> Self {
         RemoteConnectionOptions::Wsl(opts)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl From<crate::transport::mock::MockConnectionOptions> for RemoteConnectionOptions {
+    fn from(opts: crate::transport::mock::MockConnectionOptions) -> Self {
+        RemoteConnectionOptions::Mock(opts)
     }
 }
 
@@ -1254,7 +1268,7 @@ impl<T: Send + Clone + 'static> Signal<T> {
     }
 }
 
-struct ChannelClient {
+pub(crate) struct ChannelClient {
     next_message_id: AtomicU32,
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
@@ -1268,7 +1282,7 @@ struct ChannelClient {
 }
 
 impl ChannelClient {
-    fn new(
+    pub(crate) fn new(
         incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &App,
@@ -1419,7 +1433,7 @@ impl ChannelClient {
         })
     }
 
-    fn reconnect(
+    pub(crate) fn reconnect(
         self: &Arc<Self>,
         incoming_rx: UnboundedReceiver<Envelope>,
         outgoing_tx: UnboundedSender<Envelope>,
@@ -1571,203 +1585,5 @@ impl ProtoClient for ChannelClient {
 
     fn has_wsl_interop(&self) -> bool {
         self.has_wsl_interop
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-mod fake {
-    use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
-    use crate::remote_client::{CommandTemplate, RemoteConnectionOptions};
-    use anyhow::Result;
-    use askpass::EncryptedPassword;
-    use async_trait::async_trait;
-    use collections::HashMap;
-    use futures::{
-        FutureExt, SinkExt, StreamExt,
-        channel::{
-            mpsc::{self, Sender},
-            oneshot,
-        },
-        select_biased,
-    };
-    use gpui::{App, AppContext as _, AsyncApp, Task, TestAppContext};
-    use release_channel::ReleaseChannel;
-    use rpc::proto::Envelope;
-    use semver::Version;
-    use std::{path::PathBuf, sync::Arc};
-    use util::paths::{PathStyle, RemotePathBuf};
-
-    pub(super) struct FakeRemoteConnection {
-        pub(super) connection_options: RemoteConnectionOptions,
-        pub(super) server_channel: Arc<ChannelClient>,
-        pub(super) server_cx: SendableCx,
-    }
-
-    pub(super) struct SendableCx(AsyncApp);
-    impl SendableCx {
-        // SAFETY: When run in test mode, GPUI is always single threaded.
-        pub(super) fn new(cx: &TestAppContext) -> Self {
-            Self(cx.to_async())
-        }
-
-        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncApp
-        fn get(&self, _: &AsyncApp) -> AsyncApp {
-            self.0.clone()
-        }
-    }
-
-    // SAFETY: There is no way to access a SendableCx from a different thread, see [`SendableCx::new`] and [`SendableCx::get`]
-    unsafe impl Send for SendableCx {}
-    unsafe impl Sync for SendableCx {}
-
-    #[async_trait(?Send)]
-    impl RemoteConnection for FakeRemoteConnection {
-        async fn kill(&self) -> Result<()> {
-            Ok(())
-        }
-
-        fn has_been_killed(&self) -> bool {
-            false
-        }
-
-        fn build_command(
-            &self,
-            program: Option<String>,
-            args: &[String],
-            env: &HashMap<String, String>,
-            _: Option<String>,
-            _: Option<(u16, String, u16)>,
-        ) -> Result<CommandTemplate> {
-            let ssh_program = program.unwrap_or_else(|| "sh".to_string());
-            let mut ssh_args = Vec::new();
-            ssh_args.push(ssh_program);
-            ssh_args.extend(args.iter().cloned());
-            Ok(CommandTemplate {
-                program: "ssh".into(),
-                args: ssh_args,
-                env: env.clone(),
-            })
-        }
-
-        fn build_forward_ports_command(
-            &self,
-            forwards: Vec<(u16, String, u16)>,
-        ) -> anyhow::Result<CommandTemplate> {
-            Ok(CommandTemplate {
-                program: "ssh".into(),
-                args: std::iter::once("-N".to_owned())
-                    .chain(forwards.into_iter().map(|(local_port, host, remote_port)| {
-                        format!("{local_port}:{host}:{remote_port}")
-                    }))
-                    .collect(),
-                env: Default::default(),
-            })
-        }
-
-        fn upload_directory(
-            &self,
-            _src_path: PathBuf,
-            _dest_path: RemotePathBuf,
-            _cx: &App,
-        ) -> Task<Result<()>> {
-            unreachable!()
-        }
-
-        fn connection_options(&self) -> RemoteConnectionOptions {
-            self.connection_options.clone()
-        }
-
-        fn simulate_disconnect(&self, cx: &AsyncApp) {
-            let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
-            let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-            self.server_channel
-                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx));
-        }
-
-        fn start_proxy(
-            &self,
-            _unique_identifier: String,
-            _reconnect: bool,
-            mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
-            mut client_outgoing_rx: mpsc::UnboundedReceiver<Envelope>,
-            mut connection_activity_tx: Sender<()>,
-            _delegate: Arc<dyn RemoteClientDelegate>,
-            cx: &mut AsyncApp,
-        ) -> Task<Result<i32>> {
-            let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
-            let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
-
-            self.server_channel.reconnect(
-                server_incoming_rx,
-                server_outgoing_tx,
-                &self.server_cx.get(cx),
-            );
-
-            cx.background_spawn(async move {
-                loop {
-                    select_biased! {
-                        server_to_client = server_outgoing_rx.next().fuse() => {
-                            let Some(server_to_client) = server_to_client else {
-                                return Ok(1)
-                            };
-                            connection_activity_tx.try_send(()).ok();
-                            client_incoming_tx.send(server_to_client).await.ok();
-                        }
-                        client_to_server = client_outgoing_rx.next().fuse() => {
-                            let Some(client_to_server) = client_to_server else {
-                                return Ok(1)
-                            };
-                            server_incoming_tx.send(client_to_server).await.ok();
-                        }
-                    }
-                }
-            })
-        }
-
-        fn path_style(&self) -> PathStyle {
-            PathStyle::local()
-        }
-
-        fn shell(&self) -> String {
-            "sh".to_owned()
-        }
-
-        fn default_system_shell(&self) -> String {
-            "sh".to_owned()
-        }
-
-        fn has_wsl_interop(&self) -> bool {
-            false
-        }
-    }
-
-    pub(super) struct Delegate;
-
-    impl RemoteClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: oneshot::Sender<EncryptedPassword>, _: &mut AsyncApp) {
-            unreachable!()
-        }
-
-        fn download_server_binary_locally(
-            &self,
-            _: RemotePlatform,
-            _: ReleaseChannel,
-            _: Option<Version>,
-            _: &mut AsyncApp,
-        ) -> Task<Result<PathBuf>> {
-            unreachable!()
-        }
-
-        fn get_download_url(
-            &self,
-            _platform: RemotePlatform,
-            _release_channel: ReleaseChannel,
-            _version: Option<Version>,
-            _cx: &mut AsyncApp,
-        ) -> Task<Result<Option<String>>> {
-            unreachable!()
-        }
-
-        fn set_status(&self, _: Option<&str>, _: &mut AsyncApp) {}
     }
 }
