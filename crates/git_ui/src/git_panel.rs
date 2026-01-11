@@ -3329,7 +3329,6 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Check if we already have an open staged changes editor
         if let Some(existing_editor) = self
             .staged_changes_editor
             .as_ref()
@@ -3348,7 +3347,6 @@ impl GitPanel {
             return;
         };
 
-        // Collect all partially staged file paths
         let partially_staged_paths: Vec<RepoPath> = self
             .entries
             .iter()
@@ -3372,7 +3370,6 @@ impl GitPanel {
 
         window
             .spawn(cx, async move |cx| {
-                // Create a MultiBuffer to hold all the diffs (read-only for staged view)
                 let multibuffer: Entity<MultiBuffer> = cx.new(|cx| {
                     let mut mb = MultiBuffer::new(Capability::ReadOnly);
                     mb.set_all_diff_hunks_expanded(cx);
@@ -3380,7 +3377,6 @@ impl GitPanel {
                     mb
                 });
 
-                // For each partially staged file, create staged diff (HEAD vs Index)
                 for repo_path in partially_staged_paths {
                     let project_path = active_repo.update(cx, |repo, cx| {
                         repo.repo_path_to_project_path(&repo_path, cx)
@@ -3390,7 +3386,6 @@ impl GitPanel {
                         continue;
                     };
 
-                    // Open the working copy buffer
                     let working_copy_buffer = project
                         .update(cx, |project, cx| project.open_buffer(project_path, cx))
                         .await?;
@@ -3411,7 +3406,6 @@ impl GitPanel {
                         })
                         .await?;
 
-                    // Extract Index content and HEAD content
                     let (index_text, head_text, language): (
                         String,
                         Option<String>,
@@ -3426,7 +3420,6 @@ impl GitPanel {
                     // For untracked files, HEAD content is empty (file is new)
                     let head_content = head_text.unwrap_or_default();
 
-                    // Create a buffer with Index content
                     let index_buffer = project
                         .update(cx, |project, cx| project.create_buffer(false, cx))
                         .await?;
@@ -3441,7 +3434,6 @@ impl GitPanel {
                         if let Some(lang) = language_clone {
                             buffer.set_language(Some(lang), cx);
                         }
-                        // Set file info for proper filename display
                         if let Some(file) = file {
                             buffer.file_updated(file, cx);
                         }
@@ -3449,12 +3441,10 @@ impl GitPanel {
                         buffer.set_capability(Capability::ReadOnly, cx);
                     });
 
-                    // Create a BufferDiff comparing HEAD to Index
                     let index_snapshot = index_buffer.update(cx, |buffer, _| buffer.snapshot());
                     let staged_diff =
                         cx.new(|cx| buffer_diff::BufferDiff::new(&index_snapshot.text, cx));
 
-                    // Compute the diff between HEAD (base) and Index (current)
                     let update = staged_diff
                         .update(cx, |diff, cx| {
                             diff.update_diff(
@@ -3467,14 +3457,12 @@ impl GitPanel {
                         })
                         .await;
 
-                    // Apply the computed diff snapshot
                     staged_diff
                         .update(cx, |diff, cx| {
                             diff.set_snapshot(update, &index_snapshot.text, cx)
                         })
                         .await;
 
-                    // Extract diff hunk ranges from the staged diff
                     let excerpt_ranges: Vec<std::ops::Range<language::Point>> = staged_diff
                         .read_with(cx, |diff, cx| {
                             diff.snapshot(cx)
@@ -3488,7 +3476,6 @@ impl GitPanel {
                                 .collect()
                         });
 
-                    // Only add if there are actual diff hunks
                     if !excerpt_ranges.is_empty() {
                         multibuffer.update(cx, |mb, cx| {
                             let path_key = PathKey::for_buffer(&index_buffer, cx);
@@ -3504,7 +3491,6 @@ impl GitPanel {
                     }
                 }
 
-                // Create editor and add to workspace
                 workspace.update_in(cx, |workspace, window, cx| {
                     let editor = cx.new(|cx| {
                         let mut editor =
@@ -3519,7 +3505,6 @@ impl GitPanel {
                         editor
                     });
 
-                    // Store weak reference to the editor
                     this.update(cx, |this, _| {
                         this.staged_changes_editor = Some(editor.downgrade());
                     })
@@ -3539,7 +3524,6 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Check if we already have an open unstaged changes editor
         if let Some(existing_editor) = self
             .unstaged_changes_editor
             .as_ref()
@@ -3558,7 +3542,6 @@ impl GitPanel {
             return;
         };
 
-        // Collect all partially staged file paths
         let partially_staged_paths: Vec<RepoPath> = self
             .entries
             .iter()
@@ -3582,7 +3565,6 @@ impl GitPanel {
 
         window
             .spawn(cx, async move |cx| {
-                // Create a MultiBuffer to hold all the diffs
                 let multibuffer: Entity<MultiBuffer> = cx.new(|cx| {
                     let mut mb = MultiBuffer::new(Capability::ReadWrite);
                     mb.set_all_diff_hunks_expanded(cx);
@@ -3590,7 +3572,6 @@ impl GitPanel {
                     mb
                 });
 
-                // For each partially staged file, load the buffer and diff
                 for repo_path in partially_staged_paths {
                     let project_path = active_repo.update(cx, |repo, cx| {
                         repo.repo_path_to_project_path(&repo_path, cx)
@@ -3600,12 +3581,10 @@ impl GitPanel {
                         continue;
                     };
 
-                    // Open the working copy buffer
                     let working_copy_buffer = project
                         .update(cx, |project, cx| project.open_buffer(project_path, cx))
                         .await?;
 
-                    // Get unstaged diff (Index vs Working Copy)
                     let unstaged_diff = project
                         .update(cx, |project, cx| {
                             project.git_store().update(cx, |git_store, cx| {
@@ -3614,7 +3593,6 @@ impl GitPanel {
                         })
                         .await?;
 
-                    // Get buffer snapshot and extract diff hunk ranges
                     let buffer_snapshot =
                         working_copy_buffer.read_with(cx, |buffer, _| buffer.snapshot());
                     let excerpt_ranges: Vec<std::ops::Range<language::Point>> = unstaged_diff
@@ -3630,7 +3608,6 @@ impl GitPanel {
                                 .collect()
                         });
 
-                    // Only add if there are actual diff hunks
                     if !excerpt_ranges.is_empty() {
                         multibuffer.update(cx, |mb, cx| {
                             let path_key = PathKey::for_buffer(&working_copy_buffer, cx);
@@ -3646,7 +3623,6 @@ impl GitPanel {
                     }
                 }
 
-                // Create editor and add to workspace
                 workspace.update_in(cx, |workspace, window, cx| {
                     let editor = cx.new(|cx| {
                         let mut editor =
@@ -3661,7 +3637,6 @@ impl GitPanel {
                         editor
                     });
 
-                    // Store weak reference to the editor
                     this.update(cx, |this, _| {
                         this.unstaged_changes_editor = Some(editor.downgrade());
                     })
@@ -3867,7 +3842,6 @@ impl GitPanel {
                                 })
                                 .await?;
 
-                            // Get buffer snapshot and extract diff hunk ranges
                             let buffer_snapshot =
                                 working_copy_buffer.read_with(cx, |buffer, _| buffer.snapshot());
                             let excerpt_ranges: Vec<std::ops::Range<language::Point>> =
@@ -3883,7 +3857,6 @@ impl GitPanel {
                                         .collect()
                                 });
 
-                            // Only add if there are actual diff hunks
                             if !excerpt_ranges.is_empty() {
                                 multibuffer.update(cx, |mb, cx| {
                                     let path_key = PathKey::for_buffer(&working_copy_buffer, cx);
