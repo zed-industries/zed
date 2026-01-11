@@ -54,8 +54,8 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings,
-    WorkspaceStore, notifications::NotificationId,
+    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -1229,8 +1229,24 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (index, (location, paths)) in locations.into_iter().enumerate() {
+        for (index, (workspace_id, location, paths)) in locations.into_iter().enumerate() {
             match location {
+                SerializedWorkspaceLocation::Local if paths.is_empty() => {
+                    // Restore empty workspace by ID (has items like drafts but no folders)
+                    let app_state = app_state.clone();
+                    let task = cx.spawn(async move |cx| {
+                        let open_task = cx.update(|cx| {
+                            workspace::open_workspace_by_id(workspace_id, app_state, cx)
+                        });
+                        open_task.await.map(|_| ())
+                    });
+
+                    if use_system_window_tabs && index == 0 {
+                        results.push(task.await);
+                    } else {
+                        tasks.push(task);
+                    }
+                }
                 SerializedWorkspaceLocation::Local => {
                     let app_state = app_state.clone();
                     let task = cx.spawn(async move |cx| {
@@ -1351,7 +1367,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
-) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
     let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();

@@ -5688,12 +5688,16 @@ impl Workspace {
         }
     }
 
+    fn has_any_items(&self, cx: &App) -> bool {
+        self.panes.iter().any(|pane| pane.read(cx).items_len() > 0)
+    }
+
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
-            if !paths.is_empty() {
+            if !paths.is_empty() || self.has_any_items(cx) {
                 WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
@@ -7576,14 +7580,15 @@ impl WorkspaceHandle for Entity<Workspace> {
     }
 }
 
-pub async fn last_opened_workspace_location() -> Option<(SerializedWorkspaceLocation, PathList)> {
+pub async fn last_opened_workspace_location()
+-> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
@@ -7914,6 +7919,80 @@ pub struct OpenOptions {
     pub prefer_focused_window: bool,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
+}
+
+/// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
+pub fn open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    app_state: Arc<AppState>,
+    cx: &mut App,
+) -> Task<anyhow::Result<WindowHandle<Workspace>>> {
+    let project_handle = Project::local(
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.user_store.clone(),
+        app_state.languages.clone(),
+        app_state.fs.clone(),
+        None,
+        true,
+        cx,
+    );
+
+    cx.spawn(async move |cx| {
+        let serialized_workspace = persistence::DB
+            .workspace_for_id(workspace_id)
+            .ok_or_else(|| anyhow::anyhow!("Workspace {} not found", workspace_id.0))?;
+
+        let window_bounds_override = window_bounds_env_override();
+
+        let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+            (Some(WindowBounds::Windowed(bounds)), None)
+        } else if let Some(display) = serialized_workspace.display
+            && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
+        {
+            (Some(bounds.0), Some(display))
+        } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+            (Some(bounds), Some(display))
+        } else {
+            (None, None)
+        };
+
+        let options = cx.update(|cx| {
+            let mut options = (app_state.build_window_options)(display, cx);
+            options.window_bounds = window_bounds;
+            options
+        });
+        let centered_layout = serialized_workspace.centered_layout;
+
+        let window = cx.open_window(options, {
+            let app_state = app_state.clone();
+            let project_handle = project_handle.clone();
+            move |window, cx| {
+                cx.new(|cx| {
+                    let mut workspace =
+                        Workspace::new(Some(workspace_id), project_handle, app_state, window, cx);
+                    workspace.centered_layout = centered_layout;
+                    workspace
+                })
+            }
+        })?;
+
+        notify_if_database_failed(window, cx);
+
+        // Restore items from the serialized workspace
+        window
+            .update(cx, |_workspace, window, cx| {
+                open_items(Some(serialized_workspace), vec![], window, cx)
+            })?
+            .await?;
+
+        window.update(cx, |workspace, window, cx| {
+            window.activate_window();
+            workspace.serialize_workspace(window, cx);
+        })?;
+
+        Ok(window)
+    })
 }
 
 #[allow(clippy::type_complexity)]
