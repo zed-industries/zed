@@ -1306,6 +1306,7 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
+            let language_name = language_name.clone();
             self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
@@ -1314,7 +1315,7 @@ impl ExtensionStore {
                 Arc::new(move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
-                    let queries = load_plugin_queries(&language_path);
+                    let queries = load_plugin_queries(&language_name, &language_path);
                     let context_provider =
                         std::fs::read_to_string(language_path.join("tasks.json"))
                             .ok()
@@ -1879,14 +1880,24 @@ impl ExtensionStore {
     }
 }
 
-fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
+fn load_plugin_queries(language_name: &LanguageName, root_path: &Path) -> LanguageQueries {
     let mut result = LanguageQueries::default();
+    load_query_dir(&mut result, root_path);
+    load_query_dir(
+        &mut result,
+        &paths::languages_config_dir().join(language_name.as_ref()),
+    );
+    result
+}
+
+fn load_query_dir(result: &mut LanguageQueries, root_path: &Path) {
     if let Some(entries) = std::fs::read_dir(root_path).log_err() {
         for entry in entries {
             let Some(entry) = entry.log_err() else {
                 continue;
             };
             let path = entry.path();
+            log::debug!("Found language dir at {path:?}");
             if let Some(remainder) = path.strip_prefix(root_path).ok().and_then(|p| p.to_str()) {
                 if !remainder.ends_with(".scm") {
                     continue;
@@ -1894,8 +1905,9 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
                 for (name, query) in QUERY_FILENAME_PREFIXES {
                     if remainder.starts_with(name) {
                         if let Some(contents) = std::fs::read_to_string(&path).log_err() {
-                            match query(&mut result) {
-                                None => *query(&mut result) = Some(contents.into()),
+                            log::debug!("Found query at {path:?}");
+                            match query(result) {
+                                None => *query(result) = Some(contents.into()),
                                 Some(r) => r.to_mut().push_str(contents.as_ref()),
                             }
                         }
@@ -1905,5 +1917,4 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
             }
         }
     }
-    result
 }

@@ -435,5 +435,40 @@ fn load_queries(name: &str) -> LanguageQueries {
             }
         }
     }
+
+    // TODO: dedupe this logic with extension_host? Also, should there be some kind of
+    // reload logic to pick up changes in the external queries for builtin langs?
+    let root_path = paths::languages_config_dir().join(name);
+    let config_dir = std::fs::read_dir(&root_path)
+        .context(format!("reading directory: {root_path:?}"))
+        .log_with_level(log::Level::Debug);
+
+    if let Some(entries) = config_dir {
+        log::debug!("adding queries from {root_path:?}");
+        for entry in entries {
+            let Some(entry) = entry.log_err() else {
+                continue;
+            };
+            let path = entry.path();
+            if let Some(remainder) = path.strip_prefix(&root_path).ok().and_then(|p| p.to_str()) {
+                if !remainder.ends_with(".scm") {
+                    continue;
+                }
+                log::debug!("Found query at {path:?}");
+                for (name, query, _) in QUERY_FILENAME_PREFIXES {
+                    if remainder.starts_with(name) {
+                        if let Some(contents) = std::fs::read_to_string(&path).log_err() {
+                            match query(&mut result) {
+                                None => *query(&mut result) = Some(contents.into()),
+                                Some(r) => r.to_mut().push_str(&contents),
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     result
 }

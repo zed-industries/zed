@@ -291,6 +291,12 @@ pub fn snippets_dir() -> &'static PathBuf {
     SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
 }
 
+/// Returns the path to the user languages directory.
+pub fn languages_config_dir() -> &'static PathBuf {
+    static LANGUAGES_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LANGUAGES_CONFIG_DIR.get_or_init(|| config_dir().join("languages"))
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
