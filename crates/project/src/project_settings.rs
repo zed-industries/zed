@@ -744,6 +744,22 @@ impl SettingsObserver {
         let mut user_settings_watcher = None;
         if cx.try_global::<SettingsStore>().is_some() {
             if let Some(upstream_client) = upstream_client {
+                // Send current settings immediately on connection, before setting up the
+                // change observer. This ensures the remote server has the necessary
+                // configuration (e.g., NodeBinaryOptions) available immediately, rather
+                // than waiting for a settings change that may never come.
+                // See: https://github.com/zed-industries/zed/issues/46282
+                if let Some(current_settings) = cx.global::<SettingsStore>().raw_user_settings() {
+                    if let Some(settings_string) = serde_json::to_string(current_settings).ok() {
+                        upstream_client
+                            .send(proto::UpdateUserSettings {
+                                project_id: REMOTE_SERVER_PROJECT_ID,
+                                contents: settings_string,
+                            })
+                            .log_err();
+                    }
+                }
+
                 let mut user_settings = None;
                 user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
                     if let Some(new_settings) = cx.global::<SettingsStore>().raw_user_settings() {
