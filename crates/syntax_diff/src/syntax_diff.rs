@@ -12,10 +12,7 @@ pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_
 
 use std::ops::Range;
 
-use crate::{
-    syntax_graph::{ExceededGraphLimit, SyntaxRoute},
-    syntax_tree::SyntaxHint,
-};
+use crate::{syntax_graph::SyntaxRoute, syntax_tree::SyntaxHint};
 
 /// Result of a syntax diff operation.
 ///
@@ -60,13 +57,13 @@ pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
     options: &DiffOptions,
-) -> Result<SyntaxDiff, ExceededGraphLimit> {
+) -> Option<SyntaxDiff> {
     let route =
         syntax_graph::shortest_path(lhs_tree, rhs_tree, options.max_syntax_diff_graph_size)?;
 
     let (lhs_ranges, rhs_ranges) = collect_ranges(&route, lhs_tree, rhs_tree, options);
 
-    Ok(SyntaxDiff {
+    Some(SyntaxDiff {
         lhs_ranges: merge_ranges(lhs_ranges),
         rhs_ranges: merge_ranges(rhs_ranges),
     })

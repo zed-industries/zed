@@ -1078,7 +1078,6 @@ fn process_patch_hunk(
                         <= diff_options.max_syntax_diff_graph_size
                 {
                     syntax_diff::diff_trees(&base_syntax_tree, &buffer_syntax_tree, diff_options)
-                        .ok()
                         .map(|diff| {
                             let lhs_hunk_len =
                                 diff_base_byte_range.end - diff_base_byte_range.start;

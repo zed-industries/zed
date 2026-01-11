@@ -12,10 +12,6 @@ use collections::FxHashMap;
 use crate::SyntaxTree;
 use crate::syntax_tree::{SyntaxHint, SyntaxTreeCursor};
 
-/// Error when the graph search exceeds the configured limit.
-#[derive(Debug)]
-pub struct ExceededGraphLimit;
-
 /// A path segment in the diff graph.
 ///
 /// Represents a transition from one vertex to another via an edge.
@@ -437,7 +433,7 @@ pub fn shortest_path<'a>(
     lhs_tree: &'a SyntaxTree,
     rhs_tree: &'a SyntaxTree,
     graph_limit: usize,
-) -> Result<SyntaxRoute<'a>, ExceededGraphLimit> {
+) -> Option<SyntaxRoute<'a>> {
     let lhs_cursor = lhs_tree.cursor();
     let rhs_cursor = rhs_tree.cursor();
 
@@ -457,11 +453,7 @@ pub fn shortest_path<'a>(
     }));
 
     let end_vertex = loop {
-        let Reverse(path) = match heap.pop() {
-            Some(state) => state,
-            None => return Err(ExceededGraphLimit),
-        };
-
+        let Reverse(path) = heap.pop()?;
         let current_vertex = path.into.clone();
 
         match visited.entry(current_vertex.clone()) {
@@ -479,7 +471,7 @@ pub fn shortest_path<'a>(
         }
 
         if visited.len() > graph_limit {
-            return Err(ExceededGraphLimit);
+            return None;
         }
 
         let neighbours = compute_neighbours(&current_vertex);
@@ -501,7 +493,7 @@ pub fn shortest_path<'a>(
         }
     };
 
-    Ok(SyntaxRoute(reconstruct_path(end_vertex, &visited)))
+    Some(SyntaxRoute(reconstruct_path(end_vertex, &visited)))
 }
 
 fn reconstruct_path<'a>(
