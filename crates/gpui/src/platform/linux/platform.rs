@@ -203,6 +203,12 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
 
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut(ThermalState)>) {}
+
+    fn thermal_state(&self) -> ThermalState {
+        ThermalState::Nominal
+    }
+
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
