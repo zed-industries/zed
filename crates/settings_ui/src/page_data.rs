@@ -3971,7 +3971,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 20] {
+    fn project_panel_section() -> [SettingsPageItem; 22] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4266,6 +4266,52 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .sticky_scroll = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Smooth Scroll",
+                description: "Animate scroll with a smooth effect",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_scroll.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_scroll
+                            .as_ref()
+                            .and_then(|smooth_scroll| smooth_scroll.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_scroll
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Smooth Scroll Duration",
+                description: "Duration of the smoothing effect",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_scroll.duration"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_scroll
+                            .as_ref()
+                            .and_then(|smooth_scroll| smooth_scroll.duration.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_scroll
+                            .get_or_insert_default()
+                            .duration = value;
                     },
                 }),
                 metadata: None,
