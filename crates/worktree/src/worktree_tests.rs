@@ -343,6 +343,217 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_scan_symlinks_setting(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "deps": {},
+                "src": {
+                    "a.rs": "",
+                },
+            },
+            "dir2": {
+                "src": {
+                    "b.rs": "",
+                }
+            },
+        }),
+    )
+    .await;
+
+    // Create a symlink pointing outside the worktree
+    fs.create_symlink("/root/dir1/deps/dep-dir2".as_ref(), "../../dir2".into())
+        .await
+        .unwrap();
+
+    // Test 1: scan_symlinks = "never" (default)
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.scan_symlinks = Some(settings::ScanSymlinksSetting::Never);
+            });
+        });
+    });
+
+    let tree = Worktree::local(
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // With "never", the symlink directory should exist but not be scanned
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("deps"),
+                rel_path("deps/dep-dir2"),
+                rel_path("src"),
+                rel_path("src/a.rs"),
+            ]
+        );
+
+        // The symlinked directory should be unloaded
+        assert_eq!(
+            tree.entry_for_path(rel_path("deps/dep-dir2")).unwrap().kind,
+            EntryKind::UnloadedDir
+        );
+    });
+
+    // Test 2: scan_symlinks = "always"
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.scan_symlinks = Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let tree2 = Worktree::local(
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree2.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // With "always", the symlink directory should be fully scanned
+    tree2.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("deps"),
+                rel_path("deps/dep-dir2"),
+                rel_path("deps/dep-dir2/src"),
+                rel_path("deps/dep-dir2/src/b.rs"),
+                rel_path("src"),
+                rel_path("src/a.rs"),
+            ]
+        );
+    });
+
+    // Test 3: scan_symlinks = "expanded"
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.scan_symlinks = Some(settings::ScanSymlinksSetting::Expanded);
+            });
+        });
+    });
+
+    let tree3 = Worktree::local(
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree3.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // With "expanded", initially the symlink should not be scanned
+    tree3.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("deps"),
+                rel_path("deps/dep-dir2"),
+                rel_path("src"),
+                rel_path("src/a.rs"),
+            ]
+        );
+
+        assert_eq!(
+            tree.entry_for_path(rel_path("deps/dep-dir2")).unwrap().kind,
+            EntryKind::UnloadedDir
+        );
+    });
+
+    // Now expand the symlinked directory
+    tree3
+        .read_with(cx, |tree, _| {
+            tree.as_local()
+                .unwrap()
+                .refresh_entries_for_paths(vec![rel_path("deps/dep-dir2").into()])
+        })
+        .recv()
+        .await;
+
+    // After expansion, the contents should be loaded recursively
+    tree3.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("deps"),
+                rel_path("deps/dep-dir2"),
+                rel_path("deps/dep-dir2/src"),
+                rel_path("deps/dep-dir2/src/b.rs"),
+                rel_path("src"),
+                rel_path("src/a.rs"),
+            ]
+        );
+    });
+
+    // Add a new file to the symlinked directory and verify it's picked up
+    fs.insert_file("/root/dir2/src/c.rs", "// new file".into())
+        .await;
+
+    tree3.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("deps/dep-dir2/src").into()])
+    })
+    .recv()
+    .await;
+
+    // The new file should be visible, confirming the directory stays scanned
+    tree3.read_with(cx, |tree, _| {
+        let entries: Vec<_> = tree.entries(true, 0)
+            .map(|entry| entry.path.as_ref())
+            .collect();
+        assert!(
+            entries.contains(&rel_path("deps/dep-dir2/src/c.rs")),
+            "New file in expanded symlink should be visible. Got: {:?}",
+            entries
+        );
+    });
+
+}
+
 #[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_renaming_case_only(cx: &mut TestAppContext) {

@@ -526,6 +526,20 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
+## Scan Symbolic Links
+
+- Description: When to scan content of linked directories.
+- Setting: `scan_symlinks`
+- Default: `never`
+
+**Options**
+
+- `always`: Always scan symlinked directories
+- `expanded`: Only scan symlinked directories when they've been expanded in the workspace
+- `never`: Never scan symlinked directories
+
+When set to `always`, Zed will follow symbolic links and scan their contents when indexing the project. When set to `expanded`, symbolic links will only be scanned after you explicitly expand them in the project panel. When set to `never` (default), symbolic links are not followed or scanned.
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
