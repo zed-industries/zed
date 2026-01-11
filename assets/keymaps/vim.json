@@ -1058,10 +1058,11 @@
     },
   },
   {
-    "context": "Editor && edit_prediction",
+    "context": "Editor && edit_prediction && vim_mode == insert",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.
+      // Only allow in insert mode to avoid conflicts with normal mode operations.
       "tab": "editor::AcceptEditPrediction",
     },
   },

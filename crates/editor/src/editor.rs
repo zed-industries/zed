@@ -2367,6 +2367,16 @@ impl Editor {
                             });
                             if active {
                                 editor.show_mouse_cursor(cx);
+                                // Clear edit prediction preview when window is reactivated.
+                                if editor.edit_prediction_preview_is_active() {
+                                    editor.edit_prediction_preview =
+                                        EditPredictionPreview::Inactive {
+                                            released_too_fast: false,
+                                        };
+                                    editor.clear_row_highlights::<EditPredictionPreview>();
+                                    editor.update_visible_edit_prediction(window, cx);
+                                    cx.notify();
+                                }
                             }
                         }),
                     ]

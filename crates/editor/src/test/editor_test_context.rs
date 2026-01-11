@@ -251,6 +251,14 @@ impl EditorTestContext {
         self.cx.dispatch_keystroke(self.window, keystroke);
     }
 
+    pub fn simulate_window_activation(&mut self) {
+        self.cx.simulate_window_activation(self.window);
+    }
+
+    pub fn simulate_window_deactivation(&mut self) {
+        self.cx.simulate_window_deactivation(self.window);
+    }
+
     pub fn run_until_parked(&mut self) {
         self.cx.background_executor.run_until_parked();
     }
