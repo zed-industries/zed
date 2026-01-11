@@ -95,6 +95,7 @@ impl PlatformAtlas for DirectXAtlas {
         }
     }
 
+    #[track_caller]
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
@@ -115,8 +116,7 @@ impl PlatformAtlas for DirectXAtlas {
         if let Some(mut texture) = texture_slot.take() {
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
-                textures.free_list.push(texture.id.index as usize);
-                lock.tiles_by_key.remove(key);
+                textures.mark_freed(texture.id.index as usize, key);
             } else {
                 *texture_slot = Some(texture);
             }
@@ -148,6 +148,41 @@ impl DirectXAtlasState {
 
         let texture = self.push_texture(size, texture_kind)?;
         texture.allocate(size)
+    }
+
+    fn texture_or_panic(&self, id: AtlasTextureId) -> &DirectXAtlasTexture {
+        let textures = match id.kind {
+            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
+            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
+            crate::AtlasTextureKind::Subpixel => &self.subpixel_textures,
+        };
+
+        match textures.textures.get(id.index as usize) {
+            Some(Some(texture)) => texture,
+            Some(None) => {
+                if let Some(info) = textures.get_freed_info(id.index as usize) {
+                    panic!(
+                        "Attempted to access freed atlas texture (id: {:?}). \
+                        Texture was freed at {} by removing key: {:?}",
+                        id, info.location, info.key
+                    );
+                } else {
+                    panic!(
+                        "Attempted to access atlas texture slot that is None but not in free list \
+                        (id: {:?}). This indicates a bug in atlas management.",
+                        id
+                    );
+                }
+            }
+            None => {
+                panic!(
+                    "Attempted to access atlas texture with out-of-bounds index \
+                    (id: {:?}, textures len: {})",
+                    id,
+                    textures.textures.len()
+                );
+            }
+        }
     }
 
     fn push_texture(
@@ -216,7 +251,7 @@ impl DirectXAtlasState {
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
             AtlasTextureKind::Subpixel => &mut self.subpixel_textures,
         };
-        let index = texture_list.free_list.pop();
+        let index = texture_list.reuse_slot();
         let view = unsafe {
             let mut view = None;
             self.device
@@ -245,17 +280,7 @@ impl DirectXAtlasState {
     }
 
     fn texture(&self, id: AtlasTextureId) -> &DirectXAtlasTexture {
-        match id.kind {
-            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures[id.index as usize]
-                .as_ref()
-                .unwrap(),
-            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures[id.index as usize]
-                .as_ref()
-                .unwrap(),
-            crate::AtlasTextureKind::Subpixel => {
-                &self.subpixel_textures[id.index as usize].as_ref().unwrap()
-            }
-        }
+        self.texture_or_panic(id)
     }
 }
 

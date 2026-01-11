@@ -60,9 +60,11 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
+use std::panic::Location;
 use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
@@ -799,7 +801,7 @@ pub(crate) fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
     ]
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub(crate) enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
@@ -858,9 +860,15 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     fn remove(&self, key: &AtlasKey);
 }
 
+struct FreedTextureInfo {
+    key: AtlasKey,
+    location: &'static Location<'static>,
+}
+
 struct AtlasTextureList<T> {
     textures: Vec<Option<T>>,
     free_list: Vec<usize>,
+    freed_diagnostics: HashMap<usize, FreedTextureInfo>,
 }
 
 impl<T> Default for AtlasTextureList<T> {
@@ -868,6 +876,7 @@ impl<T> Default for AtlasTextureList<T> {
         Self {
             textures: Vec::default(),
             free_list: Vec::default(),
+            freed_diagnostics: HashMap::default(),
         }
     }
 }
@@ -884,12 +893,35 @@ impl<T> AtlasTextureList<T> {
     #[allow(unused)]
     fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
         self.free_list.clear();
+        self.freed_diagnostics.clear();
         self.textures.drain(..)
     }
 
     #[allow(dead_code)]
     fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
         self.textures.iter_mut().flatten()
+    }
+
+    #[track_caller]
+    fn mark_freed(&mut self, index: usize, key: &AtlasKey) {
+        self.free_list.push(index);
+        self.freed_diagnostics.insert(
+            index,
+            FreedTextureInfo {
+                key: key.clone(),
+                location: Location::caller(),
+            },
+        );
+    }
+
+    fn reuse_slot(&mut self) -> Option<usize> {
+        let index = self.free_list.pop()?;
+        self.freed_diagnostics.remove(&index);
+        Some(index)
+    }
+
+    fn get_freed_info(&self, index: usize) -> Option<&FreedTextureInfo> {
+        self.freed_diagnostics.get(&index)
     }
 }
 

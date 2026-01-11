@@ -3463,6 +3463,7 @@ impl Window {
     }
 
     /// Removes an image from the sprite atlas.
+    #[track_caller]
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
             let params = RenderImageParams {
