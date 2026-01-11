@@ -3550,7 +3550,7 @@ impl Editor {
         let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
         if !other_selections.is_empty() {
             self.selections
-                .change_with(&self.display_snapshot(cx), |selections| {
+                .change_with(&self.display_snapshot(cx), false, |selections| {
                     selections.select_anchors(other_selections);
                 });
         }
@@ -3562,7 +3562,7 @@ impl Editor {
                     return;
                 }
                 let snapshot = this.display_snapshot(cx);
-                this.selections.change_with(&snapshot, |selections| {
+                this.selections.change_with(&snapshot, false, |selections| {
                     selections.select_anchors(other_selections);
                 });
             }
@@ -3578,7 +3578,7 @@ impl Editor {
                     let snapshot = other_editor.display_snapshot(cx);
                     other_editor
                         .selections
-                        .change_with(&snapshot, |selections| {
+                        .change_with(&snapshot, false, |selections| {
                             selections.select_anchors(these_selections);
                         })
                 });
@@ -3618,7 +3618,9 @@ impl Editor {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
             state.effects.completions = effects.completions;
             state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
-            let (changed, result) = self.selections.change_with(&snapshot, change);
+            let (changed, result) =
+                self.selections
+                    .change_with(&snapshot, self.cursor_offset_on_selection, change);
             state.changed |= changed;
             return result;
         }
@@ -3633,7 +3635,9 @@ impl Editor {
                 add_selections_state: self.add_selections_state.clone(),
             },
         };
-        let (changed, result) = self.selections.change_with(&snapshot, change);
+        let (changed, result) =
+            self.selections
+                .change_with(&snapshot, self.cursor_offset_on_selection, change);
         state.changed = state.changed || changed;
         if self.defer_selection_effects {
             self.deferred_selection_effects_state = Some(state);
@@ -19025,7 +19029,7 @@ impl Editor {
     ) {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.selections
-            .change_with(&self.display_snapshot(cx), |s| {
+            .change_with(&self.display_snapshot(cx), false, |s| {
                 s.select_anchors(selections);
                 if let Some(pending_selection) = pending_selection {
                     s.set_pending(pending_selection, SelectMode::Character);
@@ -19741,7 +19745,7 @@ impl Editor {
         });
 
         let snapshot = self.display_snapshot(cx);
-        self.selections.change_with(&snapshot, |selections| {
+        self.selections.change_with(&snapshot, false, |selections| {
             selections.remove_selections_from_buffer(buffer_id);
         });
 

@@ -755,7 +755,13 @@ impl Vim {
 
                 let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
-                    .map(|selection| selection.end.row)
+                    .map(|selection| {
+                        if !selection.is_empty() && selection.end.column == 0 {
+                            selection.end.row.saturating_sub(1)
+                        } else {
+                            selection.end.row
+                        }
+                    })
                     .collect();
                 let edits = selection_end_rows
                     .into_iter()

@@ -12,7 +12,7 @@ use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
 
 use crate::{
-    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBufferSnapshot, SelectMode, ToOffset,
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBufferSnapshot, RowExt, SelectMode, ToOffset,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
 };
@@ -464,12 +464,14 @@ impl SelectionsCollection {
     pub fn change_with<R>(
         &mut self,
         snapshot: &DisplaySnapshot,
+        cursor_offset: bool,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> (bool, R) {
         let mut mutable_collection = MutableSelectionsCollection {
             snapshot,
             collection: self,
             selections_changed: false,
+            cursor_offset,
         };
 
         let result = change(&mut mutable_collection);
@@ -544,6 +546,7 @@ pub struct MutableSelectionsCollection<'snap, 'a> {
     collection: &'a mut SelectionsCollection,
     snapshot: &'snap DisplaySnapshot,
     selections_changed: bool,
+    cursor_offset: bool,
 }
 
 impl<'snap, 'a> fmt::Debug for MutableSelectionsCollection<'snap, 'a> {
@@ -957,8 +960,26 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             SelectionGoal,
         ) -> (DisplayPoint, SelectionGoal),
     ) {
+        let cursor_offset = self.cursor_offset;
         self.move_with(|map, selection| {
-            let (cursor, new_goal) = update_cursor_position(map, selection.head(), selection.goal);
+            let mut head = selection.head();
+            let range = selection.range();
+            if cursor_offset && !range.is_empty() && !selection.reversed {
+                if head.column() > 0 {
+                    head = map
+                        .clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
+                } else if head.row().0 > 0 && head != map.max_point() {
+                    head = map.clip_point(
+                        DisplayPoint::new(
+                            head.row().previous_row(),
+                            map.line_len(head.row().previous_row()),
+                        ),
+                        Bias::Left,
+                    );
+                }
+            }
+
+            let (cursor, new_goal) = update_cursor_position(map, head, selection.goal);
             selection.collapse_to(cursor, new_goal)
         });
     }
