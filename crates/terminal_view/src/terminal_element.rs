@@ -1363,6 +1363,14 @@ impl Element for TerminalElement {
                                     }],
                                     None
                                 );
+
+                                // Paint background to cover terminal text behind marked text
+                                let ime_background_bounds = Bounds::new(
+                                    ime_position,
+                                    size(shaped_line.width, layout.dimensions.line_height),
+                                );
+                                window.paint_quad(fill(ime_background_bounds, layout.background_color));
+
                                 shaped_line.paint(
                                     ime_position,
                                     layout.dimensions.line_height,
