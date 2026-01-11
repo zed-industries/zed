@@ -475,8 +475,9 @@ impl BufferDiffSnapshot {
                     let relative_target_point =
                         target_point - prev_hunk_base_text_end.to_point(self.base_text());
                     let base = prev_hunk_buffer_end.to_point(buffer);
-                    let start = base + patch.new_to_old(relative_target_point, Bias::Left);
-                    let end = base + patch.new_to_old(relative_target_point, Bias::Right);
+                    let old_position = base + relative_target_point;
+                    let start = patch.old_to_new(old_position, Bias::Left);
+                    let end = patch.old_to_new(old_position, Bias::Right);
                     start.row..end.row
                 } else {
                     let buffer_start = hunk.buffer_range.start.to_point(buffer);
@@ -2829,6 +2830,6 @@ mod tests {
         );
 
         let buffer_rows: Vec<_> = diff.base_text_rows_to_rows(0..5, &buffer).collect();
-        assert_eq!(buffer_rows, vec![0..0, 0..0, 1..3, 1..3, 1..3, 6..8]);
+        assert_eq!(buffer_rows, vec![0..0, 0..0, 1..5, 1..5, 5..5, 6..8]);
     }
 }

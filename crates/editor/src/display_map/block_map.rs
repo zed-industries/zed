@@ -1050,11 +1050,10 @@ impl BlockMap {
         })
     }
 
-    // FIXME
     fn spacer_blocks(
         &self,
-        mut new_buffer_range: Range<MultiBufferPoint>,
-        new_wrap_row_range: Range<WrapRow>,
+        new_buffer_range: Range<MultiBufferPoint>,
+        _new_wrap_row_range: Range<WrapRow>,
         wrap_snapshot: &WrapSnapshot,
         companion_snapshot: &WrapSnapshot,
         companion: &Companion,
@@ -1063,82 +1062,85 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        let diff_hunks: Vec<_> = our_buffer
-            .diff_hunks_in_range(new_buffer_range.clone())
-            .collect();
-        let excerpt_to_companion_excerpt = companion.excerpt_to_companion_excerpt(display_map_id);
+        let row_range =
+            MultiBufferRow(new_buffer_range.start.row)..MultiBufferRow(new_buffer_range.end.row);
 
-        debug_assert_eq!(new_buffer_range.start.column, 0);
-
-        new_buffer_range.start.row = new_buffer_range.start.row.saturating_sub(1);
-        new_buffer_range.start.column = 0;
-        let our_start_wrap_row = wrap_snapshot
-            .make_wrap_point(new_buffer_range.start, Bias::Left)
-            .row();
-
-        let companion_start_buffer_row = convert_row_to_companion(
-            excerpt_to_companion_excerpt,
+        let excerpt_translations = companion.convert_rows_to_companion(
+            display_map_id,
             companion_buffer,
             our_buffer,
-            MultiBufferRow(new_buffer_range.start.row),
-            Bias::Left,
+            row_range,
         );
-        let companion_start_wrap_row = companion_snapshot
-            .make_wrap_point(Point::new(companion_start_buffer_row.0, 0), Bias::Left)
-            .row();
 
-        // Baseline: how many more rows does companion have at the start?
-        // (We assume prior spacers have balanced this)
         let mut result = Vec::new();
-        let mut our_baseline_wrap_row = our_start_wrap_row.0;
-        let mut companion_baseline_wrap_row = companion_start_wrap_row.0;
+        let num_excerpts = excerpt_translations.len();
 
-        // Iterate through buffer rows, checking if each is a checkpoint
-        for buffer_row in new_buffer_range.start.row..=new_buffer_range.end.row {
-            if diff_hunks.iter().any(|hunk| {
-                buffer_row >= hunk.row_range.start.0 && buffer_row < hunk.row_range.end.0
-            }) {
+        for (excerpt_idx, excerpt_translation) in excerpt_translations.into_iter().enumerate() {
+            let boundaries = &excerpt_translation.boundaries;
+            if boundaries.is_empty() {
                 continue;
             }
 
-            // Get our wrap row at this checkpoint (at the start of the next row after the checkpoint)
-            let checkpoint_row = buffer_row;
-            let our_wrap_row = wrap_snapshot
-                .make_wrap_point(Point::new(checkpoint_row, 0), Bias::Left)
+            let excerpt_end = excerpt_translation.excerpt_end;
+            let is_last_excerpt = excerpt_idx == num_excerpts - 1;
+
+            let (first_boundary, first_range) = &boundaries[0];
+
+            let first_our_wrap = wrap_snapshot
+                .make_wrap_point(Point::new(first_boundary.0, 0), Bias::Left)
+                .row();
+            let companion_start_wrap = companion_snapshot
+                .make_wrap_point(Point::new(first_range.start.0, 0), Bias::Left)
                 .row();
 
-            // Convert to companion's buffer row
-            let companion_buffer_row = convert_row_to_companion(
-                excerpt_to_companion_excerpt,
-                companion_buffer,
-                our_buffer,
-                MultiBufferRow(checkpoint_row),
-                Bias::Left,
-            );
-            let companion_wrap_row = companion_snapshot
-                .make_wrap_point(Point::new(companion_buffer_row.0, 0), Bias::Left)
-                .row();
+            let mut delta = companion_start_wrap.0 as i32 - first_our_wrap.0 as i32;
 
-            // Calculate how many rows each side has advanced since the last checkpoint
-            let our_delta = our_wrap_row.0 - our_baseline_wrap_row;
-            let companion_delta = companion_wrap_row.0 - companion_baseline_wrap_row;
+            let mut iter = boundaries.iter().peekable();
+            while let Some((boundary, range)) = iter.next() {
+                let mut current_boundary = *boundary;
+                let mut current_range = range.clone();
 
-            // If companion advanced more than us since last checkpoint, add a spacer
-            if companion_delta > our_delta {
-                let spacer_height = companion_delta - our_delta;
-                let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
-                result.push((
-                    BlockPlacement::Above(our_wrap_row),
-                    Block::Spacer {
-                        id: spacer_id,
-                        height: spacer_height,
-                    },
-                ));
+                while iter
+                    .peek()
+                    .is_some_and(|(_, next_range)| next_range.end <= current_range.end)
+                {
+                    let (b, r) = iter.next().unwrap();
+                    current_boundary = *b;
+                    current_range = r.clone();
+                }
+
+                let our_wrap = wrap_snapshot
+                    .make_wrap_point(Point::new(current_boundary.0, 0), Bias::Left)
+                    .row();
+                let companion_wrap = companion_snapshot
+                    .make_wrap_point(Point::new(current_range.end.0, 0), Bias::Left)
+                    .row();
+
+                let expected_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
+
+                if expected_delta > delta {
+                    let spacer_height = (expected_delta - delta) as u32;
+                    let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
+
+                    let is_excerpt_boundary =
+                        current_boundary == excerpt_end && !is_last_excerpt && our_wrap.0 > 0;
+                    let placement = if is_excerpt_boundary {
+                        BlockPlacement::Below(WrapRow(our_wrap.0 - 1))
+                    } else {
+                        BlockPlacement::Above(our_wrap)
+                    };
+
+                    result.push((
+                        placement,
+                        Block::Spacer {
+                            id: spacer_id,
+                            height: spacer_height,
+                        },
+                    ));
+                }
+
+                delta = expected_delta;
             }
-
-            // Reset baseline to this checkpoint
-            our_baseline_wrap_row = our_wrap_row.0;
-            companion_baseline_wrap_row = companion_wrap_row.0;
         }
 
         result
@@ -2368,8 +2370,9 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, convert_lhs_row_to_rhs, convert_rhs_row_to_lhs, fold_map::FoldMap,
-            inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+            Companion, convert_lhs_row_to_rhs, convert_lhs_rows_to_rhs, convert_rhs_row_to_lhs,
+            convert_rhs_rows_to_lhs, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap,
+            wrap_map::WrapMap,
         },
         test::test_font,
     };
@@ -4174,6 +4177,8 @@ mod tests {
                 rhs_entity_id,
                 convert_rhs_row_to_lhs,
                 convert_lhs_row_to_rhs,
+                convert_rhs_rows_to_lhs,
+                convert_lhs_rows_to_rhs,
             );
             c.add_excerpt_mapping(lhs_excerpt_id, rhs_excerpt_id);
             c

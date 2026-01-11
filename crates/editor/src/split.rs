@@ -24,7 +24,10 @@ use workspace::{
 
 use crate::{
     DisplayMap, Editor, EditorEvent,
-    display_map::{Companion, convert_lhs_row_to_rhs, convert_rhs_row_to_lhs},
+    display_map::{
+        Companion, convert_lhs_row_to_rhs, convert_lhs_rows_to_rhs, convert_rhs_row_to_lhs,
+        convert_rhs_rows_to_lhs,
+    },
 };
 
 struct SplitDiffFeatureFlag;
@@ -273,6 +276,8 @@ impl SplittableEditor {
             rhs_display_map_id,
             convert_rhs_row_to_lhs,
             convert_lhs_row_to_rhs,
+            convert_rhs_rows_to_lhs,
+            convert_lhs_rows_to_rhs,
         );
 
         for (path, diff) in path_diffs {
