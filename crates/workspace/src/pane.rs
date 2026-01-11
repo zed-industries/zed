@@ -3276,6 +3276,7 @@ impl Pane {
             .zip(tab_details(&self.items, window, cx))
             .map(|((ix, item), detail)| {
                 self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
+                    .into_any_element()
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
@@ -3324,174 +3325,232 @@ impl Pane {
         let use_separate_rows = tab_bar_settings.show_pinned_tabs_in_separate_row;
 
         if use_separate_rows && !pinned_tabs.is_empty() && !unpinned_tabs.is_empty() {
-            // Two-row layout: pinned tabs on top, unpinned tabs on bottom
-            v_flex()
-                .w_full()
-                .flex_none()
-                .child(
-                    TabBar::new("pinned_tab_bar")
-                        .map(|tab_bar| {
-                            if let Some(open_aside_left) = open_aside_left
-                                && render_aside_toggle_left
-                            {
-                                tab_bar.start_child(open_aside_left)
-                            } else {
-                                tab_bar
-                            }
-                        })
-                        .when(
-                            self.display_nav_history_buttons.unwrap_or_default(),
-                            |tab_bar| {
-                                tab_bar
-                                    .start_child(navigate_backward)
-                                    .start_child(navigate_forward)
-                            },
-                        )
-                        .map(|tab_bar| {
-                            if self.show_tab_bar_buttons {
-                                let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                                let (left_children, right_children) =
-                                    render_tab_buttons(self, window, cx);
-                                tab_bar
-                                    .start_children(left_children)
-                                    .end_children(right_children)
-                            } else {
-                                tab_bar
-                            }
-                        })
-                        .child(
-                            h_flex()
-                                .id("pinned_tabs_row")
-                                .debug_selector(|| "pinned_tabs_row".into())
-                                .overflow_x_scroll()
-                                .w_full()
-                                .children(pinned_tabs),
-                        )
-                        .map(|tab_bar| {
-                            if let Some(open_aside_right) = open_aside_right
-                                && render_aside_toggle_right
-                            {
-                                tab_bar.end_child(open_aside_right)
-                            } else {
-                                tab_bar
-                            }
-                        }),
-                )
-                .child(
-                    TabBar::new("unpinned_tab_bar").child(
+            self.render_two_row_tab_bar(
+                pinned_tabs,
+                unpinned_tabs,
+                tab_count,
+                navigate_backward,
+                navigate_forward,
+                open_aside_left,
+                open_aside_right,
+                render_aside_toggle_left,
+                render_aside_toggle_right,
+                window,
+                cx,
+            )
+        } else {
+            self.render_single_row_tab_bar(
+                pinned_tabs,
+                unpinned_tabs,
+                tab_count,
+                navigate_backward,
+                navigate_forward,
+                open_aside_left,
+                open_aside_right,
+                render_aside_toggle_left,
+                render_aside_toggle_right,
+                window,
+                cx,
+            )
+        }
+    }
+
+    fn render_single_row_tab_bar(
+        &mut self,
+        pinned_tabs: Vec<AnyElement>,
+        unpinned_tabs: Vec<AnyElement>,
+        tab_count: usize,
+        navigate_backward: IconButton,
+        navigate_forward: IconButton,
+        open_aside_left: Option<AnyElement>,
+        open_aside_right: Option<AnyElement>,
+        render_aside_toggle_left: bool,
+        render_aside_toggle_right: bool,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        TabBar::new("tab_bar")
+            .map(|tab_bar| {
+                if let Some(open_aside_left) = open_aside_left
+                    && render_aside_toggle_left
+                {
+                    tab_bar.start_child(open_aside_left)
+                } else {
+                    tab_bar
+                }
+            })
+            .when(
+                self.display_nav_history_buttons.unwrap_or_default(),
+                |tab_bar| {
+                    tab_bar
+                        .start_child(navigate_backward)
+                        .start_child(navigate_forward)
+                },
+            )
+            .map(|tab_bar| {
+                if self.show_tab_bar_buttons {
+                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                    let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                    tab_bar
+                        .start_children(left_children)
+                        .end_children(right_children)
+                } else {
+                    tab_bar
+                }
+            })
+            .children(pinned_tabs.len().ne(&0).then(|| {
+                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
+                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                // Avoid flickering when max_offset is very small (< 2px).
+                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
+                let is_scrollable = max_scroll > px(2.0);
+                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+                h_flex()
+                    .children(pinned_tabs)
+                    .when(is_scrollable && is_scrolled, |this| {
+                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                            .border_color(cx.theme().colors().border)
+                    })
+            }))
+            .child(
+                h_flex()
+                    .id("unpinned tabs")
+                    .overflow_x_scroll()
+                    .w_full()
+                    .track_scroll(&self.tab_bar_scroll_handle)
+                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                        this.suppress_scroll = true;
+                    }))
+                    .children(unpinned_tabs)
+                    .child(
+                        div()
+                            .id("tab_bar_drop_target")
+                            .min_w_6()
+                            // HACK: This empty child is currently necessary to force the drop target to appear
+                            // despite us setting a min width above.
+                            .child("")
+                            // HACK: h_full doesn't occupy the complete height, using fixed height instead
+                            .h(Tab::container_height(cx))
+                            .flex_grow()
+                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .on_drop(cx.listener(
+                                move |this, dragged_tab: &DraggedTab, window, cx| {
+                                    this.drag_split_direction = None;
+                                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                                },
+                            ))
+                            .on_drop(cx.listener(
+                                move |this, selection: &DraggedSelection, window, cx| {
+                                    this.drag_split_direction = None;
+                                    this.handle_project_entry_drop(
+                                        &selection.active_selection.entry_id,
+                                        Some(tab_count),
+                                        window,
+                                        cx,
+                                    )
+                                },
+                            ))
+                            .on_drop(cx.listener(move |this, paths, window, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_external_paths_drop(paths, window, cx)
+                            }))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.click_count() == 2 {
+                                    window.dispatch_action(
+                                        this.double_click_dispatch_action.boxed_clone(),
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
+            )
+            .map(|tab_bar| {
+                if let Some(open_aside_right) = open_aside_right
+                    && render_aside_toggle_right
+                {
+                    tab_bar.end_child(open_aside_right)
+                } else {
+                    tab_bar
+                }
+            })
+            .into_any_element()
+    }
+
+    fn render_two_row_tab_bar(
+        &mut self,
+        pinned_tabs: Vec<AnyElement>,
+        unpinned_tabs: Vec<AnyElement>,
+        tab_count: usize,
+        navigate_backward: IconButton,
+        navigate_forward: IconButton,
+        open_aside_left: Option<AnyElement>,
+        open_aside_right: Option<AnyElement>,
+        render_aside_toggle_left: bool,
+        render_aside_toggle_right: bool,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        v_flex()
+            .w_full()
+            .flex_none()
+            .child(
+                TabBar::new("pinned_tab_bar")
+                    .map(|tab_bar| {
+                        if let Some(open_aside_left) = open_aside_left
+                            && render_aside_toggle_left
+                        {
+                            tab_bar.start_child(open_aside_left)
+                        } else {
+                            tab_bar
+                        }
+                    })
+                    .when(
+                        self.display_nav_history_buttons.unwrap_or_default(),
+                        |tab_bar| {
+                            tab_bar
+                                .start_child(navigate_backward)
+                                .start_child(navigate_forward)
+                        },
+                    )
+                    .map(|tab_bar| {
+                        if self.show_tab_bar_buttons {
+                            let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                            let (left_children, right_children) =
+                                render_tab_buttons(self, window, cx);
+                            tab_bar
+                                .start_children(left_children)
+                                .end_children(right_children)
+                        } else {
+                            tab_bar
+                        }
+                    })
+                    .child(
                         h_flex()
-                            .id("unpinned tabs")
+                            .id("pinned_tabs_row")
+                            .debug_selector(|| "pinned_tabs_row".into())
                             .overflow_x_scroll()
                             .w_full()
-                            .track_scroll(&self.tab_bar_scroll_handle)
-                            .on_scroll_wheel(cx.listener(|this, _, _, _| {
-                                this.suppress_scroll = true;
-                            }))
-                            .children(unpinned_tabs)
-                            .child(
-                                div()
-                                    .id("tab_bar_drop_target")
-                                    .min_w_6()
-                                    // HACK: This empty child is currently necessary to force
-                                    // the drop target to appear despite us setting a min width above.
-                                    .child("")
-                                    // HACK: h_full doesn't occupy the complete height, using fixed height instead
-                                    .h(Tab::container_height(cx))
-                                    .flex_grow()
-                                    .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                                        bar.bg(cx.theme().colors().drop_target_background)
-                                    })
-                                    .drag_over::<DraggedSelection>(|bar, _, _, cx| {
-                                        bar.bg(cx.theme().colors().drop_target_background)
-                                    })
-                                    .on_drop(cx.listener(
-                                        move |this, dragged_tab: &DraggedTab, window, cx| {
-                                            this.drag_split_direction = None;
-                                            this.handle_tab_drop(
-                                                dragged_tab,
-                                                this.items.len(),
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                    .on_drop(cx.listener(
-                                        move |this, selection: &DraggedSelection, window, cx| {
-                                            this.drag_split_direction = None;
-                                            this.handle_project_entry_drop(
-                                                &selection.active_selection.entry_id,
-                                                Some(tab_count),
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                    .on_drop(cx.listener(move |this, paths, window, cx| {
-                                        this.drag_split_direction = None;
-                                        this.handle_external_paths_drop(paths, window, cx)
-                                    }))
-                                    .on_click(cx.listener(
-                                        move |this, event: &ClickEvent, window, cx| {
-                                            if event.click_count() == 2 {
-                                                window.dispatch_action(
-                                                    this.double_click_dispatch_action.boxed_clone(),
-                                                    cx,
-                                                );
-                                            }
-                                        },
-                                    )),
-                            ),
-                    ),
-                )
-                .into_any_element()
-        } else {
-            // Original single-row layout: pinned tabs fixed, unpinned tabs scrollable
-            TabBar::new("tab_bar")
-                .map(|tab_bar| {
-                    if let Some(open_aside_left) = open_aside_left
-                        && render_aside_toggle_left
-                    {
-                        tab_bar.start_child(open_aside_left)
-                    } else {
-                        tab_bar
-                    }
-                })
-                .when(
-                    self.display_nav_history_buttons.unwrap_or_default(),
-                    |tab_bar| {
-                        tab_bar
-                            .start_child(navigate_backward)
-                            .start_child(navigate_forward)
-                    },
-                )
-                .map(|tab_bar| {
-                    if self.show_tab_bar_buttons {
-                        let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                        let (left_children, right_children) = render_tab_buttons(self, window, cx);
-                        tab_bar
-                            .start_children(left_children)
-                            .end_children(right_children)
-                    } else {
-                        tab_bar
-                    }
-                })
-                .children(pinned_tabs.len().ne(&0).then(|| {
-                    let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
-                    // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                    let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                    // Avoid flickering when max_offset is very small (< 2px).
-                    // The border adds 1-2px which can push max_offset back to 0, creating a loop.
-                    let is_scrollable = max_scroll > px(2.0);
-                    let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
-                    h_flex()
-                        .children(pinned_tabs)
-                        .when(is_scrollable && is_scrolled, |this| {
-                            this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                                .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                                .border_color(cx.theme().colors().border)
-                        })
-                }))
-                .child(
+                            .children(pinned_tabs),
+                    )
+                    .map(|tab_bar| {
+                        if let Some(open_aside_right) = open_aside_right
+                            && render_aside_toggle_right
+                        {
+                            tab_bar.end_child(open_aside_right)
+                        } else {
+                            tab_bar
+                        }
+                    }),
+            )
+            .child(
+                TabBar::new("unpinned_tab_bar").child(
                     h_flex()
                         .id("unpinned tabs")
                         .overflow_x_scroll()
@@ -3505,8 +3564,8 @@ impl Pane {
                             div()
                                 .id("tab_bar_drop_target")
                                 .min_w_6()
-                                // HACK: This empty child is currently necessary to force the drop target to appear
-                                // despite us setting a min width above.
+                                // HACK: This empty child is currently necessary to force
+                                // the drop target to appear despite us setting a min width above.
                                 .child("")
                                 // HACK: h_full doesn't occupy the complete height, using fixed height instead
                                 .h(Tab::container_height(cx))
@@ -3520,7 +3579,12 @@ impl Pane {
                                 .on_drop(cx.listener(
                                     move |this, dragged_tab: &DraggedTab, window, cx| {
                                         this.drag_split_direction = None;
-                                        this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                                        this.handle_tab_drop(
+                                            dragged_tab,
+                                            this.items.len(),
+                                            window,
+                                            cx,
+                                        )
                                     },
                                 ))
                                 .on_drop(cx.listener(
@@ -3538,27 +3602,20 @@ impl Pane {
                                     this.drag_split_direction = None;
                                     this.handle_external_paths_drop(paths, window, cx)
                                 }))
-                                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                    if event.click_count() == 2 {
-                                        window.dispatch_action(
-                                            this.double_click_dispatch_action.boxed_clone(),
-                                            cx,
-                                        );
-                                    }
-                                })),
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        if event.click_count() == 2 {
+                                            window.dispatch_action(
+                                                this.double_click_dispatch_action.boxed_clone(),
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                )),
                         ),
-                )
-                .map(|tab_bar| {
-                    if let Some(open_aside_right) = open_aside_right
-                        && render_aside_toggle_right
-                    {
-                        tab_bar.end_child(open_aside_right)
-                    } else {
-                        tab_bar
-                    }
-                })
-                .into_any_element()
-        }
+                ),
+            )
+            .into_any_element()
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
