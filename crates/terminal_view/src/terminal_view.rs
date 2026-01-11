@@ -62,7 +62,6 @@ use std::{
 
 struct ImeState {
     marked_text: String,
-    marked_range_utf16: Option<Range<usize>>,
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -322,24 +321,17 @@ impl TerminalView {
     }
 
     /// Sets the marked (pre-edit) text from the IME.
-    pub(crate) fn set_marked_text(
-        &mut self,
-        text: String,
-        range: Option<Range<usize>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.ime_state = Some(ImeState {
-            marked_text: text,
-            marked_range_utf16: range,
-        });
+    pub(crate) fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
+        if text.is_empty() {
+            return self.clear_marked_text(cx);
+        }
+        self.ime_state = Some(ImeState { marked_text: text });
         cx.notify();
     }
 
     /// Gets the current marked range (UTF-16).
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.ime_state
-            .as_ref()
-            .and_then(|state| state.marked_range_utf16.clone())
+        self.ime_state.as_ref().map(|_| 0..1)
     }
 
     /// Clears the marked (pre-edit) text state.

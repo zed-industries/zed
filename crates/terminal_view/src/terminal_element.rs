@@ -1482,12 +1482,12 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _range_utf16: Option<std::ops::Range<usize>>,
         new_text: &str,
-        new_marked_range: Option<std::ops::Range<usize>>,
+        _new_marked_range: Option<std::ops::Range<usize>>,
         _window: &mut Window,
         cx: &mut App,
     ) {
         self.terminal_view.update(cx, |view, view_cx| {
-            view.set_marked_text(new_text.to_string(), new_marked_range, view_cx);
+            view.set_marked_text(new_text.to_string(), view_cx);
         });
     }
 
