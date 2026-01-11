@@ -22,6 +22,7 @@ pub use settings::{
     ShowDiagnostics,
 };
 use smallvec::SmallVec;
+use settings::TabFilenameTint;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -60,6 +61,40 @@ pub struct ItemSettings {
     pub file_icons: bool,
     pub show_diagnostics: ShowDiagnostics,
     pub show_close_button: ShowCloseButton,
+
+    /// When true, tabs will be tinted based on their diagnostic severity. Errors and
+    /// warnings will use the theme's status colors for background and text, making
+    /// urgent tabs more visible. When false, tabs use the standard active and
+    /// inactive backgrounds defined by the theme.
+    pub diagnostic_tab_coloring: bool,
+    /// When true, the number of errors and warnings for a file will be displayed on
+    /// its tab. When both errors and warnings are present, the tab will display
+    /// multiple counts if there is enough space (detail > 0), otherwise only the
+    /// most severe count will be shown. When false, diagnostic counts are hidden.
+    pub diagnostic_tab_counts: bool,
+    /// When true, diagnostic icons (e.g. an 'X' for errors or a triangle for warnings)
+    /// will be displayed in the tab alongside their respective counts. When false,
+    /// only the numeric counts are shown.
+    pub diagnostic_tab_icons: bool,
+    /// When true, the filename text color of a tab will be overridden based on the
+    /// diagnostic severity for that file (error takes precedence over warning). When
+    /// false, the default filename text color based on selection and focus is used.
+    ///
+    /// Deprecated: This setting is superseded by `tab_filename_tint`, which
+    /// provides multiple tinting modes. If `tab_filename_tint` is set to any
+    /// non-`off` value, this field has no effect.
+    pub diagnostic_tab_text_use_diagnostics: bool,
+
+    /// When true, diagnostic chips will also be shown when a file has zero
+    /// diagnostics. Each chip will display a `0` for its respective severity.
+    /// When false, no chips are shown for a file with no diagnostics.
+    pub diagnostic_tab_show_zero_counts: bool,
+
+    /// Determines how the filename text is tinted. Use `TabFilenameTint::Off` to
+    /// disable tinting, `Git` or `Diagnostics` to tint solely by git status or
+    /// diagnostic severity, or the `Prefer*` variants to choose a priority
+    /// between the two when both are available.
+    pub tab_filename_tint: TabFilenameTint,
 }
 
 #[derive(RegisterSetting)]
@@ -89,6 +124,69 @@ impl Settings for ItemSettings {
             file_icons: tabs.file_icons.unwrap(),
             show_diagnostics: tabs.show_diagnostics.unwrap(),
             show_close_button: tabs.show_close_button.unwrap(),
+            // Diagnostic-based tab colouring is intentionally disabled. Always set to
+            // false, ignoring any persisted or default value. The associated
+            // setting has been removed from the UI, and we force the behaviour
+            // of being turned off.
+            diagnostic_tab_coloring: false,
+            // Diagnostic tab counts: honour the explicit setting when provided.
+            // If no explicit setting is provided, default to true for backward
+            // compatibility and when the legacy tint flag is set.
+            diagnostic_tab_counts: match tabs.diagnostic_tab_counts {
+                Some(val) => val,
+                None => {
+                    if tabs.diagnostic_tab_text_use_diagnostics.unwrap_or(false) {
+                        true
+                    } else {
+                        // default to showing counts when unset
+                        true
+                    }
+                }
+            },
+            // Diagnostic tab icons: honour the explicit setting when provided.
+            // If no explicit setting is provided, default to true, and also
+            // enable icons when migrating from the legacy diagnostic tint flag.
+            diagnostic_tab_icons: match tabs.diagnostic_tab_icons {
+                Some(val) => val,
+                None => {
+                    if tabs.diagnostic_tab_text_use_diagnostics.unwrap_or(false) {
+                        true
+                    } else {
+                        true
+                    }
+                }
+            },
+            diagnostic_tab_text_use_diagnostics: tabs
+                .diagnostic_tab_text_use_diagnostics
+                .unwrap_or(false),
+            // Diagnostic tab zero-count display: honour the explicit setting when provided.
+            // If no explicit setting is provided, default to false, even when
+            // migrating from the legacy tint flag (zero counts remain hidden).
+            diagnostic_tab_show_zero_counts: match tabs.diagnostic_tab_show_zero_counts {
+                Some(val) => val,
+                None => {
+                    if tabs.diagnostic_tab_text_use_diagnostics.unwrap_or(false) {
+                        false
+                    } else {
+                        false
+                    }
+                }
+            },
+            // Determine the filename tint mode. Use the new setting when
+            // explicitly provided. Otherwise, if the legacy
+            // `diagnostic_tab_text_use_diagnostics` flag is enabled, default to
+            // `PreferDiagnostics` to prioritise diagnostic colours over git
+            // status. If neither new nor old settings are provided, default
+            // to `Off`.
+            tab_filename_tint: {
+                if let Some(tint) = &tabs.tab_filename_tint {
+                    *tint
+                } else if tabs.diagnostic_tab_text_use_diagnostics.unwrap_or(false) {
+                    TabFilenameTint::PreferDiagnostics
+                } else {
+                    TabFilenameTint::Off
+                }
+            },
         }
     }
 }
