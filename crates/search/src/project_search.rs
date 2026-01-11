@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -199,27 +199,31 @@ pub fn init(cx: &mut App) {
                 return;
             }
 
-            let presets = workspace
+            let settings_store = cx.global::<SettingsStore>();
+
+            let worktree_ids: HashSet<_> = workspace
                 .project()
                 .read(cx)
                 .visible_worktrees(cx)
-                .next()
-                .and_then(|worktree| {
-                    let worktree_id = worktree.read(cx).id();
-                    cx.global::<SettingsStore>()
-                        .get_content_for_file(settings::SettingsFile::Project((
-                            worktree_id,
-                            RelPath::empty().into(),
-                        )))
-                        .and_then(|c| c.project_search_presets.as_ref())
-                        .map(|presets| {
-                            presets
-                                .iter()
-                                .map(|(name, preset)| (name.clone(), preset.clone()))
-                                .collect::<Vec<_>>()
-                        })
-                })
-                .unwrap_or_default();
+                .map(|wt| wt.read(cx).id())
+                .collect();
+
+            let mut presets = Vec::new();
+            for file in settings_store.get_all_files() {
+                if let settings::SettingsFile::Project((worktree_id, _)) = &file {
+                    if worktree_ids.contains(worktree_id) {
+                        if let Some(content) = settings_store.get_content_for_file(file) {
+                            if let Some(file_presets) =
+                                content.project.project_search_presets.as_ref()
+                            {
+                                for (name, preset) in file_presets {
+                                    presets.push((name.clone(), preset.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             let workspace_handle = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, move |window, cx| {
@@ -2490,11 +2494,7 @@ impl SearchPresetPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = SearchPresetPickerDelegate::new(
-            cx.entity().downgrade(),
-            presets,
-            workspace,
-        );
+        let delegate = SearchPresetPickerDelegate::new(cx.entity().downgrade(), presets, workspace);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
@@ -2558,7 +2558,12 @@ impl PickerDelegate for SearchPresetPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
@@ -2613,7 +2618,9 @@ impl PickerDelegate for SearchPresetPickerDelegate {
                 .map(|(ix, _)| ix)
                 .collect()
         };
-        self.selected_index = self.selected_index.min(self.filtered_presets.len().saturating_sub(1));
+        self.selected_index = self
+            .selected_index
+            .min(self.filtered_presets.len().saturating_sub(1));
         cx.notify();
         Task::ready(())
     }
@@ -5035,5 +5042,238 @@ pub mod tests {
         // Should match only "frontend"
         assert_eq!(delegate.filtered_presets.len(), 1);
         assert_eq!(delegate.filtered_presets, vec![2]);
+    }
+
+    #[gpui::test]
+    async fn test_deploy_search_with_include_and_exclude(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "src": {
+                    "main.ts": "const x = 1;"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.panes()[0].update(cx, |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |workspace, window, cx| {
+                let action = DeploySearch {
+                    replace_enabled: false,
+                    included_files: Some("src/**".to_string()),
+                    excluded_files: Some("**/*.test.ts".to_string()),
+                };
+                ProjectSearchView::deploy_search(workspace, &action, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be opened");
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "Filters should be enabled when action has include/exclude"
+                    );
+                    assert_eq!(
+                        search_view.included_files_editor.read(cx).text(cx),
+                        "src/**"
+                    );
+                    assert_eq!(
+                        search_view.excluded_files_editor.read(cx).text(cx),
+                        "**/*.test.ts"
+                    );
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_search_preset_with_only_include(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "src": {
+                    "main.ts": "const x = 1;"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.panes()[0].update(cx, |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |workspace, window, cx| {
+                let action = DeploySearch {
+                    replace_enabled: false,
+                    included_files: Some("src/**".to_string()),
+                    excluded_files: None,
+                };
+                ProjectSearchView::deploy_search(workspace, &action, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be opened");
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "Filters should be enabled when preset has include"
+                    );
+                    assert_eq!(
+                        search_view.included_files_editor.read(cx).text(cx),
+                        "src/**"
+                    );
+                    assert!(
+                        search_view
+                            .excluded_files_editor
+                            .read(cx)
+                            .text(cx)
+                            .is_empty(),
+                        "Excluded files should be empty"
+                    );
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_search_preset_with_only_exclude(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "src": {
+                    "main.ts": "const x = 1;"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.panes()[0].update(cx, |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |workspace, window, cx| {
+                let action = DeploySearch {
+                    replace_enabled: false,
+                    included_files: None,
+                    excluded_files: Some("**/*.test.ts".to_string()),
+                };
+                ProjectSearchView::deploy_search(workspace, &action, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be opened");
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "Filters should be enabled when preset has exclude"
+                    );
+                    assert!(
+                        search_view
+                            .included_files_editor
+                            .read(cx)
+                            .text(cx)
+                            .is_empty(),
+                        "Included files should be empty"
+                    );
+                    assert_eq!(
+                        search_view.excluded_files_editor.read(cx).text(cx),
+                        "**/*.test.ts"
+                    );
+                });
+            })
+            .unwrap();
     }
 }
