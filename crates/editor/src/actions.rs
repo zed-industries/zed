@@ -638,6 +638,10 @@ actions!(
         MoveToEndOfExcerpt,
         /// Moves cursor to the end of the previous excerpt.
         MoveToEndOfPreviousExcerpt,
+        /// Moves cursor to the start of the next larger syntax node.
+        MoveToStartOfLargerSyntaxNode,
+        /// Moves cursor to the end of the next larger syntax node.
+        MoveToEndOfLargerSyntaxNode,
         /// Moves cursor up.
         MoveUp,
         /// Inserts a new line and moves cursor to it.
