@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::paths::RUN_DIR;
+
 use log::{Level, Log, Metadata, Record};
 
 pub struct Progress {
@@ -413,9 +415,13 @@ impl Progress {
             } else {
                 0.0
             };
+            let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
             eprintln!(
-                "\n{} of {} examples failed ({:.1}%)",
-                inner.failed_examples, total_examples, percentage
+                "\n{} of {} examples failed ({:.1}%)\nFailed examples: {}",
+                inner.failed_examples,
+                total_examples,
+                percentage,
+                failed_jsonl_path.display()
             );
         }
     }

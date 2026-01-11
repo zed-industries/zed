@@ -282,7 +282,7 @@ impl ExtensionStore {
         // list of the installed extensions and the resources that they provide.
         // This index is loaded synchronously on startup.
         let (index_content, index_metadata, extensions_metadata) =
-            cx.background_executor().block(async {
+            cx.foreground_executor().block_on(async {
                 futures::join!(
                     this.fs.load(&this.index_path),
                     this.fs.metadata(&this.index_path),
@@ -336,6 +336,38 @@ impl ExtensionStore {
 
                 let mut index_changed = false;
                 let mut debounce_timer = cx.background_spawn(futures::future::pending()).fuse();
+
+                // If a test enables parking, it typically intends to allow real I/O progress while
+                // still using the scheduler-backed fake clock for deterministic execution.
+                // In that mode, debounce timers must use real time so that reloads can complete
+                // without requiring explicit fake-clock advancement.
+                #[cfg(any(test, feature = "test-support"))]
+                let use_real_time_debounce = cx
+                    .background_executor()
+                    .dispatcher()
+                    .as_test()
+                    .map(|test_dispatcher| test_dispatcher.scheduler().parking_allowed())
+                    .unwrap_or(false);
+
+                #[cfg(not(any(test, feature = "test-support")))]
+                let use_real_time_debounce = false;
+
+                fn schedule_debounce(
+                    use_real_time_debounce: bool,
+                    cx: &mut gpui::AsyncApp,
+                ) -> futures::future::Fuse<gpui::Task<()>> {
+                    if use_real_time_debounce {
+                        cx.background_spawn(async move {
+                            gpui::Timer::after(RELOAD_DEBOUNCE_DURATION).await;
+                        })
+                        .fuse()
+                    } else {
+                        cx.background_executor()
+                            .timer(RELOAD_DEBOUNCE_DURATION)
+                            .fuse()
+                    }
+                }
+
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
@@ -351,21 +383,15 @@ impl ExtensionStore {
                             Self::update_remote_clients(&this, cx).await?;
                         }
                         _ = connection_registered_rx.next() => {
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
+                            debounce_timer = schedule_debounce(use_real_time_debounce, cx);
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
-                            this.update(cx, |this, _| {
+                            this.update(cx, |this, _cx| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
                             index_changed = true;
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
+                            debounce_timer = schedule_debounce(use_real_time_debounce, cx);
                         }
                     }
                 }

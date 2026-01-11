@@ -1462,6 +1462,7 @@ async fn resolve_venv_activation_scripts(
             (ShellKind::Fish, "activate.fish"),
             (ShellKind::Nushell, "activate.nu"),
             (ShellKind::PowerShell, "activate.ps1"),
+            (ShellKind::Pwsh, "activate.ps1"),
             (ShellKind::Cmd, "activate.bat"),
             (ShellKind::Xonsh, "activate.xsh"),
         ] {

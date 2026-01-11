@@ -14,20 +14,14 @@ use git::{
         UnmergedStatus,
     },
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
-use std::{
-    path::PathBuf,
-    sync::{Arc, LazyLock},
-};
+use std::{path::PathBuf, sync::Arc};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
-
-pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
-pub static LOAD_HEAD_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -104,9 +98,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in index")
                 .cloned()
         });
-        self.executor
-            .spawn_labeled(*LOAD_INDEX_TEXT_TASK, async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
@@ -117,9 +109,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in HEAD")
                 .cloned()
         });
-        self.executor
-            .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -665,7 +655,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = git::Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut *executor.rng().lock());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })
@@ -720,8 +710,18 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        async { Ok(Some("main".into())) }.boxed()
+    fn default_branch(
+        &self,
+        include_remote_name: bool,
+    ) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        async move {
+            Ok(Some(if include_remote_name {
+                "origin/main".into()
+            } else {
+                "main".into()
+            }))
+        }
+        .boxed()
     }
 
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {

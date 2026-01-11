@@ -9,8 +9,7 @@ use text::Bias;
 use util::RandomCharIter;
 
 fn to_tab_point_benchmark(c: &mut Criterion) {
-    let rng = StdRng::seed_from_u64(1);
-    let dispatcher = TestDispatcher::new(rng);
+    let dispatcher = TestDispatcher::new(1);
     let cx = gpui::TestAppContext::build(dispatcher, None);
 
     let create_tab_map = |length: usize| {
@@ -55,8 +54,7 @@ fn to_tab_point_benchmark(c: &mut Criterion) {
 }
 
 fn to_fold_point_benchmark(c: &mut Criterion) {
-    let rng = StdRng::seed_from_u64(1);
-    let dispatcher = TestDispatcher::new(rng);
+    let dispatcher = TestDispatcher::new(1);
     let cx = gpui::TestAppContext::build(dispatcher, None);
 
     let create_tab_map = |length: usize| {

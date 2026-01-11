@@ -4,6 +4,7 @@ use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::WebSearchResponse;
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Task};
 use language_model::{
     LanguageModelProviderId, LanguageModelToolResultContent, ZED_CLOUD_PROVIDER_ID,
@@ -73,12 +74,19 @@ impl AgentTool for WebSearchTool {
 
         let search_task = provider.search(input.query, cx);
         cx.background_spawn(async move {
-            let response = match search_task.await {
-                Ok(response) => response,
-                Err(err) => {
-                    event_stream
-                        .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
-                    return Err(err);
+            let response = futures::select! {
+                result = search_task.fuse() => {
+                    match result {
+                        Ok(response) => response,
+                        Err(err) => {
+                            event_stream
+                                .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
+                            return Err(err);
+                        }
+                    }
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Web search cancelled by user");
                 }
             };
 

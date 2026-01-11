@@ -1,7 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use futures::StreamExt;
+use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
@@ -117,7 +117,7 @@ impl AgentTool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
@@ -186,7 +186,16 @@ impl AgentTool for GrepTool {
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = rx.next().await {
+            'outer: loop {
+                let search_result = futures::select! {
+                    result = rx.next().fuse() => result,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Search cancelled by user");
+                    }
+                };
+                let Some(SearchResult::Buffer { buffer, ranges }) = search_result else {
+                    break;
+                };
                 if ranges.is_empty() {
                     continue;
                 }

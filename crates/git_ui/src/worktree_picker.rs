@@ -60,9 +60,9 @@ impl WorktreeList {
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
 
-        let default_branch_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+        let default_branch_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, _| repository.default_branch(false))
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let all_worktrees = all_worktrees_request

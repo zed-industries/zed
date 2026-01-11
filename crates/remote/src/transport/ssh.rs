@@ -625,7 +625,7 @@ impl SshRemoteConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.ssh_platform, delegate.as_ref(), cx)
                 .await?
@@ -1552,6 +1552,9 @@ fn build_command(
         args.push(format!("{local_port}:{host}:{remote_port}"));
     }
 
+    // -q suppresses the "Connection to ... closed." message that SSH prints when
+    // the connection terminates with -t (pseudo-terminal allocation)
+    args.push("-q".into());
     args.push("-t".into());
     args.push(exec);
 
@@ -1592,6 +1595,7 @@ mod tests {
             [
                 "-p",
                 "2222",
+                "-q",
                 "-t",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
@@ -1624,6 +1628,7 @@ mod tests {
                 "2222",
                 "-L",
                 "1:foo:2",
+                "-q",
                 "-t",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]

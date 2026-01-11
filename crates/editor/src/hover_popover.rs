@@ -987,17 +987,17 @@ impl DiagnosticPopover {
             })
             .child(
                 div()
+                    .relative()
                     .py_1()
-                    .px_2()
+                    .pl_2()
+                    .pr_8()
                     .bg(self.background_color)
                     .border_1()
                     .border_color(self.border_color)
                     .rounded_lg()
                     .child(
-                        h_flex()
+                        div()
                             .id("diagnostic-content-container")
-                            .gap_1()
-                            .items_start()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
                             .overflow_y_scroll()
@@ -1023,12 +1023,12 @@ impl DiagnosticPopover {
                                         }
                                     },
                                 ),
-                            )
-                            .child({
-                                let message = self.local_diagnostic.diagnostic.message.clone();
-                                CopyButton::new(message).tooltip_label("Copy Diagnostic")
-                            }),
+                            ),
                     )
+                    .child(div().absolute().top_1().right_1().child({
+                        let message = self.local_diagnostic.diagnostic.message.clone();
+                        CopyButton::new(message).tooltip_label("Copy Diagnostic")
+                    }))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
                             .tracked_scroll_handle(&self.scroll_handle),

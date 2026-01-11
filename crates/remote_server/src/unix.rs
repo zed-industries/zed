@@ -929,8 +929,8 @@ pub fn handle_settings_file_changes(
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
     let server_settings_content = cx
-        .background_executor()
-        .block(server_settings_file.next())
+        .foreground_executor()
+        .block_on(server_settings_file.next())
         .unwrap();
     SettingsStore::update_global(cx, |store, cx| {
         store

@@ -68,7 +68,6 @@ messages!(
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
     (ExpandProjectEntryResponse, Foreground),
-    (FindSearchCandidatesResponse, Background),
     (FindSearchCandidates, Background),
     (FlushBufferedMessages, Foreground),
     (ExpandAllForProjectEntry, Foreground),
@@ -345,7 +344,9 @@ messages!(
     (GitCreateWorktree, Background),
     (ShareAgentThread, Foreground),
     (GetSharedAgentThread, Foreground),
-    (GetSharedAgentThreadResponse, Foreground)
+    (GetSharedAgentThreadResponse, Foreground),
+    (FindSearchCandidatesChunk, Background),
+    (FindSearchCandidatesCancelled, Background),
 );
 
 request_messages!(
@@ -440,7 +441,7 @@ request_messages!(
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
     (Stage, Ack),
-    (FindSearchCandidates, FindSearchCandidatesResponse),
+    (FindSearchCandidates, Ack),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
@@ -535,6 +536,7 @@ request_messages!(
     (GitCreateWorktree, Ack),
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
+    (FindSearchCandidatesChunk, Ack),
 );
 
 lsp_messages!(
@@ -710,6 +712,8 @@ entity_messages!(
     GitCreateWorktree,
     TrustWorktrees,
     RestrictWorktrees,
+    FindSearchCandidatesChunk,
+    FindSearchCandidatesCancelled,
 );
 
 entity_messages!(

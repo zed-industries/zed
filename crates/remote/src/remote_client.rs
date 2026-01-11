@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "test-support"))]
+use crate::transport::mock::ConnectGuard;
 use crate::{
     SshConnectionOptions,
     protocol::MessageId,
@@ -491,7 +493,7 @@ impl RemoteClient {
         executor: BackgroundExecutor,
     ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.take()?;
-        log::info!("shutting down ssh processes");
+        log::info!("shutting down remote processes");
 
         let State::Connected {
             multiplex_task,
@@ -977,23 +979,26 @@ impl RemoteClient {
     /// Creates a mock connection pair for testing.
     ///
     /// This is the recommended way to create mock remote connections for tests.
-    /// It returns both the `MockConnectionOptions` (which can be passed to create
-    /// a `HeadlessProject`) and an `AnyProtoClient` for the server side.
+    /// It returns the `MockConnectionOptions` (which can be passed to create a
+    /// `HeadlessProject`), an `AnyProtoClient` for the server side and a
+    /// `ConnectGuard` for the client side which blocks the connection from
+    /// being established until dropped.
     ///
     /// # Example
     /// ```ignore
-    /// let (opts, server_session) = RemoteClient::fake_server(cx, server_cx);
+    /// let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
     /// // Set up HeadlessProject with server_session...
+    /// drop(connect_guard);
     /// let client = RemoteClient::fake_client(opts, cx).await;
     /// ```
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_server(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (RemoteConnectionOptions, AnyProtoClient) {
+    ) -> (RemoteConnectionOptions, AnyProtoClient, ConnectGuard) {
         use crate::transport::mock::MockConnection;
-        let (opts, server_client) = MockConnection::new(client_cx, server_cx);
-        (opts.into(), server_client)
+        let (opts, server_client, connect_guard) = MockConnection::new(client_cx, server_cx);
+        (opts.into(), server_client, connect_guard)
     }
 
     /// Creates a `RemoteClient` connected to a mock server.
@@ -1002,10 +1007,11 @@ impl RemoteClient {
     /// `HeadlessProject` with the server session, then call this method
     /// to create the client.
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn fake_client(
+    pub async fn connect_mock(
         opts: RemoteConnectionOptions,
         client_cx: &mut gpui::TestAppContext,
     ) -> Entity<Self> {
+        assert!(matches!(opts, RemoteConnectionOptions::Mock(..)));
         use crate::transport::mock::MockDelegate;
         let (_tx, rx) = oneshot::channel();
         let mut cx = client_cx.to_async();
@@ -1047,7 +1053,7 @@ struct ConnectionPool {
 impl Global for ConnectionPool {}
 
 impl ConnectionPool {
-    pub fn connect(
+    fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
@@ -1095,16 +1101,15 @@ impl ConnectionPool {
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
                         #[cfg(any(test, feature = "test-support"))]
-                        RemoteConnectionOptions::Mock(opts) => {
-                            cx.update(|cx| {
-                                cx.default_global::<crate::transport::mock::MockConnectionRegistry>()
-                                    .take(&opts)
-                                    .ok_or_else(|| anyhow!(
-                                        "Mock connection not found. Call MockConnection::new() first."
-                                    ))
-                                    .map(|connection| connection as Arc<dyn RemoteConnection>)
-                            })
-                        }
+                        RemoteConnectionOptions::Mock(opts) => match cx.update(|cx| {
+                            cx.default_global::<crate::transport::mock::MockConnectionRegistry>()
+                                .take(&opts)
+                        }) {
+                            Some(connection) => Ok(connection.await as Arc<dyn RemoteConnection>),
+                            None => Err(anyhow!(
+                                "Mock connection not found. Call MockConnection::new() first."
+                            )),
+                        },
                     };
 
                     cx.update_global(|pool: &mut Self, _| {

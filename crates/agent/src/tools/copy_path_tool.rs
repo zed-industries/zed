@@ -1,6 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -75,7 +76,7 @@ impl AgentTool for CopyPathTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let copy_task = self.project.update(cx, |project, cx| {
@@ -98,7 +99,13 @@ impl AgentTool for CopyPathTool {
         });
 
         cx.background_spawn(async move {
-            let _ = copy_task.await.with_context(|| {
+            let result = futures::select! {
+                result = copy_task.fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Copy cancelled by user");
+                }
+            };
+            let _ = result.with_context(|| {
                 format!(
                     "Copying {} to {}",
                     input.source_path, input.destination_path

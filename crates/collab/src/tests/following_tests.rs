@@ -2051,6 +2051,9 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         });
     });
 
+    // Ensure client A's edits are synced to the server before client B starts following.
+    deterministic.run_until_parked();
+
     // Client B follows client A.
     workspace_b
         .update_in(cx_b, |workspace, window, cx| {

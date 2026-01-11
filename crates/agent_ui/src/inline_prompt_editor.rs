@@ -1,4 +1,4 @@
-use agent::HistoryStore;
+use agent::ThreadStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
@@ -60,7 +60,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -331,7 +331,7 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.history_store.clone(),
+                self.thread_store.clone(),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -1209,7 +1209,7 @@ impl PromptEditor<BufferCodegen> {
         codegen: Entity<BufferCodegen>,
         session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1250,14 +1250,14 @@ impl PromptEditor<BufferCodegen> {
         });
 
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1367,7 +1367,7 @@ impl PromptEditor<TerminalCodegen> {
         codegen: Entity<TerminalCodegen>,
         session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1403,14 +1403,14 @@ impl PromptEditor<TerminalCodegen> {
         });
 
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {

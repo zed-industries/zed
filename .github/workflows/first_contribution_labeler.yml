@@ -1,0 +1,75 @@
+name: First Contribution Labeler
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  label_first_contribution:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: get-app-token
+        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - id: check-and-label
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            const LABEL_NAME = 'first contribution';
+
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            // Skip bots (they shouldn't have FIRST_TIME* association anyway, but just in case)
+            if (author.endsWith('[bot]')) {
+              console.log(`Skipping bot: ${author}`);
+              return;
+            }
+
+            // Check if this is a first-time contributor.
+            // These two values are mutually exclusive, so we need to check both:
+            // - FIRST_TIME_CONTRIBUTOR: has contributed to other repos, but not this one
+            // - FIRST_TIMER: has never contributed to any public repository on GitHub
+            const association = pr.author_association;
+
+            if (association !== 'FIRST_TIME_CONTRIBUTOR' && association !== 'FIRST_TIMER') {
+              console.log(`Author ${author} has association '${association}', not a first-time contributor`);
+              return;
+            }
+
+            // Skip staff members
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: author
+              });
+              if (response.data.state === 'active') {
+                console.log(`Skipping staff member: ${author}`);
+                return;
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              // 404 means user is not a staff member, continue
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: [LABEL_NAME]
+            });
+
+            console.log(`Applied '${LABEL_NAME}' label to PR #${pr.number} by ${author}`);

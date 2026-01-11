@@ -526,7 +526,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         };
 
         match cx
-            .background_executor()
+            .foreground_executor()
             .block_with_timeout(duration, rx.clone().recv())
         {
             Ok(Some((commands, matches, interceptor_result))) => {

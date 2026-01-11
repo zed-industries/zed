@@ -54,7 +54,7 @@
       "#": "vim::MoveToPrevious",
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPreviousMatch",
-      "%": "vim::Matching",
+      "%": ["vim::Matching", { "match_quotes": true }],
       "f": ["vim::PushFindForward", { "before": false, "multiline": false }],
       "t": ["vim::PushFindForward", { "before": true, "multiline": false }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": false }],
@@ -642,7 +642,7 @@
   {
     "context": "vim_operator == helix_m",
     "bindings": {
-      "m": "vim::Matching",
+      "m": ["vim::Matching", { "match_quotes": true }],
       "s": "vim::PushHelixSurroundAdd",
       "r": "vim::PushHelixSurroundReplace",
       "d": "vim::PushHelixSurroundDelete",

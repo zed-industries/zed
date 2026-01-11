@@ -8,7 +8,7 @@ use collections::HashSet;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
+    App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
 use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
@@ -65,6 +65,113 @@ impl ConfigOptionsView {
             config_option_ids,
             _refresh_task: refresh_task,
         }
+    }
+
+    pub fn toggle_category_picker(
+        &mut self,
+        category: acp::SessionConfigOptionCategory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(config_id) = self.first_config_option_id(category) else {
+            return false;
+        };
+
+        let Some(selector) = self.selector_for_config_id(&config_id, cx) else {
+            return false;
+        };
+
+        selector.update(cx, |selector, cx| {
+            selector.toggle_picker(window, cx);
+        });
+
+        true
+    }
+
+    pub fn cycle_category_option(
+        &mut self,
+        category: acp::SessionConfigOptionCategory,
+        favorites_only: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(config_id) = self.first_config_option_id(category) else {
+            return false;
+        };
+
+        let Some(next_value) = self.next_value_for_config(&config_id, favorites_only, cx) else {
+            return false;
+        };
+
+        let task = self
+            .config_options
+            .set_config_option(config_id, next_value, cx);
+
+        cx.spawn(async move |_, _| {
+            if let Err(err) = task.await {
+                log::error!("Failed to set config option: {:?}", err);
+            }
+        })
+        .detach();
+
+        true
+    }
+
+    fn first_config_option_id(
+        &self,
+        category: acp::SessionConfigOptionCategory,
+    ) -> Option<acp::SessionConfigId> {
+        self.config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.category.as_ref() == Some(&category))
+            .map(|option| option.id)
+    }
+
+    fn selector_for_config_id(
+        &self,
+        config_id: &acp::SessionConfigId,
+        cx: &App,
+    ) -> Option<Entity<ConfigOptionSelector>> {
+        self.selectors
+            .iter()
+            .find(|selector| selector.read(cx).config_id() == config_id)
+            .cloned()
+    }
+
+    fn next_value_for_config(
+        &self,
+        config_id: &acp::SessionConfigId,
+        favorites_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<acp::SessionConfigValueId> {
+        let mut options = extract_options(&self.config_options, config_id);
+        if options.is_empty() {
+            return None;
+        }
+
+        if favorites_only {
+            let favorites = self
+                .agent_server
+                .favorite_config_option_value_ids(config_id, cx);
+            options.retain(|option| favorites.contains(&option.value));
+            if options.is_empty() {
+                return None;
+            }
+        }
+
+        let current_value = get_current_value(&self.config_options, config_id);
+        let current_index = current_value
+            .as_ref()
+            .and_then(|current| options.iter().position(|option| &option.value == current))
+            .unwrap_or(usize::MAX);
+
+        let next_index = if current_index == usize::MAX {
+            0
+        } else {
+            (current_index + 1) % options.len()
+        };
+
+        Some(options[next_index].value.clone())
     }
 
     fn config_option_ids(
@@ -204,6 +311,14 @@ impl ConfigOptionSelector {
             .config_options()
             .into_iter()
             .find(|opt| opt.id == self.config_id)
+    }
+
+    fn config_id(&self) -> &acp::SessionConfigId {
+        &self.config_id
+    }
+
+    fn toggle_picker(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker_handle.toggle(window, cx);
     }
 
     fn current_value_name(&self) -> String {

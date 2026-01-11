@@ -11541,6 +11541,9 @@ mod tests {
                 window,
                 cx,
             );
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
             workspace.move_item_to_pane_at_index(
                 &MoveItemToPane {
                     destination: 3,

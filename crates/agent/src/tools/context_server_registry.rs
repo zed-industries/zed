@@ -1,8 +1,9 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
@@ -337,7 +338,7 @@ impl AnyAgentTool for ContextServerTool {
             authorize.await?;
 
             let Some(protocol) = server.client() else {
-                bail!("Context server not initialized");
+                anyhow::bail!("Context server not initialized");
             };
 
             let arguments = if let serde_json::Value::Object(map) = input {
@@ -351,15 +352,21 @@ impl AnyAgentTool for ContextServerTool {
                 tool_name,
                 arguments
             );
-            let response = protocol
-                .request::<context_server::types::requests::CallTool>(
-                    context_server::types::CallToolParams {
-                        name: tool_name,
-                        arguments,
-                        meta: None,
-                    },
-                )
-                .await?;
+
+            let request = protocol.request::<context_server::types::requests::CallTool>(
+                context_server::types::CallToolParams {
+                    name: tool_name,
+                    arguments,
+                    meta: None,
+                },
+            );
+
+            let response = futures::select! {
+                response = request.fuse() => response?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("MCP tool cancelled by user");
+                }
+            };
 
             let mut result = String::new();
             for content in response.content {

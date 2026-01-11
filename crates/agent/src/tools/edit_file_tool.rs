@@ -7,6 +7,7 @@ use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields}
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
@@ -18,7 +19,6 @@ use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::stream::StreamExt as _;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -395,7 +395,16 @@ impl AgentTool for EditFileTool {
             let mut hallucinated_old_text = false;
             let mut ambiguous_ranges = Vec::new();
             let mut emitted_location = false;
-            while let Some(event) = events.next().await {
+            loop {
+                let event = futures::select! {
+                    event = events.next().fuse() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Edit cancelled by user");
+                    }
+                };
                 match event {
                     EditAgentOutputEvent::Edited(range) => {
                         if !emitted_location {

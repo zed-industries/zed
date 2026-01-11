@@ -266,10 +266,11 @@ mod tests {
 
         smol::block_on(async {
             let test_dir = tempfile::tempdir().unwrap();
-            let executable_path = test_dir.path().join("my_script");
+            let file_path = test_dir.path().join("my_script");
 
-            // Create an executable file
-            std::fs::write(&executable_path, "#!/bin/bash\necho 'Hello'").unwrap();
+            std::fs::write(&file_path, "#!/bin/bash\necho 'Hello'").unwrap();
+            // The permissions will be shaped by the umask in the test environment
+            let original_perms = std::fs::metadata(&file_path).unwrap().permissions();
 
             // Create zip
             let zip_file = test_dir.path().join("test.zip");
@@ -282,14 +283,20 @@ mod tests {
             let reader = read_archive(&zip_file).await;
             extract_zip(extract_dir.path(), reader).await.unwrap();
 
-            // Check permissions are preserved
+            // Permissions were not stored, so will be whatever the umask generates
+            // by default for new files. This should match what we saw when we previously wrote
+            // the file.
             let extracted_path = extract_dir.path().join("my_script");
             assert!(extracted_path.exists());
             let extracted_perms = std::fs::metadata(&extracted_path).unwrap().permissions();
             assert_eq!(
-                extracted_perms.mode() & 0o777,
-                0o644,
-                "Expected default set of permissions for unzipped file with no permissions set."
+                extracted_perms.mode(),
+                original_perms.mode(),
+                "Expected matching Unix file mode for unzipped file without keep_file_permissions"
+            );
+            assert_eq!(
+                extracted_perms, original_perms,
+                "Expected default set of permissions for unzipped file without keep_file_permissions"
             );
         });
     }

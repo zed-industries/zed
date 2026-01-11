@@ -1,5 +1,5 @@
 use acp_thread::{MentionUri, selection_name};
-use agent::{HistoryStore, outline};
+use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
@@ -60,7 +60,7 @@ pub struct MentionImage {
 
 pub struct MentionSet {
     project: WeakEntity<Project>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
 }
@@ -68,12 +68,12 @@ pub struct MentionSet {
 impl MentionSet {
     pub fn new(
         project: WeakEntity<Project>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
     ) -> Self {
         Self {
             project,
-            history_store,
+            thread_store,
             prompt_store,
             mentions: HashMap::default(),
         }
@@ -218,7 +218,9 @@ impl MentionSet {
             }
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
+            MentionUri::TextThread { .. } => {
+                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
+            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -477,7 +479,7 @@ impl MentionSet {
 
         let server = Rc::new(agent::NativeAgentServer::new(
             project.read(cx).fs().clone(),
-            self.history_store.clone(),
+            self.thread_store.clone(),
         ));
         let delegate = AgentServerDelegate::new(
             project.read(cx).agent_server_store().clone(),
@@ -495,24 +497,6 @@ impl MentionSet {
                 .await?;
             Ok(Mention::Text {
                 content: summary.to_string(),
-                tracked_buffers: Vec::new(),
-            })
-        })
-    }
-
-    fn confirm_mention_for_text_thread(
-        &mut self,
-        path: PathBuf,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Mention>> {
-        let text_thread_task = self.history_store.update(cx, |store, cx| {
-            store.load_text_thread(path.as_path().into(), cx)
-        });
-        cx.spawn(async move |_, cx| {
-            let text_thread = text_thread_task.await?;
-            let xml = text_thread.update(cx, |text_thread, cx| text_thread.to_xml(cx));
-            Ok(Mention::Text {
-                content: xml,
                 tracked_buffers: Vec::new(),
             })
         })

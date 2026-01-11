@@ -2750,7 +2750,7 @@ mod tests {
             })
         })
         .detach();
-        cx.background_spawn(async move {
+        let completion_check_task = cx.background_spawn(async move {
             // The channel may be closed if the terminal is dropped before sending
             // the completion signal, which can happen with certain task scheduling orders.
             let exit_status = completion_rx.recv().await.ok().flatten();
@@ -2764,8 +2764,7 @@ mod tests {
                 #[cfg(not(target_os = "windows"))]
                 assert_eq!(exit_status.code(), None);
             }
-        })
-        .detach();
+        });
 
         let mut all_events = Vec::new();
         while let Ok(Ok(new_event)) =
@@ -2780,6 +2779,8 @@ mod tests {
                 .any(|event| event == &Event::CloseTerminal),
             "Wrong shell command should update the title but not should not close the terminal to show the error message, but got events: {all_events:?}",
         );
+
+        completion_check_task.await;
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::{borrow::Cow, cell::RefCell};
 
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, bail};
-use futures::AsyncReadExt as _;
+use futures::{AsyncReadExt as _, FutureExt as _};
 use gpui::{App, AppContext as _, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
@@ -145,7 +145,7 @@ impl AgentTool for FetchTool {
     ) -> Task<Result<Self::Output>> {
         let authorize = event_stream.authorize(input.url.clone(), cx);
 
-        let text = cx.background_spawn({
+        let fetch_task = cx.background_spawn({
             let http_client = self.http_client.clone();
             async move {
                 authorize.await?;
@@ -154,7 +154,12 @@ impl AgentTool for FetchTool {
         });
 
         cx.foreground_executor().spawn(async move {
-            let text = text.await?;
+            let text = futures::select! {
+                result = fetch_task.fuse() => result?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Fetch cancelled by user");
+                }
+            };
             if text.trim().is_empty() {
                 bail!("no textual content found");
             }

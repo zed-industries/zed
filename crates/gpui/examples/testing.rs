@@ -311,6 +311,12 @@ mod tests {
     /// GPUI also provides support for property testing, via the iterations flag
     #[gpui::test(iterations = 10)]
     fn test_counter_random_operations(cx: &mut TestAppContext, mut rng: StdRng) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| cx.new(|cx| Counter::new(cx)))
+                .unwrap()
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
         let counter = cx.new(|cx| Counter::new(cx));
 
         // Perform random increments/decrements
@@ -318,14 +324,18 @@ mod tests {
         for _ in 0..100 {
             if rng.random_bool(0.5) {
                 expected += 1;
-                counter.update(cx, |counter, _| counter.count += 1);
+                counter.update_in(&mut cx, |counter, window, cx| {
+                    counter.increment(&Increment, window, cx)
+                });
             } else {
                 expected -= 1;
-                counter.update(cx, |counter, _| counter.count -= 1);
+                counter.update_in(&mut cx, |counter, window, cx| {
+                    counter.decrement(&Decrement, window, cx)
+                });
             }
         }
 
-        let actual = counter.read_with(cx, |counter, _| counter.count);
+        let actual = counter.read_with(&cx, |counter, _| counter.count);
         assert_eq!(
             actual, expected,
             "Counter should match expected after random ops"
@@ -337,30 +347,40 @@ mod tests {
     mod distributed_systems {
         use std::sync::{Arc, Mutex};
 
-        /// A mock network that delivers messages between two peers.
-        struct MockNetwork {
+        /// The state of the mock network.
+        struct MockNetworkState {
+            ordering: Vec<i32>,
             a_to_b: Vec<i32>,
             b_to_a: Vec<i32>,
         }
 
+        /// A mock network that delivers messages between two peers.
+        #[derive(Clone)]
+        struct MockNetwork {
+            state: Arc<Mutex<MockNetworkState>>,
+        }
+
         impl MockNetwork {
-            fn new() -> Arc<Mutex<Self>> {
-                Arc::new(Mutex::new(Self {
-                    a_to_b: Vec::new(),
-                    b_to_a: Vec::new(),
-                }))
+            fn new() -> Self {
+                Self {
+                    state: Arc::new(Mutex::new(MockNetworkState {
+                        ordering: Vec::new(),
+                        a_to_b: Vec::new(),
+                        b_to_a: Vec::new(),
+                    })),
+                }
             }
 
-            fn a_client(network: &Arc<Mutex<Self>>) -> NetworkClient {
+            fn a_client(&self) -> NetworkClient {
                 NetworkClient {
-                    network: network.clone(),
+                    network: self.clone(),
                     is_a: true,
                 }
             }
 
-            fn b_client(network: &Arc<Mutex<Self>>) -> NetworkClient {
+            fn b_client(&self) -> NetworkClient {
                 NetworkClient {
-                    network: network.clone(),
+                    network: self.clone(),
                     is_a: false,
                 }
             }
@@ -369,13 +389,15 @@ mod tests {
         /// A client handle for sending/receiving messages over the mock network.
         #[derive(Clone)]
         struct NetworkClient {
-            network: Arc<Mutex<MockNetwork>>,
+            network: MockNetwork,
             is_a: bool,
         }
 
+        // See, networking is easy!
         impl NetworkClient {
             fn send(&self, value: i32) {
-                let mut network = self.network.lock().unwrap();
+                let mut network = self.network.state.lock().unwrap();
+                network.ordering.push(value);
                 if self.is_a {
                     network.b_to_a.push(value);
                 } else {
@@ -384,7 +406,7 @@ mod tests {
             }
 
             fn receive_all(&self) -> Vec<i32> {
-                let mut network = self.network.lock().unwrap();
+                let mut network = self.network.state.lock().unwrap();
                 if self.is_a {
                     network.a_to_b.drain(..).collect()
                 } else {
@@ -425,25 +447,6 @@ mod tests {
                     self.count += delta;
                 }
             }
-
-            /// Like increment, but tracks when the background send executes.
-            fn increment_tracked(
-                &mut self,
-                delta: i32,
-                cx: &mut Context<Self>,
-                order: Arc<Mutex<Vec<i32>>>,
-            ) {
-                self.count += delta;
-
-                cx.background_spawn({
-                    let client = self.client.clone();
-                    async move {
-                        order.lock().unwrap().push(delta);
-                        client.send(delta);
-                    }
-                })
-                .detach();
-            }
         }
 
         use super::*;
@@ -454,8 +457,8 @@ mod tests {
         fn test_app_sync(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
             let network = MockNetwork::new();
 
-            let a = cx_a.new(|_| NetworkedCounter::new(MockNetwork::a_client(&network)));
-            let b = cx_b.new(|_| NetworkedCounter::new(MockNetwork::b_client(&network)));
+            let a = cx_a.new(|_| NetworkedCounter::new(network.a_client()));
+            let b = cx_b.new(|_| NetworkedCounter::new(network.b_client()));
 
             // B increments locally and broadcasts the delta
             b.update(cx_b, |b, cx| b.increment(42, cx));
@@ -482,7 +485,6 @@ mod tests {
             let network = MockNetwork::new();
 
             // Track execution order
-            let actual_order = Arc::new(Mutex::new(Vec::new()));
             let mut original_order = Vec::new();
             let a = cx_a.new(|_| NetworkedCounter::new(MockNetwork::a_client(&network)));
             let b = cx_b.new(|_| NetworkedCounter::new(MockNetwork::b_client(&network)));
@@ -490,18 +492,14 @@ mod tests {
             let num_operations: usize = rng.random_range(3..8);
 
             for i in 0..num_operations {
-                let id = i as i32;
+                let i = i as i32;
                 let which = rng.random_bool(0.5);
 
-                original_order.push(id);
+                original_order.push(i);
                 if which {
-                    b.update(cx_b, |b, cx| {
-                        b.increment_tracked(id, cx, actual_order.clone())
-                    });
+                    b.update(cx_b, |b, cx| b.increment(i, cx));
                 } else {
-                    a.update(cx_a, |a, cx| {
-                        a.increment_tracked(id, cx, actual_order.clone())
-                    });
+                    a.update(cx_a, |a, cx| a.increment(i, cx));
                 }
             }
 
@@ -518,7 +516,7 @@ mod tests {
 
             // Nicely format the execution order output.
             // Run this test with `-- --nocapture` to see it!
-            let actual = actual_order.lock().unwrap();
+            let actual = network.state.lock().unwrap().ordering.clone();
             let spawned: Vec<_> = original_order.iter().map(|n| format!("{}", n)).collect();
             let ran: Vec<_> = actual.iter().map(|n| format!("{}", n)).collect();
             let diff: Vec<_> = original_order

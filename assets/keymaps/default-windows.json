@@ -265,13 +265,6 @@
     },
   },
   {
-    "context": "AgentPanel > NavigationMenu",
-    "use_key_equivalents": true,
-    "bindings": {
-      "shift-backspace": "agent::DeleteRecentlyOpenThread",
-    },
-  },
-  {
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
