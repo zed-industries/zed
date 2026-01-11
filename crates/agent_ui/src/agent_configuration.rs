@@ -22,7 +22,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -34,9 +35,9 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
-    Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
-    PopoverMenu, Switch, Tooltip, WithScrollbar, prelude::*,
+    ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
+    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -117,7 +118,7 @@ impl AgentConfiguration {
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);
         }
@@ -261,9 +262,12 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(provider.icon())
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                        match provider.icon() {
+                                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                                            IconOrSvg::Icon(name) => Icon::new(name),
+                                        }
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
                                     )
                                     .child(
                                         h_flex()
@@ -416,7 +420,7 @@ impl AgentConfiguration {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
 
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(
@@ -817,7 +821,8 @@ impl AgentConfiguration {
                                                     }
                                                 },
                                             )
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -975,7 +980,7 @@ impl AgentConfiguration {
                 let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
                     AgentIcon::Path(icon_path)
                 } else {
-                    AgentIcon::Name(IconName::Ai)
+                    AgentIcon::Name(IconName::Sparkle)
                 };
                 let display_name = agent_server_store
                     .agent_display_name(&name)
@@ -1137,6 +1142,7 @@ impl AgentConfiguration {
     ) -> impl IntoElement {
         let id = id.into();
         let display_name = display_name.into();
+
         let icon = match icon {
             AgentIcon::Name(icon_name) => Icon::new(icon_name)
                 .size(IconSize::Small)
@@ -1299,7 +1305,7 @@ fn show_unable_to_uninstall_extension_with_context_server(
                                                     .context_servers
                                                     .remove(&context_server_id.0);
                                             });
-                                        })?;
+                                        });
                                         anyhow::Ok(())
                                     }
                                 })
@@ -1365,6 +1371,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 env: Some(HashMap::default()),
                                 default_mode: None,
                                 default_model: None,
+                                favorite_models: vec![],
+                                default_config_options: Default::default(),
+                                favorite_config_option_values: Default::default(),
                             },
                         );
                 }

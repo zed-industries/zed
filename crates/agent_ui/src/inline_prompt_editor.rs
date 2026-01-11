@@ -1,4 +1,4 @@
-use agent::HistoryStore;
+use agent::ThreadStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
@@ -8,7 +8,6 @@ use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -20,10 +19,10 @@ use parking_lot::Mutex;
 use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
+use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::{cmp, mem};
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
@@ -33,72 +32,35 @@ use workspace::{Toast, Workspace};
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::agent_model_selector::AgentModelSelector;
-use crate::buffer_codegen::BufferCodegen;
+use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
 use crate::mention_set::paste_images_as_context;
 use crate::mention_set::{MentionSet, crease_for_mention};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
+use crate::{
+    CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext,
+};
 
 actions!(inline_assistant, [ThumbsUpResult, ThumbsDownResult]);
 
-pub struct InlineAssistRatingFeatureFlag;
-
-impl FeatureFlag for InlineAssistRatingFeatureFlag {
-    const NAME: &'static str = "inline-assist-rating";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
-enum RatingState {
+enum CompletionState {
     Pending,
-    GeneratedCompletion(Option<String>),
-    Rated(Uuid),
+    Generated { completion_text: Option<String> },
+    Rated,
 }
 
-impl RatingState {
-    fn is_pending(&self) -> bool {
-        matches!(self, RatingState::Pending)
-    }
-
-    fn rating_id(&self) -> Option<Uuid> {
-        match self {
-            RatingState::Pending => None,
-            RatingState::GeneratedCompletion(_) => None,
-            RatingState::Rated(id) => Some(*id),
-        }
-    }
-
-    fn rate(&mut self) -> (Uuid, Option<String>) {
-        let id = Uuid::new_v4();
-        let old_state = mem::replace(self, RatingState::Rated(id));
-        let completion = match old_state {
-            RatingState::Pending => None,
-            RatingState::GeneratedCompletion(completion) => completion,
-            RatingState::Rated(_) => None,
-        };
-
-        (id, completion)
-    }
-
-    fn reset(&mut self) {
-        *self = RatingState::Pending;
-    }
-
-    fn generated_completion(&mut self, generated_completion: Option<String>) {
-        *self = RatingState::GeneratedCompletion(generated_completion);
-    }
+struct SessionState {
+    session_id: Uuid,
+    completion: CompletionState,
 }
 
 pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -109,7 +71,7 @@ pub struct PromptEditor<T> {
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     show_rate_limit_notice: bool,
-    rated: RatingState,
+    session_state: SessionState,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -140,11 +102,11 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let left_gutter_width = gutter.full_width() + (gutter.margin / 2.0);
                 let right_padding = editor_margins.right + RIGHT_PADDING;
 
-                let explanation = codegen
-                    .active_alternative()
-                    .read(cx)
-                    .model_explanation
-                    .clone();
+                let active_alternative = codegen.active_alternative().read(cx);
+                let explanation = active_alternative
+                    .description
+                    .clone()
+                    .or_else(|| active_alternative.failure.clone());
 
                 (left_gutter_width, right_padding, explanation)
             }
@@ -178,7 +140,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         if let Some(explanation) = &explanation {
             markdown.update(cx, |markdown, cx| {
-                markdown.reset(explanation.clone(), cx);
+                markdown.reset(SharedString::from(explanation), cx);
             });
         }
 
@@ -187,7 +149,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             .into_any_element();
 
         v_flex()
-            .key_context("PromptEditor")
+            .key_context("InlineAssistant")
             .capture_action(cx.listener(Self::paste))
             .block_mouse_except_scroll()
             .size_full()
@@ -201,10 +163,6 @@ impl<T: 'static> Render for PromptEditor<T> {
             .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
-                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                        this.model_selector
-                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                    }))
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
@@ -213,6 +171,15 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .on_action(cx.listener(Self::thumbs_down))
                     .capture_action(cx.listener(Self::cycle_prev))
                     .capture_action(cx.listener(Self::cycle_next))
+                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                        this.model_selector
+                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                    }))
+                    .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                        this.model_selector.update(cx, |model_selector, cx| {
+                            model_selector.cycle_favorite_models(window, cx);
+                        });
+                    }))
                     .child(
                         WithRemSize::new(ui_font_size)
                             .h_full()
@@ -364,7 +331,7 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.history_store.clone(),
+                self.thread_store.clone(),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -396,7 +363,7 @@ impl<T: 'static> PromptEditor<T> {
             creases = insert_message_creases(&mut editor, &existing_creases, window, cx);
 
             if focus {
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
             }
             editor
         });
@@ -487,7 +454,7 @@ impl<T: 'static> PromptEditor<T> {
                 }
 
                 self.edited_since_done = true;
-                self.rated.reset();
+                self.session_state.completion = CompletionState::Pending;
                 cx.notify();
             }
             EditorEvent::Blurred => {
@@ -559,109 +526,179 @@ impl<T: 'static> PromptEditor<T> {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
+                self.fire_started_telemetry(cx);
                 cx.emit(PromptEditorEvent::StartRequested);
             }
             CodegenStatus::Pending => {}
             CodegenStatus::Done => {
                 if self.edited_since_done {
+                    self.fire_started_telemetry(cx);
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
                 }
             }
             CodegenStatus::Error(_) => {
+                self.fire_started_telemetry(cx);
                 cx.emit(PromptEditorEvent::StartRequested);
             }
         }
     }
 
-    fn thumbs_up(&mut self, _: &ThumbsUpResult, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.rated.is_pending() {
-            self.toast("Still generating...", None, cx);
+    fn fire_started_telemetry(&self, cx: &Context<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() else {
             return;
-        }
+        };
 
-        if let Some(rating_id) = self.rated.rating_id() {
-            self.toast("Already rated this completion", Some(rating_id), cx);
-            return;
-        }
+        let model_telemetry_id = model.model.telemetry_id();
+        let model_provider_id = model.provider.id().to_string();
 
-        let (rating_id, completion) = self.rated.rate();
-
-        let selected_text = match &self.mode {
+        let (kind, language_name) = match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
-                codegen.read(cx).selected_text(cx).map(|s| s.to_string())
+                let codegen = codegen.read(cx);
+                (
+                    "inline",
+                    codegen.language_name(cx).map(|name| name.to_string()),
+                )
             }
-            PromptEditorMode::Terminal { .. } => None,
+            PromptEditorMode::Terminal { .. } => ("inline_terminal", None),
         };
-
-        let model_info = self.model_selector.read(cx).active_model(cx);
-        let model_id = {
-            let Some(configured_model) = model_info else {
-                self.toast("No configured model", None, cx);
-                return;
-            };
-
-            configured_model.model.telemetry_id()
-        };
-
-        let prompt = self.editor.read(cx).text(cx);
 
         telemetry::event!(
-            "Inline Assistant Rated",
-            rating = "positive",
-            model = model_id,
-            prompt = prompt,
-            completion = completion,
-            selected_text = selected_text,
-            rating_id = rating_id.to_string()
+            "Assistant Started",
+            session_id = self.session_state.session_id.to_string(),
+            kind = kind,
+            phase = "started",
+            model = model_telemetry_id,
+            model_provider = model_provider_id,
+            language_name = language_name,
         );
+    }
 
-        cx.notify();
+    fn thumbs_up(&mut self, _: &ThumbsUpResult, _window: &mut Window, cx: &mut Context<Self>) {
+        match &self.session_state.completion {
+            CompletionState::Pending => {
+                self.toast("Can't rate, still generating...", None, cx);
+                return;
+            }
+            CompletionState::Rated => {
+                self.toast(
+                    "Already rated this completion",
+                    Some(self.session_state.session_id),
+                    cx,
+                );
+                return;
+            }
+            CompletionState::Generated { completion_text } => {
+                let model_info = self.model_selector.read(cx).active_model(cx);
+                let (model_id, use_streaming_tools) = {
+                    let Some(configured_model) = model_info else {
+                        self.toast("No configured model", None, cx);
+                        return;
+                    };
+                    (
+                        configured_model.model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(
+                            configured_model.model.as_ref(),
+                            cx,
+                        ),
+                    )
+                };
+
+                let selected_text = match &self.mode {
+                    PromptEditorMode::Buffer { codegen, .. } => {
+                        codegen.read(cx).selected_text(cx).map(|s| s.to_string())
+                    }
+                    PromptEditorMode::Terminal { .. } => None,
+                };
+
+                let prompt = self.editor.read(cx).text(cx);
+
+                let kind = match &self.mode {
+                    PromptEditorMode::Buffer { .. } => "inline",
+                    PromptEditorMode::Terminal { .. } => "inline_terminal",
+                };
+
+                telemetry::event!(
+                    "Inline Assistant Rated",
+                    rating = "positive",
+                    session_id = self.session_state.session_id.to_string(),
+                    kind = kind,
+                    model = model_id,
+                    prompt = prompt,
+                    completion = completion_text,
+                    selected_text = selected_text,
+                    use_streaming_tools
+                );
+
+                self.session_state.completion = CompletionState::Rated;
+
+                cx.notify();
+            }
+        }
     }
 
     fn thumbs_down(&mut self, _: &ThumbsDownResult, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.rated.is_pending() {
-            self.toast("Still generating...", None, cx);
-            return;
-        }
-        if let Some(rating_id) = self.rated.rating_id() {
-            self.toast("Already rated this completion", Some(rating_id), cx);
-            return;
-        }
-
-        let (rating_id, completion) = self.rated.rate();
-
-        let selected_text = match &self.mode {
-            PromptEditorMode::Buffer { codegen, .. } => {
-                codegen.read(cx).selected_text(cx).map(|s| s.to_string())
-            }
-            PromptEditorMode::Terminal { .. } => None,
-        };
-
-        let model_info = self.model_selector.read(cx).active_model(cx);
-        let model_telemetry_id = {
-            let Some(configured_model) = model_info else {
-                self.toast("No configured model", None, cx);
+        match &self.session_state.completion {
+            CompletionState::Pending => {
+                self.toast("Can't rate, still generating...", None, cx);
                 return;
-            };
+            }
+            CompletionState::Rated => {
+                self.toast(
+                    "Already rated this completion",
+                    Some(self.session_state.session_id),
+                    cx,
+                );
+                return;
+            }
+            CompletionState::Generated { completion_text } => {
+                let model_info = self.model_selector.read(cx).active_model(cx);
+                let (model_telemetry_id, use_streaming_tools) = {
+                    let Some(configured_model) = model_info else {
+                        self.toast("No configured model", None, cx);
+                        return;
+                    };
+                    (
+                        configured_model.model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(
+                            configured_model.model.as_ref(),
+                            cx,
+                        ),
+                    )
+                };
 
-            configured_model.model.telemetry_id()
-        };
+                let selected_text = match &self.mode {
+                    PromptEditorMode::Buffer { codegen, .. } => {
+                        codegen.read(cx).selected_text(cx).map(|s| s.to_string())
+                    }
+                    PromptEditorMode::Terminal { .. } => None,
+                };
 
-        let prompt = self.editor.read(cx).text(cx);
+                let prompt = self.editor.read(cx).text(cx);
 
-        telemetry::event!(
-            "Inline Assistant Rated",
-            rating = "negative",
-            model = model_telemetry_id,
-            prompt = prompt,
-            completion = completion,
-            selected_text = selected_text,
-            rating_id = rating_id.to_string()
-        );
+                let kind = match &self.mode {
+                    PromptEditorMode::Buffer { .. } => "inline",
+                    PromptEditorMode::Terminal { .. } => "inline_terminal",
+                };
 
-        cx.notify();
+                telemetry::event!(
+                    "Inline Assistant Rated",
+                    rating = "negative",
+                    session_id = self.session_state.session_id.to_string(),
+                    kind = kind,
+                    model = model_telemetry_id,
+                    prompt = prompt,
+                    completion = completion_text,
+                    selected_text = selected_text,
+                    use_streaming_tools
+                );
+
+                self.session_state.completion = CompletionState::Rated;
+
+                cx.notify();
+            }
+        }
     }
 
     fn toast(&mut self, msg: &str, uuid: Option<Uuid>, cx: &mut Context<'_, PromptEditor<T>>) {
@@ -795,8 +832,7 @@ impl<T: 'static> PromptEditor<T> {
                             .into_any_element(),
                     ]
                 } else {
-                    let show_rating_buttons = cx.has_flag::<InlineAssistRatingFeatureFlag>();
-                    let rated = self.rated.rating_id().is_some();
+                    let rated = matches!(self.session_state.completion, CompletionState::Rated);
 
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)
@@ -811,31 +847,72 @@ impl<T: 'static> PromptEditor<T> {
 
                     let mut buttons = Vec::new();
 
-                    if show_rating_buttons {
-                        buttons.push(
-                            IconButton::new("thumbs-down", IconName::ThumbsDown)
-                                .icon_color(if rated { Color::Muted } else { Color::Default })
-                                .shape(IconButtonShape::Square)
-                                .disabled(rated)
-                                .tooltip(Tooltip::text("Bad result"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.thumbs_down(&ThumbsDownResult, window, cx);
-                                }))
-                                .into_any_element(),
-                        );
-
-                        buttons.push(
-                            IconButton::new("thumbs-up", IconName::ThumbsUp)
-                                .icon_color(if rated { Color::Muted } else { Color::Default })
-                                .shape(IconButtonShape::Square)
-                                .disabled(rated)
-                                .tooltip(Tooltip::text("Good result"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.thumbs_up(&ThumbsUpResult, window, cx);
-                                }))
-                                .into_any_element(),
-                        );
-                    }
+                    buttons.push(
+                        h_flex()
+                            .pl_1()
+                            .gap_1()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                IconButton::new("thumbs-up", IconName::ThumbsUp)
+                                    .shape(IconButtonShape::Square)
+                                    .map(|this| {
+                                        if rated {
+                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
+                                                move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Good Result",
+                                                        None,
+                                                        "You already rated this result",
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
+                                                Tooltip::for_action(
+                                                    "Good Result",
+                                                    &ThumbsUpResult,
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.thumbs_up(&ThumbsUpResult, window, cx);
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("thumbs-down", IconName::ThumbsDown)
+                                    .shape(IconButtonShape::Square)
+                                    .map(|this| {
+                                        if rated {
+                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
+                                                move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Bad Result",
+                                                        None,
+                                                        "You already rated this result",
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
+                                                Tooltip::for_action(
+                                                    "Bad Result",
+                                                    &ThumbsDownResult,
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.thumbs_down(&ThumbsDownResult, window, cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
 
                     buttons.push(accept);
 
@@ -896,10 +973,21 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let focus_handle = self.editor.focus_handle(cx);
+
         IconButton::new("cancel", IconName::Close)
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
-            .tooltip(Tooltip::text("Close Assistant"))
+            .tooltip({
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Close Assistant",
+                        &editor::actions::Cancel,
+                        &focus_handle,
+                        cx,
+                    )
+                }
+            })
             .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
             .into_any_element()
     }
@@ -1013,7 +1101,6 @@ impl<T: 'static> PromptEditor<T> {
         let colors = cx.theme().colors();
 
         div()
-            .key_context("InlineAssistEditor")
             .size_full()
             .p_2()
             .pl_1()
@@ -1120,8 +1207,9 @@ impl PromptEditor<BufferCodegen> {
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
+        session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1162,14 +1250,14 @@ impl PromptEditor<BufferCodegen> {
         });
 
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1190,7 +1278,10 @@ impl PromptEditor<BufferCodegen> {
             editor_subscriptions: Vec::new(),
             show_rate_limit_notice: false,
             mode,
-            rated: RatingState::Pending,
+            session_state: SessionState {
+                session_id,
+                completion: CompletionState::Pending,
+            },
             _phantom: Default::default(),
         };
 
@@ -1210,13 +1301,15 @@ impl PromptEditor<BufferCodegen> {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Pending => {
-                self.rated.reset();
+                self.session_state.completion = CompletionState::Pending;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
             CodegenStatus::Done => {
                 let completion = codegen.read(cx).active_completion(cx);
-                self.rated.generated_completion(completion);
+                self.session_state.completion = CompletionState::Generated {
+                    completion_text: completion,
+                };
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1272,8 +1365,9 @@ impl PromptEditor<TerminalCodegen> {
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<TerminalCodegen>,
+        session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1309,14 +1403,14 @@ impl PromptEditor<TerminalCodegen> {
         });
 
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1337,7 +1431,10 @@ impl PromptEditor<TerminalCodegen> {
             editor_subscriptions: Vec::new(),
             mode,
             show_rate_limit_notice: false,
-            rated: RatingState::Pending,
+            session_state: SessionState {
+                session_id,
+                completion: CompletionState::Pending,
+            },
             _phantom: Default::default(),
         };
         this.count_lines(cx);
@@ -1377,13 +1474,14 @@ impl PromptEditor<TerminalCodegen> {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Pending => {
-                self.rated = RatingState::Pending;
+                self.session_state.completion = CompletionState::Pending;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
             CodegenStatus::Done | CodegenStatus::Error(_) => {
-                self.rated
-                    .generated_completion(codegen.read(cx).completion());
+                self.session_state.completion = CompletionState::Generated {
+                    completion_text: codegen.read(cx).completion(),
+                };
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));

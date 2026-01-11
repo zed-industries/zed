@@ -22,6 +22,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use task::{Shell, SpawnInTerminal};
@@ -240,6 +241,123 @@ mod ext_agent_tests {
             .collect();
         assert_eq!(remaining, vec!["custom".to_string()]);
     }
+
+    #[test]
+    fn resolve_extension_icon_path_allows_valid_paths() {
+        // Create a temporary directory structure for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Create a valid icon file
+        let icon_path = ext_dir.join("icon.svg");
+        std::fs::write(&icon_path, "<svg></svg>").unwrap();
+
+        // Test that a valid relative path works
+        let result = super::resolve_extension_icon_path(extensions_dir, "my-extension", "icon.svg");
+        assert!(result.is_some());
+        assert!(result.unwrap().ends_with("icon.svg"));
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_allows_nested_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        let icons_dir = ext_dir.join("assets").join("icons");
+        std::fs::create_dir_all(&icons_dir).unwrap();
+
+        let icon_path = icons_dir.join("logo.svg");
+        std::fs::write(&icon_path, "<svg></svg>").unwrap();
+
+        let result = super::resolve_extension_icon_path(
+            extensions_dir,
+            "my-extension",
+            "assets/icons/logo.svg",
+        );
+        assert!(result.is_some());
+        assert!(result.unwrap().ends_with("logo.svg"));
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_blocks_path_traversal() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+
+        // Create two extension directories
+        let ext1_dir = extensions_dir.join("extension1");
+        let ext2_dir = extensions_dir.join("extension2");
+        std::fs::create_dir_all(&ext1_dir).unwrap();
+        std::fs::create_dir_all(&ext2_dir).unwrap();
+
+        // Create a file in extension2
+        let secret_file = ext2_dir.join("secret.svg");
+        std::fs::write(&secret_file, "<svg>secret</svg>").unwrap();
+
+        // Try to access extension2's file from extension1 using path traversal
+        let result = super::resolve_extension_icon_path(
+            extensions_dir,
+            "extension1",
+            "../extension2/secret.svg",
+        );
+        assert!(
+            result.is_none(),
+            "Path traversal to sibling extension should be blocked"
+        );
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_blocks_absolute_escape() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Create a file outside the extensions directory
+        let outside_file = temp_dir.path().join("outside.svg");
+        std::fs::write(&outside_file, "<svg>outside</svg>").unwrap();
+
+        // Try to escape to parent directory
+        let result =
+            super::resolve_extension_icon_path(extensions_dir, "my-extension", "../outside.svg");
+        assert!(
+            result.is_none(),
+            "Path traversal to parent directory should be blocked"
+        );
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_blocks_deep_traversal() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Try deep path traversal
+        let result = super::resolve_extension_icon_path(
+            extensions_dir,
+            "my-extension",
+            "../../../../../../etc/passwd",
+        );
+        assert!(
+            result.is_none(),
+            "Deep path traversal should be blocked (file doesn't exist)"
+        );
+    }
+
+    #[test]
+    fn resolve_extension_icon_path_returns_none_for_nonexistent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extensions_dir = temp_dir.path();
+        let ext_dir = extensions_dir.join("my-extension");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Try to access a file that doesn't exist
+        let result =
+            super::resolve_extension_icon_path(extensions_dir, "my-extension", "nonexistent.svg");
+        assert!(result.is_none(), "Nonexistent file should return None");
+    }
 }
 
 impl AgentServerStore {
@@ -277,7 +395,6 @@ impl AgentServerStore {
                 extension_agents.clear();
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
-                        // Store absolute icon path if provided, resolving symlinks for dev extensions
                         // Store display name from manifest
                         self.agent_display_names.insert(
                             ExternalAgentServerName(agent_name.clone().into()),
@@ -285,18 +402,17 @@ impl AgentServerStore {
                         );
 
                         let icon_path = if let Some(icon) = &agent_entry.icon {
-                            let icon_path = extensions_dir.join(ext_id).join(icon);
-                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
-                            let absolute_icon_path = icon_path
-                                .canonicalize()
-                                .unwrap_or(icon_path)
-                                .to_string_lossy()
-                                .to_string();
-                            self.agent_icons.insert(
-                                ExternalAgentServerName(agent_name.clone().into()),
-                                SharedString::from(absolute_icon_path.clone()),
-                            );
-                            Some(absolute_icon_path)
+                            if let Some(absolute_icon_path) =
+                                resolve_extension_icon_path(&extensions_dir, ext_id, icon)
+                            {
+                                self.agent_icons.insert(
+                                    ExternalAgentServerName(agent_name.clone().into()),
+                                    SharedString::from(absolute_icon_path.clone()),
+                                );
+                                Some(absolute_icon_path)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -325,23 +441,18 @@ impl AgentServerStore {
                             SharedString::from(agent_entry.name.clone()),
                         );
 
-                        // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
-                            let icon_path = extensions_dir.join(ext_id).join(icon);
-                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
-                            let absolute_icon_path = icon_path
-                                .canonicalize()
-                                .unwrap_or(icon_path)
-                                .to_string_lossy()
-                                .to_string();
-
-                            // Store icon locally for remote client
-                            self.agent_icons.insert(
-                                ExternalAgentServerName(agent_name.clone().into()),
-                                SharedString::from(absolute_icon_path.clone()),
-                            );
-
-                            Some(absolute_icon_path)
+                            if let Some(absolute_icon_path) =
+                                resolve_extension_icon_path(&extensions_dir, ext_id, icon)
+                            {
+                                self.agent_icons.insert(
+                                    ExternalAgentServerName(agent_name.clone().into()),
+                                    SharedString::from(absolute_icon_path.clone()),
+                                );
+                                Some(absolute_icon_path)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -383,7 +494,49 @@ impl AgentServerStore {
     pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_icons.get(name).cloned()
     }
+}
 
+/// Safely resolves an extension icon path, ensuring it stays within the extension directory.
+/// Returns `None` if the path would escape the extension directory (path traversal attack).
+fn resolve_extension_icon_path(
+    extensions_dir: &Path,
+    extension_id: &str,
+    icon_relative_path: &str,
+) -> Option<String> {
+    let extension_root = extensions_dir.join(extension_id);
+    let icon_path = extension_root.join(icon_relative_path);
+
+    // Canonicalize both paths to resolve symlinks and normalize the paths.
+    // For the extension root, we need to handle the case where it might be a symlink
+    // (common for dev extensions).
+    let canonical_extension_root = extension_root.canonicalize().unwrap_or(extension_root);
+    let canonical_icon_path = match icon_path.canonicalize() {
+        Ok(path) => path,
+        Err(err) => {
+            log::warn!(
+                "Failed to canonicalize icon path for extension '{}': {} (path: {})",
+                extension_id,
+                err,
+                icon_relative_path
+            );
+            return None;
+        }
+    };
+
+    // Verify the resolved icon path is within the extension directory
+    if canonical_icon_path.starts_with(&canonical_extension_root) {
+        Some(canonical_icon_path.to_string_lossy().to_string())
+    } else {
+        log::warn!(
+            "Icon path '{}' for extension '{}' escapes extension directory, ignoring for security",
+            icon_relative_path,
+            extension_id
+        );
+        None
+    }
+}
+
+impl AgentServerStore {
     pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_display_names.get(name).cloned()
     }
@@ -459,7 +612,7 @@ impl AgentServerStore {
                     .gemini
                     .as_ref()
                     .and_then(|settings| settings.ignore_system_version)
-                    .unwrap_or(false),
+                    .unwrap_or(true),
             }),
         );
         self.external_agents.insert(
@@ -759,7 +912,7 @@ impl AgentServerStore {
                     new_version_available_tx,
                     &mut cx.to_async(),
                 ))
-            })??
+            })?
             .await?;
         Ok(proto::AgentServerCommand {
             path: command.path.to_string_lossy().into_owned(),
@@ -839,7 +992,7 @@ impl AgentServerStore {
                 .collect();
             cx.emit(AgentServersUpdated);
             Ok(())
-        })?
+        })
     }
 
     async fn handle_external_extension_agents_updated(
@@ -888,7 +1041,7 @@ impl AgentServerStore {
             this.reregister_agents(cx);
             cx.emit(AgentServersUpdated);
             Ok(())
-        })?
+        })
     }
 
     async fn handle_loading_status_updated(
@@ -903,7 +1056,8 @@ impl AgentServerStore {
             {
                 status_tx.send(envelope.payload.status.into()).ok();
             }
-        })
+        });
+        Ok(())
     }
 
     async fn handle_new_version_available(
@@ -920,7 +1074,8 @@ impl AgentServerStore {
                     .send(Some(envelope.payload.version))
                     .ok();
             }
-        })
+        });
+        Ok(())
     }
 
     pub fn get_extension_id_for_agent(
@@ -974,11 +1129,10 @@ fn get_or_npm_install_builtin_agent(
         }
 
         versions.sort();
-        let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+        let newest_version = if let Some((version, _)) = versions.last().cloned()
             && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
         {
-            versions.pop();
-            Some(file_name)
+            versions.pop()
         } else {
             None
         };
@@ -1004,9 +1158,8 @@ fn get_or_npm_install_builtin_agent(
         })
         .detach();
 
-        let version = if let Some(file_name) = newest_version {
+        let version = if let Some((version, file_name)) = newest_version {
             cx.background_spawn({
-                let file_name = file_name.clone();
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
@@ -1015,7 +1168,7 @@ fn get_or_npm_install_builtin_agent(
                         .await
                         .ok();
                     if let Some(latest_version) = latest_version
-                        && &latest_version != &file_name.to_string_lossy()
+                        && latest_version != version
                     {
                         let download_result = download_latest_version(
                             fs,
@@ -1028,7 +1181,9 @@ fn get_or_npm_install_builtin_agent(
                         if let Some(mut new_version_available) = new_version_available
                             && download_result.is_some()
                         {
-                            new_version_available.send(Some(latest_version)).ok();
+                            new_version_available
+                                .send(Some(latest_version.to_string()))
+                                .ok();
                         }
                     }
                 }
@@ -1047,6 +1202,7 @@ fn get_or_npm_install_builtin_agent(
                 package_name.clone(),
             ))
             .await?
+            .to_string()
             .into()
         };
 
@@ -1093,7 +1249,7 @@ async fn download_latest_version(
     dir: PathBuf,
     node_runtime: NodeRuntime,
     package_name: SharedString,
-) -> Result<String> {
+) -> Result<Version> {
     log::debug!("downloading latest version of {package_name}");
 
     let tmp_dir = tempfile::tempdir_in(&dir)?;
@@ -1109,7 +1265,7 @@ async fn download_latest_version(
 
     fs.rename(
         &tmp_dir.keep(),
-        &dir.join(&version),
+        &dir.join(version.to_string()),
         RenameOptions {
             ignore_if_exists: true,
             overwrite: true,
@@ -1866,6 +2022,9 @@ pub struct BuiltinAgentServerSettings {
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
+    pub favorite_models: Vec<String>,
+    pub default_config_options: HashMap<String, String>,
+    pub favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1889,6 +2048,9 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
             default_model: value.default_model,
+            favorite_models: value.favorite_models,
+            default_config_options: value.default_config_options,
+            favorite_config_option_values: value.favorite_config_option_values,
         }
     }
 }
@@ -1920,6 +2082,22 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -1934,6 +2112,22 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
 }
 
@@ -1960,6 +2154,45 @@ impl CustomAgentServerSettings {
             }
         }
     }
+
+    pub fn favorite_models(&self) -> &[String] {
+        match self {
+            CustomAgentServerSettings::Custom {
+                favorite_models, ..
+            }
+            | CustomAgentServerSettings::Extension {
+                favorite_models, ..
+            } => favorite_models,
+        }
+    }
+
+    pub fn default_config_option(&self, config_id: &str) -> Option<&str> {
+        match self {
+            CustomAgentServerSettings::Custom {
+                default_config_options,
+                ..
+            }
+            | CustomAgentServerSettings::Extension {
+                default_config_options,
+                ..
+            } => default_config_options.get(config_id).map(|s| s.as_str()),
+        }
+    }
+
+    pub fn favorite_config_option_values(&self, config_id: &str) -> Option<&[String]> {
+        match self {
+            CustomAgentServerSettings::Custom {
+                favorite_config_option_values,
+                ..
+            }
+            | CustomAgentServerSettings::Extension {
+                favorite_config_option_values,
+                ..
+            } => favorite_config_option_values
+                .get(config_id)
+                .map(|v| v.as_slice()),
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1971,6 +2204,9 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 env,
                 default_mode,
                 default_model,
+                favorite_models,
+                default_config_options,
+                favorite_config_option_values,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -1979,13 +2215,22 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 },
                 default_mode,
                 default_model,
+                favorite_models,
+                default_config_options,
+                favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
             } => CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
             },
         }
     }
@@ -2311,6 +2556,9 @@ mod extension_agent_tests {
             ignore_system_version: None,
             default_mode: None,
             default_model: None,
+            favorite_models: vec![],
+            default_config_options: Default::default(),
+            favorite_config_option_values: Default::default(),
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2327,6 +2575,9 @@ mod extension_agent_tests {
             env: None,
             default_mode: None,
             default_model: None,
+            favorite_models: vec![],
+            default_config_options: Default::default(),
+            favorite_config_option_values: Default::default(),
         };
 
         let converted: CustomAgentServerSettings = settings.into();

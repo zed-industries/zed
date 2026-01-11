@@ -12,12 +12,12 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
-    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -217,19 +217,77 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
+    /// Fallback arena used when no app-specific arena is active.
+    /// In production, each window draw sets CURRENT_ELEMENT_ARENA to the app's arena.
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(1024 * 1024));
+
+    /// Points to the current App's element arena during draw operations.
+    /// This allows multiple test Apps to have isolated arenas, preventing
+    /// cross-session corruption when the scheduler interleaves their tasks.
+    static CURRENT_ELEMENT_ARENA: Cell<Option<*const RefCell<Arena>>> = const { Cell::new(None) };
+}
+
+/// Allocates an element in the current arena. Uses the app-specific arena if one
+/// is active (during draw), otherwise falls back to the thread-local ELEMENT_ARENA.
+pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
+    CURRENT_ELEMENT_ARENA.with(|current| {
+        if let Some(arena_ptr) = current.get() {
+            // SAFETY: The pointer is valid for the duration of the draw operation
+            // that set it, and we're being called during that same draw.
+            let arena_cell = unsafe { &*arena_ptr };
+            f(&mut arena_cell.borrow_mut())
+        } else {
+            ELEMENT_ARENA.with_borrow_mut(f)
+        }
+    })
+}
+
+/// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
+/// When dropped, restores the previous arena (supporting nested draws).
+pub(crate) struct ElementArenaScope {
+    previous: Option<*const RefCell<Arena>>,
+}
+
+impl ElementArenaScope {
+    /// Enter a scope where element allocations use the given arena.
+    pub(crate) fn enter(arena: &RefCell<Arena>) -> Self {
+        let previous = CURRENT_ELEMENT_ARENA.with(|current| {
+            let prev = current.get();
+            current.set(Some(arena as *const RefCell<Arena>));
+            prev
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for ElementArenaScope {
+    fn drop(&mut self) {
+        CURRENT_ELEMENT_ARENA.with(|current| {
+            current.set(self.previous);
+        });
+    }
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
-pub struct ArenaClearNeeded;
+pub struct ArenaClearNeeded {
+    arena: *const RefCell<Arena>,
+}
 
 impl ArenaClearNeeded {
+    /// Create a new ArenaClearNeeded that will clear the given arena.
+    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
+        Self {
+            arena: arena as *const RefCell<Arena>,
+        }
+    }
+
     /// Clear the element arena.
     pub fn clear(self) {
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            element_arena.clear();
-        });
+        // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
+        // at the end of draw() and must be cleared before the next draw.
+        let arena_cell = unsafe { &*self.arena };
+        arena_cell.borrow_mut().clear();
     }
 }
 
@@ -345,8 +403,8 @@ impl FocusHandle {
     }
 
     /// Moves the focus to the element associated with this handle.
-    pub fn focus(&self, window: &mut Window) {
-        window.focus(self)
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        window.focus(self, cx)
     }
 
     /// Obtains whether the element associated with this handle is currently focused.
@@ -838,6 +896,7 @@ pub struct Window {
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
+    text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
     /// The stack of override values for the window's rem size.
     ///
@@ -876,7 +935,9 @@ pub struct Window {
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
-    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
+    /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
+    pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -895,6 +956,51 @@ pub struct Window {
 struct ModifierState {
     modifiers: Modifiers,
     saw_keystroke: bool,
+}
+
+/// Tracks input event timestamps to determine if input is arriving at a high rate.
+/// Used for selective VRR (Variable Refresh Rate) optimization.
+#[derive(Clone, Debug)]
+pub(crate) struct InputRateTracker {
+    timestamps: Vec<Instant>,
+    window: Duration,
+    inputs_per_second: u32,
+    sustain_until: Instant,
+    sustain_duration: Duration,
+}
+
+impl Default for InputRateTracker {
+    fn default() -> Self {
+        Self {
+            timestamps: Vec::new(),
+            window: Duration::from_millis(100),
+            inputs_per_second: 60,
+            sustain_until: Instant::now(),
+            sustain_duration: Duration::from_secs(1),
+        }
+    }
+}
+
+impl InputRateTracker {
+    pub fn record_input(&mut self) {
+        let now = Instant::now();
+        self.timestamps.push(now);
+        self.prune_old_timestamps(now);
+
+        let min_events = self.inputs_per_second as u128 * self.window.as_millis() / 1000;
+        if self.timestamps.len() as u128 >= min_events {
+            self.sustain_until = now + self.sustain_duration;
+        }
+    }
+
+    pub fn is_high_rate(&self) -> bool {
+        Instant::now() < self.sustain_until
+    }
+
+    fn prune_old_timestamps(&mut self, now: Instant) {
+        self.timestamps
+            .retain(|&t| now.duration_since(t) <= self.window);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1047,7 +1153,7 @@ impl Window {
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
-        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+        let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1075,7 +1181,7 @@ impl Window {
             let active = active.clone();
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
-            let last_input_timestamp = last_input_timestamp.clone();
+            let input_rate_tracker = input_rate_tracker.clone();
             move |request_frame_options| {
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
@@ -1088,12 +1194,12 @@ impl Window {
                         .log_err();
                 }
 
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
+                // Keep presenting if input was recently arriving at a high rate (>= 60fps).
+                // Once high-rate input is detected, we sustain presentation for 1 second
+                // to prevent display underclocking during active input.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get()
-                        && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
+                    || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
@@ -1101,7 +1207,6 @@ impl Window {
                             .update(&mut cx, |_, window, cx| {
                                 let arena_clear_needed = window.draw(cx);
                                 window.present();
-                                // drop the arena elements after present to reduce latency
                                 arena_clear_needed.clear();
                             })
                             .log_err();
@@ -1266,6 +1371,7 @@ impl Window {
             display_id,
             sprite_atlas,
             text_system,
+            text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
@@ -1299,7 +1405,7 @@ impl Window {
             active,
             hovered,
             needs_present,
-            last_input_timestamp,
+            input_rate_tracker,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -1436,13 +1542,25 @@ impl Window {
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
-    pub fn focus(&mut self, handle: &FocusHandle) {
+    pub fn focus(&mut self, handle: &FocusHandle, cx: &mut App) {
         if !self.focus_enabled || self.focus == Some(handle.id) {
             return;
         }
 
         self.focus = Some(handle.id);
         self.clear_pending_keystrokes();
+
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+
         self.refresh();
     }
 
@@ -1463,24 +1581,24 @@ impl Window {
     }
 
     /// Move focus to next tab stop.
-    pub fn focus_next(&mut self) {
+    pub fn focus_next(&mut self, cx: &mut App) {
         if !self.focus_enabled {
             return;
         }
 
         if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
-            self.focus(&handle)
+            self.focus(&handle, cx)
         }
     }
 
     /// Move focus to previous tab stop.
-    pub fn focus_prev(&mut self) {
+    pub fn focus_prev(&mut self, cx: &mut App) {
         if !self.focus_enabled {
             return;
         }
 
         if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
-            self.focus(&handle)
+            self.focus(&handle, cx)
         }
     }
 
@@ -1764,6 +1882,15 @@ impl Window {
         self.platform_window.bounds()
     }
 
+    /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
+    /// This does not present the frame to screen - useful for visual testing where we want
+    /// to capture what would be rendered without displaying it or requiring the window to be visible.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
+        self.platform_window
+            .render_to_image(&self.rendered_frame.scene)
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
@@ -1961,9 +2088,17 @@ impl Window {
     }
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
-    pub fn is_action_available(&self, action: &dyn Action, cx: &mut App) -> bool {
+    pub fn is_action_available(&self, action: &dyn Action, cx: &App) -> bool {
         let node_id =
             self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
+        self.rendered_frame
+            .dispatch_tree
+            .is_action_available(action, node_id)
+    }
+
+    /// Determine whether the given action is available along the dispatch path to the given focus_handle.
+    pub fn is_action_available_in(&self, action: &dyn Action, focus_handle: &FocusHandle) -> bool {
+        let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
         self.rendered_frame
             .dispatch_tree
             .is_action_available(action, node_id)
@@ -1998,6 +2133,10 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // Set up the per-App arena for element allocation during this draw.
+        // This ensures that multiple test Apps have isolated arenas.
+        let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -2065,7 +2204,7 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
-        ArenaClearNeeded
+        ArenaClearNeeded::new(&cx.element_arena)
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -3055,6 +3194,7 @@ impl Window {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
         };
+        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -3062,6 +3202,7 @@ impl Window {
             subpixel_variant,
             scale_factor,
             is_emoji: false,
+            subpixel_rendering,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3078,17 +3219,49 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            self.next_frame.scene.insert_primitive(MonochromeSprite {
-                order: 0,
-                pad: 0,
-                bounds,
-                content_mask,
-                color: color.opacity(element_opacity),
-                tile,
-                transformation: TransformationMatrix::unit(),
-            });
+
+            if subpixel_rendering {
+                self.next_frame.scene.insert_primitive(SubpixelSprite {
+                    order: 0,
+                    pad: 0,
+                    bounds,
+                    content_mask,
+                    color: color.opacity(element_opacity),
+                    tile,
+                    transformation: TransformationMatrix::unit(),
+                });
+            } else {
+                self.next_frame.scene.insert_primitive(MonochromeSprite {
+                    order: 0,
+                    pad: 0,
+                    bounds,
+                    content_mask,
+                    color: color.opacity(element_opacity),
+                    tile,
+                    transformation: TransformationMatrix::unit(),
+                });
+            }
         }
         Ok(())
+    }
+
+    fn should_use_subpixel_rendering(&self, font_id: FontId, font_size: Pixels) -> bool {
+        if self.platform_window.background_appearance() != WindowBackgroundAppearance::Opaque {
+            return false;
+        }
+
+        if !self.platform_window.is_subpixel_rendering_supported() {
+            return false;
+        }
+
+        let mode = match self.text_rendering_mode.get() {
+            TextRenderingMode::PlatformDefault => self
+                .text_system()
+                .recommended_rendering_mode(font_id, font_size),
+            mode => mode,
+        };
+
+        mode == TextRenderingMode::Subpixel
     }
 
     /// Paints an emoji glyph into the scene for the next frame at the current z-index.
@@ -3118,6 +3291,7 @@ impl Window {
             subpixel_variant: Default::default(),
             scale_factor,
             is_emoji: true,
+            subpixel_rendering: false,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3671,8 +3845,6 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        self.last_input_timestamp.set(Instant::now());
-
         // Track whether this input was keyboard-based for focus-visible styling
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
@@ -3704,6 +3876,9 @@ impl Window {
                 self.mouse_position = mouse_up.position;
                 self.modifiers = mouse_up.modifiers;
                 PlatformInput::MouseUp(mouse_up)
+            }
+            PlatformInput::MousePressure(mouse_pressure) => {
+                PlatformInput::MousePressure(mouse_pressure)
             }
             PlatformInput::MouseExited(mouse_exited) => {
                 self.modifiers = mouse_exited.modifiers;
@@ -3768,6 +3943,10 @@ impl Window {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        }
+
+        if self.invalidator.is_dirty() {
+            self.input_rate_tracker.borrow_mut().record_input();
         }
 
         DispatchEventResult {
@@ -4009,7 +4188,7 @@ impl Window {
         self.dispatch_keystroke_observers(event, None, context_stack, cx);
     }
 
-    fn pending_input_changed(&mut self, cx: &mut App) {
+    pub(crate) fn pending_input_changed(&mut self, cx: &mut App) {
         self.pending_input_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
@@ -4427,6 +4606,13 @@ impl Window {
         dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
     }
 
+    /// Find the bindings that can follow the current input sequence for the current context stack.
+    pub fn possible_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .possible_next_bindings_for_input(input, &self.context_stack())
+    }
+
     fn context_stack_for_focus_handle(
         &self,
         focus_handle: &FocusHandle,
@@ -4771,6 +4957,19 @@ impl Window {
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
     }
+
+    /// For testing: simulate a mouse move event to the given position.
+    /// This dispatches the event through the normal event handling path,
+    /// which will trigger hover states and tooltips.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, cx: &mut App) {
+        let event = PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            modifiers: self.modifiers,
+            pressed_button: None,
+        });
+        let _ = self.dispatch_event(event, cx);
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
@@ -4831,11 +5030,11 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        crate::Flatten::flatten(cx.update_window(self.any_handle, |root_view, _, _| {
+        cx.update_window(self.any_handle, |root_view, _, _| {
             root_view
                 .downcast::<V>()
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))
-        }))
+        })?
     }
 
     /// Updates the root view of this window.
@@ -4936,7 +5135,7 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 }
 
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,

@@ -12,6 +12,7 @@ workspace = true
 path = "src/agent_settings.rs"
 
 [dependencies]
+agent-client-protocol.workspace = true
 anyhow.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
@@ -19,7 +20,9 @@ convert_case.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language_model.workspace = true
+log.workspace = true
 project.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true

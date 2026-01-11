@@ -2,7 +2,7 @@ use std::{cmp, sync::Arc};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::{DataCollectionState, Direction, EditPredictionDelegate};
+use edit_prediction_types::{DataCollectionState, EditPredictionDelegate, SuggestionDisplayType};
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
@@ -66,7 +66,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.store
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
-            if self.store.read(cx).data_collection_choice.is_enabled() {
+            if self.store.read(cx).data_collection_choice.is_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
                 }
@@ -100,7 +100,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     ) -> bool {
         let store = self.store.read(cx);
         if store.edit_prediction_model == EditPredictionModel::Sweep {
-            store.has_sweep_api_token()
+            store.has_sweep_api_token(cx)
         } else {
             true
         }
@@ -139,15 +139,6 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         });
     }
 
-    fn cycle(
-        &mut self,
-        _buffer: Entity<language::Buffer>,
-        _cursor_position: language::Anchor,
-        _direction: Direction,
-        _cx: &mut Context<Self>,
-    ) {
-    }
-
     fn accept(&mut self, cx: &mut Context<Self>) {
         self.store.update(cx, |store, cx| {
             store.accept_current_prediction(&self.project, cx);
@@ -160,9 +151,9 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         });
     }
 
-    fn did_show(&mut self, cx: &mut Context<Self>) {
+    fn did_show(&mut self, display_type: SuggestionDisplayType, cx: &mut Context<Self>) {
         self.store.update(cx, |store, cx| {
-            store.did_show_current_prediction(&self.project, cx);
+            store.did_show_current_prediction(&self.project, display_type, cx);
         });
     }
 

@@ -100,6 +100,7 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<String>,
     notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
+    version: Option<SharedString>,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
@@ -518,6 +519,7 @@ impl LanguageServer {
             response_handlers,
             io_handlers,
             name: server_name,
+            version: None,
             process_name: binary
                 .path
                 .file_name()
@@ -777,6 +779,7 @@ impl LanguageServer {
                                 properties: vec![
                                     "additionalTextEdits".to_string(),
                                     "command".to_string(),
+                                    "detail".to_string(),
                                     "documentation".to_string(),
                                     // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
                                     // "textEdit".to_string(),
@@ -900,7 +903,9 @@ impl LanguageServer {
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
                     show_message: Some(ShowMessageRequestClientCapabilities {
-                        message_action_item: None,
+                        message_action_item: Some(MessageActionItemCapabilities {
+                            additional_properties_support: Some(true),
+                        }),
                     }),
                     ..WindowClientCapabilities::default()
                 }),
@@ -941,6 +946,7 @@ impl LanguageServer {
                     )
                 })?;
             if let Some(info) = response.server_info {
+                self.version = info.version.map(SharedString::from);
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
@@ -1168,6 +1174,11 @@ impl LanguageServer {
     /// Get the name of the running language server.
     pub fn name(&self) -> LanguageServerName {
         self.name.clone()
+    }
+
+    /// Get the version of the running language server.
+    pub fn version(&self) -> Option<SharedString> {
+        self.version.clone()
     }
 
     /// Get the process name of the running language server.
@@ -1784,13 +1795,11 @@ impl FakeLanguageServer {
         T: request::Request,
         T::Result: 'static + Send,
     {
-        self.server.executor.start_waiting();
         self.server.request::<T>(params).await
     }
 
     /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
-        self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 

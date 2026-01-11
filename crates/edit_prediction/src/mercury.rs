@@ -1,38 +1,32 @@
-use anyhow::{Context as _, Result};
-use credentials_provider::CredentialsProvider;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
-use gpui::{
-    App, AppContext as _, Task,
-    http_client::{self, AsyncBody, Method},
-};
-use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
-use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
-use zeta_prompt::ZetaPromptInput;
-
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
     EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
     prediction::EditPredictionResult,
 };
+use anyhow::{Context as _, Result};
+use futures::AsyncReadExt as _;
+use gpui::{
+    App, AppContext as _, Entity, Global, SharedString, Task,
+    http_client::{self, AsyncBody, Method},
+};
+use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language_model::{ApiKeyState, EnvVar, env_var};
+use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
+use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 
 pub struct Mercury {
-    pub api_token: Shared<Task<Option<String>>>,
+    pub api_token: Entity<ApiKeyState>,
 }
 
 impl Mercury {
-    pub fn new(cx: &App) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         Mercury {
-            api_token: load_api_token(cx).shared(),
+            api_token: mercury_api_token(cx),
         }
-    }
-
-    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.api_token = Task::ready(api_token.clone()).shared();
-        store_api_token_in_keychain(api_token, cx)
     }
 
     pub(crate) fn request_prediction(
@@ -48,7 +42,10 @@ impl Mercury {
         }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
+        self.api_token.update(cx, |key_state, cx| {
+            _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
+        });
+        let Some(api_token) = self.api_token.read(cx).key(&MERCURY_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = snapshot
@@ -296,48 +293,31 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
 fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(&mut String)) {
     prompt.push_str(delimiters.start);
     cb(prompt);
+    prompt.push('\n');
     prompt.push_str(delimiters.end);
 }
 
-pub const MERCURY_CREDENTIALS_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
+pub const MERCURY_CREDENTIALS_URL: SharedString =
+    SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
+pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
 
-pub fn load_api_token(cx: &App) -> Task<Option<String>> {
-    if let Some(api_token) = std::env::var("MERCURY_AI_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        return Task::ready(Some(api_token));
+struct GlobalMercuryApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalMercuryApiKey {}
+
+pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    if let Some(global) = cx.try_global::<GlobalMercuryApiKey>() {
+        return global.0.clone();
     }
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-    cx.spawn(async move |cx| {
-        let (_, credentials) = credentials_provider
-            .read_credentials(MERCURY_CREDENTIALS_URL, &cx)
-            .await
-            .ok()??;
-        String::from_utf8(credentials).ok()
-    })
+    let entity =
+        cx.new(|_| ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone()));
+    cx.set_global(GlobalMercuryApiKey(entity.clone()));
+    entity
 }
 
-fn store_api_token_in_keychain(api_token: Option<String>, cx: &App) -> Task<Result<()>> {
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-
-    cx.spawn(async move |cx| {
-        if let Some(api_token) = api_token {
-            credentials_provider
-                .write_credentials(
-                    MERCURY_CREDENTIALS_URL,
-                    MERCURY_CREDENTIALS_USERNAME,
-                    api_token.as_bytes(),
-                    cx,
-                )
-                .await
-                .context("Failed to save Mercury API token to system keychain")
-        } else {
-            credentials_provider
-                .delete_credentials(MERCURY_CREDENTIALS_URL, cx)
-                .await
-                .context("Failed to delete Mercury API token from system keychain")
-        }
+pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
+    mercury_api_token(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx)
     })
 }

@@ -107,10 +107,12 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
+chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
+scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
@@ -183,6 +185,7 @@ blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 cosmic-text = { version = "0.14.0", optional = true }
+swash = { version = "0.2.6" }
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "110523127440aefb11ce0cf280ae7c5071337ec5", package = "zed-font-kit", version = "0.14.1-zed", features = [
     "source-fontconfig-dlopen",
@@ -198,14 +201,14 @@ wayland-backend = { version = "0.3.3", features = [
     "client_system",
     "dlopen",
 ], optional = true }
-wayland-client = { version = "0.31.2", optional = true }
-wayland-cursor = { version = "0.31.1", optional = true }
-wayland-protocols = { version = "0.31.2", features = [
+wayland-client = { version = "0.31.11", optional = true }
+wayland-cursor = { version = "0.31.11", optional = true }
+wayland-protocols = { version = "0.32.9", features = [
     "client",
     "staging",
     "unstable",
 ], optional = true }
-wayland-protocols-plasma = { version = "0.2.0", features = [
+wayland-protocols-plasma = { version = "0.3.9", features = [
     "client",
 ], optional = true }
 wayland-protocols-wlr = { version = "0.3.9", features = [
@@ -251,6 +254,7 @@ lyon = { version = "1.0", features = ["extra"] }
 pretty_assertions.workspace = true
 rand.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 util = { workspace = true, features = ["test-support"] }
 
@@ -330,3 +334,7 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "mouse_pressure"
+path = "examples/mouse_pressure.rs"

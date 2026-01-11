@@ -635,7 +635,14 @@ impl Platform for WindowsPlatform {
                 UserName: PWSTR::from_raw(username.as_mut_ptr()),
                 ..CREDENTIALW::default()
             };
-            unsafe { CredWriteW(&credentials, 0) }?;
+            unsafe {
+                CredWriteW(&credentials, 0).map_err(|err| {
+                    anyhow!(
+                        "Failed to write credentials to Windows Credential Manager: {}",
+                        err,
+                    )
+                })?;
+            }
             Ok(())
         })
     }
@@ -659,7 +666,7 @@ impl Platform for WindowsPlatform {
             if let Err(err) = result {
                 // ERROR_NOT_FOUND means the credential doesn't exist.
                 // Return Ok(None) to match macOS and Linux behavior.
-                if err.code().0 == ERROR_NOT_FOUND.0 as i32 {
+                if err.code() == ERROR_NOT_FOUND.to_hresult() {
                     return Ok(None);
                 }
                 return Err(err.into());
@@ -838,9 +845,6 @@ impl WindowsPlatformInner {
                     let peek_msg = |msg: &mut _, msg_kind| unsafe {
                         PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
                     };
-                    if peek_msg(&mut msg, PM_QS_PAINT) {
-                        process_message(&msg);
-                    }
                     while peek_msg(&mut msg, PM_QS_INPUT) {
                         process_message(&msg);
                     }

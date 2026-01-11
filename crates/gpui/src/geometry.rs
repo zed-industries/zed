@@ -2648,6 +2648,18 @@ impl Debug for Pixels {
     }
 }
 
+impl std::iter::Sum for Pixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Pixels> for Pixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + *b)
+    }
+}
+
 impl TryFrom<&'_ str> for Pixels {
     type Error = anyhow::Error;
 

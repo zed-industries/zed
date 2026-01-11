@@ -9,6 +9,7 @@ members = [
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",
+    "crates/agent_ui_v2",
     "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",
@@ -38,6 +39,7 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
+    "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
     "crates/crashes",
@@ -57,6 +59,7 @@ members = [
     "crates/edit_prediction_ui",
     "crates/edit_prediction_context",
     "crates/editor",
+    "crates/encoding_selector",
     "crates/eval",
     "crates/eval_utils",
     "crates/explorer_command_injector",
@@ -191,11 +194,13 @@ members = [
     "crates/vercel",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/which_key",
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/workspace",
     "crates/worktree",
+    "crates/worktree_benchmarks",
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
@@ -242,6 +247,7 @@ action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
+agent_ui_v2 = { path = "crates/agent_ui_v2" }
 agent_settings = { path = "crates/agent_settings" }
 agent_servers = { path = "crates/agent_servers" }
 ai_onboarding = { path = "crates/ai_onboarding" }
@@ -271,6 +277,7 @@ collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
+component_preview  = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 crashes = { path = "crates/crashes" }
@@ -286,6 +293,7 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+encoding_selector = { path = "crates/encoding_selector" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -372,6 +380,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf7
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
+scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
@@ -413,6 +422,7 @@ util_macros = { path = "crates/util_macros" }
 vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+which_key = { path = "crates/which_key" }
 
 watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
@@ -434,13 +444,13 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.9.0", features = ["unstable"] }
+agent-client-protocol = { version = "=0.9.3", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -453,27 +463,28 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.2", features = [
+aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.8", features = [
     "hardcoded-credentials",
 ] }
-aws-sdk-bedrockruntime = { version = "1.80.0", features = [
+aws-sdk-bedrockruntime = { version = "1.112.0", features = [
     "behavior-version-latest",
 ] }
-aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
-aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
+aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { version = "0.7.0" }
-blade-macros = { version = "0.3.0" }
-blade-util = { version = "0.3.0" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 cfg-if = "1.0.3"
+chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
@@ -497,6 +508,7 @@ dotenvy = "0.15.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
+encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.16.0"
 fork = "0.4.0"
@@ -590,7 +602,7 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-pulldown-cmark = { version = "0.12.0", default-features = false }
+pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
@@ -661,7 +673,7 @@ tokio-socks = { version = "0.5.2", default-features = false, features = ["future
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.10", features = ["wasm"] }
+tree-sitter = { version = "0.26", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -695,7 +707,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
-wasmtime = { version = "29", default-features = false, features = [
+wasmtime = { version = "33", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
@@ -704,7 +716,7 @@ wasmtime = { version = "29", default-features = false, features = [
     "incremental-cache",
     "parallel-compilation",
 ] }
-wasmtime-wasi = "29"
+wasmtime-wasi = "33"
 wax = "0.6"
 which = "6.0.0"
 windows-core = "0.61"
@@ -855,8 +867,6 @@ unexpected_cfgs = { level = "allow" }
 dbg_macro = "deny"
 todo = "deny"
 
-# This is not a style lint, see https://github.com/rust-lang/rust-clippy/pull/15454
-# Remove when the lint gets promoted to `suspicious`.
 declare_interior_mutable_const = "deny"
 
 redundant_clone = "deny"

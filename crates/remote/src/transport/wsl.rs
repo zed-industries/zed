@@ -1,5 +1,5 @@
 use crate::{
-    RemoteClientDelegate, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
@@ -65,12 +65,15 @@ impl WslRemoteConnection {
             connection_options.user
         );
         let (release_channel, version) =
-            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)));
 
         let mut this = Self {
             connection_options,
             remote_binary_path: None,
-            platform: RemotePlatform { os: "", arch: "" },
+            platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
@@ -178,7 +181,7 @@ impl WslRemoteConnection {
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.platform, delegate.as_ref(), cx).await?
         {
@@ -207,7 +210,7 @@ impl WslRemoteConnection {
 
         let wanted_version = match release_channel {
             ReleaseChannel::Nightly | ReleaseChannel::Dev => None,
-            _ => Some(cx.update(|cx| AppVersion::global(cx))?),
+            _ => Some(cx.update(|cx| AppVersion::global(cx))),
         };
 
         let src_path = delegate

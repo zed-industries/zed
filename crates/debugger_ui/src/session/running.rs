@@ -348,7 +348,7 @@ pub(crate) fn new_debugger_pane(
                         debug_assert!(_previous_subscription.is_none());
                         running
                             .panes
-                            .split(&this_pane, &new_pane, split_direction)?;
+                            .split(&this_pane, &new_pane, split_direction, cx)?;
                         anyhow::Ok(new_pane)
                     })
                 })
@@ -604,7 +604,7 @@ impl DebugTerminal {
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
             if let Some(terminal) = this.terminal.as_ref() {
-                terminal.focus_handle(cx).focus(window);
+                terminal.focus_handle(cx).focus(window, cx);
             }
         });
 
@@ -1113,7 +1113,7 @@ impl RunningState {
                             task_with_shell.clone(),
                             cx,
                         )
-                    })?.await?;
+                    }).await?;
 
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
@@ -1135,7 +1135,7 @@ impl RunningState {
                 })?;
 
                 let exit_status = terminal
-                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
                     .await
                     .context("Failed to wait for completed task")?;
 
@@ -1302,7 +1302,7 @@ impl RunningState {
                     .pid()
                     .map(|pid| pid.as_u32())
                     .context("Terminal was spawned but PID was not available")
-            })?
+            })
         });
 
         cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })
@@ -1462,7 +1462,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1889,9 +1889,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self) {
+    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies();
+        self.panes.invert_axies(cx);
     }
 }
 
