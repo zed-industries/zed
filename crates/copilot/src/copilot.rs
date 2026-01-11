@@ -509,12 +509,11 @@ impl Copilot {
                 Path::new("/")
             };
 
-            let request_timeout: std::time::Duration = cx
-                .update(|app| {
-                    ProjectSettings::get_global(app)
-                        .global_lsp_settings
-                        .get_request_timeout()
-                });
+            let request_timeout: std::time::Duration = cx.update(|app| {
+                ProjectSettings::get_global(app)
+                    .global_lsp_settings
+                    .get_request_timeout()
+            });
 
             let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
