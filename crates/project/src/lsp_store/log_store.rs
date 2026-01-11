@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 
 use collections::HashMap;
 use futures::{StreamExt, channel::mpsc};
@@ -9,12 +9,15 @@ use lsp::{
 };
 use rpc::proto;
 use settings::WorktreeId;
+use util::truncate_lines_to_byte_limit;
 
 use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
 
 const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
+const MAX_STORED_RPC_MESSAGE_BYTES: usize = 256 * 1024;
+const MAX_STORED_RPC_LOG_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn init(on_headless_host: bool, cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(|cx| LogStore::new(on_headless_host, cx));
@@ -185,6 +188,7 @@ impl LanguageServerKind {
 #[derive(Debug)]
 pub struct LanguageServerRpcState {
     pub rpc_messages: VecDeque<RpcMessage>,
+    total_bytes: usize,
     last_message_kind: Option<MessageKind>,
 }
 
@@ -519,51 +523,43 @@ impl LogStore {
         cx: &mut Context<'_, Self>,
     ) {
         let store_logs = !self.on_headless_host;
-        let Some(state) = self
-            .get_language_server_state(language_server_id)
-            .and_then(|state| state.rpc_state.as_mut())
-        else {
-            return;
-        };
-
         let received = kind == MessageKind::Receive;
-        let rpc_log_lines = &mut state.rpc_messages;
-        if state.last_message_kind != Some(kind) {
-            while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
-                rpc_log_lines.pop_front();
-            }
-            let line_before_message = match kind {
-                MessageKind::Send => SEND_LINE,
-                MessageKind::Receive => RECEIVE_LINE,
+        let message = truncate_rpc_message(message.trim());
+        {
+            let Some(state) = self
+                .get_language_server_state(language_server_id)
+                .and_then(|state| state.rpc_state.as_mut())
+            else {
+                return;
             };
-            if store_logs {
-                rpc_log_lines.push_back(RpcMessage {
-                    message: line_before_message.to_string(),
+
+            if state.last_message_kind != Some(kind) {
+                let line_before_message = match kind {
+                    MessageKind::Send => SEND_LINE,
+                    MessageKind::Receive => RECEIVE_LINE,
+                };
+                if store_logs {
+                    push_rpc_message(state, line_before_message.to_string());
+                }
+                // Do not send a synthetic message over the wire, it will be derived from the actual RPC message
+                cx.emit(Event::NewServerLogEntry {
+                    id: language_server_id,
+                    kind: LanguageServerLogType::Rpc { received },
+                    text: line_before_message.to_string(),
                 });
             }
-            // Do not send a synthetic message over the wire, it will be derived from the actual RPC message
-            cx.emit(Event::NewServerLogEntry {
-                id: language_server_id,
-                kind: LanguageServerLogType::Rpc { received },
-                text: line_before_message.to_string(),
-            });
-        }
 
-        while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
-            rpc_log_lines.pop_front();
-        }
-
-        if store_logs {
-            rpc_log_lines.push_back(RpcMessage {
-                message: message.trim().to_owned(),
-            });
+            if store_logs {
+                push_rpc_message(state, message.clone().into_owned());
+            }
+            state.last_message_kind = Some(kind);
         }
 
         self.emit_event(
             Event::NewServerLogEntry {
                 id: language_server_id,
                 kind: LanguageServerLogType::Rpc { received },
-                text: message.to_owned(),
+                text: message.into_owned(),
             },
             cx,
         );
@@ -610,6 +606,7 @@ impl LogStore {
             .rpc_state
             .get_or_insert_with(|| LanguageServerRpcState {
                 rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                total_bytes: 0,
                 last_message_kind: None,
             });
         Some(rpc_state)
@@ -712,5 +709,95 @@ impl LogStore {
                 self.disable_rpc_trace_for_language_server(server_id);
             }
         }
+    }
+}
+
+fn truncate_rpc_message(message: &str) -> Cow<'_, str> {
+    if message.len() <= MAX_STORED_RPC_MESSAGE_BYTES {
+        return Cow::Borrowed(message);
+    }
+
+    let suffix = format!("\n// ... truncated ({} bytes)", message.len());
+    let max_prefix = MAX_STORED_RPC_MESSAGE_BYTES.saturating_sub(suffix.len());
+    let prefix = truncate_lines_to_byte_limit(message, max_prefix);
+    let mut truncated = String::with_capacity(prefix.len() + suffix.len());
+    truncated.push_str(prefix);
+    truncated.push_str(&suffix);
+    Cow::Owned(truncated)
+}
+
+fn push_rpc_message(rpc_state: &mut LanguageServerRpcState, message: String) {
+    let message_len = message.len();
+    while rpc_state.rpc_messages.len() + 1 >= MAX_STORED_LOG_ENTRIES
+        || rpc_state.total_bytes.saturating_add(message_len) > MAX_STORED_RPC_LOG_BYTES
+    {
+        if let Some(removed) = rpc_state.rpc_messages.pop_front() {
+            rpc_state.total_bytes = rpc_state.total_bytes.saturating_sub(removed.message.len());
+        } else {
+            break;
+        }
+    }
+    rpc_state.total_bytes = rpc_state.total_bytes.saturating_add(message_len);
+    rpc_state.rpc_messages.push_back(RpcMessage { message });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_truncate_rpc_message(cx: &mut TestAppContext) {
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+        log_store.update(cx, |store, cx| {
+            store.add_language_server(
+                LanguageServerKind::Global,
+                LanguageServerId(1),
+                None,
+                None,
+                None,
+                cx,
+            );
+            store.enable_rpc_trace_for_language_server(LanguageServerId(1));
+            let message = "a".repeat(MAX_STORED_RPC_MESSAGE_BYTES + 10);
+            store.add_language_server_rpc(LanguageServerId(1), MessageKind::Send, &message, cx);
+        });
+
+        let last_message = log_store.read_with(cx, |store, _| {
+            let state = store.language_servers.get(&LanguageServerId(1)).unwrap();
+            let rpc_state = state.rpc_state.as_ref().unwrap();
+            rpc_state.rpc_messages.back().unwrap().as_ref().to_string()
+        });
+        assert!(last_message.contains("// ... truncated"));
+        assert!(last_message.len() <= MAX_STORED_RPC_MESSAGE_BYTES);
+    }
+
+    #[gpui::test]
+    async fn test_rpc_log_byte_cap(cx: &mut TestAppContext) {
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+        log_store.update(cx, |store, cx| {
+            store.add_language_server(
+                LanguageServerKind::Global,
+                LanguageServerId(1),
+                None,
+                None,
+                None,
+                cx,
+            );
+            store.enable_rpc_trace_for_language_server(LanguageServerId(1));
+            let message = "a".repeat(128 * 1024);
+            for _ in 0..100 {
+                store.add_language_server_rpc(LanguageServerId(1), MessageKind::Send, &message, cx);
+            }
+        });
+
+        let (total_bytes, message_count) = log_store.read_with(cx, |store, _| {
+            let state = store.language_servers.get(&LanguageServerId(1)).unwrap();
+            let rpc_state = state.rpc_state.as_ref().unwrap();
+            (rpc_state.total_bytes, rpc_state.rpc_messages.len())
+        });
+        assert!(total_bytes <= MAX_STORED_RPC_LOG_BYTES);
+        let max_entries = MAX_STORED_RPC_LOG_BYTES / (128 * 1024) + 2;
+        assert!(message_count <= max_entries);
     }
 }
