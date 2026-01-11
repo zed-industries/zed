@@ -412,6 +412,21 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     })
 }
 
+/// Returns a position of the previous subword boundary, where a subword is defined as a run of
+/// word characters of the same "subkind" - where subcharacter kinds are '_' character,
+/// lowerspace characters and uppercase characters or newline.
+pub fn previous_subword_start_or_newline(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
+
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        (is_subword_start(left, right, &classifier)) || left == '\n' || right == '\n'
+    })
+}
+
 pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) -> bool {
     let is_word_start = classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
     let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
@@ -473,13 +488,38 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     })
 }
 
+/// Returns a position of the next subword boundary, where a subword is defined as a run of
+/// word characters of the same "subkind" - where subcharacter kinds are '_' character,
+/// lowerspace characters and uppercase characters or newline.
+pub fn next_subword_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
+
+    let mut on_starting_row = true;
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        if left == '\n' {
+            on_starting_row = false;
+        }
+        ((classifier.kind(left) != classifier.kind(right)
+            || is_subword_boundary_end(left, right, &classifier))
+            && ((on_starting_row && !left.is_whitespace())
+                || (!on_starting_row && !right.is_whitespace())))
+            || right == '\n'
+    })
+}
+
 pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> bool {
     let is_word_end =
         (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
-    let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+    is_word_end || is_subword_boundary_end(left, right, classifier)
+}
+
+/// Returns true if the transition from `left` to `right` is a subword boundary,
+/// such as case changes, underscores, or dashes. Does not include word boundaries like whitespace.
+fn is_subword_boundary_end(left: char, right: char, classifier: &CharClassifier) -> bool {
+    classifier.is_word('-') && left != '-' && right == '-'
         || left != '_' && right == '_'
-        || left.is_lowercase() && right.is_uppercase();
-    is_word_end || is_subword_end
+        || left.is_lowercase() && right.is_uppercase()
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
