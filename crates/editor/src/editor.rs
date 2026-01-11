@@ -19492,12 +19492,30 @@ impl Editor {
                 }
             }
 
+            // Find the outermost enclosing crease by searching backward
+            let mut enclosing_crease = None;
             for row in (0..=range.start.row).rev() {
                 if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
                     if crease.range().end.row >= buffer_start_row {
-                        to_fold.push(crease);
+                        enclosing_crease = Some(crease);
                     } else {
                         break;
+                    }
+                }
+            }
+
+            // If we found an enclosing crease, fold it and all descendants
+            if let Some(crease) = enclosing_crease {
+                let crease_start = crease.range().start.row;
+                let crease_end = crease.range().end.row;
+                to_fold.push(crease);
+
+                // Iterate forward through the crease range to find all nested creases
+                for row in (crease_start + 1)..=crease_end {
+                    if let Some(nested_crease) =
+                        display_map.crease_for_buffer_row(MultiBufferRow(row))
+                    {
+                        to_fold.push(nested_crease);
                     }
                 }
             }

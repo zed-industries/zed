@@ -1478,6 +1478,74 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_recursive_single_cursor_folds_descendants(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                impl Foo {
+                    fn outer() {
+                        if true {
+                            let x = 1;
+                        }
+                    }
+
+                    fn other() {
+                        let y = 2;
+                    }
+                }
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        // Place cursor on row 0 (impl Foo {) with NO selection
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ]);
+        });
+
+        // Fold recursive - should fold impl Foo AND all nested blocks (outer, other, if)
+        editor.fold_recursive(&FoldRecursive, window, cx);
+
+        // impl Foo should be folded
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {⋯
+                }
+            "
+            .unindent(),
+        );
+
+        // Now unfold just the top level
+        editor.unfold_lines(&UnfoldLines, window, cx);
+
+        // BUG: Children should still be folded (like fold_all behavior)
+        // but currently they are NOT folded because fold_recursive with single cursor
+        // only searches backwards for enclosing blocks, not forwards into descendants
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    fn outer() {⋯
+                    }
+
+                    fn other() {⋯
+                    }
+                }
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
