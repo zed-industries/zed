@@ -8,9 +8,10 @@ use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelImage, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolChoice, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 use menu;
 use open_ai::responses::{
@@ -25,7 +26,7 @@ use open_ai::{
     },
     stream_completion,
 };
-use serde_json::{Value, json};
+
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore, ThinkingMode};
 use std::pin::Pin;
 use std::str::FromStr as _;
@@ -656,56 +657,13 @@ pub fn into_open_ai_response(
 
     let mut input_items = Vec::new();
     for (msg_idx, message) in messages.into_iter().enumerate() {
-        let mut content_parts: Vec<Value> = Vec::new();
-
-        for content in message.content {
-            match content {
-                MessageContent::Text(text) => {
-                    push_response_text_part(&message.role, text, &mut content_parts);
-                }
-                MessageContent::Thinking { text, .. } => {
-                    if should_include_thinking(thinking_mode, msg_idx, last_user_message_idx) {
-                        push_response_text_part(&message.role, text, &mut content_parts);
-                    }
-                }
-                MessageContent::RedactedThinking(_) => {
-                    // Redacted thinking is always skipped in all modes
-                }
-                MessageContent::Image(image) => {
-                    push_response_image_part(&message.role, image, &mut content_parts);
-                }
-                MessageContent::ToolUse(tool_use) => {
-                    flush_response_parts(
-                        &message.role,
-                        msg_idx,
-                        &mut content_parts,
-                        &mut input_items,
-                    );
-                    let call_id = tool_use.id.to_string();
-                    input_items.push(json!({
-                        "type": "function_call",
-                        "call_id": call_id,
-                        "name": tool_use.name,
-                        "arguments": tool_use.raw_input,
-                    }));
-                }
-                MessageContent::ToolResult(tool_result) => {
-                    flush_response_parts(
-                        &message.role,
-                        msg_idx,
-                        &mut content_parts,
-                        &mut input_items,
-                    );
-                    input_items.push(json!({
-                        "type": "function_call_output",
-                        "call_id": tool_result.tool_use_id.to_string(),
-                        "output": tool_result_output(&tool_result),
-                    }));
-                }
-            }
-        }
-
-        flush_response_parts(&message.role, msg_idx, &mut content_parts, &mut input_items);
+        append_message_to_response_items(
+            message,
+            msg_idx,
+            &mut input_items,
+            Some(thinking_mode),
+            last_user_message_idx,
+        );
     }
 
     let tools: Vec<_> = tools
@@ -749,6 +707,8 @@ fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
     input_items: &mut Vec<ResponseInputItem>,
+    thinking_mode: Option<ThinkingMode>,
+    last_user_message_idx: Option<usize>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
@@ -758,7 +718,11 @@ fn append_message_to_response_items(
                 push_response_text_part(&message.role, text, &mut content_parts);
             }
             MessageContent::Thinking { text, .. } => {
-                push_response_text_part(&message.role, text, &mut content_parts);
+                if thinking_mode.map_or(true, |mode| {
+                    should_include_thinking(mode, index, last_user_message_idx)
+                }) {
+                    push_response_text_part(&message.role, text, &mut content_parts);
+                }
             }
             MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
