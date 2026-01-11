@@ -892,7 +892,8 @@ impl PickerDelegate for BranchListDelegate {
                     )
                 })
                 .disabled(is_head_branch)
-                .on_click(cx.listener(move |this, _, window, cx| {
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.delegate.set_selected_index(entry_ix, window, cx);
                     this.delegate.delete_at(entry_ix, window, cx);
                 }))
         };
