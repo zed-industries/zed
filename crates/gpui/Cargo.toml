@@ -107,10 +107,12 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
+chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
+scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
@@ -252,6 +254,7 @@ lyon = { version = "1.0", features = ["extra"] }
 pretty_assertions.workspace = true
 rand.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 util = { workspace = true, features = ["test-support"] }
 

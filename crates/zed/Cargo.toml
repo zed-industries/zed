@@ -46,6 +46,8 @@ visual-tests = [
     "agent/test-support",
     "language_model/test-support",
     "fs/test-support",
+    "recent_projects/test-support",
+    "title_bar/test-support",
 ]
 
 [[bin]]
