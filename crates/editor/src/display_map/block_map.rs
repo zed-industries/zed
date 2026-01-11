@@ -618,7 +618,7 @@ impl BlockMap {
             }]);
         }
 
-        // Transform companion edits to our coordinate space and compose them after our edits
+        // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
         if let Some((companion_new_snapshot, companion_edits)) = companion_wrap_edits
             && let Some((companion, display_map_id)) = companion
         {
@@ -645,15 +645,15 @@ impl BlockMap {
                         wrap_snapshot.buffer_snapshot(),
                         companion_new_snapshot.buffer_snapshot(),
                         companion_start_row,
-                        Bias::Left,
-                    );
+                    )
+                    .start;
                     let my_end_row = convert(
                         excerpt_map,
                         wrap_snapshot.buffer_snapshot(),
                         companion_new_snapshot.buffer_snapshot(),
                         companion_end_row,
-                        Bias::Right,
-                    );
+                    )
+                    .end;
 
                     let my_start = wrap_snapshot
                         .make_wrap_point(Point::new(my_start_row.0, 0), Bias::Left)
@@ -906,8 +906,7 @@ impl BlockMap {
                 let rows_before_block;
                 match block_placement {
                     BlockPlacement::Above(position) => {
-                        rows_before_block =
-                            dbg!(position) - dbg!(new_transforms.summary().input_rows);
+                        rows_before_block = position - new_transforms.summary().input_rows;
                         just_processed_folded_buffer = false;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
@@ -1061,66 +1060,12 @@ impl BlockMap {
         companion: &Companion,
         display_map_id: EntityId,
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
-        if display_map_id == companion.rhs_display_map_id {
-            dbg!("SYNCING RHS");
-        } else {
-            dbg!("SYNCING LHS");
-        };
-        dbg!(&new_buffer_range);
-
-        // This function calculates which spacer blocks should appear for the
-        // given range of wrap rows. These spacer blocks are needed when viewing
-        // a diff side-by-side, to ensure that equivalent lines appear next to
-        // each other.
-        //
-        // Without spacers, equivalent lines may become unaligned due to either:
-        // - There is a diff that changed the number of lines in a hunk (for
-        //   example, deleting two lines and replacing it with four)
-        // - An unchanged line is soft-wrapped differently on each side (perhaps
-        //   because one side has a smaller viewport).
-        //
-        // We determine spacers by first computing a series of "checkpoints".
-        //
-        // A checkpoint is a buffer row boundary (the start of a MultiBufferRow) where we want to ensure that all the _preceding_ content
-        // occupies the same number of rows in the block map's output coordinates. The block map's output
-        // coordinates are the same as the wrap map's coordinates, except that we insert some blocks that
-        // can occupy a whole number of rows. When the content preceding a checkpoint does not occupy the
-        // same number of rows in the wrap map's coordinates (WrapRow), we insert a spacer on our side if
-        // we are the side with fewer wrap rows, to restore balance.
-        //
-        // We assume that before the start of the range passed to this function, the two sides are in balance.
-        //
-        // The locations of checkpoints are as follows:
-        // - After each diff hunk
-        // - After each buffer row that is not inside a diff hunk
-        //
-        // (These correspond to the reasons listed above for why two lines can get out of alignment).
-        //
-        // We collect the checkpoints by iterating over our side's snapshot. Then, for each checkpoint,
-        // we compute which wrap row it corresponds to on each side. (we translate the checkpoint to the coordinate
-        // space of the other side's multibuffer using the conversion function on the companion). We compute
-        // the difference between those wrap row values, and compare it to the difference in wrap row values
-        // for the start of the edit between the two sides (because we assume inductively that spacers
-        // have been inserted before this edit range to keep the two sides in balance, so any difference
-        // in wrap row numbers before the start of the edit will be cancelled out). if our side
-        // has fewer wrap rows at a checkpoint than the other side after accounting for the difference
-        // at the start of the edit, we insert a spacer block to restore the balance (to where it was
-        // at the start of the edit).
-        //
-        // Spacer blocks have Above placement.
-
-        if new_buffer_range.start.row >= new_buffer_range.end.row {
-            return Vec::new();
-        }
-
-        let convert_row_to_companion = companion.convert_row_to_companion(display_map_id);
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
         let diff_hunks: Vec<_> = our_buffer
             .diff_hunks_in_range(new_buffer_range.clone())
             .collect();
-        dbg!(&diff_hunks);
         let excerpt_to_companion_excerpt = companion.excerpt_to_companion_excerpt(display_map_id);
 
         debug_assert_eq!(new_buffer_range.start.column, 0);
@@ -1131,7 +1076,6 @@ impl BlockMap {
             .make_wrap_point(new_buffer_range.start, Bias::Left)
             .row();
 
-        // Convert our start buffer row to companion's coordinate space
         let companion_start_buffer_row = convert_row_to_companion(
             excerpt_to_companion_excerpt,
             companion_buffer,
@@ -1174,14 +1118,6 @@ impl BlockMap {
             let companion_wrap_row = companion_snapshot
                 .make_wrap_point(Point::new(companion_buffer_row.0, 0), Bias::Left)
                 .row();
-            dbg!(our_wrap_row, companion_wrap_row);
-            dbg!(convert_row_to_companion(
-                excerpt_to_companion_excerpt,
-                companion_buffer,
-                our_buffer,
-                MultiBufferRow(checkpoint_row),
-                Bias::Right,
-            ));
 
             // Calculate how many rows each side has advanced since the last checkpoint
             let our_delta = our_wrap_row.0 - our_baseline_wrap_row;
@@ -1190,10 +1126,9 @@ impl BlockMap {
             // If companion advanced more than us since last checkpoint, add a spacer
             if companion_delta > our_delta {
                 let spacer_height = companion_delta - our_delta;
-                dbg!(spacer_height, our_wrap_row);
                 let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
                 result.push((
-                    BlockPlacement::Above(dbg!(our_wrap_row)),
+                    BlockPlacement::Above(our_wrap_row),
                     Block::Spacer {
                         id: spacer_id,
                         height: spacer_height,
@@ -1226,7 +1161,7 @@ impl BlockMap {
                         Ordering::Equal
                     }
                 })
-                .then_with(|| match dbg!((block_a, block_b)) {
+                .then_with(|| match (block_a, block_b) {
                     (
                         Block::ExcerptBoundary {
                             excerpt: excerpt_a, ..
@@ -4344,10 +4279,9 @@ mod tests {
             multibuffer.snapshot(cx)
         });
 
-        dbg!(">>>>>>>>>>> RHS");
         let (rhs_inlay_snapshot, rhs_inlay_edits) = rhs_inlay_map.sync(
             rhs_buffer_snapshot.clone(),
-            dbg!(subscription.consume().into_inner()),
+            subscription.consume().into_inner(),
         );
         let (rhs_fold_snapshot, rhs_fold_edits) =
             rhs_fold_map.read(rhs_inlay_snapshot, rhs_inlay_edits);
@@ -4360,14 +4294,12 @@ mod tests {
         let rhs_snapshot = companion.read_with(cx, |companion, _cx| {
             rhs_block_map.read(
                 rhs_wrap_snapshot.clone(),
-                dbg!(rhs_wrap_edits.clone()),
+                rhs_wrap_edits.clone(),
                 Some((&lhs_wrap_snapshot, &Default::default())),
                 Some((companion, rhs_entity_id)),
             )
         });
-        dbg!("<<<<<<<<<<< RHS");
 
-        dbg!(">>>>>>>>>>> LHS");
         let lhs_snapshot = companion.read_with(cx, |companion, _cx| {
             lhs_block_map.read(
                 lhs_wrap_snapshot.clone(),
@@ -4376,7 +4308,6 @@ mod tests {
                 Some((companion, lhs_entity_id)),
             )
         });
-        dbg!("<<<<<<<<<<< LHS");
 
         assert_eq!(
             rhs_snapshot.snapshot.text(),

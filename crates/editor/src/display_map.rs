@@ -155,21 +155,20 @@ pub type ConvertMultiBufferRow = fn(
     &MultiBufferSnapshot,
     &MultiBufferSnapshot,
     MultiBufferRow,
-    Bias,
-) -> MultiBufferRow;
+) -> Range<MultiBufferRow>;
 
 pub(crate) fn convert_lhs_row_to_rhs(
     lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
     lhs_row: MultiBufferRow,
-    bias: Bias,
-) -> MultiBufferRow {
+) -> Range<MultiBufferRow> {
     let lhs_point = Point::new(lhs_row.0, 0);
     let Some((_lhs_buffer_snapshot, lhs_buffer_point, lhs_excerpt_id)) =
         lhs_snapshot.point_to_buffer_point(lhs_point)
     else {
-        return MultiBufferRow(rhs_snapshot.max_point().row);
+        let row = MultiBufferRow(rhs_snapshot.max_point().row);
+        return row..row;
     };
     let rhs_excerpt_id = lhs_excerpt_to_rhs_excerpt
         .get(&lhs_excerpt_id)
@@ -179,20 +178,35 @@ pub(crate) fn convert_lhs_row_to_rhs(
     let diff = rhs_snapshot
         .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
         .unwrap();
-    // The diff's hunks always have anchors in rhs_buffer_snapshot (the primary/main buffer).
-    let rhs_row = diff.base_text_row_to_row(lhs_buffer_point.row, bias, &rhs_buffer_snapshot);
-    let rhs_point = Point::new(rhs_row, 0);
-    let text_anchor = rhs_buffer_snapshot.anchor_at(rhs_point, bias);
-    let ctx_range = rhs_snapshot
+    let rhs_row_range = diff
+        .base_text_rows_to_rows(
+            lhs_buffer_point.row..lhs_buffer_point.row,
+            &rhs_buffer_snapshot,
+        )
+        .next()
+        .unwrap();
+    let rhs_start_point = Point::new(rhs_row_range.start, 0);
+    let rhs_end_point = Point::new(rhs_row_range.end, 0);
+    let start_anchor = rhs_buffer_snapshot.anchor_before(rhs_start_point);
+    let end_anchor = rhs_buffer_snapshot.anchor_before(rhs_end_point);
+    let context_range = rhs_snapshot
         .context_range_for_excerpt(rhs_excerpt_id)
         .unwrap();
-    let text_anchor = *text_anchor
-        .max(&ctx_range.start, &rhs_buffer_snapshot)
-        .min(&ctx_range.end, &rhs_buffer_snapshot);
-    let rhs_anchor = rhs_snapshot
-        .anchor_in_excerpt(rhs_excerpt_id, text_anchor)
+    let start_anchor = *start_anchor
+        .max(&context_range.start, &rhs_buffer_snapshot)
+        .min(&context_range.end, &rhs_buffer_snapshot);
+    let end_anchor = *end_anchor
+        .max(&context_range.start, &rhs_buffer_snapshot)
+        .min(&context_range.end, &rhs_buffer_snapshot);
+    let start_anchor = rhs_snapshot
+        .anchor_in_excerpt(rhs_excerpt_id, start_anchor)
         .unwrap();
-    MultiBufferRow(rhs_anchor.to_point(rhs_snapshot).row)
+    let end_anchor = rhs_snapshot
+        .anchor_in_excerpt(rhs_excerpt_id, end_anchor)
+        .unwrap();
+    let start_row = start_anchor.to_point(rhs_snapshot).row;
+    let end_row = end_anchor.to_point(rhs_snapshot).row;
+    MultiBufferRow(start_row)..MultiBufferRow(end_row)
 }
 
 pub(crate) fn convert_rhs_row_to_lhs(
@@ -200,13 +214,13 @@ pub(crate) fn convert_rhs_row_to_lhs(
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
     rhs_row: MultiBufferRow,
-    bias: Bias,
-) -> MultiBufferRow {
+) -> Range<MultiBufferRow> {
     let rhs_point = Point::new(rhs_row.0, 0);
     let Some((rhs_buffer_snapshot, rhs_buffer_point, rhs_excerpt_id)) =
         rhs_snapshot.point_to_buffer_point(rhs_point)
     else {
-        return MultiBufferRow(lhs_snapshot.max_point().row);
+        let row = MultiBufferRow(lhs_snapshot.max_point().row);
+        return row..row;
     };
     let lhs_excerpt_id = rhs_excerpt_to_lhs_excerpt
         .get(&rhs_excerpt_id)
@@ -216,19 +230,35 @@ pub(crate) fn convert_rhs_row_to_lhs(
     let diff = rhs_snapshot
         .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
         .unwrap();
-    let lhs_row = diff.row_to_base_text_row(rhs_buffer_point.row, bias, &rhs_buffer_snapshot);
-    let lhs_point = Point::new(lhs_row, 0);
-    let text_anchor = lhs_buffer_snapshot.anchor_at(lhs_point, bias);
-    let ctx_range = lhs_snapshot
+    let lhs_row_range = diff
+        .rows_to_base_text_rows(
+            rhs_buffer_point.row..rhs_buffer_point.row,
+            &rhs_buffer_snapshot,
+        )
+        .next()
+        .unwrap();
+    let lhs_start_point = Point::new(lhs_row_range.start, 0);
+    let lhs_end_point = Point::new(lhs_row_range.end, 0);
+    let start_anchor = lhs_buffer_snapshot.anchor_before(lhs_start_point);
+    let end_anchor = lhs_buffer_snapshot.anchor_after(lhs_end_point);
+    let context_range = lhs_snapshot
         .context_range_for_excerpt(lhs_excerpt_id)
         .unwrap();
-    let text_anchor = *text_anchor
-        .max(&ctx_range.start, &lhs_buffer_snapshot)
-        .min(&ctx_range.end, &lhs_buffer_snapshot);
-    let lhs_anchor = lhs_snapshot
-        .anchor_in_excerpt(lhs_excerpt_id, text_anchor)
+    let start_anchor = *start_anchor
+        .max(&context_range.start, &lhs_buffer_snapshot)
+        .min(&context_range.end, &lhs_buffer_snapshot);
+    let end_anchor = *end_anchor
+        .max(&context_range.start, &lhs_buffer_snapshot)
+        .min(&context_range.end, &lhs_buffer_snapshot);
+    let start_anchor = lhs_snapshot
+        .anchor_in_excerpt(lhs_excerpt_id, start_anchor)
         .unwrap();
-    MultiBufferRow(lhs_anchor.to_point(lhs_snapshot).row)
+    let end_anchor = lhs_snapshot
+        .anchor_in_excerpt(lhs_excerpt_id, end_anchor)
+        .unwrap();
+    let start_row = start_anchor.to_point(lhs_snapshot).row;
+    let end_row = end_anchor.to_point(lhs_snapshot).row;
+    MultiBufferRow(start_row)..MultiBufferRow(end_row)
 }
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,

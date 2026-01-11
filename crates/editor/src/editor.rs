@@ -21102,15 +21102,20 @@ impl Editor {
             };
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+            let start_row = buffer_diff_snapshot
+                .rows_to_base_text_rows(start_row_in_buffer..start_row_in_buffer, buffer)
+                .next()
+                .unwrap()
+                .start;
+            let end_row = buffer_diff_snapshot
+                .rows_to_base_text_rows(end_row_in_buffer..end_row_in_buffer, buffer)
+                .next()
+                .unwrap()
+                .end;
 
             Some((
                 multi_buffer.buffer(buffer.remote_id()).unwrap(),
-                buffer_diff_snapshot.row_to_base_text_row(start_row_in_buffer, Bias::Left, buffer)
-                    ..buffer_diff_snapshot.row_to_base_text_row(
-                        end_row_in_buffer,
-                        Bias::Left,
-                        buffer,
-                    ),
+                start_row..end_row,
             ))
         });
 
