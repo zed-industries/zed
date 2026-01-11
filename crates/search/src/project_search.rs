@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -20,19 +20,21 @@ use editor::{
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
-    Action, AnyElement, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
-    SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Axis, Context, DismissEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext,
+    ParentElement, Point, Render, SharedString, Styled, Subscription, Task, UpdateGlobal,
+    WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
+use picker::{Picker, PickerDelegate};
 use project::{
     Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
-use settings::Settings;
+use settings::{ProjectSearchPreset, Settings, SettingsStore};
 use std::{
     any::{Any, TypeId},
     mem,
@@ -43,7 +45,7 @@ use std::{
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
-    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemNavHistory, ModalView, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -61,7 +63,9 @@ actions!(
         /// Toggles the search filters panel.
         ToggleFilters,
         /// Toggles collapse/expand state of all search result excerpts.
-        ToggleAllSearchResults
+        ToggleAllSearchResults,
+        /// Opens the search preset picker.
+        SearchWithPreset
     ]
 );
 
@@ -188,6 +192,43 @@ pub fn init(cx: &mut App) {
             }
             ProjectSearchView::new_search(workspace, action, window, cx);
             cx.notify();
+        });
+        workspace.register_action(move |workspace, _: &SearchWithPreset, window, cx| {
+            if workspace.has_active_modal(window, cx) {
+                cx.propagate();
+                return;
+            }
+
+            let settings_store = cx.global::<SettingsStore>();
+
+            let worktree_ids: HashSet<_> = workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|wt| wt.read(cx).id())
+                .collect();
+
+            let mut presets = Vec::new();
+            for file in settings_store.get_all_files() {
+                if let settings::SettingsFile::Project((worktree_id, _)) = &file {
+                    if worktree_ids.contains(worktree_id) {
+                        if let Some(content) = settings_store.get_content_for_file(file) {
+                            if let Some(file_presets) =
+                                content.project.project_search_presets.as_ref()
+                            {
+                                for (name, preset) in file_presets {
+                                    presets.push((name.clone(), preset.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let workspace_handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                SearchPresetPicker::new(presets, workspace_handle, window, cx)
+            });
         });
     })
     .detach();
@@ -2438,6 +2479,169 @@ fn register_workspace_action_for_present_search<A: Action>(
             cx.propagate();
         }
     });
+}
+
+// Search Preset Picker
+
+pub struct SearchPresetPicker {
+    picker: Entity<Picker<SearchPresetPickerDelegate>>,
+}
+
+impl SearchPresetPicker {
+    pub fn new(
+        presets: Vec<(String, ProjectSearchPreset)>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = SearchPresetPickerDelegate::new(cx.entity().downgrade(), presets, workspace);
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        Self { picker }
+    }
+}
+
+impl Render for SearchPresetPicker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("SearchPresetPicker")
+            .w(rems(34.))
+            .child(self.picker.clone())
+    }
+}
+
+impl Focusable for SearchPresetPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl EventEmitter<DismissEvent> for SearchPresetPicker {}
+impl ModalView for SearchPresetPicker {}
+
+pub struct SearchPresetPickerDelegate {
+    picker: WeakEntity<SearchPresetPicker>,
+    presets: Vec<(String, ProjectSearchPreset)>,
+    filtered_presets: Vec<usize>,
+    selected_index: usize,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl SearchPresetPickerDelegate {
+    fn new(
+        picker: WeakEntity<SearchPresetPicker>,
+        presets: Vec<(String, ProjectSearchPreset)>,
+        workspace: WeakEntity<Workspace>,
+    ) -> Self {
+        let filtered_presets = (0..presets.len()).collect();
+        Self {
+            picker,
+            presets,
+            filtered_presets,
+            selected_index: 0,
+            workspace,
+        }
+    }
+}
+
+impl PickerDelegate for SearchPresetPickerDelegate {
+    type ListItem = ui::ListItem;
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select a search preset…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.filtered_presets.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        if self.presets.is_empty() {
+            Some("No search presets defined. Add presets to .zed/settings.json".into())
+        } else {
+            Some("No matching presets".into())
+        }
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(&preset_ix) = self.filtered_presets.get(self.selected_index) {
+            let (_, preset) = &self.presets[preset_ix];
+            let included_files = preset.include.clone();
+            let excluded_files = preset.exclude.clone();
+
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    let action = DeploySearch {
+                        replace_enabled: false,
+                        included_files,
+                        excluded_files,
+                    };
+                    ProjectSearchView::deploy_search(workspace, &action, window, cx);
+                });
+            }
+        }
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.picker
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let query = query.to_lowercase();
+        self.filtered_presets = if query.is_empty() {
+            (0..self.presets.len()).collect()
+        } else {
+            self.presets
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, _))| name.to_lowercase().contains(&query))
+                .map(|(ix, _)| ix)
+                .collect()
+        };
+        self.selected_index = self
+            .selected_index
+            .min(self.filtered_presets.len().saturating_sub(1));
+        cx.notify();
+        Task::ready(())
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let preset_ix = *self.filtered_presets.get(ix)?;
+        let (name, _) = &self.presets[preset_ix];
+        Some(
+            ui::ListItem::new(ix)
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(ui::Label::new(name.clone())),
+        )
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4711,5 +4915,365 @@ pub mod tests {
             editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
         );
         cx.background_executor.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_search_preset_picker_delegate_empty(cx: &mut TestAppContext) {
+        let presets: Vec<(String, settings::ProjectSearchPreset)> = vec![];
+        let delegate = SearchPresetPickerDelegate {
+            picker: WeakEntity::new_invalid(),
+            presets,
+            filtered_presets: vec![],
+            selected_index: 0,
+            workspace: WeakEntity::new_invalid(),
+        };
+
+        assert_eq!(delegate.match_count(), 0);
+        cx.update(|cx| {
+            cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+                let text = delegate.no_matches_text(window, cx);
+                assert!(text.is_some());
+                assert_eq!(
+                    text.unwrap().as_ref(),
+                    "No search presets defined. Add presets to .zed/settings.json"
+                );
+                cx.new(|_| gpui::Empty)
+            })
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_search_preset_picker_delegate_with_presets(_cx: &mut TestAppContext) {
+        let presets = vec![
+            (
+                "source_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/**".to_string()),
+                    exclude: Some("**/*.test.ts".to_string()),
+                },
+            ),
+            (
+                "tests_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("**/*.test.ts".to_string()),
+                    exclude: None,
+                },
+            ),
+            (
+                "frontend".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/ui/**".to_string()),
+                    exclude: None,
+                },
+            ),
+        ];
+
+        let delegate = SearchPresetPickerDelegate {
+            picker: WeakEntity::new_invalid(),
+            presets,
+            filtered_presets: (0..3).collect(),
+            selected_index: 0,
+            workspace: WeakEntity::new_invalid(),
+        };
+
+        assert_eq!(delegate.match_count(), 3);
+        assert_eq!(delegate.selected_index(), 0);
+    }
+
+    #[gpui::test]
+    fn test_search_preset_picker_filtering(_cx: &mut TestAppContext) {
+        let presets = vec![
+            (
+                "source_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/**".to_string()),
+                    exclude: None,
+                },
+            ),
+            (
+                "tests_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("**/*.test.ts".to_string()),
+                    exclude: None,
+                },
+            ),
+            (
+                "frontend".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/ui/**".to_string()),
+                    exclude: None,
+                },
+            ),
+        ];
+
+        let mut delegate = SearchPresetPickerDelegate {
+            picker: WeakEntity::new_invalid(),
+            presets,
+            filtered_presets: (0..3).collect(),
+            selected_index: 0,
+            workspace: WeakEntity::new_invalid(),
+        };
+
+        // Simulate filtering with "only" query
+        let query = "only".to_string().to_lowercase();
+        delegate.filtered_presets = delegate
+            .presets
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| name.to_lowercase().contains(&query))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        // Should match "source_only" and "tests_only"
+        assert_eq!(delegate.filtered_presets.len(), 2);
+        assert_eq!(delegate.filtered_presets, vec![0, 1]);
+
+        // Simulate filtering with "front" query
+        let query = "front".to_string().to_lowercase();
+        delegate.filtered_presets = delegate
+            .presets
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| name.to_lowercase().contains(&query))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        // Should match only "frontend"
+        assert_eq!(delegate.filtered_presets.len(), 1);
+        assert_eq!(delegate.filtered_presets, vec![2]);
+    }
+
+    #[gpui::test]
+    async fn test_deploy_search_with_include_and_exclude(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "src": {
+                    "main.ts": "const x = 1;"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.panes()[0].update(cx, |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |workspace, window, cx| {
+                let action = DeploySearch {
+                    replace_enabled: false,
+                    included_files: Some("src/**".to_string()),
+                    excluded_files: Some("**/*.test.ts".to_string()),
+                };
+                ProjectSearchView::deploy_search(workspace, &action, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be opened");
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "Filters should be enabled when action has include/exclude"
+                    );
+                    assert_eq!(
+                        search_view.included_files_editor.read(cx).text(cx),
+                        "src/**"
+                    );
+                    assert_eq!(
+                        search_view.excluded_files_editor.read(cx).text(cx),
+                        "**/*.test.ts"
+                    );
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_search_preset_with_only_include(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "src": {
+                    "main.ts": "const x = 1;"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.panes()[0].update(cx, |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |workspace, window, cx| {
+                let action = DeploySearch {
+                    replace_enabled: false,
+                    included_files: Some("src/**".to_string()),
+                    excluded_files: None,
+                };
+                ProjectSearchView::deploy_search(workspace, &action, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be opened");
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "Filters should be enabled when preset has include"
+                    );
+                    assert_eq!(
+                        search_view.included_files_editor.read(cx).text(cx),
+                        "src/**"
+                    );
+                    assert!(
+                        search_view
+                            .excluded_files_editor
+                            .read(cx)
+                            .text(cx)
+                            .is_empty(),
+                        "Excluded files should be empty"
+                    );
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_search_preset_with_only_exclude(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "src": {
+                    "main.ts": "const x = 1;"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        cx.run_until_parked();
+
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.panes()[0].update(cx, |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |workspace, window, cx| {
+                let action = DeploySearch {
+                    replace_enabled: false,
+                    included_files: None,
+                    excluded_files: Some("**/*.test.ts".to_string()),
+                };
+                ProjectSearchView::deploy_search(workspace, &action, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be opened");
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "Filters should be enabled when preset has exclude"
+                    );
+                    assert!(
+                        search_view
+                            .included_files_editor
+                            .read(cx)
+                            .text(cx)
+                            .is_empty(),
+                        "Included files should be empty"
+                    );
+                    assert_eq!(
+                        search_view.excluded_files_editor.read(cx).text(cx),
+                        "**/*.test.ts"
+                    );
+                });
+            })
+            .unwrap();
     }
 }

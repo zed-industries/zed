@@ -797,6 +797,16 @@
       "on_drop": true,
     },
   },
+  // Saved presets for project search filters.
+  // Each preset has a name and can specify include/exclude glob patterns.
+  // Example:
+  //   "project_search_presets": {
+  //     "source_only": {
+  //       "include": "src/**",
+  //       "exclude": "**/*.test.ts"
+  //     }
+  //   }
+  "project_search_presets": {},
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
     "button": true,
