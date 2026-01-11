@@ -20,19 +20,21 @@ use editor::{
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
-    Action, AnyElement, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
-    SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Axis, Context, DismissEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext,
+    ParentElement, Point, Render, SharedString, Styled, Subscription, Task, UpdateGlobal,
+    WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
+use picker::{Picker, PickerDelegate};
 use project::{
     Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
-use settings::Settings;
+use settings::{ProjectSearchPreset, Settings, SettingsStore};
 use std::{
     any::{Any, TypeId},
     mem,
@@ -43,7 +45,7 @@ use std::{
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
-    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemNavHistory, ModalView, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -61,7 +63,9 @@ actions!(
         /// Toggles the search filters panel.
         ToggleFilters,
         /// Toggles collapse/expand state of all search result excerpts.
-        ToggleAllSearchResults
+        ToggleAllSearchResults,
+        /// Opens the search preset picker.
+        SearchWithPreset
     ]
 );
 
@@ -188,6 +192,39 @@ pub fn init(cx: &mut App) {
             }
             ProjectSearchView::new_search(workspace, action, window, cx);
             cx.notify();
+        });
+        workspace.register_action(move |workspace, _: &SearchWithPreset, window, cx| {
+            if workspace.has_active_modal(window, cx) {
+                cx.propagate();
+                return;
+            }
+
+            let presets = workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .and_then(|worktree| {
+                    let worktree_id = worktree.read(cx).id();
+                    cx.global::<SettingsStore>()
+                        .get_content_for_file(settings::SettingsFile::Project((
+                            worktree_id,
+                            RelPath::empty().into(),
+                        )))
+                        .and_then(|c| c.project_search_presets.as_ref())
+                        .map(|presets| {
+                            presets
+                                .iter()
+                                .map(|(name, preset)| (name.clone(), preset.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                })
+                .unwrap_or_default();
+
+            let workspace_handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                SearchPresetPicker::new(presets, workspace_handle, window, cx)
+            });
         });
     })
     .detach();
@@ -2438,6 +2475,166 @@ fn register_workspace_action_for_present_search<A: Action>(
             cx.propagate();
         }
     });
+}
+
+// Search Preset Picker
+
+pub struct SearchPresetPicker {
+    picker: Entity<Picker<SearchPresetPickerDelegate>>,
+}
+
+impl SearchPresetPicker {
+    pub fn new(
+        presets: Vec<(String, ProjectSearchPreset)>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = SearchPresetPickerDelegate::new(
+            cx.entity().downgrade(),
+            presets,
+            workspace,
+        );
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        Self { picker }
+    }
+}
+
+impl Render for SearchPresetPicker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("SearchPresetPicker")
+            .w(rems(34.))
+            .child(self.picker.clone())
+    }
+}
+
+impl Focusable for SearchPresetPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl EventEmitter<DismissEvent> for SearchPresetPicker {}
+impl ModalView for SearchPresetPicker {}
+
+pub struct SearchPresetPickerDelegate {
+    picker: WeakEntity<SearchPresetPicker>,
+    presets: Vec<(String, ProjectSearchPreset)>,
+    filtered_presets: Vec<usize>,
+    selected_index: usize,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl SearchPresetPickerDelegate {
+    fn new(
+        picker: WeakEntity<SearchPresetPicker>,
+        presets: Vec<(String, ProjectSearchPreset)>,
+        workspace: WeakEntity<Workspace>,
+    ) -> Self {
+        let filtered_presets = (0..presets.len()).collect();
+        Self {
+            picker,
+            presets,
+            filtered_presets,
+            selected_index: 0,
+            workspace,
+        }
+    }
+}
+
+impl PickerDelegate for SearchPresetPickerDelegate {
+    type ListItem = ui::ListItem;
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select a search preset…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.filtered_presets.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        if self.presets.is_empty() {
+            Some("No search presets defined. Add presets to .zed/settings.json".into())
+        } else {
+            Some("No matching presets".into())
+        }
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(&preset_ix) = self.filtered_presets.get(self.selected_index) {
+            let (_, preset) = &self.presets[preset_ix];
+            let included_files = preset.include.clone();
+            let excluded_files = preset.exclude.clone();
+
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    let action = DeploySearch {
+                        replace_enabled: false,
+                        included_files,
+                        excluded_files,
+                    };
+                    ProjectSearchView::deploy_search(workspace, &action, window, cx);
+                });
+            }
+        }
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.picker
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let query = query.to_lowercase();
+        self.filtered_presets = if query.is_empty() {
+            (0..self.presets.len()).collect()
+        } else {
+            self.presets
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, _))| name.to_lowercase().contains(&query))
+                .map(|(ix, _)| ix)
+                .collect()
+        };
+        self.selected_index = self.selected_index.min(self.filtered_presets.len().saturating_sub(1));
+        cx.notify();
+        Task::ready(())
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let preset_ix = *self.filtered_presets.get(ix)?;
+        let (name, _) = &self.presets[preset_ix];
+        Some(
+            ui::ListItem::new(ix)
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(ui::Label::new(name.clone())),
+        )
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4711,5 +4908,132 @@ pub mod tests {
             editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
         );
         cx.background_executor.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_search_preset_picker_delegate_empty(cx: &mut TestAppContext) {
+        let presets: Vec<(String, settings::ProjectSearchPreset)> = vec![];
+        let delegate = SearchPresetPickerDelegate {
+            picker: WeakEntity::new_invalid(),
+            presets,
+            filtered_presets: vec![],
+            selected_index: 0,
+            workspace: WeakEntity::new_invalid(),
+        };
+
+        assert_eq!(delegate.match_count(), 0);
+        cx.update(|cx| {
+            cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+                let text = delegate.no_matches_text(window, cx);
+                assert!(text.is_some());
+                assert_eq!(
+                    text.unwrap().as_ref(),
+                    "No search presets defined. Add presets to .zed/settings.json"
+                );
+                cx.new(|_| gpui::Empty)
+            })
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_search_preset_picker_delegate_with_presets(_cx: &mut TestAppContext) {
+        let presets = vec![
+            (
+                "source_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/**".to_string()),
+                    exclude: Some("**/*.test.ts".to_string()),
+                },
+            ),
+            (
+                "tests_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("**/*.test.ts".to_string()),
+                    exclude: None,
+                },
+            ),
+            (
+                "frontend".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/ui/**".to_string()),
+                    exclude: None,
+                },
+            ),
+        ];
+
+        let delegate = SearchPresetPickerDelegate {
+            picker: WeakEntity::new_invalid(),
+            presets,
+            filtered_presets: (0..3).collect(),
+            selected_index: 0,
+            workspace: WeakEntity::new_invalid(),
+        };
+
+        assert_eq!(delegate.match_count(), 3);
+        assert_eq!(delegate.selected_index(), 0);
+    }
+
+    #[gpui::test]
+    fn test_search_preset_picker_filtering(_cx: &mut TestAppContext) {
+        let presets = vec![
+            (
+                "source_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/**".to_string()),
+                    exclude: None,
+                },
+            ),
+            (
+                "tests_only".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("**/*.test.ts".to_string()),
+                    exclude: None,
+                },
+            ),
+            (
+                "frontend".to_string(),
+                settings::ProjectSearchPreset {
+                    include: Some("src/ui/**".to_string()),
+                    exclude: None,
+                },
+            ),
+        ];
+
+        let mut delegate = SearchPresetPickerDelegate {
+            picker: WeakEntity::new_invalid(),
+            presets,
+            filtered_presets: (0..3).collect(),
+            selected_index: 0,
+            workspace: WeakEntity::new_invalid(),
+        };
+
+        // Simulate filtering with "only" query
+        let query = "only".to_string().to_lowercase();
+        delegate.filtered_presets = delegate
+            .presets
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| name.to_lowercase().contains(&query))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        // Should match "source_only" and "tests_only"
+        assert_eq!(delegate.filtered_presets.len(), 2);
+        assert_eq!(delegate.filtered_presets, vec![0, 1]);
+
+        // Simulate filtering with "front" query
+        let query = "front".to_string().to_lowercase();
+        delegate.filtered_presets = delegate
+            .presets
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| name.to_lowercase().contains(&query))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        // Should match only "frontend"
+        assert_eq!(delegate.filtered_presets.len(), 1);
+        assert_eq!(delegate.filtered_presets, vec![2]);
     }
 }
