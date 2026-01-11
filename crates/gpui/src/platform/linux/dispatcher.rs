@@ -5,22 +5,26 @@ use calloop::{
 };
 use util::ResultExt;
 
-use std::{mem::MaybeUninit, thread, time::Duration};
+use std::{
+    mem::MaybeUninit,
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::{
-    GLOBAL_THREAD_TIMINGS, GpuiRunnable, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RealtimePriority, THREAD_TIMINGS, TaskLabel, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
+    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, profiler,
 };
 
 struct TimerAfter {
     duration: Duration,
-    runnable: GpuiRunnable,
+    runnable: RunnableVariant,
 }
 
 pub(crate) struct LinuxDispatcher {
-    main_sender: PriorityQueueCalloopSender<GpuiRunnable>,
+    main_sender: PriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
-    background_sender: PriorityQueueSender<GpuiRunnable>,
+    background_sender: PriorityQueueSender<RunnableVariant>,
     _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
@@ -28,25 +32,44 @@ pub(crate) struct LinuxDispatcher {
 const MIN_THREADS: usize = 2;
 
 impl LinuxDispatcher {
-    pub fn new(main_sender: PriorityQueueCalloopSender<GpuiRunnable>) -> Self {
+    pub fn new(main_sender: PriorityQueueCalloopSender<RunnableVariant>) -> Self {
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         let thread_count =
             std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
 
-        // These thread should really be lower prio then the foreground
-        // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
-                let mut receiver: PriorityQueueReceiver<GpuiRunnable> = background_receiver.clone();
+                let mut receiver: PriorityQueueReceiver<RunnableVariant> =
+                    background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let started = runnable.run_and_profile();
+                            // Check if the executor that spawned this task was closed
+                            if runnable.metadata().is_closed() {
+                                continue;
+                            }
+
+                            let start = Instant::now();
+
+                            let location = runnable.metadata().location;
+                            let mut timing = TaskTiming {
+                                location,
+                                start,
+                                end: None,
+                            };
+                            profiler::add_task_timing(timing);
+
+                            runnable.run();
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
+
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
                                 i,
-                                started.elapsed()
+                                start.elapsed()
                             );
                         }
                     })
@@ -57,7 +80,7 @@ impl LinuxDispatcher {
         let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
         let timer_thread = std::thread::Builder::new()
             .name("Timer".to_owned())
-            .spawn(|| {
+            .spawn(move || {
                 let mut event_loop: EventLoop<()> =
                     EventLoop::try_new().expect("Failed to initialize timer loop!");
 
@@ -66,14 +89,31 @@ impl LinuxDispatcher {
                 handle
                     .insert_source(timer_channel, move |e, _, _| {
                         if let channel::Event::Msg(timer) = e {
-                            // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
                             let mut runnable = Some(timer.runnable);
                             timer_handle
                                 .insert_source(
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            runnable.run_and_profile();
+                                            // Check if the executor that spawned this task was closed
+                                            if runnable.metadata().is_closed() {
+                                                return TimeoutAction::Drop;
+                                            }
+
+                                            let start = Instant::now();
+                                            let location = runnable.metadata().location;
+                                            let mut timing = TaskTiming {
+                                                location,
+                                                start,
+                                                end: None,
+                                            };
+                                            profiler::add_task_timing(timing);
+
+                                            runnable.run();
+                                            let end = Instant::now();
+
+                                            timing.end = Some(end);
+                                            profiler::add_task_timing(timing);
                                         }
                                         TimeoutAction::Drop
                                     },
@@ -123,15 +163,15 @@ impl PlatformDispatcher for LinuxDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: GpuiRunnable, _: Option<TaskLabel>) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.background_sender
-            .send(runnable.priority(), runnable)
+            .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
     }
 
-    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         self.main_sender
-            .send(runnable.priority(), runnable)
+            .send(priority, runnable)
             .unwrap_or_else(|runnable| {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
@@ -145,25 +185,19 @@ impl PlatformDispatcher for LinuxDispatcher {
             });
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: GpuiRunnable) {
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.timer_sender
             .send(TimerAfter { duration, runnable })
             .ok();
     }
 
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
             // SAFETY: always safe to call
             let thread_id = unsafe { libc::pthread_self() };
 
-            let policy = match priority {
-                RealtimePriority::Audio => libc::SCHED_FIFO,
-                RealtimePriority::Other => libc::SCHED_RR,
-            };
-            let sched_priority = match priority {
-                RealtimePriority::Audio => 65,
-                RealtimePriority::Other => 45,
-            };
+            let policy = libc::SCHED_FIFO;
+            let sched_priority = 65;
 
             // SAFETY: all sched_param members are valid when initialized to zero.
             let mut sched_param =
@@ -172,7 +206,7 @@ impl PlatformDispatcher for LinuxDispatcher {
             // SAFETY: sched_param is a valid initialized structure
             let result = unsafe { libc::pthread_setschedparam(thread_id, policy, &sched_param) };
             if result != 0 {
-                log::warn!("failed to set realtime thread priority to {:?}", priority);
+                log::warn!("failed to set realtime thread priority");
             }
 
             f();

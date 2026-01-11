@@ -48,18 +48,17 @@ pub struct State {
     codestral_api_key_state: Entity<ApiKeyState>,
 }
 
-struct CodestralApiKey(Entity<ApiKeyState>);
-impl Global for CodestralApiKey {}
-
 pub fn codestral_api_key(cx: &mut App) -> Entity<ApiKeyState> {
-    if cx.has_global::<CodestralApiKey>() {
-        cx.global::<CodestralApiKey>().0.clone()
-    } else {
-        let api_key_state = cx
-            .new(|_| ApiKeyState::new(CODESTRAL_API_URL.into(), CODESTRAL_API_KEY_ENV_VAR.clone()));
-        cx.set_global(CodestralApiKey(api_key_state.clone()));
-        api_key_state
-    }
+    // IMPORTANT:
+    // Do not store `Entity<T>` handles in process-wide statics (e.g. `OnceLock`).
+    //
+    // `Entity<T>` is tied to a particular `App`/entity-map context. Caching it globally can
+    // cause panics like "used a entity with the wrong context" when tests (or multiple apps)
+    // create distinct `App` instances in the same process.
+    //
+    // If we want a per-process singleton, store plain data (e.g. env var names) and create
+    // the entity per-App instead.
+    cx.new(|_| ApiKeyState::new(CODESTRAL_API_URL.into(), CODESTRAL_API_KEY_ENV_VAR.clone()))
 }
 
 impl State {

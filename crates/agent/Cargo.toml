@@ -24,7 +24,6 @@ agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
-assistant_text_thread.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
@@ -32,6 +31,7 @@ collections.workspace = true
 context_server.workspace = true
 db.workspace = true
 derive_more.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -75,7 +75,6 @@ zstd.workspace = true
 
 [dev-dependencies]
 agent_servers = { workspace = true, "features" = ["test-support"] }
-assistant_text_thread = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
