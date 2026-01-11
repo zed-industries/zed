@@ -449,30 +449,26 @@ impl Render for QuickSearch {
             }))
             .on_action(cx.listener(|this, _: &SelectNextMatch, window, cx| {
                 this.picker.update(cx, |picker, cx| {
-                    let delegate = &mut picker.delegate;
-                    if !delegate.matches.is_empty() {
-                        delegate.selected_index =
-                            (delegate.selected_index + 1) % delegate.matches.len();
-                        delegate.has_changed_selected_index = true;
-                        delegate.update_preview(window, cx);
+                    let match_count = picker.delegate.matches.len();
+                    if match_count > 0 {
+                        let new_index =
+                            (picker.delegate.selected_index + 1) % match_count;
+                        picker.set_selected_index(new_index, None, true, window, cx);
                     }
                 });
-                cx.notify();
             }))
             .on_action(cx.listener(|this, _: &SelectPreviousMatch, window, cx| {
                 this.picker.update(cx, |picker, cx| {
-                    let delegate = &mut picker.delegate;
-                    if !delegate.matches.is_empty() {
-                        delegate.selected_index = if delegate.selected_index == 0 {
-                            delegate.matches.len() - 1
+                    let match_count = picker.delegate.matches.len();
+                    if match_count > 0 {
+                        let new_index = if picker.delegate.selected_index == 0 {
+                            match_count - 1
                         } else {
-                            delegate.selected_index - 1
+                            picker.delegate.selected_index - 1
                         };
-                        delegate.has_changed_selected_index = true;
-                        delegate.update_preview(window, cx);
+                        picker.set_selected_index(new_index, None, true, window, cx);
                     }
                 });
-                cx.notify();
             }))
             .m_4()
             .relative()
@@ -741,8 +737,7 @@ pub struct QuickSearchDelegate {
     matches: Vec<SearchMatch>,
     selected_index: usize,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
-    /// Set when selection changes via click, cleared on confirm. Used to detect click vs Enter.
-    has_changed_selected_index: bool,
+    last_selection_change_time: Option<std::time::Instant>,
     last_confirm_time: Option<std::time::Instant>,
     search_options: SearchOptions,
     search_in_progress: bool,
@@ -773,7 +768,7 @@ impl QuickSearchDelegate {
             matches: Vec::new(),
             selected_index: 0,
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            has_changed_selected_index: false,
+            last_selection_change_time: None,
             last_confirm_time: None,
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
@@ -1253,7 +1248,7 @@ impl PickerDelegate for QuickSearchDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix;
-        self.has_changed_selected_index = true;
+        self.last_selection_change_time = Some(std::time::Instant::now());
         self.update_preview(window, cx);
     }
 
@@ -1379,11 +1374,15 @@ impl PickerDelegate for QuickSearchDelegate {
             return;
         }
 
-        // Clicks require double-click, Enter key proceeds immediately
-        if self.has_changed_selected_index {
-            self.has_changed_selected_index = false;
+        // Clicks (set_selected_index called immediately before confirm) require double-click.
+        // Enter key proceeds immediately.
+        let now = std::time::Instant::now();
+        let is_click = self
+            .last_selection_change_time
+            .map(|t| now.duration_since(t).as_millis() < 50)
+            .unwrap_or(false);
 
-            let now = std::time::Instant::now();
+        if is_click {
             let is_double_click = self
                 .last_confirm_time
                 .map(|t| now.duration_since(t).as_millis() < 300)
