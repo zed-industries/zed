@@ -1087,8 +1087,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                         picker.refresh(window, cx);
                                     }))
                             })
-                            .child({
-                                let focus_handle = focus_handle.clone();
+                            .child(
                                 IconButton::new("regex", SearchOption::Regex.icon())
                                     .size(ButtonSize::Compact)
                                     .toggle_state(search_options.contains(SearchOptions::REGEX))
@@ -1103,12 +1102,11 @@ impl PickerDelegate for QuickSearchDelegate {
                                     .on_click(cx.listener(|picker, _, window, cx| {
                                         picker.delegate.search_options.toggle(SearchOptions::REGEX);
                                         picker.refresh(window, cx);
-                                    }))
-                            })
+                                    })),
+                            )
                     }),
             )
             .when(self.replace_enabled, |this| {
-                let focus_handle = focus_handle.clone();
                 this.child(Divider::horizontal()).child(
                     h_flex()
                         .flex_none()
@@ -1122,7 +1120,6 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .child(self.replace_editor.clone()),
                         )
                         .child({
-                            let focus_handle = focus_handle.clone();
                             h_flex()
                                 .flex_none()
                                 .gap_0p5()
