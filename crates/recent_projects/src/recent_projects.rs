@@ -1055,6 +1055,7 @@ mod tests {
             let state = AppState::test(cx);
             crate::init(cx);
             editor::init(cx);
+            project::Project::init(&state.client, cx);
             state
         })
     }
