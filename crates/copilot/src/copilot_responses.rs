@@ -1,7 +1,8 @@
 use super::*;
+use crate::copilot_chat::ChatLocation;
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
@@ -22,6 +23,7 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<ResponseIncludable>>,
+    pub store: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -278,6 +280,7 @@ pub async fn stream_response(
     api_url: String,
     request: Request,
     is_user_initiated: bool,
+    location: ChatLocation,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>> {
     let is_vision_request = request.input.iter().any(|item| match item {
         ResponseInputItem::Message {
@@ -290,6 +293,7 @@ pub async fn stream_response(
     });
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
+    let interaction_type = location.to_intent_string();
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -304,13 +308,13 @@ pub async fn stream_response(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("X-Initiator", request_initiator);
-
-    let request_builder = if is_vision_request {
-        request_builder.header("Copilot-Vision-Request", "true")
-    } else {
-        request_builder
-    };
+        .header("X-Initiator", request_initiator)
+        .header("X-Interaction-Type", interaction_type)
+        .header("OpenAI-Intent", interaction_type)
+        .header("X-GitHub-Api-Version", "2025-10-01")
+        .when(is_vision_request, |builder| {
+            builder.header("Copilot-Vision-Request", "true")
+        });
 
     let is_streaming = request.stream;
     let json = serde_json::to_string(&request)?;

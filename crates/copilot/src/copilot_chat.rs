@@ -77,6 +77,30 @@ pub enum Role {
     System,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ChatLocation {
+    #[default]
+    Panel,
+    Editor,
+    EditingSession,
+    Terminal,
+    Agent,
+    Other,
+}
+
+impl ChatLocation {
+    pub fn to_intent_string(self) -> &'static str {
+        match self {
+            ChatLocation::Panel => "conversation-panel",
+            ChatLocation::Editor => "conversation-inline",
+            ChatLocation::EditingSession => "conversation-edits",
+            ChatLocation::Terminal => "conversation-terminal",
+            ChatLocation::Agent => "conversation-agent",
+            ChatLocation::Other => "conversation-other",
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub enum ModelSupportedEndpoint {
     #[serde(rename = "/chat/completions")]
@@ -221,6 +245,10 @@ impl Model {
         self.capabilities.limits.max_prompt_tokens
     }
 
+    pub fn max_output_tokens(&self) -> usize {
+        self.capabilities.limits.max_output_tokens
+    }
+
     pub fn supports_tools(&self) -> bool {
         self.capabilities.supports.tool_calls
     }
@@ -254,7 +282,6 @@ impl Model {
 
 #[derive(Serialize, Deserialize)]
 pub struct Request {
-    pub intent: bool,
     pub n: usize,
     pub stream: bool,
     pub temperature: f32,
@@ -264,6 +291,8 @@ pub struct Request {
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -585,6 +614,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
+        location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
@@ -597,12 +627,14 @@ impl CopilotChat {
             api_url.into(),
             request,
             is_user_initiated,
+            location,
         )
         .await
     }
 
     pub async fn stream_response(
         request: responses::Request,
+        location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
@@ -615,6 +647,7 @@ impl CopilotChat {
             api_url,
             request,
             is_user_initiated,
+            location,
         )
         .await
     }
@@ -788,6 +821,7 @@ async fn stream_completion(
     completion_url: Arc<str>,
     request: Request,
     is_user_initiated: bool,
+    location: ChatLocation,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
         ChatMessage::User { content }
@@ -799,6 +833,7 @@ async fn stream_completion(
     });
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
+    let interaction_type = location.to_intent_string();
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -814,6 +849,9 @@ async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
         .header("X-Initiator", request_initiator)
+        .header("X-Interaction-Type", interaction_type)
+        .header("OpenAI-Intent", interaction_type)
+        .header("X-GitHub-Api-Version", "2025-10-01")
         .when(is_vision_request, |builder| {
             builder.header("Copilot-Vision-Request", is_vision_request.to_string())
         });
