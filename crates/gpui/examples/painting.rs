@@ -1,7 +1,7 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
     PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
+    linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size, ElementId
 };
 
 struct PaintingViewer {
@@ -309,7 +309,7 @@ fn button(
     on_click: impl Fn(&mut PaintingViewer, &mut Context<PaintingViewer>) + 'static,
 ) -> impl IntoElement {
     div()
-        .id(text.to_string())
+        .id(ElementId::Name(text.to_string().into()))
         .child(text.to_string())
         .bg(gpui::black())
         .text_color(gpui::white())
