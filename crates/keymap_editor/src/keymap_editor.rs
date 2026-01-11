@@ -54,6 +54,7 @@ use crate::{
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
+const COLS: usize = 6;
 
 actions!(
     keymap_editor,
@@ -428,7 +429,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
-    current_widths: Entity<TableColumnWidths<6>>,
+    current_widths: Entity<TableColumnWidths>,
     show_hover_menus: bool,
     actions_with_schemas: HashSet<&'static str>,
     /// In order for the JSON LSP to run in the actions arguments editor, we
@@ -560,7 +561,7 @@ impl KeymapEditor {
             actions_with_schemas: HashSet::default(),
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| TableColumnWidths::new(cx)),
+            current_widths: cx.new(|cx| TableColumnWidths::new(COLS, cx)),
         };
 
         this.on_keymap_changed(window, cx);
@@ -1914,14 +1915,14 @@ impl Render for KeymapEditor {
                     ),
             )
             .child(
-                Table::new()
+                Table::new(COLS)
                     .interactable(&self.table_interaction_state)
                     .striped()
                     .empty_table_callback({
                         let this = cx.entity();
                         move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
                     })
-                    .column_widths([
+                    .column_widths(vec![
                         DefiniteLength::Absolute(AbsoluteLength::Pixels(px(36.))),
                         DefiniteLength::Fraction(0.25),
                         DefiniteLength::Fraction(0.20),
@@ -1930,7 +1931,7 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.08),
                     ])
                     .resizable_columns(
-                        [
+                        vec![
                             TableResizeBehavior::None,
                             TableResizeBehavior::Resizable,
                             TableResizeBehavior::Resizable,
@@ -1941,7 +1942,7 @@ impl Render for KeymapEditor {
                         &self.current_widths,
                         cx,
                     )
-                    .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
+                    .header(vec!["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
@@ -2051,7 +2052,7 @@ impl Render for KeymapEditor {
                                         .unwrap_or_default()
                                         .into_any_element();
 
-                                    Some([
+                                    Some(vec![
                                         icon.into_any_element(),
                                         action,
                                         action_arguments,
@@ -2318,20 +2319,18 @@ impl KeybindingEditorModal {
                     .await;
 
                 let language = load_keybind_context_language(workspace, cx).await;
-                editor_entity
-                    .update(cx, |editor, cx| {
-                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(language), cx);
-                            });
-                        }
-                        editor.set_completion_provider(Some(std::rc::Rc::new(
-                            KeyContextCompletionProvider { contexts },
-                        )));
-                    })
-                    .context("Failed to load completions for keybinding context")
+                editor_entity.update(cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(Some(language), cx);
+                        });
+                    }
+                    editor.set_completion_provider(Some(std::rc::Rc::new(
+                        KeyContextCompletionProvider { contexts },
+                    )));
+                });
             })
-            .detach_and_log_err(cx);
+            .detach();
 
             input
         });

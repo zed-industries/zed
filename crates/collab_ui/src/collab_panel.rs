@@ -488,6 +488,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
+        let fg_executor = cx.foreground_executor();
         let executor = cx.background_executor().clone();
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
@@ -517,7 +518,7 @@ impl CollabPanel {
                     self.match_candidates.clear();
                     self.match_candidates
                         .push(StringMatchCandidate::new(0, &user.github_login));
-                    let matches = executor.block(match_strings(
+                    let matches = fg_executor.block_on(match_strings(
                         &self.match_candidates,
                         &query,
                         true,
@@ -561,7 +562,7 @@ impl CollabPanel {
                             &participant.user.github_login,
                         )
                     }));
-                let mut matches = executor.block(match_strings(
+                let mut matches = fg_executor.block_on(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -613,7 +614,7 @@ impl CollabPanel {
                             StringMatchCandidate::new(id, &participant.github_login)
                         },
                     ));
-                let matches = executor.block(match_strings(
+                let matches = fg_executor.block_on(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -648,7 +649,7 @@ impl CollabPanel {
                 .ordered_channels()
                 .map(|(_, chan)| chan)
                 .collect::<Vec<_>>();
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -750,7 +751,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
             );
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -786,7 +787,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
             );
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -811,7 +812,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
             );
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -845,14 +846,14 @@ impl CollabPanel {
                     .map(|(ix, contact)| StringMatchCandidate::new(ix, &contact.user.github_login)),
             );
 
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
                 true,
                 usize::MAX,
                 &Default::default(),
-                executor.clone(),
+                executor,
             ));
 
             let (online_contacts, offline_contacts) = matches
@@ -2179,7 +2180,7 @@ impl CollabPanel {
             cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
-                        .update(cx, |channels, _| channels.remove_channel(channel_id))?
+                        .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                         .notify_async_err(cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
@@ -2213,7 +2214,7 @@ impl CollabPanel {
         cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
-                    .update(cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                     .notify_async_err(cx);
             }

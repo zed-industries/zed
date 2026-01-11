@@ -35,7 +35,7 @@ impl Diff {
                     .await
                     .log_err();
 
-                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx))?;
+                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
 
                 let diff = build_buffer_diff(
                     old_text.unwrap_or("".into()).into(),
@@ -45,31 +45,29 @@ impl Diff {
                 )
                 .await?;
 
-                multibuffer
-                    .update(cx, |multibuffer, cx| {
-                        let hunk_ranges = {
-                            let buffer = buffer.read(cx);
-                            diff.read(cx)
-                                .snapshot(cx)
-                                .hunks_intersecting_range(
-                                    Anchor::min_for_buffer(buffer.remote_id())
-                                        ..Anchor::max_for_buffer(buffer.remote_id()),
-                                    buffer,
-                                )
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
-                                .collect::<Vec<_>>()
-                        };
+                multibuffer.update(cx, |multibuffer, cx| {
+                    let hunk_ranges = {
+                        let buffer = buffer.read(cx);
+                        diff.read(cx)
+                            .snapshot(cx)
+                            .hunks_intersecting_range(
+                                Anchor::min_for_buffer(buffer.remote_id())
+                                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                                buffer,
+                            )
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                            .collect::<Vec<_>>()
+                    };
 
-                        multibuffer.set_excerpts_for_path(
-                            PathKey::for_buffer(&buffer, cx),
-                            buffer.clone(),
-                            hunk_ranges,
-                            multibuffer_context_lines(cx),
-                            cx,
-                        );
-                        multibuffer.add_diff(diff, cx);
-                    })
-                    .log_err();
+                    multibuffer.set_excerpts_for_path(
+                        PathKey::for_buffer(&buffer, cx),
+                        buffer.clone(),
+                        hunk_ranges,
+                        multibuffer_context_lines(cx),
+                        cx,
+                    );
+                    multibuffer.add_diff(diff, cx);
+                });
 
                 anyhow::Ok(())
             }
@@ -206,8 +204,8 @@ impl PendingDiff {
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
         self.update_diff = cx.spawn(async move |diff, cx| {
-            let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot())?;
-            let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned())?;
+            let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
             let update = buffer_diff
                 .update(cx, |diff, cx| {
                     diff.update_diff(
@@ -217,7 +215,7 @@ impl PendingDiff {
                         language,
                         cx,
                     )
-                })?
+                })
                 .await;
             let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
                 let task1 = diff.set_snapshot(update.clone(), &text_snapshot, cx);
@@ -226,7 +224,7 @@ impl PendingDiff {
                     .unwrap()
                     .update(cx, |diff, cx| diff.set_snapshot(update, &text_snapshot, cx));
                 (task1, task2)
-            })?;
+            });
             task1.await;
             task2.await;
             diff.update(cx, |diff, cx| {
@@ -374,36 +372,37 @@ async fn build_buffer_diff(
     language_registry: Option<Arc<LanguageRegistry>>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    let language = cx.update(|cx| buffer.read(cx).language().cloned())?;
-    let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
+    let language = cx.update(|cx| buffer.read(cx).language().cloned());
+    let text_snapshot = cx.update(|cx| buffer.read(cx).text_snapshot());
+    let buffer = cx.update(|cx| buffer.read(cx).snapshot());
 
-    let secondary_diff = cx.new(|cx| BufferDiff::new(&buffer, cx))?;
+    let secondary_diff = cx.new(|cx| BufferDiff::new(&buffer, cx));
 
     let update = secondary_diff
         .update(cx, |secondary_diff, cx| {
             secondary_diff.update_diff(
-                buffer.text.clone(),
+                text_snapshot.clone(),
                 Some(old_text),
                 true,
                 language.clone(),
                 cx,
             )
-        })?
+        })
         .await;
 
     secondary_diff
         .update(cx, |secondary_diff, cx| {
             secondary_diff.language_changed(language.clone(), language_registry.clone(), cx);
             secondary_diff.set_snapshot(update.clone(), &buffer, cx)
-        })?
+        })
         .await;
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer, cx))?;
+    let diff = cx.new(|cx| BufferDiff::new(&buffer, cx));
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, language_registry, cx);
         diff.set_secondary_diff(secondary_diff);
         diff.set_snapshot(update.clone(), &buffer, cx)
-    })?
+    })
     .await;
     Ok(diff)
 }

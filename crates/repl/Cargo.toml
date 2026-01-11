@@ -16,6 +16,7 @@ doctest = false
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
+async-task.workspace = true
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots", "tokio-runtime"] }
 base64.workspace = true
 client.workspace = true

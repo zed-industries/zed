@@ -131,7 +131,16 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited => self.handle_buffer_edited(buffer, cx),
+            BufferEvent::Edited => {
+                let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
+                    return;
+                };
+                let buffer_version = buffer.read(cx).version();
+                if !buffer_version.changed_since(&tracked_buffer.version) {
+                    return;
+                }
+                self.handle_buffer_edited(buffer, cx);
+            }
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }
@@ -198,7 +207,7 @@ impl ActionLog {
             .ok();
         let buffer_repo = git_store.read_with(cx, |git_store, cx| {
             git_store.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-        })?;
+        });
 
         let (mut git_diff_updates_tx, mut git_diff_updates_rx) = watch::channel(());
         let _repo_subscription =
@@ -214,7 +223,7 @@ impl ActionLog {
                             }
                         }
                     }))
-                })?
+                })
             } else {
                 None
             };
@@ -394,54 +403,51 @@ impl ActionLog {
                 buffer.read(cx).language().cloned(),
             ))
         })??;
-        let update = diff.update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer_snapshot.clone(),
-                Some(new_base_text),
-                true,
-                language,
-                cx,
-            )
-        });
-        let mut unreviewed_edits = Patch::default();
-        if let Ok(update) = update {
-            let update = update.await;
-
-            diff.update(cx, |diff, cx| {
-                diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
-            })?
+        let update = diff
+            .update(cx, |diff, cx| {
+                diff.update_diff(
+                    buffer_snapshot.clone(),
+                    Some(new_base_text),
+                    true,
+                    language,
+                    cx,
+                )
+            })
             .await;
-            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx))?;
+        diff.update(cx, |diff, cx| {
+            diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
+        })
+        .await;
+        let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
-            unreviewed_edits = cx
-                .background_spawn({
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    let new_diff_base = new_diff_base.clone();
-                    async move {
-                        let mut unreviewed_edits = Patch::default();
-                        for hunk in diff_snapshot.hunks_intersecting_range(
-                            Anchor::min_for_buffer(buffer_snapshot.remote_id())
-                                ..Anchor::max_for_buffer(buffer_snapshot.remote_id()),
-                            &buffer_snapshot,
-                        ) {
-                            let old_range = new_diff_base
-                                .offset_to_point(hunk.diff_base_byte_range.start)
-                                ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
-                            let new_range = hunk.range.start..hunk.range.end;
-                            unreviewed_edits.push(point_to_row_edit(
-                                Edit {
-                                    old: old_range,
-                                    new: new_range,
-                                },
-                                &new_diff_base,
-                                buffer_snapshot.as_rope(),
-                            ));
-                        }
-                        unreviewed_edits
+        let unreviewed_edits = cx
+            .background_spawn({
+                let buffer_snapshot = buffer_snapshot.clone();
+                let new_diff_base = new_diff_base.clone();
+                async move {
+                    let mut unreviewed_edits = Patch::default();
+                    for hunk in diff_snapshot.hunks_intersecting_range(
+                        Anchor::min_for_buffer(buffer_snapshot.remote_id())
+                            ..Anchor::max_for_buffer(buffer_snapshot.remote_id()),
+                        &buffer_snapshot,
+                    ) {
+                        let old_range = new_diff_base
+                            .offset_to_point(hunk.diff_base_byte_range.start)
+                            ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
+                        let new_range = hunk.range.start..hunk.range.end;
+                        unreviewed_edits.push(point_to_row_edit(
+                            Edit {
+                                old: old_range,
+                                new: new_range,
+                            },
+                            &new_diff_base,
+                            buffer_snapshot.as_rope(),
+                        ));
                     }
-                })
-                .await;
-        }
+                    unreviewed_edits
+                }
+            })
+            .await;
         this.update(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
@@ -467,10 +473,13 @@ impl ActionLog {
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let new_version = buffer.read(cx).version();
         let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
+
+        tracked_buffer.version = new_version;
         tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
     }
 
@@ -957,6 +966,7 @@ enum ChangeAuthor {
     Agent,
 }
 
+#[derive(Debug)]
 enum TrackedBufferStatus {
     Created { existing_file_content: Option<Rope> },
     Modified,

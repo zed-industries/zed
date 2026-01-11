@@ -8320,7 +8320,7 @@ impl project::ProjectItem for TestProjectItem {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
-        Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
+        Some(cx.spawn(async move |cx| Ok(cx.new(|_| Self { path }))))
     }
 
     fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
