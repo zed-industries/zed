@@ -1658,7 +1658,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     // Cancel the current send and ensure that the event stream is closed, even
     // if one of the tools is still running.
-    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    thread.update(cx, |thread, cx| thread.cancel(cx));
     let events = events.collect::<Vec<_>>().await;
     let last_event = events.last();
     assert!(
@@ -1732,7 +1732,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     wait_for_terminal_tool_started(&mut events, cx).await;
 
     // Cancel the thread while the terminal is running
-    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+    thread.update(cx, |thread, cx| thread.cancel(cx));
 
     // Collect remaining events, driving the executor to let cancellation complete
     let remaining_events = collect_events_until_stop(&mut events, cx).await;
@@ -1853,17 +1853,11 @@ async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppC
     }
     assert!(tool_started, "expected cancellation aware tool to start");
 
-    // Cancel the thread and wait for it to complete
-    let cancel_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+    // Cancel the thread
+    thread.update(cx, |thread, cx| thread.cancel(cx));
 
-    // The cancel task should complete promptly because the tool handles cancellation
-    let timeout = cx.background_executor.timer(Duration::from_secs(5));
-    futures::select! {
-        _ = cancel_task.fuse() => {}
-        _ = timeout.fuse() => {
-            panic!("cancel task timed out - tool did not respond to cancellation");
-        }
-    }
+    // Give the cancellation time to propagate
+    cx.run_until_parked();
 
     // Verify the tool detected cancellation via its flag
     assert!(
@@ -2122,7 +2116,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     );
 
     // Cancel the thread while both terminals are running
-    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+    thread.update(cx, |thread, cx| thread.cancel(cx));
 
     // Collect remaining events
     let remaining_events = collect_events_until_stop(&mut events, cx).await;
