@@ -21,7 +21,7 @@ use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
 };
-use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
+use gpui::{App, AsyncApp, Entity, FutureExt as _, Global, Task, Timeout, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::RwLock;
 use postage::watch;
@@ -331,6 +331,7 @@ impl Credentials {
     }
 }
 
+pub const CREDENTIAL_READ_TIMEOUT: Duration = Duration::from_secs(25);
 pub struct ClientCredentialsProvider {
     provider: Arc<dyn CredentialsProvider>,
 }
@@ -347,11 +348,15 @@ impl ClientCredentialsProvider {
     }
 
     /// Reads the credentials from the provider.
+    ///
+    /// Times out after [`CREDENTIAL_READ_TIMEOUT`] seconds returning None and
+    /// logging the timeout as error
     fn read_credentials<'a>(
         &'a self,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
         async move {
+            let executor = cx.background_executor();
             if IMPERSONATE_LOGIN.is_some() {
                 return None;
             }
@@ -360,7 +365,10 @@ impl ClientCredentialsProvider {
             let (user_id, access_token) = self
                 .provider
                 .read_credentials(&server_url, cx)
+                .with_timeout(CREDENTIAL_READ_TIMEOUT, executor)
                 .await
+                .map_err(|_| anyhow!("Timed out waiting for credentials from OS"))
+                .flatten()
                 .log_err()
                 .flatten()?;
 
@@ -852,17 +860,35 @@ impl Client {
             credentials = Some(old_credentials);
         }
 
-        if credentials.is_none()
-            && try_provider
-            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
-        {
-            if self.validate_credentials(&stored_credentials, cx).await? {
-                credentials = Some(stored_credentials);
-            } else {
-                self.credentials_provider
-                    .delete_credentials(cx)
-                    .await
-                    .log_err();
+        let executor = cx.background_executor();
+        if credentials.is_none() && try_provider {
+            match self
+                .credentials_provider
+                .read_credentials(cx)
+                .with_timeout(
+                    CREDENTIAL_READ_TIMEOUT - Duration::from_millis(200),
+                    executor,
+                )
+                .await
+            {
+                Ok(None) => (),
+                Ok(Some(stored_credentials)) => {
+                    if self.validate_credentials(&stored_credentials, cx).await? {
+                        credentials = Some(stored_credentials);
+                    } else {
+                        self.credentials_provider
+                            .delete_credentials(cx)
+                            .await
+                            .log_err();
+                    }
+                }
+                Err(Timeout) => {
+                    // Todo do not time out but show toast after 10s. Hide toast
+                    // when keyring unlocks.
+                    return Err(anyhow!(
+                        "Timed out waiting for credentials from OS, did you unlock the keyring?"
+                    ));
+                }
             }
         }
 
