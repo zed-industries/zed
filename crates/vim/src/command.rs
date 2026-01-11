@@ -1020,6 +1020,7 @@ impl VimCommand {
         self
     }
 
+    /// Emit action from argument with trailing whitespace allowed.
     fn args(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1028,6 +1029,7 @@ impl VimCommand {
         self
     }
 
+    /// Emit action from argument with trimmed whitespace. Supports filename autocompletion.
     fn filename(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1139,11 +1141,11 @@ impl VimCommand {
         let has_bang = rest.starts_with('!');
         let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
-            rest.strip_prefix('!')?.trim().to_string()
+            rest.strip_prefix('!')?.trim_start().to_string()
         } else if rest.is_empty() {
             "".into()
         } else {
-            rest.strip_prefix(' ')?.trim().to_string()
+            rest.strip_prefix(' ')?.trim_start().to_string()
         };
         Some(ParsedQuery {
             args,
@@ -1177,7 +1179,14 @@ impl VimCommand {
             action
         } else {
             // if command does not accept args and we have args then we should do no action
-            self.args.as_ref()?(action, args)?
+            self.args.as_ref()?(
+                action,
+                if self.has_filename {
+                    args.trim().into()
+                } else {
+                    args
+                },
+            )?
         };
 
         let range = range.as_ref().or(self.default_range.as_ref());
@@ -1812,7 +1821,7 @@ pub fn command_interceptor(
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
     let has_trailing_space = query.ends_with(" ");
-    let mut query = query.as_str().trim();
+    let mut query = query.as_str().trim_start();
 
     let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
         .then(|| {
@@ -3192,6 +3201,25 @@ mod test {
 
         cx.shared_state().await.assert_eq(indoc! {"
             ˇThe quick
+            brown fox
+            jumps over
+            the lazy dog
+        "});
+
+        cx.set_shared_state(indoc! {"
+            ˇquick
+            brown fox
+            jumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": n o r m space I T h e space")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            Theˇ quick
             brown fox
             jumps over
             the lazy dog
