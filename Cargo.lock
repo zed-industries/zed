@@ -12617,6 +12617,7 @@ dependencies = [
  "language",
  "menu",
  "notifications",
+ "panel",
  "pretty_assertions",
  "project",
  "rayon",
