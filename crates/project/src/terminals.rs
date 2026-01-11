@@ -282,8 +282,31 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, false, cx)
+    }
+
+    /// Creates a local terminal even if the project is remote.
+    /// Used for "breaking out" of remote to access local shell.
+    /// The terminal will open in the Zed process's current directory,
+    /// which is where Zed was launched from (if via CLI) or home directory (if via app icon).
+    pub fn create_local_terminal(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(None, true, cx)
+    }
+
+    /// Internal method for creating terminal shells.
+    /// If force_local is true, creates a local terminal even if the project has a remote client.
+    /// This allows "breaking out" to a local shell in remote projects.
+    fn create_terminal_shell_internal(
+        &mut self,
+        cwd: Option<PathBuf>,
+        force_local: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
-        let is_via_remote = self.remote_client.is_some();
+        let is_via_remote = !force_local && self.remote_client.is_some();
 
         let mut settings_location = None;
         if let Some(path) = path.as_ref()
@@ -314,7 +337,11 @@ impl Project {
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
-        let remote_client = self.remote_client.clone();
+        let remote_client = if force_local {
+            None
+        } else {
+            self.remote_client.clone()
+        };
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
