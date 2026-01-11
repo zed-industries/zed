@@ -903,6 +903,7 @@ impl<T> AtlasTextureList<T> {
     }
 
     #[track_caller]
+    #[allow(dead_code)]
     fn mark_freed(&mut self, index: usize, key: &AtlasKey) {
         self.free_list.push(index);
         self.freed_diagnostics.insert(
@@ -914,12 +915,14 @@ impl<T> AtlasTextureList<T> {
         );
     }
 
+    #[allow(dead_code)]
     fn reuse_slot(&mut self) -> Option<usize> {
         let index = self.free_list.pop()?;
         self.freed_diagnostics.remove(&index);
         Some(index)
     }
 
+    #[allow(dead_code)]
     fn get_freed_info(&self, index: usize) -> Option<&FreedTextureInfo> {
         self.freed_diagnostics.get(&index)
     }
