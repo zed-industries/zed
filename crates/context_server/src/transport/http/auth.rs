@@ -229,6 +229,10 @@ impl OAuthClient {
         post_json(&registration_endpoint.to_string(), metadata, http_client).await
     }
 
+    pub fn is_authenticated(&self) -> bool {
+        matches!(self.state, State::Authenticated { .. })
+    }
+
     pub async fn access_token(&mut self) -> Result<Option<&str>> {
         let State::Authenticated {
             expires_at,

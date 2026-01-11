@@ -178,6 +178,21 @@ impl HttpTransport {
                     .get("WWW-Authenticate")
                     .and_then(|value| Some(value.to_str().ok()?.to_string()));
 
+                if www_authenticate_header
+                    .as_deref()
+                    .and_then(WwwAuthenticate::parse)
+                    .and_then(|www_auth| www_auth.error)
+                    .is_some_and(|error| error.indicates_invalid_client())
+                {
+                    self.oauth_client
+                        .lock()
+                        .await
+                        .take_if(|client| client.is_authenticated());
+
+                    // todo! remove from credentials manager
+                    // todo! test
+                }
+
                 (self.on_auth_required)(AuthRequired {
                     www_authenticate_header,
                 });

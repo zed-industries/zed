@@ -4,7 +4,7 @@ use std::borrow::Cow;
 pub struct WwwAuthenticate<'a> {
     pub realm: Option<Cow<'a, str>>,
     pub scope: Option<Cow<'a, str>>,
-    pub error: Option<Cow<'a, str>>,
+    pub error: Option<BearerError>,
     pub error_description: Option<Cow<'a, str>>,
     pub error_uri: Option<Cow<'a, str>>,
     pub resource_metadata: Option<Cow<'a, str>>,
@@ -58,7 +58,7 @@ impl<'a> WwwAuthenticate<'a> {
             match name {
                 "realm" => challenge.realm = Some(value),
                 "scope" => challenge.scope = Some(value),
-                "error" => challenge.error = Some(value),
+                "error" => challenge.error = Some(BearerError::parse(&value)),
                 "error_description" => challenge.error_description = Some(value),
                 "error_uri" => {
                     challenge.error_uri = Some(value);
@@ -83,6 +83,43 @@ impl<'a> WwwAuthenticate<'a> {
         }
 
         Some(challenge)
+    }
+}
+
+/// Error codes defined by RFC 6750 Section 3.1 for Bearer token authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BearerError {
+    /// The request is missing a required parameter, includes an unsupported parameter
+    /// or parameter value, repeats the same parameter, uses more than one method for
+    /// including an access token, or is otherwise malformed.
+    InvalidRequest,
+    /// The access token provided is expired, revoked, malformed, or invalid for other reasons.
+    InvalidToken,
+    /// The request requires higher privileges than provided by the access token.
+    InsufficientScope,
+    /// An unrecognized error code (extension or future spec addition).
+    Other,
+}
+
+impl BearerError {
+    fn parse(value: &str) -> Self {
+        match value {
+            "invalid_request" => BearerError::InvalidRequest,
+            "invalid_token" => BearerError::InvalidToken,
+            "insufficient_scope" => BearerError::InsufficientScope,
+            _ => BearerError::Other,
+        }
+    }
+
+    /// Returns true if the error indicates the OAuth client registration may be invalid
+    /// and should be discarded to force re-registration.
+    pub fn indicates_invalid_client(&self) -> bool {
+        match self {
+            BearerError::InvalidRequest => false,
+            BearerError::InsufficientScope => false,
+            BearerError::InvalidToken => true,
+            BearerError::Other => true,
+        }
     }
 }
 
@@ -182,7 +219,7 @@ mod tests {
             WwwAuthenticate {
                 realm: Some(Cow::Borrowed("example")),
                 scope: Some(Cow::Borrowed("read write")),
-                error: Some(Cow::Borrowed("invalid_token")),
+                error: Some(BearerError::InvalidToken),
                 error_description: Some(Cow::Borrowed("The access token expired")),
                 ..Default::default()
             }
@@ -232,10 +269,43 @@ mod tests {
             challenge,
             WwwAuthenticate {
                 realm: Some(Cow::Borrowed("first")),
-                error: Some(Cow::Borrowed("invalid_token")),
+                error: Some(BearerError::InvalidToken),
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn parses_all_standard_error_codes() {
+        let invalid_request =
+            WwwAuthenticate::parse("Bearer error=invalid_request").expect("should parse");
+        assert_eq!(invalid_request.error, Some(BearerError::InvalidRequest));
+
+        let invalid_token =
+            WwwAuthenticate::parse("Bearer error=invalid_token").expect("should parse");
+        assert_eq!(invalid_token.error, Some(BearerError::InvalidToken));
+
+        let insufficient_scope =
+            WwwAuthenticate::parse("Bearer error=insufficient_scope").expect("should parse");
+        assert_eq!(
+            insufficient_scope.error,
+            Some(BearerError::InsufficientScope)
+        );
+    }
+
+    #[test]
+    fn parses_unknown_error_as_other() {
+        let challenge =
+            WwwAuthenticate::parse("Bearer error=some_future_error").expect("should parse");
+        assert_eq!(challenge.error, Some(BearerError::Other));
+    }
+
+    #[test]
+    fn indicates_invalid_client_for_appropriate_errors() {
+        assert!(!BearerError::InvalidRequest.indicates_invalid_client());
+        assert!(!BearerError::InsufficientScope.indicates_invalid_client());
+        assert!(BearerError::InvalidToken.indicates_invalid_client());
+        assert!(BearerError::Other.indicates_invalid_client());
     }
 
     #[test]
