@@ -9,7 +9,7 @@ use gpui::{
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
-use project::{git_store::Repository, project_settings::ProjectSettings};
+use project::{git_store::Repository, project_settings::GitSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
@@ -43,7 +43,7 @@ impl BlameRenderer for GitBlameRenderer {
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
-        let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
+        let avatar = if GitSettings::get_global(cx).blame.show_avatar {
             Some(
                 CommitAvatar::new(
                     &blame_entry.sha.to_string().into(),
@@ -137,10 +137,7 @@ impl BlameRenderer for GitBlameRenderer {
     ) -> Option<AnyElement> {
         let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
         let author = blame_entry.author.as_deref().unwrap_or_default();
-        let summary_enabled = ProjectSettings::get_global(cx)
-            .git
-            .inline_blame
-            .show_commit_summary;
+        let summary_enabled = GitSettings::get_global(cx).inline_blame.show_commit_summary;
 
         let text = match blame_entry.summary.as_ref() {
             Some(summary) if summary_enabled => {

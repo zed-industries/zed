@@ -1920,6 +1920,7 @@ mod tests {
             current
                 .git
                 .get_or_insert_default()
+                .project
                 .inline_blame
                 .get_or_insert_default()
                 .enabled = Some(true);
