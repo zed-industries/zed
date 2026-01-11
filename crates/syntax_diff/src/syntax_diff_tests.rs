@@ -109,12 +109,12 @@ fn test_diff_trees_rust_changed_function_signature() {
     assert_diff(
         indoc! {r#"
                 fn process(x: i32) -> i32 {
-                    «x» «*» «2»
+                    x «*» «2»
                 }
             "#},
         indoc! {r#"
                 fn process(x: i32«,» «y:» «i32») -> i32 {
-                    «x» «+» «y»
+                    x «+» «y»
                 }
             "#},
         parse_rust,
@@ -148,7 +148,7 @@ fn test_diff_trees_rust_match_arm_change() {
                 fn classify(n: i32) -> &'static str {
                     match n {
                         0 => "zero",
-                        «1» => "«one»",
+                        1 => "«one»",
                         _ => "other",
                     }
                 }
@@ -157,11 +157,121 @@ fn test_diff_trees_rust_match_arm_change() {
                 fn classify(n: i32) -> &'static str {
                     match n {
                         0 => "zero",
-                        «1» «|» «2» => "«small»",
+                        1 «|» «2» => "«small»",
                         _ => "other",
                     }
                 }
             "#},
+        parse_rust,
+    );
+}
+
+#[test]
+fn test_diff_trees_rust_nested_closures() {
+    assert_diff(
+        indoc! {r#"
+            fn main() {
+                let result = items
+                    .iter()
+                    .map(|x| x * «2»)
+                    .filter(|x| x > &«5»)
+                    .collect::<Vec<_>>();
+            }
+        "#},
+        indoc! {r#"
+            fn main() {
+                let result = items
+                    .iter()
+                    .map(|x| x * «3»)
+                    .filter(|x| x > &«10»)
+                    .collect::<Vec<_>>();
+            }
+        "#},
+        parse_rust,
+    );
+}
+
+#[test]
+fn test_diff_trees_rust_impl_with_generics() {
+    assert_diff(
+        indoc! {r#"
+            impl<T: Clone> Container<T> {
+                fn new(value: T) -> Self {
+                    Self { value }
+                }
+            }
+        "#},
+        indoc! {r#"
+            impl<T: Clone «+» «Send»> Container<T> {
+                fn new(value: T) -> Self {
+                    Self { value }
+                }
+
+                «fn» «get(&self)» «->» «&T» «{»
+                    «&self.value»
+                «}»
+            }
+        "#},
+        parse_rust,
+    );
+}
+
+#[test]
+fn test_diff_trees_rust_complex_expression_reorder() {
+    assert_diff(
+        indoc! {r#"
+            fn compute() -> i32 {
+                let a = 1;
+                let b = 2;
+                let c = 3;
+                «a» + b + «c»
+            }
+        "#},
+        indoc! {r#"
+            fn compute() -> i32 {
+                let a = 1;
+                let b = 2;
+                let c = 3;
+                «c» + b + «a»
+            }
+        "#},
+        parse_rust,
+    );
+}
+
+#[test]
+fn test_diff_trees_rust_enum_variant_change() {
+    assert_diff(
+        indoc! {r#"
+            enum Message {
+                «Quit»,
+                Move { x: i32, y: i32 },
+                Write(String),
+            }
+
+            fn handle(msg: Message) {
+                match msg {
+                    Message::«Quit» => println!("«quit»"),
+                    Message::Move { x, y } => println!("{x}, {y}"),
+                    Message::Write(s) => println!("{s}"),
+                }
+            }
+        "#},
+        indoc! {r#"
+            enum Message {
+                «Pause»,
+                Move { x: i32, y: i32 },
+                Write(String),
+            }
+
+            fn handle(msg: Message) {
+                match msg {
+                    Message::«Pause» => println!("«paused»"),
+                    Message::Move { x, y } => println!("{x}, {y}"),
+                    Message::Write(s) => println!("{s}"),
+                }
+            }
+        "#},
         parse_rust,
     );
 }

@@ -3,6 +3,7 @@
 use std::cmp::{Reverse, min};
 use std::collections::BinaryHeap;
 use std::collections::hash_map::Entry;
+use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 use arrayvec::ArrayVec;
@@ -22,7 +23,7 @@ pub struct ExceededGraphLimit;
 /// - `edge` is the transition taken (None for the start of the path)
 /// - `into` is the destination vertex
 /// - `cost` is the cumulative cost to reach `into` from the start
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SyntaxPath<'a> {
     pub from: Option<SyntaxVertex<'a>>,
     pub edge: Option<SyntaxEdge>,
@@ -32,6 +33,18 @@ pub struct SyntaxPath<'a> {
 
 /// Result of running Dijkstra's algorithm on two syntax trees.
 pub struct SyntaxRoute<'a>(pub Vec<SyntaxPath<'a>>);
+
+impl<'a> Debug for SyntaxRoute<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SyntaxRoute [")?;
+        for path in &self.0 {
+            let lhs_range = path.into.lhs.node().map(|n| &n.byte_range);
+            let rhs_range = path.into.rhs.node().map(|n| &n.byte_range);
+            writeln!(f, "  {:?} {:?} {:?}", path.edge, lhs_range, rhs_range)?;
+        }
+        write!(f, "]")
+    }
+}
 
 impl<'a> PartialEq for SyntaxPath<'a> {
     fn eq(&self, other: &Self) -> bool {
@@ -57,7 +70,7 @@ impl<'a> Ord for SyntaxPath<'a> {
 ///
 /// Each vertex represents positions in both the LHS and RHS syntax trees,
 /// along with a cursor into the delimiter stack that tracks how we got here.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SyntaxVertex<'a> {
     pub lhs: SyntaxTreeCursor<'a>,
     pub rhs: SyntaxTreeCursor<'a>,
@@ -143,7 +156,7 @@ impl SyntaxEdge {
     }
 }
 
-#[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct SyntaxDelimeters {
     // TODO: SmallVec<[(u64, u64)]; 16> to avoid limits
     lhs_depths: u128,
@@ -446,7 +459,7 @@ pub fn shortest_path<'a>(
     let end_vertex = loop {
         let Reverse(path) = match heap.pop() {
             Some(state) => state,
-            None => panic!("Ran out of graph nodes before reaching end"),
+            None => return Err(ExceededGraphLimit),
         };
 
         let current_vertex = path.into.clone();

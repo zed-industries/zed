@@ -414,8 +414,6 @@ fn build_tree_recursive(
     let mut hint = None;
 
     // Detection and extraction of delimiters
-    //
-    // TODO: the heuristic should directly check the content of the delimiters
     if remaining_children >= 2 {
         if let (Some(first_child), Some(last_child)) = (
             ts_node.child(0),
@@ -423,17 +421,8 @@ fn build_tree_recursive(
         ) {
             if first_child.start_byte() == ts_node.start_byte()
                 && last_child.end_byte() == ts_node.end_byte()
-                && first_child.child_count() == 0
-                && last_child.child_count() == 0
             {
-                if let (Some(open), Some(close)) = (
-                    source.get(first_child.byte_range()),
-                    source.get(last_child.byte_range()),
-                ) && open.len() <= 2
-                    && open.len() > 0
-                    && close.len() <= 2
-                    && close.len() > 0
-                {
+                if let Some((open, close)) = detect_delimeters(first_child, last_child, source) {
                     open.hash(&mut hasher);
                     close.hash(&mut hasher);
 
@@ -499,6 +488,32 @@ fn build_tree_recursive(
     node.hint = hint;
 
     this_id
+}
+
+fn detect_delimeters<'a>(
+    first_child: tree_sitter::Node<'a>,
+    last_child: tree_sitter::Node<'a>,
+    source: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    if first_child.child_count() != 0 || last_child.child_count() != 0 {
+        return None;
+    }
+
+    // TODO: the heuristic should directly check the content of the delimiters
+    let is_delimeter = |delimeter: &str| {
+        !delimeter.is_empty()
+            && delimeter.len() <= 2
+            && !delimeter.chars().any(|c| c.is_alphanumeric())
+    };
+
+    let open = source.get(first_child.byte_range())?;
+    let close = source.get(last_child.byte_range())?;
+
+    if !is_delimeter(open) || !is_delimeter(close) {
+        return None;
+    }
+
+    Some((open, close))
 }
 
 #[cfg(test)]
