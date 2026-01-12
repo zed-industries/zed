@@ -56,6 +56,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
+toml.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -77,4 +78,5 @@ lsp.workspace = true
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

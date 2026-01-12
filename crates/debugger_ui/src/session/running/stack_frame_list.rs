@@ -428,7 +428,7 @@ impl StackFrameList {
                 .await?;
             let position = buffer.read_with(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
-            })?;
+            });
             this.update_in(cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let project_path = buffer

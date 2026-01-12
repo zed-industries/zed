@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::paths::RUN_DIR;
+
 use log::{Level, Log, Metadata, Record};
 
 pub struct Progress {
@@ -22,6 +24,7 @@ struct ProgressInner {
     total_examples: usize,
     failed_examples: usize,
     last_line_is_logging: bool,
+    ticker: Option<std::thread::JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -46,6 +49,8 @@ pub enum Step {
     FormatPrompt,
     Predict,
     Score,
+    Synthesize,
+    PullExamples,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +67,8 @@ impl Step {
             Step::FormatPrompt => "Format",
             Step::Predict => "Predict",
             Step::Score => "Score",
+            Step::Synthesize => "Synthesize",
+            Step::PullExamples => "Pull",
         }
     }
 
@@ -72,6 +79,8 @@ impl Step {
             Step::FormatPrompt => "\x1b[34m",
             Step::Predict => "\x1b[32m",
             Step::Score => "\x1b[31m",
+            Step::Synthesize => "\x1b[36m",
+            Step::PullExamples => "\x1b[36m",
         }
     }
 }
@@ -81,6 +90,7 @@ static LOGGER: ProgressLogger = ProgressLogger;
 
 const MARGIN: usize = 4;
 const MAX_STATUS_LINES: usize = 10;
+const STATUS_TICK_INTERVAL: Duration = Duration::from_millis(300);
 
 impl Progress {
     /// Returns the global Progress instance, initializing it if necessary.
@@ -91,17 +101,19 @@ impl Progress {
                     inner: Mutex::new(ProgressInner {
                         completed: Vec::new(),
                         in_progress: HashMap::new(),
-                        is_tty: std::io::stderr().is_terminal(),
+                        is_tty: std::env::var("NO_COLOR").is_err()
+                            && std::io::stderr().is_terminal(),
                         terminal_width: get_terminal_width(),
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
                         total_examples: 0,
                         failed_examples: 0,
                         last_line_is_logging: false,
+                        ticker: None,
                     }),
                 });
                 let _ = log::set_logger(&LOGGER);
-                log::set_max_level(log::LevelFilter::Error);
+                log::set_max_level(log::LevelFilter::Info);
                 progress
             })
             .clone()
@@ -131,7 +143,17 @@ impl Progress {
             inner.last_line_is_logging = true;
         }
 
-        eprintln!("{}", message);
+        let max_width = inner.terminal_width.saturating_sub(MARGIN);
+        for line in message.lines() {
+            let truncated = truncate_to_visible_width(line, max_width);
+            if truncated.len() < line.len() {
+                eprintln!("{}…", truncated);
+            } else {
+                eprintln!("{}", truncated);
+            }
+        }
+
+        Self::print_status_lines(&mut inner);
     }
 
     pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> StepProgress {
@@ -139,7 +161,14 @@ impl Progress {
 
         Self::clear_status_lines(&mut inner);
 
-        inner.max_example_name_len = inner.max_example_name_len.max(example_name.len());
+        let max_name_width = inner
+            .terminal_width
+            .saturating_sub(MARGIN * 2)
+            .saturating_div(3)
+            .max(1);
+        inner.max_example_name_len = inner
+            .max_example_name_len
+            .max(example_name.len().min(max_name_width));
         inner.in_progress.insert(
             example_name.to_string(),
             InProgressTask {
@@ -149,6 +178,23 @@ impl Progress {
                 info: None,
             },
         );
+
+        if inner.is_tty && inner.ticker.is_none() {
+            let progress = self.clone();
+            inner.ticker = Some(std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(STATUS_TICK_INTERVAL);
+
+                    let mut inner = progress.inner.lock().unwrap();
+                    if inner.in_progress.is_empty() {
+                        break;
+                    }
+
+                    Progress::clear_status_lines(&mut inner);
+                    Progress::print_status_lines(&mut inner);
+                }
+            }));
+        }
 
         Self::print_status_lines(&mut inner);
 
@@ -176,7 +222,9 @@ impl Progress {
 
             Self::clear_status_lines(&mut inner);
             Self::print_logging_closing_divider(&mut inner);
-            Self::print_completed(&inner, inner.completed.last().unwrap());
+            if let Some(last_completed) = inner.completed.last() {
+                Self::print_completed(&inner, last_completed);
+            }
             Self::print_status_lines(&mut inner);
         } else {
             inner.in_progress.insert(example_name.to_string(), task);
@@ -207,6 +255,7 @@ impl Progress {
     fn print_completed(inner: &ProgressInner, task: &CompletedTask) {
         let duration = format_duration(task.duration);
         let name_width = inner.max_example_name_len;
+        let truncated_name = truncate_with_ellipsis(&task.example_name, name_width);
 
         if inner.is_tty {
             let reset = "\x1b[0m";
@@ -230,7 +279,7 @@ impl Progress {
                 "{bold}{color}{label:>12}{reset} {name:<name_width$} {dim}│{reset} {info_part}",
                 color = task.step.color_code(),
                 label = task.step.label(),
-                name = task.example_name,
+                name = truncated_name,
             );
 
             let duration_with_margin = format!("{duration} ");
@@ -252,7 +301,7 @@ impl Progress {
             eprintln!(
                 "{label:>12} {name:<name_width$}{info_part} {duration}",
                 label = task.step.label(),
-                name = task.example_name,
+                name = truncate_with_ellipsis(&task.example_name, name_width),
             );
         }
     }
@@ -315,10 +364,11 @@ impl Progress {
             let step_label = task.step.label();
             let step_color = task.step.color_code();
             let name_width = inner.max_example_name_len;
+            let truncated_name = truncate_with_ellipsis(name, name_width);
 
             let prefix = format!(
                 "{bold}{step_color}{step_label:>12}{reset} {name:<name_width$} {dim}│{reset} {substatus_part}",
-                name = name,
+                name = truncated_name,
             );
 
             let duration_with_margin = format!("{elapsed} ");
@@ -345,20 +395,33 @@ impl Progress {
     }
 
     pub fn finalize(&self) {
+        let ticker = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.ticker.take()
+        };
+
+        if let Some(ticker) = ticker {
+            let _ = ticker.join();
+        }
+
         let mut inner = self.inner.lock().unwrap();
         Self::clear_status_lines(&mut inner);
 
         // Print summary if there were failures
         if inner.failed_examples > 0 {
-            let total_processed = inner.completed.len() + inner.failed_examples;
-            let percentage = if total_processed > 0 {
-                inner.failed_examples as f64 / total_processed as f64 * 100.0
+            let total_examples = inner.total_examples;
+            let percentage = if total_examples > 0 {
+                inner.failed_examples as f64 / total_examples as f64 * 100.0
             } else {
                 0.0
             };
+            let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
             eprintln!(
-                "\n{} of {} examples failed ({:.1}%)",
-                inner.failed_examples, total_processed, percentage
+                "\n{} of {} examples failed ({:.1}%)\nFailed examples: {}",
+                inner.failed_examples,
+                total_examples,
+                percentage,
+                failed_jsonl_path.display()
             );
         }
     }
@@ -486,12 +549,34 @@ fn strip_ansi_len(s: &str) -> usize {
     len
 }
 
-fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
+fn truncate_with_ellipsis(s: &str, max_len: usize) -> Cow<'_, str> {
     if s.len() <= max_len {
-        s.to_string()
+        Cow::Borrowed(s)
     } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
+        Cow::Owned(format!("{}…", &s[..max_len.saturating_sub(1)]))
     }
+}
+
+fn truncate_to_visible_width(s: &str, max_visible_len: usize) -> &str {
+    let mut visible_len = 0;
+    let mut in_escape = false;
+    let mut last_byte_index = 0;
+    for (byte_index, c) in s.char_indices() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            if visible_len >= max_visible_len {
+                return &s[..last_byte_index];
+            }
+            visible_len += 1;
+        }
+        last_byte_index = byte_index + c.len_utf8();
+    }
+    s
 }
 
 fn format_duration(duration: Duration) -> String {

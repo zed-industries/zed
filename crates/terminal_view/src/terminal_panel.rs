@@ -281,11 +281,9 @@ impl TerminalPanel {
         };
 
         if let Some(workspace) = workspace.upgrade() {
-            workspace
-                .update(&mut cx, |workspace, _| {
-                    workspace.set_terminal_provider(TerminalProvider(terminal_panel.clone()))
-                })
-                .ok();
+            workspace.update(&mut cx, |workspace, _| {
+                workspace.set_terminal_provider(TerminalProvider(terminal_panel.clone()))
+            });
         }
 
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
@@ -487,7 +485,6 @@ impl TerminalPanel {
                     ),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
-                .ok()?
                 .await
                 .log_err()?;
 
@@ -781,7 +778,7 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))?
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -840,7 +837,7 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
+                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
                 .await;
 
             match terminal {
@@ -914,15 +911,13 @@ impl TerminalPanel {
                 .timer(Duration::from_millis(50))
                 .await;
             let terminal_panel = terminal_panel.upgrade()?;
-            let items = terminal_panel
-                .update(cx, |terminal_panel, cx| {
-                    SerializedItems::WithSplits(serialize_pane_group(
-                        &terminal_panel.center,
-                        &terminal_panel.active_pane,
-                        cx,
-                    ))
-                })
-                .ok()?;
+            let items = terminal_panel.update(cx, |terminal_panel, cx| {
+                SerializedItems::WithSplits(serialize_pane_group(
+                    &terminal_panel.center,
+                    &terminal_panel.active_pane,
+                    cx,
+                ))
+            });
             cx.background_spawn(
                 async move {
                     KEY_VALUE_STORE
@@ -964,7 +959,7 @@ impl TerminalPanel {
             let new_terminal = project
                 .update(cx, |project, cx| {
                     project.create_terminal_task(spawn_task, cx)
-                })?
+                })
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
                 terminal_to_replace.set_terminal(new_terminal.clone(), window, cx);
@@ -1299,14 +1294,12 @@ async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, Entity<Pane>, Entity<TerminalView>)>,
     cx: &mut AsyncApp,
 ) {
-    let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
-        terminal
-            .update(cx, |terminal_view, cx| {
-                terminal_view
-                    .terminal()
-                    .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
-            })
-            .ok()
+    let pending_tasks = terminals_for_task.iter().map(|(_, _, terminal)| {
+        terminal.update(cx, |terminal_view, cx| {
+            terminal_view
+                .terminal()
+                .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
+        })
     });
     join_all(pending_tasks).await;
 }

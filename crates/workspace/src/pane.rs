@@ -26,7 +26,7 @@ use gpui::{
     actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
-use language::DiagnosticSeverity;
+use language::{Capability, DiagnosticSeverity};
 use parking_lot::Mutex;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
@@ -1580,6 +1580,8 @@ impl Pane {
             None => self.active_item_id(),
         };
 
+        self.unpreview_item_if_preview(active_item_id, cx);
+
         let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(
@@ -2120,7 +2122,7 @@ impl Pane {
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
-        let path_style = project.read_with(cx, |project, cx| project.path_style(cx))?;
+        let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         };
@@ -2335,7 +2337,7 @@ impl Pane {
                     .flatten();
                 let save_task = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
-                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
                     let new_path = ProjectPath { worktree_id, path };
 
                     pane.update_in(cx, |pane, window, cx| {
@@ -2699,6 +2701,26 @@ impl Pane {
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
+        let read_only_toggle = |toggleable: bool| {
+            IconButton::new("toggle_read_only", IconName::FileLock)
+                .size(ButtonSize::None)
+                .shape(IconButtonShape::Square)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .disabled(!toggleable)
+                .tooltip(move |_, cx| {
+                    Tooltip::with_meta("Unlock File", None, "This will make this file editable", cx)
+                })
+                .on_click(cx.listener(move |pane, _, window, cx| {
+                    if let Some(item) = pane.item_for_index(ix) {
+                        item.toggle_read_only(window, cx);
+                    }
+                }))
+        };
+
+        let has_file_icon = icon.is_some() | decorated_icon.is_some();
+
+        let capability = item.capability(cx);
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -2833,24 +2855,36 @@ impl Pane {
             })
             .child(
                 h_flex()
-                    .gap_1()
-                    .items_center()
-                    .children(
-                        std::iter::once(if let Some(decorated_icon) = decorated_icon {
-                            Some(div().child(decorated_icon.into_any_element()))
-                        } else {
-                            icon.map(|icon| div().child(icon.into_any_element()))
-                        })
-                        .flatten(),
-                    )
-                    .child(label)
                     .id(("pane-tab-content", ix))
+                    .gap_1()
+                    .children(if let Some(decorated_icon) = decorated_icon {
+                        Some(decorated_icon.into_any_element())
+                    } else if let Some(icon) = icon {
+                        Some(icon.into_any_element())
+                    } else if !capability.editable() {
+                        Some(read_only_toggle(capability == Capability::Read).into_any_element())
+                    } else {
+                        None
+                    })
+                    .child(label)
                     .map(|this| match tab_tooltip_content {
-                        Some(TabTooltipContent::Text(text)) => this.tooltip(Tooltip::text(text)),
+                        Some(TabTooltipContent::Text(text)) => {
+                            if capability.editable() {
+                                this.tooltip(Tooltip::text(text))
+                            } else {
+                                this.tooltip(move |_, cx| {
+                                    let text = text.clone();
+                                    Tooltip::with_meta(text, None, "Read-Only File", cx)
+                                })
+                            }
+                        }
                         Some(TabTooltipContent::Custom(element_fn)) => {
                             this.tooltip(move |window, cx| element_fn(window, cx))
                         }
                         None => this,
+                    })
+                    .when(capability == Capability::Read && has_file_icon, |this| {
+                        this.child(read_only_toggle(true))
                     }),
             );
 
@@ -2867,8 +2901,10 @@ impl Pane {
         let has_items_to_right = ix < total_items - 1;
         let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
         let is_pinned = self.is_tab_pinned(ix);
+
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
+
         right_click_menu(ix)
             .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
@@ -3015,6 +3051,24 @@ impl Pane {
                                 }
                             })
                         };
+
+                        if capability != Capability::ReadOnly {
+                            let read_only_label = if capability.editable() {
+                                "Make File Read-Only"
+                            } else {
+                                "Make File Editable"
+                            };
+                            menu = menu.separator().entry(
+                                read_only_label,
+                                None,
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    if let Some(item) = pane.item_for_index(ix) {
+                                        item.toggle_read_only(window, cx);
+                                    }
+                                }),
+                            );
+                        }
+
                         if let Some(entry) = single_entry_to_resolve {
                             let project_path = pane
                                 .read(cx)
@@ -3046,6 +3100,7 @@ impl Pane {
                                 && worktree.is_some_and(|worktree| worktree.read(cx).is_visible());
 
                             let entry_id = entry.to_proto();
+
                             menu = menu
                                 .separator()
                                 .when_some(entry_abs_path, |menu, abs_path| {
@@ -3110,7 +3165,7 @@ impl Pane {
                         } else {
                             menu = menu.map(pin_tab_entries);
                         }
-                    }
+                    };
 
                     menu.context(menu_context)
                 })
@@ -6488,6 +6543,45 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_other_items_unpreviews_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.set_preview_item_id(Some(item_c.item_id()), cx);
+        });
+        assert!(pane.read_with(cx, |pane, _| pane.preview_item_id()
+            == Some(item_c.item_id())));
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_other_items(
+                &CloseOtherItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                Some(item_c.item_id()),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert!(pane.read_with(cx, |pane, _| pane.preview_item_id().is_none()));
+        assert_item_labels(&pane, ["C*"], cx);
     }
 
     #[gpui::test]

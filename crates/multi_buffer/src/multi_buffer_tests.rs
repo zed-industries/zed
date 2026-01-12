@@ -78,8 +78,8 @@ fn test_remote(cx: &mut App) {
     let guest_buffer = cx.new(|cx| {
         let state = host_buffer.read(cx).to_proto(cx);
         let ops = cx
-            .background_executor()
-            .block(host_buffer.read(cx).serialize_ops(None, cx));
+            .foreground_executor()
+            .block_on(host_buffer.read(cx).serialize_ops(None, cx));
         let mut buffer =
             Buffer::from_proto(ReplicaId::REMOTE_SERVER, Capability::ReadWrite, state, None)
                 .unwrap();
@@ -4019,8 +4019,9 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         })
         .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx);
-    });
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
+    })
+    .await;
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4056,8 +4057,9 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         })
         .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx);
-    });
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
+    })
+    .await;
     cx.run_until_parked();
 
     assert_new_snapshot(

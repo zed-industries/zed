@@ -67,3 +67,7 @@ pub fn edit_prediction_docs(cx: &App) -> String {
         server_url = server_url(cx)
     )
 }
+
+pub fn shared_agent_thread_url(session_id: &str) -> String {
+    format!("zed://agent/shared/{}", session_id)
+}

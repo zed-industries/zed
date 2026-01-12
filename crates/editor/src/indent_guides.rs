@@ -106,7 +106,7 @@ impl Editor {
 
             // Try to resolve the indent in a short amount of time, otherwise move it to a background task.
             match cx
-                .background_executor()
+                .foreground_executor()
                 .block_with_timeout(Duration::from_micros(200), task)
             {
                 Ok(result) => state.active_indent_range = result,

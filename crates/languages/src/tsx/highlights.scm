@@ -4,9 +4,9 @@
 
 (call_expression
   function: (member_expression
-    object: (identifier) @type.builtin
+    object: (identifier) @type
     (#any-of?
-      @type.builtin
+      @type
       "Promise"
       "Array"
       "Object"
@@ -381,11 +381,6 @@
   "override"
 ] @keyword
 
-; JSX elements
-(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-
 (jsx_opening_element
   [
     (identifier) @type
@@ -413,6 +408,10 @@
     )
   ]
 )
+
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
