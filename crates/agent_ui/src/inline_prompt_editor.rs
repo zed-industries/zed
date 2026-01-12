@@ -1,4 +1,4 @@
-use agent::HistoryStore;
+use agent::ThreadStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
@@ -8,7 +8,6 @@ use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlagAppExt, InlineAssistantUseToolFeatureFlag};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -61,7 +60,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -332,7 +331,7 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.history_store.clone(),
+                self.thread_store.clone(),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -833,7 +832,6 @@ impl<T: 'static> PromptEditor<T> {
                             .into_any_element(),
                     ]
                 } else {
-                    let show_rating_buttons = cx.has_flag::<InlineAssistantUseToolFeatureFlag>();
                     let rated = matches!(self.session_state.completion, CompletionState::Rated);
 
                     let accept = IconButton::new("accept", IconName::Check)
@@ -849,78 +847,72 @@ impl<T: 'static> PromptEditor<T> {
 
                     let mut buttons = Vec::new();
 
-                    if show_rating_buttons {
-                        buttons.push(
-                            h_flex()
-                                .pl_1()
-                                .gap_1()
-                                .border_l_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(
-                                    IconButton::new("thumbs-up", IconName::ThumbsUp)
-                                        .shape(IconButtonShape::Square)
-                                        .map(|this| {
-                                            if rated {
-                                                this.disabled(true)
-                                                    .icon_color(Color::Disabled)
-                                                    .tooltip(move |_, cx| {
-                                                        Tooltip::with_meta(
-                                                            "Good Result",
-                                                            None,
-                                                            "You already rated this result",
-                                                            cx,
-                                                        )
-                                                    })
-                                            } else {
-                                                this.icon_color(Color::Muted).tooltip(
-                                                    move |_, cx| {
-                                                        Tooltip::for_action(
-                                                            "Good Result",
-                                                            &ThumbsUpResult,
-                                                            cx,
-                                                        )
-                                                    },
+                    buttons.push(
+                        h_flex()
+                            .pl_1()
+                            .gap_1()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                IconButton::new("thumbs-up", IconName::ThumbsUp)
+                                    .shape(IconButtonShape::Square)
+                                    .map(|this| {
+                                        if rated {
+                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
+                                                move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Good Result",
+                                                        None,
+                                                        "You already rated this result",
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
+                                                Tooltip::for_action(
+                                                    "Good Result",
+                                                    &ThumbsUpResult,
+                                                    cx,
                                                 )
-                                            }
-                                        })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.thumbs_up(&ThumbsUpResult, window, cx);
-                                        })),
-                                )
-                                .child(
-                                    IconButton::new("thumbs-down", IconName::ThumbsDown)
-                                        .shape(IconButtonShape::Square)
-                                        .map(|this| {
-                                            if rated {
-                                                this.disabled(true)
-                                                    .icon_color(Color::Disabled)
-                                                    .tooltip(move |_, cx| {
-                                                        Tooltip::with_meta(
-                                                            "Bad Result",
-                                                            None,
-                                                            "You already rated this result",
-                                                            cx,
-                                                        )
-                                                    })
-                                            } else {
-                                                this.icon_color(Color::Muted).tooltip(
-                                                    move |_, cx| {
-                                                        Tooltip::for_action(
-                                                            "Bad Result",
-                                                            &ThumbsDownResult,
-                                                            cx,
-                                                        )
-                                                    },
+                                            })
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.thumbs_up(&ThumbsUpResult, window, cx);
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("thumbs-down", IconName::ThumbsDown)
+                                    .shape(IconButtonShape::Square)
+                                    .map(|this| {
+                                        if rated {
+                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
+                                                move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Bad Result",
+                                                        None,
+                                                        "You already rated this result",
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
+                                                Tooltip::for_action(
+                                                    "Bad Result",
+                                                    &ThumbsDownResult,
+                                                    cx,
                                                 )
-                                            }
-                                        })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.thumbs_down(&ThumbsDownResult, window, cx);
-                                        })),
-                                )
-                                .into_any_element(),
-                        );
-                    }
+                                            })
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.thumbs_down(&ThumbsDownResult, window, cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
 
                     buttons.push(accept);
 
@@ -1217,7 +1209,7 @@ impl PromptEditor<BufferCodegen> {
         codegen: Entity<BufferCodegen>,
         session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1258,14 +1250,14 @@ impl PromptEditor<BufferCodegen> {
         });
 
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1375,7 +1367,7 @@ impl PromptEditor<TerminalCodegen> {
         codegen: Entity<TerminalCodegen>,
         session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1411,14 +1403,14 @@ impl PromptEditor<TerminalCodegen> {
         });
 
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {

@@ -21,6 +21,8 @@ use std::{
     },
 };
 
+static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
+
 pub async fn run_prediction(
     example: &mut Example,
     provider: Option<PredictionProvider>,
@@ -46,9 +48,7 @@ pub async fn run_prediction(
     ) {
         let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
-        if example.prompt.is_none() {
-            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
-        }
+        run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
 
         let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
@@ -56,12 +56,13 @@ pub async fn run_prediction(
 
     run_load_project(example, app_state.clone(), cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
+    let step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
     if matches!(
         provider,
         PredictionProvider::Zeta1 | PredictionProvider::Zeta2
     ) {
+        step_progress.set_substatus("authenticating");
         static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
         AUTHENTICATED
             .get_or_init(|| {
@@ -77,9 +78,9 @@ pub async fn run_prediction(
             .await;
     }
 
-    let ep_store = cx.update(|cx| {
-        EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-    })??;
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx))
+        .context("EditPredictionStore not initialized")?;
 
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
@@ -92,15 +93,15 @@ pub async fn run_prediction(
             }
         };
         store.set_edit_prediction_model(model);
-    })?;
+    });
+    step_progress.set_substatus("configuring model");
     let state = example.state.as_ref().context("state must be set")?;
     let run_dir = RUN_DIR.join(&example.spec.name);
 
     let updated_example = Arc::new(Mutex::new(example.clone()));
     let current_run_ix = Arc::new(AtomicUsize::new(0));
 
-    let mut debug_rx =
-        ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx))?;
+    let mut debug_rx = ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx));
     let debug_task = cx.background_spawn({
         let updated_example = updated_example.clone();
         let current_run_ix = current_run_ix.clone();
@@ -173,6 +174,7 @@ pub async fn run_prediction(
                 provider,
             });
 
+        step_progress.set_substatus("requesting prediction");
         let prediction = ep_store
             .update(&mut cx, |store, cx| {
                 store.request_prediction(
@@ -182,7 +184,7 @@ pub async fn run_prediction(
                     cloud_llm_client::PredictEditsRequestTrigger::Cli,
                     cx,
                 )
-            })?
+            })
             .await?;
 
         let actual_patch = prediction
@@ -210,13 +212,13 @@ pub async fn run_prediction(
             } else {
                 ("no prediction", InfoStyle::Warning)
             };
-            _step_progress.set_info(info, style);
+            step_progress.set_info(info, style);
         }
     }
 
     ep_store.update(&mut cx, |store, _| {
         store.remove_project(&state.project);
-    })?;
+    });
     debug_task.await?;
 
     *example = Arc::into_inner(updated_example)
@@ -233,12 +235,14 @@ async fn predict_anthropic(
 ) -> anyhow::Result<()> {
     let llm_model_name = "claude-sonnet-4-5";
     let max_tokens = 16384;
-    let llm_client = if batched {
-        AnthropicClient::batch(&crate::paths::LLM_CACHE_DB.as_ref())
-    } else {
-        AnthropicClient::plain()
-    };
-    let llm_client = llm_client.context("Failed to create LLM client")?;
+    let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+        let client = if batched {
+            AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+        } else {
+            AnthropicClient::plain()
+        };
+        client.expect("Failed to create Anthropic client")
+    });
 
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
@@ -283,9 +287,10 @@ async fn predict_anthropic(
 pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
     match provider {
         PredictionProvider::Teacher => {
-            let cache_path = crate::paths::LLM_CACHE_DB.as_ref();
-            let llm_client =
-                AnthropicClient::batch(cache_path).context("Failed to create LLM client")?;
+            let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+                AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+                    .expect("Failed to create Anthropic client")
+            });
             llm_client
                 .sync_batches()
                 .await

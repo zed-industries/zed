@@ -1,13 +1,18 @@
 use agent_client_protocol::ToolKind;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
@@ -64,9 +69,23 @@ impl AgentTool for CreateDirectoryTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &input.path, settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => Some(event_stream.authorize(
+                format!("Create directory {}", MarkdownInlineCode(&input.path)),
+                cx,
+            )),
+        };
+
         let project_path = match self.project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
             None => {
@@ -80,9 +99,18 @@ impl AgentTool for CreateDirectoryTool {
         });
 
         cx.spawn(async move |_cx| {
-            create_entry
-                .await
-                .with_context(|| format!("Creating directory {destination_path}"))?;
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
+            futures::select! {
+                result = create_entry.fuse() => {
+                    result.with_context(|| format!("Creating directory {destination_path}"))?;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Create directory cancelled by user");
+                }
+            }
 
             Ok(format!("Created directory {destination_path}"))
         })

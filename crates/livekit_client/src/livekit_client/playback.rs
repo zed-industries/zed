@@ -478,7 +478,7 @@ pub(crate) async fn capture_local_video_track(
             width: metadata.resolution.width.0 as u32,
             height: metadata.resolution.height.0 as u32,
         })
-    })?
+    })
     .await?;
 
     let capture_stream = capture_source

@@ -3913,7 +3913,7 @@ impl EditorElement {
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
         let file = for_excerpt.buffer.file();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let can_open_excerpts = file.is_none_or(|file| file.can_open());
         let path_style = file.map(|file| file.path_style(cx));
         let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
         let (parent_path, filename) = if let Some(path) = &relative_path {
@@ -5790,6 +5790,10 @@ impl EditorElement {
                         element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
 
                     let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
+
+                    if x < text_hitbox.bounds.left() {
+                        continue;
+                    }
 
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));
@@ -8008,6 +8012,8 @@ pub fn render_breadcrumb_text(
         .downcast::<Editor>()
         .map(|editor| editor.downgrade());
 
+    let has_project_path = active_item.project_path(cx).is_some();
+
     match editor {
         Some(editor) => element
             .id("breadcrumb_container")
@@ -8021,14 +8027,33 @@ pub fn render_breadcrumb_text(
                     .when(!multibuffer_header, |this| {
                         let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
 
-                        this.tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
-                                &focus_handle,
-                                cx,
-                            )
-                        })
+                        this.tooltip(Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .justify_between()
+                                        .child(Label::new("Show Symbol Outline"))
+                                        .child(ui::KeyBinding::for_action_in(
+                                            &zed_actions::outline::ToggleOutline,
+                                            &focus_handle,
+                                            cx,
+                                        )),
+                                )
+                                .when(has_project_path, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_between()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(Label::new("Right-Click to Copy Path")),
+                                    )
+                                })
+                                .into_any_element()
+                        }))
                         .on_click({
                             let editor = editor.clone();
                             move |_, window, cx| {
@@ -8040,12 +8065,29 @@ pub fn render_breadcrumb_text(
                                 }
                             }
                         })
+                        .when(has_project_path, |this| {
+                            this.on_right_click({
+                                let editor = editor.clone();
+                                move |_, _, cx| {
+                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.target_file_abs_path(cx)
+                                        })
+                                    }) {
+                                        if let Some(path_str) = abs_path.to_str() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                path_str.to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            })
+                        })
                     }),
             )
             .into_any_element(),
         None => element
-            // Match the height and padding of the `ButtonLike` in the other arm.
-            .h(rems_from_px(22.))
+            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),

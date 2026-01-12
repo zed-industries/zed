@@ -106,5 +106,9 @@ pub async fn fetch_if_needed(repo_path: &Path, revision: &str) -> Result<String>
         run_git(repo_path, &["fetch", "origin"]).await?;
     }
 
-    run_git(repo_path, &["rev-parse", "FETCH_HEAD"]).await
+    run_git(
+        repo_path,
+        &["rev-parse", &format!("{}^{{commit}}", revision)],
+    )
+    .await
 }

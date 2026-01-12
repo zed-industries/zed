@@ -1,5 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
+use collections::{HashMap, HashSet};
 use editor::{
     DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
     SelectionEffects,
@@ -26,6 +27,7 @@ use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -65,7 +67,7 @@ async fn test_host_disconnect(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
@@ -74,7 +76,7 @@ async fn test_host_disconnect(
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_id = active_call_a
@@ -151,7 +153,7 @@ async fn test_host_disconnect(
 
     // Allow client A to reconnect to the server.
     server.allow_connections();
-    cx_a.background_executor.advance_clock(RECEIVE_TIMEOUT);
+    cx_a.background_executor.advance_clock(RECONNECT_TIMEOUT);
 
     // Client B calls client A again after they reconnected.
     let active_call_b = cx_b.read(ActiveCall::global);
@@ -427,6 +429,51 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         assert!(!buffer.completion_triggers().is_empty())
     });
 
+    // Set up the completion request handlers BEFORE typing the trigger character.
+    // This is critical - the handlers must be in place when the request arrives,
+    // otherwise the requests will time out waiting for a response.
+    let mut first_completion_request = fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 14),
+            );
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "second_method(…)".into(),
+                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "second_method()".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+            ])))
+        });
+    let mut second_completion_request = second_fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) });
     // Type a completion trigger character as the guest.
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -439,6 +486,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Allow the completion request to propagate from guest to host to LSP.
     cx_b.background_executor.run_until_parked();
     cx_a.background_executor.run_until_parked();
+
+    // Wait for the completion requests to be received by the fake language servers.
+    first_completion_request.next().await.unwrap();
+    second_completion_request.next().await.unwrap();
 
     // Open the buffer on the host.
     let buffer_a = project_a
@@ -1371,6 +1422,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
     fake_language_server.start_progress("the-token").await;
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
@@ -1840,7 +1892,6 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Receive an OnTypeFormatting request as the host's language server.
     // Return some formatting from the host's language server.
-    executor.start_waiting();
     fake_language_server
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
@@ -1860,7 +1911,6 @@ async fn test_on_input_format_from_guest_to_host(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
@@ -2236,8 +2286,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    cx_a.background_executor.start_waiting();
-
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
@@ -2301,7 +2349,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
@@ -2913,7 +2960,6 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    executor.start_waiting();
 
     // The host opens a rust file.
     let _buffer_a = project_a
@@ -3366,10 +3412,13 @@ async fn test_lsp_pull_diagnostics(
         .await
         .into_response()
         .expect("workspace diagnostics refresh request failed");
+    // Workspace refresh now also triggers document diagnostic pulls for all open buffers
+    pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        11,
+        13,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
-        "No single file pulls should happen after the diagnostics refresh server request"
+        "Workspace refresh should trigger document pulls for all open buffers (main.rs and lib.rs)"
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
@@ -3378,10 +3427,9 @@ async fn test_lsp_pull_diagnostics(
         "Another workspace diagnostics pull should happen after the diagnostics refresh server request"
     );
     {
-        assert_eq!(
-            diagnostics_pulls_result_ids.lock().await.len(),
-            diagnostic_pulls_result_ids,
-            "Pulls should not happen hence no extra ids should appear"
+        assert!(
+            diagnostics_pulls_result_ids.lock().await.len() > diagnostic_pulls_result_ids,
+            "Document diagnostic pulls should happen after workspace refresh"
         );
         assert!(
             workspace_diagnostics_pulls_result_ids.lock().await.len() > workspace_pulls_result_ids,
@@ -4635,6 +4683,119 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .filter_map(|inlay| inlay.get_color())
         .map(Rgba::from)
         .collect()
+}
+
+#[gpui::test]
+async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let has_restricted_worktrees = |project: &gpui::Entity<project::Project>,
+                                    cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let worktree_store = project.read(cx).worktree_store();
+            TrustedWorktrees::try_get_global(cx)
+                .unwrap()
+                .read(cx)
+                .has_restricted_worktrees(&worktree_store, cx)
+        })
+    };
+
+    cx_a.update(|cx| {
+        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+    });
+    cx_b.update(|cx| {
+        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+    });
+
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "file.txt": "contents",
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a
+        .build_local_project_with_trust(path!("/a"), cx_a)
+        .await;
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let _editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/main.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let _editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/main.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    assert!(
+        has_restricted_worktrees(&project_a, cx_a),
+        "local client should have restricted worktrees after opening it"
+    );
+    assert!(
+        !has_restricted_worktrees(&project_b, cx_b),
+        "remote client joined a project should have no restricted worktrees"
+    );
+
+    cx_a.update(|_, cx| {
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project_a.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        }
+    });
+    assert!(
+        !has_restricted_worktrees(&project_a, cx_a),
+        "local client should have no worktrees after trusting those"
+    );
+    assert!(
+        !has_restricted_worktrees(&project_b, cx_b),
+        "remote client should still be trusted"
+    );
 }
 
 fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {

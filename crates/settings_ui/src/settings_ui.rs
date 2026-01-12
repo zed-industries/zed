@@ -498,6 +498,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
+        .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
@@ -726,7 +727,7 @@ struct NavBarEntry {
 
 struct SettingsPage {
     title: &'static str,
-    items: Vec<SettingsPageItem>,
+    items: Box<[SettingsPageItem]>,
 }
 
 #[derive(PartialEq)]
@@ -1817,6 +1818,7 @@ impl SettingsWindow {
             );
 
             let fuzzy_matches = fuzzy_search_task.await;
+            let bm25_matches = bm25_task.await;
 
             _ = this
                 .update(cx, |this, cx| {
@@ -1841,37 +1843,18 @@ impl SettingsWindow {
                     //     let score = fuzzy_match.score;
                     //     eprint!("# {header} :: QUERY = {query} :: SCORE = {score}\n{title}\n{description}\n\n");
                     // }
-                    update_matches_inner(
-                        this,
-                        search_index.as_ref(),
-                        fuzzy_matches
-                            .into_iter()
-                            // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
-                            // flexible enough to catch misspellings and <4 letter queries
-                            // More flexible is good for us here because fuzzy matches will only be used for things that don't
-                            // match using bm25
-                            .take_while(|fuzzy_match| fuzzy_match.score >= 0.3)
-                            .map(|fuzzy_match| fuzzy_match.candidate_id),
-                        cx,
-                    );
-                })
-                .ok();
+                    let fuzzy_indices = fuzzy_matches
+                        .into_iter()
+                        // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
+                        // flexible enough to catch misspellings and <4 letter queries
+                        .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
+                        .map(|fuzzy_match| fuzzy_match.candidate_id);
+                    let bm25_indices = bm25_matches
+                        .into_iter()
+                        .map(|bm25_match| bm25_match.document.id);
+                    let merged_indices = bm25_indices.chain(fuzzy_indices);
 
-            let bm25_matches = bm25_task.await;
-
-            _ = this
-                .update(cx, |this, cx| {
-                    if bm25_matches.is_empty() {
-                        return;
-                    }
-                    update_matches_inner(
-                        this,
-                        search_index.as_ref(),
-                        bm25_matches
-                            .into_iter()
-                            .map(|bm25_match| bm25_match.document.id),
-                        cx,
-                    );
+                    update_matches_inner(this, search_index.as_ref(), merged_indices, cx);
                 })
                 .ok();
 
@@ -3964,7 +3947,11 @@ pub mod test {
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
-        let mut pages: Vec<SettingsPage> = Vec::new();
+        struct PageBuilder {
+            title: &'static str,
+            items: Vec<SettingsPageItem>,
+        }
+        let mut page_builders: Vec<PageBuilder> = Vec::new();
         let mut expanded_pages = Vec::new();
         let mut selected_idx = None;
         let mut index = 0;
@@ -3984,23 +3971,23 @@ pub mod test {
             assert_eq!(kind.len(), 1);
             let kind = kind.chars().next().unwrap();
             if kind == 'v' {
-                let page_idx = pages.len();
+                let page_idx = page_builders.len();
                 expanded_pages.push(page_idx);
-                pages.push(SettingsPage {
+                page_builders.push(PageBuilder {
                     title,
                     items: vec![],
                 });
                 index += 1;
                 in_expanded_section = true;
             } else if kind == '>' {
-                pages.push(SettingsPage {
+                page_builders.push(PageBuilder {
                     title,
                     items: vec![],
                 });
                 index += 1;
                 in_expanded_section = false;
             } else if kind == '-' {
-                pages
+                page_builders
                     .last_mut()
                     .unwrap()
                     .items
@@ -4016,6 +4003,14 @@ pub mod test {
                 );
             }
         }
+
+        let pages: Vec<SettingsPage> = page_builders
+            .into_iter()
+            .map(|builder| SettingsPage {
+                title: builder.title,
+                items: builder.items.into_boxed_slice(),
+            })
+            .collect();
 
         let mut settings_window = SettingsWindow {
             title_bar: None,
