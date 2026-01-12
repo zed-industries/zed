@@ -302,6 +302,9 @@ impl TrustedWorktreesStore {
                         self.restricted.get_mut(&weak_worktree_store)
                     {
                         restricted_worktrees.remove(worktree_id);
+                        if restricted_worktrees.is_empty() {
+                            self.restricted.remove(&weak_worktree_store);
+                        }
                     };
 
                     if let Some(worktree) =
@@ -610,7 +613,8 @@ impl TrustedWorktreesStore {
         &mut self,
         cx: &mut Context<Self>,
     ) -> HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> {
-        self.trusted_paths
+        let new_trusted_paths = self
+            .trusted_paths
             .iter()
             .filter_map(|(worktree_store, paths)| {
                 let host = self.worktree_stores.get(&worktree_store)?.clone();
@@ -628,13 +632,16 @@ impl TrustedWorktreesStore {
                     .collect::<HashSet<_>>();
                 Some((host, abs_paths))
             })
-            .chain(self.db_trusted_paths.clone())
+            .chain(self.db_trusted_paths.drain())
             .fold(HashMap::default(), |mut acc, (host, paths)| {
                 acc.entry(host)
                     .or_insert_with(HashSet::default)
                     .extend(paths);
                 acc
-            })
+            });
+
+        self.db_trusted_paths = new_trusted_paths.clone();
+        new_trusted_paths
     }
 
     fn add_worktree_store(
@@ -643,6 +650,8 @@ impl TrustedWorktreesStore {
         remote_host: Option<RemoteHostLocation>,
         cx: &mut Context<Self>,
     ) {
+        self.worktree_stores
+            .retain(|worktree_store, _| worktree_store.is_upgradable());
         let weak_worktree_store = worktree_store.downgrade();
         self.worktree_stores
             .insert(weak_worktree_store.clone(), remote_host.clone());
