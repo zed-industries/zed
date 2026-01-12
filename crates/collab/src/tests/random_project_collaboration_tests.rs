@@ -1110,8 +1110,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let fs = fs.clone();
                             move |_, cx| {
                                 let background = cx.background_executor();
-                                let rng = background.rng();
-                                let mut rng = rng.lock();
+                                let mut rng = background.rng();
                                 let count = rng.random_range::<usize, _>(1..3);
                                 let files = fs.as_fake().files();
                                 let files = (0..count)
@@ -1137,8 +1136,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 move |_, cx| {
                                     let mut highlights = Vec::new();
                                     let background = cx.background_executor();
-                                    let rng = background.rng();
-                                    let mut rng = rng.lock();
+                                    let mut rng = background.rng();
 
                                     let highlight_count = rng.random_range(1..=5);
                                     for _ in 0..highlight_count {
