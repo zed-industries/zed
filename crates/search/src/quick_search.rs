@@ -11,7 +11,7 @@ use crate::{
     ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use editor::EditorSettings;
-use editor::{Editor, EditorEvent, EditorMode};
+use editor::{Editor, EditorEvent, EditorMode, RowHighlightOptions};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
@@ -39,6 +39,7 @@ actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters]);
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 
 struct SearchMatchHighlight;
+struct SearchMatchLineHighlight;
 
 /// Global state for storing the recent search query.
 struct RecentSearchState {
@@ -828,6 +829,17 @@ impl QuickSearchDelegate {
 
             let multi_buffer_snapshot = multi_buffer.read(cx);
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
+                // Highlight the entire row (including gutter)
+                let row_anchor =
+                    editor::Anchor::in_buffer(excerpt_id, anchor_range.start.clone());
+                editor.highlight_rows::<SearchMatchLineHighlight>(
+                    row_anchor.clone()..row_anchor,
+                    cx.theme().colors().editor_active_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+
+                // Highlight the match itself
                 let highlight_range =
                     editor::Anchor::range_in_buffer(excerpt_id, anchor_range.clone());
 
