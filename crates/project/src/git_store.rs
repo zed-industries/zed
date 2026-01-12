@@ -5031,12 +5031,9 @@ impl Repository {
                 .filter_map(|entry| {
                     if let Some(ops) =
                         pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                        && (ops.staging() || ops.staged())
                     {
-                        if ops.staging() || ops.staged() {
-                            None
-                        } else {
-                            Some(entry.repo_path)
-                        }
+                        None
                     } else if entry.status.staging().is_fully_staged() {
                         None
                     } else {
@@ -5064,12 +5061,9 @@ impl Repository {
                 .filter_map(|entry| {
                     if let Some(ops) =
                         pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                        && (ops.staging() || ops.staged())
                     {
-                        if !ops.staging() && !ops.staged() {
-                            None
-                        } else {
-                            Some(entry.repo_path)
-                        }
+                        Some(entry.repo_path)
                     } else if entry.status.staging().is_fully_unstaged() {
                         None
                     } else {
