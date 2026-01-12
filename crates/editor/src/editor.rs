@@ -20883,6 +20883,7 @@ impl Editor {
     /// Submits the diff review comment to the agent panel.
     /// Dispatches the SubmitDiffReviewComment action which is handled by the workspace.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("submit_diff_review_comment called, dispatching SubmitDiffReviewComment action");
         // Just dispatch the action - the handler in text_thread_editor.rs does all the work
         window.dispatch_action(Box::new(crate::actions::SubmitDiffReviewComment), cx);
     }

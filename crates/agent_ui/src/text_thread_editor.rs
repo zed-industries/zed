@@ -212,10 +212,12 @@ const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl TextThreadEditor {
     pub fn init(cx: &mut App) {
+        log::info!("TextThreadEditor::init called");
         workspace::FollowableViewRegistry::register::<TextThreadEditor>(cx);
 
         cx.observe_new(
             |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+                log::info!("TextThreadEditor: registering actions on new workspace");
                 workspace
                     .register_action(TextThreadEditor::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
@@ -1527,19 +1529,35 @@ impl TextThreadEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        // Get the active editor and extract the diff review data directly
+        log::info!("handle_submit_diff_review_comment called");
+
+        // Find the editor that has the diff review overlay
+        // We can't use active_item because the prompt editor inside the overlay has focus
         let Some((comment_text, point_range, buffer)) = maybe!({
             let editor = workspace
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))?;
+                .items_of_type::<Editor>(cx)
+                .find(|editor| editor.read(cx).diff_review_prompt_editor().is_some());
+
+            let editor = match editor {
+                Some(e) => {
+                    log::info!("Found editor with diff review overlay");
+                    e
+                }
+                None => {
+                    log::warn!("No editor found with diff review overlay");
+                    return None;
+                }
+            };
 
             editor.update(cx, |editor, cx| {
                 // Get the prompt editor from the overlay
                 let prompt_editor = editor.diff_review_prompt_editor()?.clone();
                 let comment_text = prompt_editor.read(cx).text(cx).trim().to_string();
+                log::info!("Comment text: '{}'", comment_text);
 
                 // Don't submit if comment is empty
                 if comment_text.is_empty() {
+                    log::info!("Comment is empty, not submitting");
                     return None;
                 }
 
@@ -1566,41 +1584,56 @@ impl TextThreadEditor {
                 // Dismiss the overlay
                 editor.dismiss_diff_review_overlay(cx);
 
+                log::info!(
+                    "Extracted review data: comment='{}', range={:?}",
+                    comment_text,
+                    line_start..line_end
+                );
                 Some((comment_text, line_start..line_end, buffer))
             })
         }) else {
+            log::warn!("Failed to extract diff review data");
             return;
         };
 
+        log::info!("Focusing agent panel");
         // Focus the agent panel
         workspace.focus_panel::<crate::AgentPanel>(window, cx);
 
         // Defer all the work to ensure the panel is focused and ready
         cx.defer_in(window, move |workspace, window, cx| {
+            log::info!("Deferred callback 1 executing");
             let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                log::warn!("No agent panel found");
                 return;
             };
 
             // Check if there's an active text thread editor, create new thread if not
             let has_active_thread = panel.read(cx).active_text_thread_editor().is_some();
+            log::info!("Has active thread: {}", has_active_thread);
 
             if !has_active_thread {
                 // Create a new thread by dispatching the NewThread action
+                log::info!("Dispatching NewThread action");
                 window.dispatch_action(Box::new(crate::NewThread), cx);
             }
 
             // Defer again to ensure the new thread is created
             cx.defer_in(window, move |workspace, window, cx| {
+                log::info!("Deferred callback 2 executing");
                 let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                    log::warn!("No agent panel found in deferred callback 2");
                     return;
                 };
 
                 panel.update(cx, |panel, cx| {
                     if let Some(text_thread_editor) = panel.active_text_thread_editor() {
+                        log::info!("Found active text thread editor, inserting content");
                         let snapshot = buffer.read(cx).snapshot(cx);
 
                         text_thread_editor.update(cx, |text_thread_editor, cx| {
                             // Quote the code as a crease
+                            log::info!("Calling quote_ranges with range {:?}", point_range);
                             text_thread_editor.quote_ranges(
                                 vec![point_range],
                                 snapshot,
@@ -1611,9 +1644,12 @@ impl TextThreadEditor {
                             // Insert the user's comment
                             text_thread_editor.editor.update(cx, |editor, cx| {
                                 let comment_with_newlines = format!("{}\n", comment_text);
+                                log::info!("Inserting comment: '{}'", comment_with_newlines);
                                 editor.insert(&comment_with_newlines, window, cx);
                             });
                         });
+                    } else {
+                        log::warn!("No active text thread editor in deferred callback 2");
                     }
                 });
             });
