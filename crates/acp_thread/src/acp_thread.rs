@@ -2717,6 +2717,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    None,
                 )
             })
             .await

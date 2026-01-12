@@ -141,13 +141,13 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .clone()
                 .send(Box::new(move |cx| {
                     Box::pin(async move {
-                        let result = async {
+                        let result: Result<extension::TerminalHandle> = async {
                             // Resolve the target terminal by entity_id if specified
                             let target_terminal = cx.update(|cx| {
                                 in_pane_of_entity_id.and_then(|entity_id| {
                                     terminal_provider.find_terminal_by_id(entity_id, cx)
                                 })
-                            })?;
+                            });
 
                             // Get the task from the provider (called synchronously on main thread)
                             let create_task = cx.update(|cx| {
@@ -156,7 +156,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     .ok_or_else(|| {
                                         anyhow!("No workspace available for terminal creation")
                                     })
-                            })??;
+                            })?;
 
                             // Wait for the terminal to be created
                             let weak_terminal = create_task.await?;
@@ -169,7 +169,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     // Set title override if provided
                                     if title_override.is_some() {
                                         terminal.update(cx, |terminal, cx| {
-                                            terminal.set_title_override(title_override, cx);
+                                            terminal.set_title_override(title_override.clone(), cx);
                                         });
                                     }
 
@@ -177,7 +177,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                 } else {
                                     Err(anyhow!("Terminal was dropped immediately after creation"))
                                 }
-                            })??;
+                            })?;
 
                             Ok(entity_id)
                         }
@@ -189,9 +189,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -228,7 +226,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     Err(anyhow!("Terminal no longer exists"))
                                 }
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -236,9 +234,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -303,7 +299,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     Err(anyhow!("Terminal no longer exists"))
                                 }
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -311,9 +307,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -356,7 +350,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     Err(anyhow!("Terminal no longer exists"))
                                 }
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -364,9 +358,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -396,14 +388,14 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .clone()
                 .send(Box::new(move |cx| {
                     Box::pin(async move {
-                        let result = async {
+                        let result: Result<extension::TerminalHandle> = async {
                             let weak_terminal = cx.update(|cx| {
                                 terminal_provider
                                     .find_terminal_by_id(terminal_handle, cx)
                                     .ok_or_else(|| {
                                         anyhow!("Terminal {} not found", terminal_handle)
                                     })
-                            })??;
+                            })?;
 
                             let create_task = cx.update(|cx| {
                                 terminal_provider
@@ -411,7 +403,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     .ok_or_else(|| {
                                         anyhow!("No workspace available for terminal split")
                                     })
-                            })??;
+                            })?;
 
                             let new_weak_terminal = create_task.await?;
 
@@ -423,7 +415,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     // Set title override if provided
                                     if title_override.is_some() {
                                         terminal.update(cx, |terminal, cx| {
-                                            terminal.set_title_override(title_override, cx);
+                                            terminal.set_title_override(title_override.clone(), cx);
                                         });
                                     }
 
@@ -431,7 +423,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                 } else {
                                     Err(anyhow!("Terminal was dropped immediately after creation"))
                                 }
-                            })??;
+                            })?;
 
                             Ok(entity_id)
                         }
@@ -443,9 +435,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -471,7 +461,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
 
                                 terminal_provider.close_terminal(weak_terminal, cx)
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -479,9 +469,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -497,9 +485,9 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .clone()
                 .send(Box::new(move |cx| {
                     Box::pin(async move {
-                        let result = cx
-                            .update(|cx| Ok(terminal_provider.list_all_workspaces_terminals(cx)))
-                            .unwrap_or_else(|e| Err(e));
+                        let result: Result<Vec<extension::WorkspaceTerminals>> = cx.update(|cx| {
+                            Ok(terminal_provider.list_all_workspaces_terminals(cx))
+                        });
 
                         result_tx.send(result).ok();
                     })
@@ -507,9 +495,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -540,7 +526,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     Err(anyhow!("Terminal no longer exists"))
                                 }
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -548,9 +534,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -590,7 +574,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     Err(anyhow!("Terminal no longer exists"))
                                 }
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -598,9 +582,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -645,7 +627,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     identifier
                                 ))
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -653,9 +635,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -671,18 +651,16 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .clone()
                 .send(Box::new(move |cx| {
                     Box::pin(async move {
-                        let result = cx
-                            .update(|cx| {
-                                let handle_for_terminal =
-                                    |weak: &WeakEntity<Terminal>| -> Option<u64> {
-                                        weak.upgrade().map(|terminal| {
-                                            terminal.entity_id().as_non_zero_u64().get()
-                                        })
-                                    };
+                        let result: Result<extension::PaneLayout> = cx.update(|cx| {
+                            let handle_for_terminal =
+                                |weak: &WeakEntity<Terminal>| -> Option<u64> {
+                                    weak.upgrade().map(|terminal| {
+                                        terminal.entity_id().as_non_zero_u64().get()
+                                    })
+                                };
 
-                                Ok(terminal_provider.get_layout(&handle_for_terminal, cx))
-                            })
-                            .unwrap_or_else(|e| Err(e));
+                            Ok(terminal_provider.get_layout(&handle_for_terminal, cx))
+                        });
 
                         result_tx.send(result).ok();
                     })
@@ -690,9 +668,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -718,7 +694,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
 
                                 terminal_provider.focus_terminal(weak_terminal, cx)
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -726,9 +702,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -750,7 +724,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                     Box::pin(async move {
                         let result = cx
                             .update(|cx| terminal_provider.set_layout(mode, caller_terminal_id, cx))
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -758,9 +732,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -797,7 +769,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     Err(anyhow!("Terminal no longer exists"))
                                 }
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -805,9 +777,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 
@@ -845,7 +815,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
 
                                 terminal_provider.move_terminal(source, destination, cx)
                             })
-                            .unwrap_or_else(|e| Err(e));
+                            ;
 
                         result_tx.send(result).ok();
                     })
@@ -853,9 +823,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            result_rx
-                .await
-                .map_err(|_| anyhow!("Result channel closed"))?
+            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
         })
     }
 }

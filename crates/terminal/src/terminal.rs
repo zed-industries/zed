@@ -436,6 +436,7 @@ impl TerminalBuilder {
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
+        entity_id: Option<u64>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let fut = async move {
@@ -452,7 +453,7 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version, Some(entity_id));
+            insert_zed_terminal_env(&mut env, &version, entity_id);
 
             #[derive(Default)]
             struct ShellParams {
@@ -2145,6 +2146,15 @@ impl Terminal {
         }
     }
 
+    pub fn set_title_override(&mut self, title_override: Option<String>, cx: &mut Context<Self>) {
+        self.title_override = title_override;
+        cx.emit(Event::TitleChanged);
+    }
+
+    pub fn title_override(&self) -> Option<&str> {
+        self.title_override.as_deref()
+    }
+
     pub fn kill_active_task(&mut self) {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
@@ -2262,7 +2272,12 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: Option<PathBuf>,
+        entity_id: Option<u64>,
+    ) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
@@ -2279,6 +2294,7 @@ impl Terminal {
             None,
             cx,
             self.activation_script.clone(),
+            entity_id,
         )
     }
 }
@@ -2530,6 +2546,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    None,
                 )
             })
             .await
@@ -2666,6 +2683,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    None,
                 )
             })
             .await
@@ -2741,6 +2759,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    None,
                 )
             })
             .await
@@ -3207,6 +3226,7 @@ mod tests {
                         None,
                         cx,
                         vec![],
+                        None,
                     )
                 })
                 .await
