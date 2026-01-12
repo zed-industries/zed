@@ -212,6 +212,9 @@ struct FormatPromptArgs {
 enum PromptFormat {
     Teacher,
     Zeta2,
+    Zeta2DoubleFim,
+    Zeta2DoubleFimLabeled,
+    Zeta2FimDiff,
 }
 
 #[derive(Debug, Args, Clone)]

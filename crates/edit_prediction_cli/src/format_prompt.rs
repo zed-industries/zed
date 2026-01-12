@@ -39,44 +39,18 @@ pub async fn run_format_prompt(
                 format: prompt_format,
             });
         }
-        PromptFormat::Zeta2 => {
-            step_progress.set_substatus("loading project");
-            run_load_project(example, app_state, cx.clone()).await?;
-
-            step_progress.set_substatus("formatting zeta2 prompt");
-
-            let ep_store: Entity<EditPredictionStore> = cx.update(|cx| {
-                EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-            })?;
-
-            let state = example.state.as_ref().context("state must be set")?;
-            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-            let project = state.project.clone();
-            let (_, input) =
-                ep_store.update(&mut cx, |ep_store: &mut EditPredictionStore, cx| {
-                    let events = ep_store
-                        .edit_history_for_project(&project, cx)
-                        .into_iter()
-                        .map(|e| e.event)
-                        .collect();
-                    anyhow::Ok(zeta2_prompt_input(
-                        &snapshot,
-                        example
-                            .context
-                            .as_ref()
-                            .context("context must be set")?
-                            .files
-                            .clone(),
-                        events,
-                        example.spec.cursor_path.clone(),
-                        example
-                            .buffer
-                            .as_ref()
-                            .context("buffer must be set")?
-                            .cursor_offset,
-                    ))
-                })?;
-            let prompt = format_zeta_prompt(&input);
+        PromptFormat::Zeta2
+        | PromptFormat::Zeta2DoubleFim
+        | PromptFormat::Zeta2DoubleFimLabeled
+        | PromptFormat::Zeta2FimDiff => {
+            let input = get_zeta_inputs(example, app_state, cx, step_progress).await?;
+            let prompt = match prompt_format {
+                PromptFormat::Zeta2 => format_zeta_prompt(&input),
+                PromptFormat::Zeta2DoubleFim => format_zeta_double_fim_prompt(&input, false),
+                PromptFormat::Zeta2DoubleFimLabeled => format_zeta_double_fim_prompt(&input, true),
+                PromptFormat::Zeta2FimDiff => format_zeta_fim_diff_prompt(&input),
+                PromptFormat::Teacher => unreachable!(),
+            };
             let expected_output = zeta2_output_for_patch(
                 &input,
                 &example
@@ -94,6 +68,171 @@ pub async fn run_format_prompt(
         }
     };
     Ok(())
+}
+
+fn format_zeta_fim_diff_prompt(input: &zeta_prompt::ZetaPromptInput) -> String {
+    // Zeta2FimDiff
+    //
+    // This will be the result of this function:
+    //
+    // ```
+    // <|file_sep|> {context_file_1_path}
+    // {context_file_1_excerpts}
+    // <|file_sep|> {context_file_2_path}
+    // {context_file_2_excerpts}
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // lines above...
+    // <|fim_suffix|>
+    // line below
+    // <|fim_middle|>
+    // <<<<<<< original
+    // code
+    // code line2
+    // ===========
+    // ```
+    //
+    //
+    //
+    // This will be the output (expected completion), formatted in a different function:
+    //
+    // ```
+    // updated code 2
+    // code line2 new
+    // >>>>>>>>> updated
+    // ```
+
+    let mut prompt = String::new();
+
+    let path_str = input.cursor_path.to_string_lossy();
+    let prefix = &input.cursor_excerpt[..input.editable_range_in_excerpt.start];
+    let suffix = &input.cursor_excerpt[input.editable_range_in_excerpt.end..];
+
+    write!(&mut prompt, "<|file_sep|>{}\n", path_str).ok();
+    prompt.push_str("<|fim_prefix|>");
+    prompt.push_str(prefix);
+    if !prefix.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push_str("<|fim_suffix|>");
+    prompt.push_str(suffix);
+    if !suffix.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push_str("<|fim_middle|>");
+
+    prompt
+}
+
+fn format_zeta_double_fim_prompt(input: &zeta_prompt::ZetaPromptInput, labeled: bool) -> String {
+    // Zeta2DoubleFim
+    //
+    // <|file_sep|> {context_file_1_path}
+    // {context_file_1_excerpts}
+    // <|file_sep|> {context_file_2_path}
+    // {context_file_2_excerpts}
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // lines above...
+    // <|fim_suffix|>
+    // line below
+    // <|fim_middle|>
+    // print(42)
+    // <|fim_middle|>
+    // print(43)
+
+    // Zeta2DoubleFimLabeled
+    //
+    // <|file_sep|> {context_file_1_path}
+    // {context_file_1_excerpts}
+    // <|file_sep|> {context_file_2_path}
+    // {context_file_2_excerpts}
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // lines above...
+    // <|fim_suffix|>
+    // line below
+    // <|fim_middle|>current
+    // print(42)
+    // <|fim_middle|>updated
+    // print(43)
+
+    let mut prompt = String::new();
+
+    let path_str = input.cursor_path.to_string_lossy();
+    let prefix = &input.cursor_excerpt[..input.editable_range_in_excerpt.start];
+    let editable_region = &input.cursor_excerpt[input.editable_range_in_excerpt.clone()];
+    let suffix = &input.cursor_excerpt[input.editable_range_in_excerpt.end..];
+
+    write!(&mut prompt, "<|file_sep|>{}\n", path_str).ok();
+    prompt.push_str("<|fim_prefix|>");
+    prompt.push_str(prefix);
+    if !prefix.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push_str("<|fim_suffix|>");
+    prompt.push_str(suffix);
+    if !suffix.ends_with('\n') {
+        prompt.push('\n');
+    }
+    if labeled {
+        prompt.push_str("<|fim_middle|>current\n");
+    } else {
+        prompt.push_str("<|fim_middle|>\n");
+    }
+    prompt.push_str(editable_region);
+    if !editable_region.ends_with('\n') {
+        prompt.push('\n');
+    }
+    if labeled {
+        prompt.push_str("<|fim_middle|>updated");
+    } else {
+        prompt.push_str("<|fim_middle|>");
+    }
+
+    prompt
+}
+
+async fn get_zeta_inputs(
+    example: &mut Example,
+    app_state: Arc<EpAppState>,
+    mut cx: AsyncApp,
+    step_progress: crate::progress::StepProgress,
+) -> Result<zeta_prompt::ZetaPromptInput, anyhow::Error> {
+    step_progress.set_substatus("loading project");
+    run_load_project(example, app_state, cx.clone()).await?;
+
+    step_progress.set_substatus("formatting zeta2 prompt");
+    let ep_store: Entity<EditPredictionStore> = cx.update(|cx| {
+        EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
+    })?;
+    let state = example.state.as_ref().context("state must be set")?;
+    let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+    let project = state.project.clone();
+    let (_, input) = ep_store.update(&mut cx, |ep_store: &mut EditPredictionStore, cx| {
+        let events = ep_store
+            .edit_history_for_project(&project, cx)
+            .into_iter()
+            .map(|e| e.event)
+            .collect();
+        anyhow::Ok(zeta2_prompt_input(
+            &snapshot,
+            example
+                .context
+                .as_ref()
+                .context("context must be set")?
+                .files
+                .clone(),
+            events,
+            example.spec.cursor_path.clone(),
+            example
+                .buffer
+                .as_ref()
+                .context("buffer must be set")?
+                .cursor_offset,
+        ))
+    })?;
+    Ok(input)
 }
 
 pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
@@ -135,6 +274,81 @@ impl TeacherPrompt {
 
         prompt
     }
+
+    // Original Qwen2.5 FIM:prompt:
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // context
+    // print(42)
+    // <|fim_suffix|>
+    // code after
+    // <|fim_middle|>
+    // print(43)
+    //
+
+    // <|file_sep|> path1
+    // ....
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // context
+    // <<<<< original
+    // print(42)
+    // =====
+    // <|fim_suffix|>
+    // code after
+    // <|fim_middle|>
+    // print(43)
+    // >>>>>>>
+
+    //    // <|file_sep|> {the_path}
+    //    // <|fim_prefix|>
+    //    // lines above...
+    //    // <|fim_middle|>
+    //    // print(42)
+    //    // <|fim_suffix|>
+    //    // line below
+    //    // <|fim_middle|>
+    //
+
+    // Zeta2DoubleFim
+    //
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // lines above...
+    // <|fim_suffix|>
+    // line below
+    // <|fim_middle|>
+    // print(42)
+    // <|fim_middle|>
+    // print(43)
+
+    // Zeta2DoubleFimLabeled
+    //
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // lines above...
+    // <|fim_suffix|>
+    // line below
+    // <|fim_middle|>current
+    // print(42)
+    // <|fim_middle|>updated
+    // print(43)
+
+    // Zeta2FimDiff
+    //
+    // <|file_sep|> {the_path}
+    // <|fim_prefix|>
+    // lines above...
+    // <|fim_suffix|>
+    // line below
+    // <|fim_middle|>
+    // <<<<<<< original
+    // code
+    // code line2
+    // ===========
+    // updated code 2
+    // code line2 new
+    // >>>>>>>>> updated
 
     pub fn parse(example: &Example, response: &str) -> Result<String> {
         // Ideally, we should always be able to find cursor position in the retrieved context.

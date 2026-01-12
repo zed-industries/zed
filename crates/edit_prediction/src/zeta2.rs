@@ -50,6 +50,8 @@ pub fn request_prediction_with_zeta2(
     #[cfg(feature = "cli-support")]
     let eval_cache = store.eval_cache.clone();
 
+    let prompt_format = store.options.prompt_format;
+
     let request_task = cx.background_spawn({
         async move {
             let cursor_offset = position.to_offset(&snapshot);
