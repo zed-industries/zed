@@ -227,7 +227,9 @@ pub mod git {
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
-            Worktree
+            Worktree,
+            /// Creates a pull request for the current branch.
+            CreatePullRequest
         ]
     );
 }
@@ -354,6 +356,8 @@ pub mod agent {
             ResetAgentZoom,
             /// Toggles the utility/agent pane open/closed state.
             ToggleAgentPane,
+            /// Pastes clipboard content without any formatting.
+            PasteRaw,
         ]
     );
 }

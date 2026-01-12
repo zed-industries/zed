@@ -15,7 +15,7 @@ use crate::{
     inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
     terminal_inline_assistant::TerminalInlineAssistant,
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
@@ -300,7 +300,7 @@ impl InlineAssistant {
         if let Some(error) = configuration_error() {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
-                    cx.update(|cx| provider.authenticate(cx))?.await?;
+                    cx.update(|cx| provider.authenticate(cx)).await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -468,7 +468,7 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -605,7 +605,7 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -648,7 +648,7 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -1259,28 +1259,26 @@ impl InlineAssistant {
                 let bottom = top + 1.0;
                 (top, bottom)
             });
-            let mut scroll_target_top = scroll_target_range.0;
-            let mut scroll_target_bottom = scroll_target_range.1;
-
-            scroll_target_top -= editor.vertical_scroll_margin() as ScrollOffset;
-            scroll_target_bottom += editor.vertical_scroll_margin() as ScrollOffset;
-
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
+            let vertical_scroll_margin = editor.vertical_scroll_margin() as ScrollOffset;
+            let scroll_target_top = (scroll_target_range.0 - vertical_scroll_margin)
+                // Don't scroll up too far in the case of a large vertical_scroll_margin.
+                .max(scroll_target_range.0 - height_in_lines / 2.0);
+            let scroll_target_bottom = (scroll_target_range.1 + vertical_scroll_margin)
+                // Don't scroll down past where the top would still be visible.
+                .min(scroll_target_top + height_in_lines);
+
             let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
 
             if scroll_target_top < scroll_top {
                 editor.set_scroll_position(point(0., scroll_target_top), window, cx);
             } else if scroll_target_bottom > scroll_bottom {
-                if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
-                    editor.set_scroll_position(
-                        point(0., scroll_target_bottom - height_in_lines),
-                        window,
-                        cx,
-                    );
-                } else {
-                    editor.set_scroll_position(point(0., scroll_target_top), window, cx);
-                }
+                editor.set_scroll_position(
+                    point(0., scroll_target_bottom - height_in_lines),
+                    window,
+                    cx,
+                );
             }
         });
     }
@@ -1635,7 +1633,7 @@ impl EditorInlineAssists {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
                             assistant.update_editor_highlights(&editor, cx);
-                        })?;
+                        });
                     }
                     Ok(())
                 }
@@ -1980,7 +1978,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                         let multibuffer_snapshot = multibuffer.read(cx);
                         multibuffer_snapshot.anchor_range_in_excerpt(excerpt_id, action.range)
                     })
-                })?
+                })
                 .context("invalid range")?;
 
             let prompt_store = prompt_store.await.ok();
@@ -2033,8 +2031,7 @@ pub mod test {
 
     use std::sync::Arc;
 
-    use agent::HistoryStore;
-    use assistant_text_thread::TextThreadStore;
+    use agent::ThreadStore;
     use client::{Client, UserStore};
     use editor::{Editor, MultiBuffer, MultiBufferOffset};
     use fs::FakeFs;
@@ -2105,9 +2102,9 @@ pub mod test {
             cx.set_global(inline_assistant);
         });
 
-        let project = cx
-            .executor()
-            .block_test(async { Project::test(fs.clone(), [], cx).await });
+        let foreground_executor = cx.foreground_executor().clone();
+        let project =
+            foreground_executor.block_test(async { Project::test(fs.clone(), [], cx).await });
 
         // Create workspace with window
         let (workspace, cx) = cx.add_window_view(|window, cx| {
@@ -2133,8 +2130,7 @@ pub mod test {
                 })
             });
 
-            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
@@ -2148,8 +2144,8 @@ pub mod test {
                         &editor,
                         workspace.downgrade(),
                         project.downgrade(),
-                        history_store, // thread_store
-                        None,          // prompt_store
+                        thread_store,
+                        None,
                         Some(prompt),
                         window,
                         cx,
@@ -2166,8 +2162,7 @@ pub mod test {
 
         test(cx);
 
-        let assist_id = cx
-            .executor()
+        let assist_id = foreground_executor
             .block_test(async { completion_rx.next().await })
             .unwrap()
             .unwrap();
@@ -2210,7 +2205,6 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use gpui::TestAppContext;
     use language_model::{LanguageModelRegistry, SelectedModel};
-    use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
@@ -2312,7 +2306,7 @@ pub mod evals {
         let prompt = prompt.into();
 
         eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
-            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+            let dispatcher = gpui::TestDispatcher::new(rand::random());
             let mut cx = TestAppContext::build(dispatcher, None);
             cx.skip_drawing();
 

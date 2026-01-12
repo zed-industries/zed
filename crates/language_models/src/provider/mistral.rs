@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
 use collections::BTreeMap;
 
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -48,18 +48,17 @@ pub struct State {
     codestral_api_key_state: Entity<ApiKeyState>,
 }
 
-struct CodestralApiKey(Entity<ApiKeyState>);
-impl Global for CodestralApiKey {}
-
 pub fn codestral_api_key(cx: &mut App) -> Entity<ApiKeyState> {
-    if cx.has_global::<CodestralApiKey>() {
-        cx.global::<CodestralApiKey>().0.clone()
-    } else {
-        let api_key_state = cx
-            .new(|_| ApiKeyState::new(CODESTRAL_API_URL.into(), CODESTRAL_API_KEY_ENV_VAR.clone()));
-        cx.set_global(CodestralApiKey(api_key_state.clone()));
-        api_key_state
-    }
+    // IMPORTANT:
+    // Do not store `Entity<T>` handles in process-wide statics (e.g. `OnceLock`).
+    //
+    // `Entity<T>` is tied to a particular `App`/entity-map context. Caching it globally can
+    // cause panics like "used a entity with the wrong context" when tests (or multiple apps)
+    // create distinct `App` instances in the same process.
+    //
+    // If we want a per-process singleton, store plain data (e.g. env var names) and create
+    // the entity per-App instead.
+    cx.new(|_| ApiKeyState::new(CODESTRAL_API_URL.into(), CODESTRAL_API_KEY_ENV_VAR.clone()))
 }
 
 impl State {
@@ -176,8 +175,8 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiMistral
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiMistral)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -272,12 +271,10 @@ impl MistralLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
@@ -754,10 +751,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -790,7 +784,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -803,7 +797,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -852,7 +846,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )

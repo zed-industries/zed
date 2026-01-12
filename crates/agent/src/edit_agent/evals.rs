@@ -1337,9 +1337,10 @@ impl EvalAssertion {
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<EditEvalMetadata> {
-    let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+    let dispatcher = gpui::TestDispatcher::new(rand::random());
     let mut cx = TestAppContext::build(dispatcher, None);
-    let result = cx.executor().block_test(async {
+    let foreground_executor = cx.foreground_executor().clone();
+    let result = foreground_executor.block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await
     });
@@ -1473,9 +1474,9 @@ impl EditAgentTest {
                 .provider(&selected_model.provider)
                 .expect("Provider not found");
             provider.authenticate(cx)
-        })?
+        })
         .await?;
-        cx.update(|cx| {
+        Ok(cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
@@ -1485,7 +1486,7 @@ impl EditAgentTest {
                 })
                 .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0));
             model
-        })
+        }))
     }
 
     async fn eval(&self, mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EditEvalOutput> {

@@ -32,8 +32,7 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::{Shell, ShellKind},
-    shell_builder::ShellBuilder,
+    shell::ShellKind,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -593,7 +592,7 @@ impl SshRemoteConnection {
         };
 
         let (release_channel, version) =
-            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)));
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await?,
@@ -626,7 +625,7 @@ impl SshRemoteConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.ssh_platform, delegate.as_ref(), cx)
                 .await?
@@ -669,7 +668,7 @@ impl SshRemoteConnection {
                 )
             }
             _ => Ok(Some(AppVersion::global(cx))),
-        })??;
+        })?;
 
         let tmp_path_gz = remote_server_dir_relative().join(
             RelPath::unix(&format!(
@@ -1544,8 +1543,6 @@ fn build_command(
     } else {
         write!(exec, "{ssh_shell} -l")?;
     };
-    let (command, command_args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
-        .build(Some(exec.clone()), &[]);
 
     let mut args = Vec::new();
     args.extend(ssh_args);
@@ -1555,9 +1552,11 @@ fn build_command(
         args.push(format!("{local_port}:{host}:{remote_port}"));
     }
 
+    // -q suppresses the "Connection to ... closed." message that SSH prints when
+    // the connection terminates with -t (pseudo-terminal allocation)
+    args.push("-q".into());
     args.push("-t".into());
-    args.push(command);
-    args.extend(command_args);
+    args.push(exec);
 
     Ok(CommandTemplate {
         program: "ssh".into(),
@@ -1596,10 +1595,8 @@ mod tests {
             [
                 "-p",
                 "2222",
+                "-q",
                 "-t",
-                "/bin/fish",
-                "-i",
-                "-c",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
@@ -1631,10 +1628,8 @@ mod tests {
                 "2222",
                 "-L",
                 "1:foo:2",
+                "-q",
                 "-t",
-                "/bin/fish",
-                "-i",
-                "-c",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );

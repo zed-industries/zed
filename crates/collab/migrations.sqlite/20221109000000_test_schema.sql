@@ -4,9 +4,6 @@ CREATE TABLE "users" (
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
     "name" TEXT,
-    "invite_code" VARCHAR(64),
-    "invite_count" INTEGER NOT NULL DEFAULT 0,
-    "inviter_id" INTEGER REFERENCES users (id),
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
@@ -17,8 +14,6 @@ CREATE TABLE "users" (
 );
 
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
-
-CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
 
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 
@@ -460,3 +455,14 @@ CREATE TABLE IF NOT EXISTS "breakpoints" (
 );
 
 CREATE INDEX "index_breakpoints_on_project_id" ON "breakpoints" ("project_id");
+
+CREATE TABLE IF NOT EXISTS "shared_threads" (
+    "id" TEXT PRIMARY KEY NOT NULL,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "title" VARCHAR(512) NOT NULL,
+    "data" BLOB NOT NULL,
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX "index_shared_threads_user_id" ON "shared_threads" ("user_id");

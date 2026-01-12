@@ -15,7 +15,6 @@ path = "src/buffer_diff.rs"
 test-support = ["settings"]
 
 [dependencies]
-anyhow.workspace = true
 clock.workspace = true
 futures.workspace = true
 git2.workspace = true

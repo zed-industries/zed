@@ -16,15 +16,13 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Entity, Task, WindowBounds, WindowId, point, size};
+use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{PathTrust, RemoteHostLocation, find_worktree_in_store},
-    worktree_store::WorktreeStore,
+    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
-use project::WorktreeId;
 use remote::{
     DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
 };
@@ -845,6 +843,44 @@ impl Domain for WorkspaceDb {
                 host_name TEXT
             ) STRICT;
         ),
+        sql!(CREATE TABLE toolchains2 (
+            workspace_id INTEGER,
+            worktree_root_path TEXT NOT NULL,
+            language_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            relative_worktree_path TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, worktree_root_path, language_name, relative_worktree_path)) STRICT;
+            INSERT OR REPLACE INTO toolchains2
+                // The `instr(paths, '\n') = 0` part allows us to find all
+                // workspaces that have a single worktree, as `\n` is used as a
+                // separator when serializing the workspace paths, so if no `\n` is
+                // found, we know we have a single worktree.
+                SELECT toolchains.workspace_id, paths, language_name, name, path, raw_json, relative_worktree_path FROM toolchains INNER JOIN workspaces ON toolchains.workspace_id = workspaces.workspace_id AND instr(paths, '\n') = 0;
+            DROP TABLE toolchains;
+            ALTER TABLE toolchains2 RENAME TO toolchains;
+        ),
+        sql!(CREATE TABLE user_toolchains2 (
+            remote_connection_id INTEGER,
+            workspace_id INTEGER NOT NULL,
+            worktree_root_path TEXT NOT NULL,
+            relative_worktree_path TEXT NOT NULL,
+            language_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+
+            PRIMARY KEY (workspace_id, worktree_root_path, relative_worktree_path, language_name, name, path, raw_json)) STRICT;
+            INSERT OR REPLACE INTO user_toolchains2
+                // The `instr(paths, '\n') = 0` part allows us to find all
+                // workspaces that have a single worktree, as `\n` is used as a
+                // separator when serializing the workspace paths, so if no `\n` is
+                // found, we know we have a single worktree.
+                SELECT user_toolchains.remote_connection_id, user_toolchains.workspace_id, paths, relative_worktree_path, language_name, name, path, raw_json  FROM user_toolchains INNER JOIN workspaces ON user_toolchains.workspace_id = workspaces.workspace_id AND instr(paths, '\n') = 0;
+            DROP TABLE user_toolchains;
+            ALTER TABLE user_toolchains2 RENAME TO user_toolchains;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1030,11 +1066,11 @@ impl WorkspaceDb {
         workspace_id: WorkspaceId,
         remote_connection_id: Option<RemoteConnectionId>,
     ) -> BTreeMap<ToolchainScope, IndexSet<Toolchain>> {
-        type RowKind = (WorkspaceId, u64, String, String, String, String, String);
+        type RowKind = (WorkspaceId, String, String, String, String, String, String);
 
         let toolchains: Vec<RowKind> = self
             .select_bound(sql! {
-                SELECT workspace_id, worktree_id, relative_worktree_path,
+                SELECT workspace_id, worktree_root_path, relative_worktree_path,
                 language_name, name, path, raw_json
                 FROM user_toolchains WHERE remote_connection_id IS ?1 AND (
                       workspace_id IN (0, ?2)
@@ -1048,7 +1084,7 @@ impl WorkspaceDb {
 
         for (
             _workspace_id,
-            worktree_id,
+            worktree_root_path,
             relative_worktree_path,
             language_name,
             name,
@@ -1058,22 +1094,24 @@ impl WorkspaceDb {
         {
             // INTEGER's that are primary keys (like workspace ids, remote connection ids and such) start at 1, so we're safe to
             let scope = if _workspace_id == WorkspaceId(0) {
-                debug_assert_eq!(worktree_id, u64::MAX);
+                debug_assert_eq!(worktree_root_path, String::default());
                 debug_assert_eq!(relative_worktree_path, String::default());
                 ToolchainScope::Global
             } else {
                 debug_assert_eq!(workspace_id, _workspace_id);
                 debug_assert_eq!(
-                    worktree_id == u64::MAX,
+                    worktree_root_path == String::default(),
                     relative_worktree_path == String::default()
                 );
 
                 let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
                     continue;
                 };
-                if worktree_id != u64::MAX && relative_worktree_path != String::default() {
+                if worktree_root_path != String::default()
+                    && relative_worktree_path != String::default()
+                {
                     ToolchainScope::Subproject(
-                        WorktreeId::from_usize(worktree_id as usize),
+                        Arc::from(worktree_root_path.as_ref()),
                         relative_path.into(),
                     )
                 } else {
@@ -1159,13 +1197,13 @@ impl WorkspaceDb {
 
                 for (scope, toolchains) in workspace.user_toolchains {
                     for toolchain in toolchains {
-                        let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
-                        let (workspace_id, worktree_id, relative_worktree_path) = match scope {
-                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.as_unix_str().to_owned())),
+                        let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_root_path, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
+                        let (workspace_id, worktree_root_path, relative_worktree_path) = match scope {
+                            ToolchainScope::Subproject(ref worktree_root_path, ref path) => (Some(workspace.id), Some(worktree_root_path.to_string_lossy().into_owned()), Some(path.as_unix_str().to_owned())),
                             ToolchainScope::Project => (Some(workspace.id), None, None),
                             ToolchainScope::Global => (None, None, None),
                         };
-                        let args = (remote_connection_id, workspace_id.unwrap_or(WorkspaceId(0)), worktree_id.map_or(usize::MAX,|id| id.to_usize()), relative_worktree_path.unwrap_or_default(),
+                        let args = (remote_connection_id, workspace_id.unwrap_or(WorkspaceId(0)), worktree_root_path.unwrap_or_default(), relative_worktree_path.unwrap_or_default(),
                         toolchain.language_name.as_ref().to_owned(), toolchain.name.to_string(), toolchain.path.to_string(), toolchain.as_json.to_string());
                         if let Err(err) = conn.exec_bound(query)?(args) {
                             log::error!("{err}");
@@ -1286,6 +1324,11 @@ impl WorkspaceDb {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(options.container_id);
                 name = Some(options.name);
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => {
+                kind = RemoteConnectionKind::Ssh;
+                host = Some(format!("mock-{}", options.id));
             }
         }
         Self::get_or_create_remote_connection_query(
@@ -1844,24 +1887,24 @@ impl WorkspaceDb {
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<RelPath>)>> {
+    ) -> Result<Vec<(Toolchain, Arc<Path>, Arc<RelPath>)>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
                     SELECT
-                        name, path, worktree_id, relative_worktree_path, language_name, raw_json
+                        name, path, worktree_root_path, relative_worktree_path, language_name, raw_json
                     FROM toolchains
                     WHERE workspace_id = ?
                 ))
                 .context("select toolchains")?;
 
-            let toolchain: Vec<(String, String, u64, String, String, String)> =
+            let toolchain: Vec<(String, String, String, String, String, String)> =
                 select(workspace_id)?;
 
             Ok(toolchain
                 .into_iter()
                 .filter_map(
-                    |(name, path, worktree_id, relative_worktree_path, language, json)| {
+                    |(name, path, worktree_root_path, relative_worktree_path, language, json)| {
                         Some((
                             Toolchain {
                                 name: name.into(),
@@ -1869,7 +1912,7 @@ impl WorkspaceDb {
                                 language_name: LanguageName::new(&language),
                                 as_json: serde_json::Value::from_str(&json).ok()?,
                             },
-                            WorktreeId::from_proto(worktree_id),
+                           Arc::from(worktree_root_path.as_ref()),
                             RelPath::from_proto(&relative_worktree_path).log_err()?,
                         ))
                     },
@@ -1882,18 +1925,18 @@ impl WorkspaceDb {
     pub async fn set_toolchain(
         &self,
         workspace_id: WorkspaceId,
-        worktree_id: WorktreeId,
+        worktree_root_path: Arc<Path>,
         relative_worktree_path: Arc<RelPath>,
         toolchain: Toolchain,
     ) -> Result<()> {
         log::debug!(
-            "Setting toolchain for workspace, worktree: {worktree_id:?}, relative path: {relative_worktree_path:?}, toolchain: {}",
+            "Setting toolchain for workspace, worktree: {worktree_root_path:?}, relative path: {relative_worktree_path:?}, toolchain: {}",
             toolchain.name
         );
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
-                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?, ?, ?, ?, ?,  ?, ?)
+                    INSERT INTO toolchains(workspace_id, worktree_root_path, relative_worktree_path, language_name, name, path, raw_json) VALUES (?, ?, ?, ?, ?,  ?, ?)
                     ON CONFLICT DO
                     UPDATE SET
                         name = ?5,
@@ -1904,7 +1947,7 @@ impl WorkspaceDb {
 
             insert((
                 workspace_id,
-                worktree_id.to_usize(),
+                worktree_root_path.to_string_lossy().into_owned(),
                 relative_worktree_path.as_unix_str(),
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
@@ -1990,18 +2033,12 @@ VALUES {placeholders};"#
         Ok(())
     }
 
-    pub fn fetch_trusted_worktrees(
-        &self,
-        worktree_store: Option<Entity<WorktreeStore>>,
-        host: Option<RemoteHostLocation>,
-        cx: &App,
-    ) -> Result<HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>> {
+    pub fn fetch_trusted_worktrees(&self) -> Result<DbTrustedPaths> {
         let trusted_worktrees = DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
             .filter_map(|(abs_path, user_name, host_name)| {
                 let db_host = match (user_name, host_name) {
-                    (_, None) => None,
                     (None, Some(host_name)) => Some(RemoteHostLocation {
                         user_name: None,
                         host_identifier: SharedString::new(host_name),
@@ -2010,24 +2047,14 @@ VALUES {placeholders};"#
                         user_name: Some(SharedString::new(user_name)),
                         host_identifier: SharedString::new(host_name),
                     }),
+                    _ => None,
                 };
-
-                let abs_path = abs_path?;
-                Some(if db_host != host {
-                    (db_host, PathTrust::AbsPath(abs_path))
-                } else if let Some(worktree_store) = &worktree_store {
-                    find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                        .map(PathTrust::Worktree)
-                        .map(|trusted_worktree| (host.clone(), trusted_worktree))
-                        .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
-                } else {
-                    (db_host, PathTrust::AbsPath(abs_path))
-                })
+                Some((db_host, abs_path?))
             })
-            .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
+            .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
                     .or_insert_with(HashSet::default)
-                    .insert(path_trust);
+                    .insert(abs_path);
                 acc
             }))
     }
@@ -3295,5 +3322,54 @@ mod tests {
         let new_workspace = db.workspace_for_roots(id).unwrap();
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
+
+    #[gpui::test]
+    async fn test_empty_workspace_window_bounds() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_empty_workspace_window_bounds").await;
+        let id = db.next_id().await.unwrap();
+
+        // Create a workspace with empty paths (empty workspace)
+        let empty_paths: &[&str] = &[];
+        let display_uuid = Uuid::new_v4();
+        let window_bounds = SerializedWindowBounds(WindowBounds::Windowed(Bounds {
+            origin: point(px(100.0), px(200.0)),
+            size: size(px(800.0), px(600.0)),
+        }));
+
+        let workspace = SerializedWorkspace {
+            id,
+            paths: PathList::new(empty_paths),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+        };
+
+        // Save the workspace (this creates the record with empty paths)
+        db.save_workspace(workspace.clone()).await;
+
+        // Save window bounds separately (as the actual code does via set_window_open_status)
+        db.set_window_open_status(id, window_bounds, display_uuid)
+            .await
+            .unwrap();
+
+        // Retrieve it using empty paths
+        let retrieved = db.workspace_for_roots(empty_paths).unwrap();
+
+        // Verify window bounds were persisted
+        assert_eq!(retrieved.id, id);
+        assert!(retrieved.window_bounds.is_some());
+        assert_eq!(retrieved.window_bounds.unwrap().0, window_bounds.0);
+        assert!(retrieved.display.is_some());
+        assert_eq!(retrieved.display.unwrap(), display_uuid);
     }
 }

@@ -55,6 +55,13 @@
     },
   },
   {
+    "context": "menu",
+    "bindings": {
+      "right": "menu::SelectChild",
+      "left": "menu::SelectParent",
+    },
+  },
+  {
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -195,8 +202,8 @@
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
       "ctrl-shift-r": "agent::OpenAgentDiff",
@@ -206,8 +213,8 @@
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
     },
@@ -227,6 +234,7 @@
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-k l": "agent::OpenRulesLibrary",
+      "ctrl-shift-v": "agent::PasteRaw",
     },
   },
   {
@@ -240,6 +248,7 @@
       "shift-alt-l": "agent::OpenRulesLibrary",
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
       "shift-alt-/": "agent::ToggleModelSelector",
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
@@ -253,14 +262,6 @@
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
       "shift-alt-z": "agent::RejectOnce",
-      "alt-tab": "agent::CycleFavoriteModels",
-    },
-  },
-  {
-    "context": "AgentPanel > NavigationMenu",
-    "use_key_equivalents": true,
-    "bindings": {
-      "shift-backspace": "agent::DeleteRecentlyOpenThread",
     },
   },
   {
@@ -287,39 +288,6 @@
     },
   },
   {
-    "context": "MessageEditor && !Picker > Editor && !use_modifier_to_send",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "agent::Chat",
-      "ctrl-enter": "agent::ChatWithFollow",
-      "ctrl-i": "agent::ToggleProfileSelector",
-      "ctrl-shift-r": "agent::OpenAgentDiff",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
-    },
-  },
-  {
-    "context": "MessageEditor && !Picker > Editor && use_modifier_to_send",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-enter": "agent::Chat",
-      "enter": "editor::Newline",
-      "ctrl-i": "agent::ToggleProfileSelector",
-      "ctrl-shift-r": "agent::OpenAgentDiff",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
-    },
-  },
-  {
-    "context": "EditMessageEditor > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "escape": "menu::Cancel",
-      "enter": "menu::Confirm",
-      "alt-enter": "editor::Newline",
-    },
-  },
-  {
     "context": "AgentFeedbackMessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -335,15 +303,27 @@
     },
   },
   {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-r": "agent::OpenAgentDiff",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-enter": "agent::ChatWithFollow",
+      "ctrl-shift-enter": "agent::QueueMessage",
+      "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
+      "ctrl-shift-backspace": "agent::ClearMessageQueue",
+      "ctrl-shift-v": "agent::PasteRaw",
+      "ctrl-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
+    },
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "ctrl-shift-r": "agent::OpenAgentDiff",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
-      "shift-tab": "agent::CycleModeSelector",
-      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -351,11 +331,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-enter": "agent::Chat",
-      "ctrl-shift-r": "agent::OpenAgentDiff",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
-      "shift-tab": "agent::CycleModeSelector",
-      "alt-tab": "agent::CycleFavoriteModels",
+      "enter": "editor::Newline",
     },
   },
   {
@@ -382,6 +358,7 @@
       "tab": "buffer_search::FocusEditor",
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPreviousMatch",
+      "ctrl-shift-enter": "editor::ToggleFoldAll",
       "alt-enter": "search::SelectAllMatches",
       "ctrl-f": "search::FocusSearch",
       "ctrl-h": "search::ToggleReplace",
@@ -481,7 +458,7 @@
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
       "alt-f": "project_search::ToggleFilters",
-      "shift-enter": "project_search::ToggleAllSearchResults",
+      "ctrl-shift-enter": "project_search::ToggleAllSearchResults",
       "alt-r": "search::ToggleRegex",
       // "ctrl-shift-alt-x": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab",
@@ -823,7 +800,7 @@
     },
   },
   {
-    "context": "PromptEditor",
+    "context": "InlineAssistant",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
@@ -1250,9 +1227,11 @@
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
       "alt-enter": "keymap_editor::CreateBinding",
+      "ctrl-k": "keymap_editor::OpenCreateKeybindingModal",
       "ctrl-c": "keymap_editor::CopyAction",
       "ctrl-shift-c": "keymap_editor::CopyContext",
       "ctrl-t": "keymap_editor::ShowMatchingKeybinds",
+      "ctrl-e": "zed::OpenKeymapFile",
     },
   },
   {

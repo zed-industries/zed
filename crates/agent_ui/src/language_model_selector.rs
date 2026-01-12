@@ -4,11 +4,12 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, ForegroundExecutor,
+    Subscription, Task,
 };
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -20,14 +21,14 @@ use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem}
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
-type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &App) + 'static>;
+type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static>;
 
 pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-    on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &App) + 'static,
+    on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -55,7 +56,7 @@ pub fn language_model_selector(
 
 fn all_models(cx: &App) -> GroupedModels {
     let lm_registry = LanguageModelRegistry::global(cx).read(cx);
-    let providers = lm_registry.providers();
+    let providers = lm_registry.visible_providers();
 
     let mut favorites_index = FavoritesIndex::default();
 
@@ -94,7 +95,7 @@ type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    icon: IconName,
+    icon: IconOrSvg,
     is_favorite: bool,
 }
 
@@ -133,7 +134,7 @@ impl LanguageModelPickerDelegate {
     fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-        on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &App) + 'static,
+        on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
         popover_styles: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -203,7 +204,7 @@ impl LanguageModelPickerDelegate {
     fn authenticate_all_providers(cx: &mut App) -> Task<()> {
         let authenticate_all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
@@ -248,6 +249,10 @@ impl LanguageModelPickerDelegate {
 
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
         (self.get_active_model)(cx)
+    }
+
+    pub fn favorites_count(&self) -> usize {
+        self.all_models.favorites.len()
     }
 
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -357,22 +362,28 @@ enum LanguageModelPickerEntry {
 
 struct ModelMatcher {
     models: Vec<ModelInfo>,
+    fg_executor: ForegroundExecutor,
     bg_executor: BackgroundExecutor,
     candidates: Vec<StringMatchCandidate>,
 }
 
 impl ModelMatcher {
-    fn new(models: Vec<ModelInfo>, bg_executor: BackgroundExecutor) -> ModelMatcher {
+    fn new(
+        models: Vec<ModelInfo>,
+        fg_executor: ForegroundExecutor,
+        bg_executor: BackgroundExecutor,
+    ) -> ModelMatcher {
         let candidates = Self::make_match_candidates(&models);
         Self {
             models,
+            fg_executor,
             bg_executor,
             candidates,
         }
     }
 
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
-        let mut matches = self.bg_executor.block(match_strings(
+        let mut matches = self.fg_executor.block_on(match_strings(
             &self.candidates,
             query,
             false,
@@ -468,13 +479,14 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Task<()> {
         let all_models = self.all_models.clone();
         let active_model = (self.get_active_model)(cx);
+        let fg_executor = cx.foreground_executor();
         let bg_executor = cx.background_executor();
 
         let language_model_registry = LanguageModelRegistry::global(cx);
 
         let configured_providers = language_model_registry
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
@@ -499,8 +511,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .cloned()
             .collect::<Vec<_>>();
 
-        let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
-        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
+        let matcher_rec =
+            ModelMatcher::new(recommended_models, fg_executor.clone(), bg_executor.clone());
+        let matcher_all =
+            ModelMatcher::new(available_models, fg_executor.clone(), bg_executor.clone());
 
         let recommended = matcher_rec.exact_search(&query);
         let all = matcher_all.fuzzy_search(&query);
@@ -561,12 +575,18 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let handle_action_click = {
                     let model = model_info.model.clone();
                     let on_toggle_favorite = self.on_toggle_favorite.clone();
-                    move |cx: &App| on_toggle_favorite(model.clone(), !is_favorite, cx)
+                    cx.listener(move |picker, _, window, cx| {
+                        on_toggle_favorite(model.clone(), !is_favorite, cx);
+                        picker.refresh(window, cx);
+                    })
                 };
 
                 Some(
                     ModelSelectorListItem::new(ix, model_info.model.name().0)
-                        .icon(model_info.icon)
+                        .map(|this| match &model_info.icon {
+                            IconOrSvg::Icon(icon_name) => this.icon(*icon_name),
+                            IconOrSvg::Svg(icon_path) => this.icon_path(icon_path.clone()),
+                        })
                         .is_selected(is_selected)
                         .is_focused(selected)
                         .is_favorite(is_favorite)
@@ -702,7 +722,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: IconName::Ai,
+                    icon: IconOrSvg::Icon(IconName::Ai),
                     is_favorite,
                 }
             })
@@ -739,7 +759,11 @@ mod tests {
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+        let matcher = ModelMatcher::new(
+            models,
+            cx.foreground_executor().clone(),
+            cx.background_executor.clone(),
+        );
 
         // The order of models should be maintained, case doesn't matter
         let results = matcher.exact_search("GPT-4.1");
@@ -767,7 +791,11 @@ mod tests {
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+        let matcher = ModelMatcher::new(
+            models,
+            cx.foreground_executor().clone(),
+            cx.background_executor.clone(),
+        );
 
         // Results should preserve models order whenever possible.
         // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical

@@ -8,6 +8,7 @@ use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 use ui::Checkbox;
+use ui::CopyButton;
 
 use std::borrow::Cow;
 use std::iter;
@@ -22,9 +23,9 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task,
-    TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
+    ImageFormat, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
+    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -32,7 +33,7 @@ use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
+use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -112,6 +113,7 @@ pub struct Markdown {
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: HashMap<usize, ScrollHandle>,
+    context_menu_selected_text: Option<String>,
 }
 
 struct Options {
@@ -181,6 +183,7 @@ impl Markdown {
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
+            context_menu_selected_text: None,
         };
         this.parse(cx);
         this
@@ -205,6 +208,7 @@ impl Markdown {
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
+            context_menu_selected_text: None,
         };
         this.parse(cx);
         this
@@ -289,6 +293,14 @@ impl Markdown {
         }
     }
 
+    pub fn selected_text(&self) -> Option<String> {
+        if self.selection.end <= self.selection.start {
+            None
+        } else {
+            Some(self.source[self.selection.start..self.selection.end].to_string())
+        }
+    }
+
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.end <= self.selection.start {
             return;
@@ -297,12 +309,20 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn copy_as_markdown(&self, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.context_menu_selected_text.take() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            return;
+        }
         if self.selection.end <= self.selection.start {
             return;
         }
         let text = self.source[self.selection.start..self.selection.end].to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn capture_selection_for_context_menu(&mut self) {
+        self.context_menu_selected_text = self.selected_text();
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -666,6 +686,19 @@ impl MarkdownElement {
         let on_open_url = self.on_url_click.take();
 
         self.on_mouse_event(window, cx, {
+            let hitbox = hitbox.clone();
+            move |markdown, event: &MouseDownEvent, phase, window, _| {
+                if phase.capture()
+                    && event.button == MouseButton::Right
+                    && hitbox.is_hovered(window)
+                {
+                    // Capture selected text so it survives until menu item is clicked
+                    markdown.capture_selection_for_context_menu();
+                }
+            }
+        });
+
+        self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
@@ -713,7 +746,7 @@ impl MarkdownElement {
                         window.prevent_default();
                         cx.notify();
                     }
-                } else if phase.capture() {
+                } else if phase.capture() && event.button == MouseButton::Left {
                     markdown.selection = Selection::default();
                     markdown.pressed_link = None;
                     cx.notify();
@@ -1170,7 +1203,6 @@ impl Element for MarkdownElement {
                                     range.end,
                                     code,
                                     self.markdown.clone(),
-                                    cx,
                                 );
                                 el.child(
                                     h_flex()
@@ -1201,7 +1233,6 @@ impl Element for MarkdownElement {
                                     range.end,
                                     code,
                                     self.markdown.clone(),
-                                    cx,
                                 );
                                 el.child(
                                     h_flex()
@@ -1417,26 +1448,12 @@ fn render_copy_code_block_button(
     id: usize,
     code: String,
     markdown: Entity<Markdown>,
-    cx: &App,
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-markdown-code", id);
-    let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
-    IconButton::new(
-        id.clone(),
-        if was_copied {
-            IconName::Check
-        } else {
-            IconName::Copy
-        },
-    )
-    .icon_color(Color::Muted)
-    .icon_size(IconSize::Small)
-    .style(ButtonStyle::Filled)
-    .shape(ui::IconButtonShape::Square)
-    .tooltip(Tooltip::text("Copy"))
-    .on_click({
+
+    CopyButton::new(code.clone()).custom_on_click({
         let markdown = markdown;
-        move |_event, _window, cx| {
+        move |_window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {
                 this.copied_code_blocks.insert(id.clone());

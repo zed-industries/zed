@@ -1,3 +1,4 @@
+use crate::QueueMessage;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -9,7 +10,7 @@ use crate::{
     },
 };
 use acp_thread::MentionUri;
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::HashSet;
@@ -31,10 +32,10 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{ContextMenu, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::agent::Chat;
+use zed_actions::agent::{Chat, PasteRaw};
 
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
@@ -50,6 +51,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
+    Queue,
     Cancel,
     Focus,
     LostFocus,
@@ -98,7 +100,7 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        history_store: Entity<HistoryStore>,
+        history_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -132,6 +134,21 @@ impl MessageEditor {
                 placement: Some(ContextMenuPlacement::Above),
             });
             editor.register_addon(MessageEditorAddon::new());
+
+            editor.set_custom_context_menu(|editor, _point, window, cx| {
+                let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.action("Cut", Box::new(editor::actions::Cut))
+                        .action_disabled_when(
+                            !has_selection,
+                            "Copy",
+                            Box::new(editor::actions::Copy),
+                        )
+                        .action("Paste", Box::new(editor::actions::Paste))
+                }))
+            });
+
             editor
         });
         let mention_set =
@@ -449,9 +466,9 @@ impl MessageEditor {
                         }
                     }
                 });
-                Ok((chunks, all_tracked_buffers))
+                anyhow::Ok((chunks, all_tracked_buffers))
             })?;
-            result
+            Ok(result)
         })
     }
 
@@ -478,6 +495,18 @@ impl MessageEditor {
             editor.clear_inlay_hints(cx);
         });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    pub fn queue(&mut self, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::Queue)
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -523,6 +552,10 @@ impl MessageEditor {
         self.send(cx);
     }
 
+    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
+        self.queue(cx);
+    }
+
     fn chat_with_follow(
         &mut self,
         _: &ChatWithFollow,
@@ -543,6 +576,9 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
         let editor_clipboard_selections = cx
             .read_from_clipboard()
             .and_then(|item| item.entries().first().cloned())
@@ -553,133 +589,123 @@ impl MessageEditor {
                 _ => None,
             });
 
-        let has_file_context = editor_clipboard_selections
-            .as_ref()
-            .is_some_and(|selections| {
-                selections
-                    .iter()
-                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
-            });
-
-        if has_file_context {
-            if let Some((workspace, selections)) =
-                self.workspace.upgrade().zip(editor_clipboard_selections)
-            {
-                let Some(first_selection) = selections.first() else {
-                    return;
-                };
-                if let Some(file_path) = &first_selection.file_path {
-                    // In case someone pastes selections from another window
-                    // with a different project, we don't want to insert the
-                    // crease (containing the absolute path) since the agent
-                    // cannot access files outside the project.
-                    let is_in_project = workspace
-                        .read(cx)
-                        .project()
-                        .read(cx)
-                        .project_path_for_absolute_path(file_path, cx)
-                        .is_some();
-                    if !is_in_project {
-                        return;
-                    }
-                }
-
-                cx.stop_propagation();
-                let insertion_target = self
-                    .editor
-                    .read(cx)
-                    .selections
-                    .newest_anchor()
-                    .start
-                    .text_anchor;
-
-                let project = workspace.read(cx).project().clone();
-                for selection in selections {
-                    if let (Some(file_path), Some(line_range)) =
-                        (selection.file_path, selection.line_range)
-                    {
-                        let crease_text =
-                            acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
-
-                        let mention_uri = MentionUri::Selection {
-                            abs_path: Some(file_path.clone()),
-                            line_range: line_range.clone(),
-                        };
-
-                        let mention_text = mention_uri.as_link().to_string();
-                        let (excerpt_id, text_anchor, content_len) =
-                            self.editor.update(cx, |editor, cx| {
-                                let buffer = editor.buffer().read(cx);
-                                let snapshot = buffer.snapshot(cx);
-                                let (excerpt_id, _, buffer_snapshot) =
-                                    snapshot.as_singleton().unwrap();
-                                let text_anchor = insertion_target.bias_left(&buffer_snapshot);
-
-                                editor.insert(&mention_text, window, cx);
-                                editor.insert(" ", window, cx);
-
-                                (*excerpt_id, text_anchor, mention_text.len())
-                            });
-
-                        let Some((crease_id, tx)) = insert_crease_for_mention(
-                            excerpt_id,
-                            text_anchor,
-                            content_len,
-                            crease_text.into(),
-                            mention_uri.icon_path(cx),
-                            None,
-                            self.editor.clone(),
-                            window,
-                            cx,
-                        ) else {
-                            continue;
-                        };
-                        drop(tx);
-
-                        let mention_task = cx
-                            .spawn({
-                                let project = project.clone();
-                                async move |_, cx| {
-                                    let project_path = project
-                                        .update(cx, |project, cx| {
-                                            project.project_path_for_absolute_path(&file_path, cx)
-                                        })
-                                        .map_err(|e| e.to_string())?
-                                        .ok_or_else(|| "project path not found".to_string())?;
-
-                                    let buffer = project
-                                        .update(cx, |project, cx| {
-                                            project.open_buffer(project_path, cx)
-                                        })
-                                        .map_err(|e| e.to_string())?
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-
-                                    buffer
-                                        .update(cx, |buffer, cx| {
-                                            let start = Point::new(*line_range.start(), 0)
-                                                .min(buffer.max_point());
-                                            let end = Point::new(*line_range.end() + 1, 0)
-                                                .min(buffer.max_point());
-                                            let content =
-                                                buffer.text_for_range(start..end).collect();
-                                            Mention::Text {
-                                                content,
-                                                tracked_buffers: vec![cx.entity()],
-                                            }
-                                        })
-                                        .map_err(|e| e.to_string())
-                                }
-                            })
-                            .shared();
-
-                        self.mention_set.update(cx, |mention_set, _cx| {
-                            mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
-                        });
-                    }
-                }
-                return;
+        // Insert creases for pasted clipboard selections that:
+        // 1. Contain exactly one selection
+        // 2. Have an associated file path
+        // 3. Span multiple lines (not single-line selections)
+        // 4. Belong to a file that exists in the current project
+        let should_insert_creases = util::maybe!({
+            let selections = editor_clipboard_selections.as_ref()?;
+            if selections.len() > 1 {
+                return Some(false);
             }
+            let selection = selections.first()?;
+            let file_path = selection.file_path.as_ref()?;
+            let line_range = selection.line_range.as_ref()?;
+
+            if line_range.start() == line_range.end() {
+                return Some(false);
+            }
+
+            Some(
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .project_path_for_absolute_path(file_path, cx)
+                    .is_some(),
+            )
+        })
+        .unwrap_or(false);
+
+        if should_insert_creases && let Some(selections) = editor_clipboard_selections {
+            cx.stop_propagation();
+            let insertion_target = self
+                .editor
+                .read(cx)
+                .selections
+                .newest_anchor()
+                .start
+                .text_anchor;
+
+            let project = workspace.read(cx).project().clone();
+            for selection in selections {
+                if let (Some(file_path), Some(line_range)) =
+                    (selection.file_path, selection.line_range)
+                {
+                    let crease_text =
+                        acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
+
+                    let mention_uri = MentionUri::Selection {
+                        abs_path: Some(file_path.clone()),
+                        line_range: line_range.clone(),
+                    };
+
+                    let mention_text = mention_uri.as_link().to_string();
+                    let (excerpt_id, text_anchor, content_len) =
+                        self.editor.update(cx, |editor, cx| {
+                            let buffer = editor.buffer().read(cx);
+                            let snapshot = buffer.snapshot(cx);
+                            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
+                            let text_anchor = insertion_target.bias_left(&buffer_snapshot);
+
+                            editor.insert(&mention_text, window, cx);
+                            editor.insert(" ", window, cx);
+
+                            (*excerpt_id, text_anchor, mention_text.len())
+                        });
+
+                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                        excerpt_id,
+                        text_anchor,
+                        content_len,
+                        crease_text.into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        self.editor.clone(),
+                        window,
+                        cx,
+                    ) else {
+                        continue;
+                    };
+                    drop(tx);
+
+                    let mention_task = cx
+                        .spawn({
+                            let project = project.clone();
+                            async move |_, cx| {
+                                let project_path = project
+                                    .update(cx, |project, cx| {
+                                        project.project_path_for_absolute_path(&file_path, cx)
+                                    })
+                                    .ok_or_else(|| "project path not found".to_string())?;
+
+                                let buffer = project
+                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+
+                                Ok(buffer.update(cx, |buffer, cx| {
+                                    let start =
+                                        Point::new(*line_range.start(), 0).min(buffer.max_point());
+                                    let end = Point::new(*line_range.end() + 1, 0)
+                                        .min(buffer.max_point());
+                                    let content = buffer.text_for_range(start..end).collect();
+                                    Mention::Text {
+                                        content,
+                                        tracked_buffers: vec![cx.entity()],
+                                    }
+                                }))
+                            }
+                        })
+                        .shared();
+
+                    self.mention_set.update(cx, |mention_set, _cx| {
+                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                    });
+                }
+            }
+            return;
         }
 
         if self.prompt_capabilities.borrow().image
@@ -688,6 +714,13 @@ impl MessageEditor {
         {
             task.detach();
         }
+    }
+
+    fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+        window.defer(cx, move |window, cx| {
+            editor.update(cx, |editor, cx| editor.paste(&Paste, window, cx));
+        });
     }
 
     pub fn insert_dragged_files(
@@ -965,8 +998,10 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::queue_message))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::paste_raw))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
             .child({
@@ -1027,9 +1062,8 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
-    use agent::{HistoryStore, outline};
+    use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
-    use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1061,8 +1095,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1166,8 +1199,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
@@ -1323,8 +1355,7 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(*window, cx);
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -1553,8 +1584,7 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2046,8 +2076,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2144,8 +2173,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         // Create a thread metadata to insert as summary
         let thread_metadata = agent::DbThreadMetadata {
@@ -2220,8 +2248,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2282,8 +2309,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2437,8 +2463,7 @@ mod tests {
             });
         });
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history_store = cx.new(|cx| ThreadStore::new(cx));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually

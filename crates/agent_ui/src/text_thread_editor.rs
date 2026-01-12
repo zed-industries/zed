@@ -1,8 +1,8 @@
 use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::BurnModeTooltip,
+    ui::{BurnModeTooltip, ModelSelectorTooltip},
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -33,7 +33,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, Role,
+    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
+    Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -71,7 +72,7 @@ use workspace::{
     pane,
     searchable::{SearchEvent, SearchableItem},
 };
-use zed_actions::agent::{AddSelectionToThread, ToggleModelSelector};
+use zed_actions::agent::{AddSelectionToThread, PasteRaw, ToggleModelSelector};
 
 use crate::CycleFavoriteModels;
 
@@ -1698,6 +1699,9 @@ impl TextThreadEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
         let editor_clipboard_selections = cx
             .read_from_clipboard()
             .and_then(|item| item.entries().first().cloned())
@@ -1708,84 +1712,101 @@ impl TextThreadEditor {
                 _ => None,
             });
 
-        let has_file_context = editor_clipboard_selections
-            .as_ref()
-            .is_some_and(|selections| {
-                selections
-                    .iter()
-                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
-            });
+        // Insert creases for pasted clipboard selections that:
+        // 1. Contain exactly one selection
+        // 2. Have an associated file path
+        // 3. Span multiple lines (not single-line selections)
+        // 4. Belong to a file that exists in the current project
+        let should_insert_creases = util::maybe!({
+            let selections = editor_clipboard_selections.as_ref()?;
+            if selections.len() > 1 {
+                return Some(false);
+            }
+            let selection = selections.first()?;
+            let file_path = selection.file_path.as_ref()?;
+            let line_range = selection.line_range.as_ref()?;
 
-        if has_file_context {
-            if let Some(clipboard_item) = cx.read_from_clipboard() {
-                if let Some(ClipboardEntry::String(clipboard_text)) =
-                    clipboard_item.entries().first()
-                {
-                    if let Some(selections) = editor_clipboard_selections {
-                        cx.stop_propagation();
+            if line_range.start() == line_range.end() {
+                return Some(false);
+            }
 
-                        let text = clipboard_text.text();
-                        self.editor.update(cx, |editor, cx| {
-                            let mut current_offset = 0;
-                            let weak_editor = cx.entity().downgrade();
+            Some(
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .project_path_for_absolute_path(file_path, cx)
+                    .is_some(),
+            )
+        })
+        .unwrap_or(false);
 
-                            for selection in selections {
-                                if let (Some(file_path), Some(line_range)) =
-                                    (selection.file_path, selection.line_range)
-                                {
-                                    let selected_text =
-                                        &text[current_offset..current_offset + selection.len];
-                                    let fence = assistant_slash_commands::codeblock_fence_for_path(
-                                        file_path.to_str(),
-                                        Some(line_range.clone()),
-                                    );
-                                    let formatted_text = format!("{fence}{selected_text}\n```");
+        if should_insert_creases && let Some(clipboard_item) = cx.read_from_clipboard() {
+            if let Some(ClipboardEntry::String(clipboard_text)) = clipboard_item.entries().first() {
+                if let Some(selections) = editor_clipboard_selections {
+                    cx.stop_propagation();
 
-                                    let insert_point = editor
-                                        .selections
-                                        .newest::<Point>(&editor.display_snapshot(cx))
-                                        .head();
-                                    let start_row = MultiBufferRow(insert_point.row);
+                    let text = clipboard_text.text();
+                    self.editor.update(cx, |editor, cx| {
+                        let mut current_offset = 0;
+                        let weak_editor = cx.entity().downgrade();
 
-                                    editor.insert(&formatted_text, window, cx);
+                        for selection in selections {
+                            if let (Some(file_path), Some(line_range)) =
+                                (selection.file_path, selection.line_range)
+                            {
+                                let selected_text =
+                                    &text[current_offset..current_offset + selection.len];
+                                let fence = assistant_slash_commands::codeblock_fence_for_path(
+                                    file_path.to_str(),
+                                    Some(line_range.clone()),
+                                );
+                                let formatted_text = format!("{fence}{selected_text}\n```");
 
-                                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                    let anchor_before = snapshot.anchor_after(insert_point);
-                                    let anchor_after = editor
-                                        .selections
-                                        .newest_anchor()
-                                        .head()
-                                        .bias_left(&snapshot);
+                                let insert_point = editor
+                                    .selections
+                                    .newest::<Point>(&editor.display_snapshot(cx))
+                                    .head();
+                                let start_row = MultiBufferRow(insert_point.row);
 
-                                    editor.insert("\n", window, cx);
+                                editor.insert(&formatted_text, window, cx);
 
-                                    let crease_text = acp_thread::selection_name(
-                                        Some(file_path.as_ref()),
-                                        &line_range,
-                                    );
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let anchor_before = snapshot.anchor_after(insert_point);
+                                let anchor_after = editor
+                                    .selections
+                                    .newest_anchor()
+                                    .head()
+                                    .bias_left(&snapshot);
 
-                                    let fold_placeholder = quote_selection_fold_placeholder(
-                                        crease_text,
-                                        weak_editor.clone(),
-                                    );
-                                    let crease = Crease::inline(
-                                        anchor_before..anchor_after,
-                                        fold_placeholder,
-                                        render_quote_selection_output_toggle,
-                                        |_, _, _, _| Empty.into_any(),
-                                    );
-                                    editor.insert_creases(vec![crease], cx);
-                                    editor.fold_at(start_row, window, cx);
+                                editor.insert("\n", window, cx);
 
-                                    current_offset += selection.len;
-                                    if !selection.is_entire_line && current_offset < text.len() {
-                                        current_offset += 1;
-                                    }
+                                let crease_text = acp_thread::selection_name(
+                                    Some(file_path.as_ref()),
+                                    &line_range,
+                                );
+
+                                let fold_placeholder = quote_selection_fold_placeholder(
+                                    crease_text,
+                                    weak_editor.clone(),
+                                );
+                                let crease = Crease::inline(
+                                    anchor_before..anchor_after,
+                                    fold_placeholder,
+                                    render_quote_selection_output_toggle,
+                                    |_, _, _, _| Empty.into_any(),
+                                );
+                                editor.insert_creases(vec![crease], cx);
+                                editor.fold_at(start_row, window, cx);
+
+                                current_offset += selection.len;
+                                if !selection.is_entire_line && current_offset < text.len() {
+                                    current_offset += 1;
                                 }
                             }
-                        });
-                        return;
-                    }
+                        }
+                    });
+                    return;
                 }
             }
         }
@@ -1942,6 +1963,12 @@ impl TextThreadEditor {
                 }
             });
         }
+    }
+
+    fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.paste(&editor::actions::Paste, window, cx);
+        });
     }
 
     fn update_image_blocks(&mut self, cx: &mut Context<Self>) {
@@ -2205,10 +2232,10 @@ impl TextThreadEditor {
             .default_model()
             .map(|default| default.provider);
 
-        let provider_icon = match active_provider {
-            Some(provider) => provider.icon(),
-            None => IconName::Ai,
-        };
+        let provider_icon = active_provider
+            .as_ref()
+            .map(|p| p.icon())
+            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
         let focus_handle = self.editor().focus_handle(cx);
 
@@ -2218,43 +2245,25 @@ impl TextThreadEditor {
             (Color::Muted, IconName::ChevronDown)
         };
 
-        let tooltip = Tooltip::element({
-            move |_, cx| {
-                let focus_handle = focus_handle.clone();
-                let should_show_cycle_row = !AgentSettings::get_global(cx)
-                    .favorite_model_ids()
-                    .is_empty();
+        let provider_icon_element = match provider_icon {
+            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+            IconOrSvg::Icon(name) => Icon::new(name),
+        }
+        .color(color)
+        .size(IconSize::XSmall);
 
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Change Model"))
-                            .child(KeyBinding::for_action_in(
-                                &ToggleModelSelector,
-                                &focus_handle,
-                                cx,
-                            )),
-                    )
-                    .when(should_show_cycle_row, |this| {
-                        this.child(
-                            h_flex()
-                                .pt_1()
-                                .gap_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .justify_between()
-                                .child(Label::new("Cycle Favorited Models"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleFavoriteModels,
-                                    &focus_handle,
-                                    cx,
-                                )),
-                        )
-                    })
-                    .into_any()
+        let show_cycle_row = self
+            .language_model_selector
+            .read(cx)
+            .delegate
+            .favorites_count()
+            > 1;
+
+        let tooltip = Tooltip::element({
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
             }
         });
 
@@ -2265,7 +2274,7 @@ impl TextThreadEditor {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(Icon::new(provider_icon).color(color).size(IconSize::XSmall))
+                        .child(provider_icon_element)
                         .child(
                             Label::new(model_name)
                                 .color(color)
@@ -2627,6 +2636,7 @@ impl Render for TextThreadEditor {
             .capture_action(cx.listener(TextThreadEditor::copy))
             .capture_action(cx.listener(TextThreadEditor::cut))
             .capture_action(cx.listener(TextThreadEditor::paste))
+            .on_action(cx.listener(TextThreadEditor::paste_raw))
             .capture_action(cx.listener(TextThreadEditor::cycle_message_role))
             .capture_action(cx.listener(TextThreadEditor::confirm_command))
             .on_action(cx.listener(TextThreadEditor::assist))

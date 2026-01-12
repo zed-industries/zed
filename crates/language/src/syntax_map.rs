@@ -4,7 +4,6 @@ mod syntax_map_tests;
 use crate::{
     Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
-use anyhow::Context as _;
 use collections::HashMap;
 use futures::FutureExt;
 use gpui::SharedString;
@@ -13,13 +12,17 @@ use std::{
     cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
     fmt, iter,
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
-use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
+use tree_sitter::{
+    Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches,
+    QueryPredicateArg, Tree,
+};
 
 pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
 
@@ -82,6 +85,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
     matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
@@ -417,11 +421,38 @@ impl SyntaxSnapshot {
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
     ) {
+        self.reparse_(text, registry, root_language, None).ok();
+    }
+
+    pub fn reparse_with_timeout(
+        &mut self,
+        text: &BufferSnapshot,
+        registry: Option<Arc<LanguageRegistry>>,
+        root_language: Arc<Language>,
+        budget: Duration,
+    ) -> Result<(), ParseTimeout> {
+        self.reparse_(text, registry, root_language, Some(budget))
+    }
+
+    fn reparse_(
+        &mut self,
+        text: &BufferSnapshot,
+        registry: Option<Arc<LanguageRegistry>>,
+        root_language: Arc<Language>,
+        mut budget: Option<Duration>,
+    ) -> Result<(), ParseTimeout> {
+        let budget = &mut budget;
         let edit_ranges = text
             .edits_since::<usize>(&self.parsed_version)
             .map(|edit| edit.new)
             .collect::<Vec<_>>();
-        self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
+        self.reparse_with_ranges(
+            text,
+            root_language.clone(),
+            edit_ranges,
+            registry.as_ref(),
+            budget,
+        )?;
 
         if let Some(registry) = registry
             && registry.version() != self.language_registry_version
@@ -456,12 +487,14 @@ impl SyntaxSnapshot {
                     root_language,
                     resolved_injection_ranges,
                     Some(&registry),
-                );
+                    budget,
+                )?;
             }
             self.language_registry_version = registry.version();
         }
 
         self.update_count += 1;
+        Ok(())
     }
 
     fn reparse_with_ranges(
@@ -470,7 +503,8 @@ impl SyntaxSnapshot {
         root_language: Arc<Language>,
         invalidated_ranges: Vec<Range<usize>>,
         registry: Option<&Arc<LanguageRegistry>>,
-    ) {
+        budget: &mut Option<Duration>,
+    ) -> Result<(), ParseTimeout> {
         log::trace!(
             "reparse. invalidated ranges:{:?}",
             LogOffsetRanges(&invalidated_ranges, text),
@@ -666,11 +700,15 @@ impl SyntaxSnapshot {
                             step_start_byte,
                             &included_ranges,
                             Some(old_tree.clone()),
+                            budget,
                         );
                         match result {
                             Ok(t) => tree = t,
+                            Err(e) if e.downcast_ref::<ParseTimeout>().is_some() => {
+                                return Err(ParseTimeout);
+                            }
                             Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
+                                log::error!("error parsing text: {e:?}");
                                 continue;
                             }
                         };
@@ -719,11 +757,15 @@ impl SyntaxSnapshot {
                             step_start_byte,
                             &included_ranges,
                             None,
+                            budget,
                         );
                         match result {
                             Ok(t) => tree = t,
+                            Err(e) if e.downcast_ref::<ParseTimeout>().is_some() => {
+                                return Err(ParseTimeout);
+                            }
                             Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
+                                log::error!("error parsing text: {e:?}");
                                 continue;
                             }
                         };
@@ -801,6 +843,7 @@ impl SyntaxSnapshot {
         self.parsed_version = text.version.clone();
         #[cfg(debug_assertions)]
         self.check_invariants(text);
+        Ok(())
     }
 
     #[cfg(debug_assertions)]
@@ -1163,6 +1206,7 @@ impl<'a> SyntaxMapMatches<'a> {
                 depth: layer.depth,
                 grammar_index,
                 matches,
+                query,
                 next_pattern_index: 0,
                 next_captures: Vec::new(),
                 has_next: false,
@@ -1260,13 +1304,20 @@ impl SyntaxMapCapturesLayer<'_> {
 
 impl SyntaxMapMatchesLayer<'_> {
     fn advance(&mut self) {
-        if let Some(mat) = self.matches.next() {
-            self.next_captures.clear();
-            self.next_captures.extend_from_slice(mat.captures);
-            self.next_pattern_index = mat.pattern_index;
-            self.has_next = true;
-        } else {
-            self.has_next = false;
+        loop {
+            if let Some(mat) = self.matches.next() {
+                if !satisfies_custom_predicates(self.query, mat) {
+                    continue;
+                }
+                self.next_captures.clear();
+                self.next_captures.extend_from_slice(mat.captures);
+                self.next_pattern_index = mat.pattern_index;
+                self.has_next = true;
+                return;
+            } else {
+                self.has_next = false;
+                return;
+            }
         }
     }
 
@@ -1293,6 +1344,39 @@ impl<'a> Iterator for SyntaxMapCaptures<'a> {
         self.advance();
         result
     }
+}
+
+fn satisfies_custom_predicates(query: &Query, mat: &QueryMatch) -> bool {
+    for predicate in query.general_predicates(mat.pattern_index) {
+        let satisfied = match predicate.operator.as_ref() {
+            "has-parent?" => has_parent(&predicate.args, mat),
+            "not-has-parent?" => !has_parent(&predicate.args, mat),
+            _ => true,
+        };
+        if !satisfied {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_parent(args: &[QueryPredicateArg], mat: &QueryMatch) -> bool {
+    let (
+        Some(QueryPredicateArg::Capture(capture_ix)),
+        Some(QueryPredicateArg::String(parent_kind)),
+    ) = (args.first(), args.get(1))
+    else {
+        return false;
+    };
+
+    let Some(capture) = mat.captures.iter().find(|c| c.index == *capture_ix) else {
+        return false;
+    };
+
+    capture
+        .node
+        .parent()
+        .is_some_and(|p| p.kind() == parent_kind.as_ref())
 }
 
 fn join_ranges(
@@ -1327,14 +1411,41 @@ fn join_ranges(
     result
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct ParseTimeout;
+
+impl std::error::Error for ParseTimeout {}
+
+impl std::fmt::Display for ParseTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "parse timeout")
+    }
+}
+
 fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
     ranges: &[tree_sitter::Range],
     old_tree: Option<Tree>,
+    parse_budget: &mut Option<Duration>,
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {
+        let mut timed_out = false;
+        let now = Instant::now();
+        let mut progress_callback = parse_budget.map(|budget| {
+            let timed_out = &mut timed_out;
+            move |_: &_| {
+                let elapsed = now.elapsed();
+                if elapsed > budget {
+                    *timed_out = true;
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+        });
+
         let mut chunks = text.chunks_in_range(start_byte..text.len());
         parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
@@ -1345,9 +1456,21 @@ fn parse_text(
                     chunks.next().unwrap_or("").as_bytes()
                 },
                 old_tree.as_ref(),
-                None,
+                progress_callback
+                    .as_mut()
+                    .map(|progress_callback| tree_sitter::ParseOptions {
+                        progress_callback: Some(progress_callback),
+                    }),
             )
-            .context("failed to parse")
+            .inspect(|_| {
+                if let Some(parse_budget) = parse_budget {
+                    *parse_budget = parse_budget.saturating_sub(now.elapsed());
+                }
+            })
+            .ok_or_else(|| match timed_out {
+                true => anyhow::anyhow!(ParseTimeout),
+                false => anyhow::anyhow!("parsing failed"),
+            })
     })
 }
 

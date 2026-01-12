@@ -18,13 +18,14 @@ use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{SshSettings, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use ui::SharedString;
 use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
@@ -48,6 +49,9 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel,
+    SharedAgentThread {
+        session_id: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -57,6 +61,9 @@ pub enum OpenRequestKind {
     Setting {
         /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
+    },
+    GitClone {
+        repo_url: SharedString,
     },
     GitCommit {
         sha: String,
@@ -103,6 +110,14 @@ impl OpenRequest {
                 });
             } else if url == "zed://agent" {
                 this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
+                if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                    this.kind = Some(OpenRequestKind::SharedAgentThread {
+                        session_id: session_id_str.to_string(),
+                    });
+                } else {
+                    log::error!("Invalid session ID in URL: {}", session_id_str);
+                }
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -113,6 +128,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
+            } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
+                this.parse_git_clone_url(clone_path)?
             } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
                 this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
@@ -141,6 +158,26 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
+        // Format: /?repo=<url> or ?repo=<url>
+        let clone_path = clone_path.strip_prefix('/').unwrap_or(clone_path);
+
+        let query = clone_path
+            .strip_prefix('?')
+            .context("invalid git clone url: missing query string")?;
+
+        let repo_url = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "repo").then_some(value))
+            .filter(|s| !s.is_empty())
+            .context("invalid git clone url: missing repo query parameter")?
+            .to_string()
+            .into();
+
+        self.kind = Some(OpenRequestKind::GitClone { repo_url });
+
+        Ok(())
     }
 
     fn parse_git_commit_url(&mut self, commit_path: &str) -> Result<()> {
@@ -178,7 +215,7 @@ impl OpenRequest {
             "cannot open both local and ssh paths"
         );
         let mut connection_options =
-            SshSettings::get_global(cx).connection_options_for(host, port, username);
+            RemoteSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }
@@ -304,7 +341,7 @@ pub async fn open_paths_with_positions(
         .collect::<Vec<_>>();
 
     let (workspace, mut items) = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
+        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
     for diff_pair in diff_paths {
@@ -312,9 +349,10 @@ pub async fn open_paths_with_positions(
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
             FileDiffView::open(old_path, new_path, workspace, window, cx)
-        }) && let Some(diff_view) = diff_view.await.log_err()
-        {
-            items.push(Some(Ok(Box::new(diff_view))))
+        }) {
+            if let Some(diff_view) = diff_view.await.log_err() {
+                items.push(Some(Ok(Box::new(diff_view))))
+            }
         }
     }
 
@@ -384,8 +422,7 @@ pub async fn handle_cli_connection(
                                 responses.send(CliResponse::Exit { status: 1 }).log_err();
                             }
                         };
-                    })
-                    .log_err();
+                    });
                     return;
                 }
 
@@ -439,8 +476,7 @@ async fn open_workspaces(
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_onboarding_view(app_state, cx).detach())
-                .log_err();
+            cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
         else {
@@ -453,8 +489,7 @@ async fn open_workspaces(
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 })
                 .detach();
-            })
-            .log_err();
+            });
         }
     } else {
         // If there are paths to open, open a workspace for each grouping of paths
@@ -490,9 +525,9 @@ async fn open_workspaces(
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection {
                         cx.update(|cx| {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
-                        })?;
+                        });
                     }
                     cx.spawn(async move |cx| {
                         open_remote_project(
@@ -534,9 +569,7 @@ async fn open_local_workspace(
     let (open_new_workspace, replace_window) = if reuse {
         (
             Some(true),
-            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
-                .ok()
-                .flatten(),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next()),
         )
     } else {
         (open_new_workspace, None)
@@ -600,14 +633,14 @@ async fn open_local_workspace(
                 if wait {
                     let (release_tx, release_rx) = oneshot::channel();
                     item_release_futures.push(release_rx);
-                    subscriptions.push(cx.update(|cx| {
+                    subscriptions.push(Ok(cx.update(|cx| {
                         item.on_release(
                             cx,
                             Box::new(move |_| {
                                 release_tx.send(()).ok();
                             }),
                         )
-                    }));
+                    })));
                 }
             }
             Some(Err(err)) => {
@@ -1086,5 +1119,81 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/?repo=https://github.com/zed-industries/zed.git".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_without_slash(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone?repo=https://github.com/zed-industries/zed.git".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_with_encoding(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/?repo=https%3A%2F%2Fgithub.com%2Fzed-industries%2Fzed.git"
+                            .into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
     }
 }
