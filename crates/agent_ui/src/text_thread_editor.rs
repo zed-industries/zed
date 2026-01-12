@@ -1544,7 +1544,7 @@ impl TextThreadEditor {
         );
 
         let comment_text = pending.comment;
-        let buffer = pending.buffer;
+        let buffer = pending.buffer.clone();
         let snapshot = buffer.read(cx).snapshot(cx);
         let point_range = pending.anchor_range.start.to_point(&snapshot)
             ..pending.anchor_range.end.to_point(&snapshot);
@@ -1561,22 +1561,22 @@ impl TextThreadEditor {
                 return;
             };
 
-            // Check if there's an active text thread editor
-            let has_active_text_thread = panel.read(cx).active_text_thread_editor().is_some();
-            log::info!("Has active text thread: {}", has_active_text_thread);
+            // Check if there's an active agent thread view using panel.update()
+            let has_active_thread =
+                panel.update(cx, |panel, _cx| panel.active_thread_view().is_some());
+            log::info!("Has active agent thread: {}", has_active_thread);
 
-            if !has_active_text_thread {
-                // Create a new text thread (not a native agent thread)
-                // Native agent threads (NewThread) don't have a text thread editor
-                log::info!("Dispatching NewTextThread action");
-                window.dispatch_action(Box::new(crate::NewTextThread), cx);
+            if !has_active_thread {
+                // Create a new agent thread (native agent thread, not text thread)
+                log::info!("Dispatching NewThread action");
+                window.dispatch_action(Box::new(crate::NewThread), cx);
             }
 
             // Defer multiple times to ensure the new thread is fully created
-            // The NewTextThread action is async and may take a few event loop cycles
-            cx.defer_in(window, move |workspace, window, cx| {
+            // The NewThread action is async and may take a few event loop cycles
+            cx.defer_in(window, move |_workspace, window, cx| {
                 log::info!("Deferred callback 2 executing");
-                cx.defer_in(window, move |workspace, window, cx| {
+                cx.defer_in(window, move |_workspace, window, cx| {
                     log::info!("Deferred callback 3 executing");
                     cx.defer_in(window, move |workspace, window, cx| {
                         log::info!("Deferred callback 4 executing");
@@ -1586,32 +1586,35 @@ impl TextThreadEditor {
                         };
 
                         panel.update(cx, |panel, cx| {
-                            if let Some(text_thread_editor) = panel.active_text_thread_editor() {
-                                log::info!("Found active text thread editor, inserting content");
+                            if let Some(thread_view) = panel.active_thread_view().cloned() {
+                                log::info!("Found active agent thread view, inserting content");
+
+                                // Create creases for the code snippet using the stored buffer and range
                                 let snapshot = buffer.read(cx).snapshot(cx);
+                                let creases =
+                                    selections_creases(vec![point_range.clone()], snapshot, cx);
 
-                                text_thread_editor.update(cx, |text_thread_editor, cx| {
-                                    // Quote the code as a crease
-                                    log::info!("Calling quote_ranges with range {:?}", point_range);
-                                    text_thread_editor.quote_ranges(
-                                        vec![point_range.clone()],
-                                        snapshot,
-                                        window,
-                                        cx,
-                                    );
+                                thread_view.update(
+                                    cx,
+                                    |thread_view: &mut crate::acp::AcpThreadView, cx| {
+                                        // Insert the code snippet as a crease
+                                        log::info!(
+                                            "Inserting code crease with range {:?}",
+                                            point_range
+                                        );
+                                        thread_view.insert_code_crease(creases, window, cx);
 
-                                    // Insert the user's comment
-                                    text_thread_editor.editor.update(cx, |editor, cx| {
-                                        let comment_with_newlines = format!("{}\n", comment_text);
+                                        // Then insert the user's comment into the message editor
+                                        let comment_with_newlines = format!("\n{}\n", comment_text);
                                         log::info!(
                                             "Inserting comment: '{}'",
                                             comment_with_newlines
                                         );
-                                        editor.insert(&comment_with_newlines, window, cx);
-                                    });
-                                });
+                                        thread_view.insert_text(&comment_with_newlines, window, cx);
+                                    },
+                                );
                             } else {
-                                log::warn!("No active text thread editor in deferred callback 4");
+                                log::warn!("No active agent thread view in deferred callback 4");
                             }
                         });
                     });
