@@ -654,6 +654,10 @@ impl AgentConfiguration {
             .configuration_for_server(&context_server_id);
 
         let is_running = matches!(server_status, ContextServerStatus::Running(_));
+        let is_authenticated = matches!(
+            server_status,
+            ContextServerStatus::Running(ContextServerAuthStatus::Authenticated)
+        );
         let item_id = SharedString::from(context_server_id.0.clone());
         // Servers without a configuration can only be provided by extensions.
         let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
@@ -699,19 +703,27 @@ impl AgentConfiguration {
                     .into_any_element(),
                 "Server is starting.",
             ),
-            ContextServerStatus::Running(ref auth_status) => {
-                if matches!(auth_status, ContextServerAuthStatus::Required { .. }) {
-                    (
-                        Indicator::dot().color(Color::Warning).into_any_element(),
-                        "Authentication required",
-                    )
-                } else {
-                    (
-                        Indicator::dot().color(Color::Success).into_any_element(),
-                        "Server is active.",
-                    )
-                }
-            }
+            ContextServerStatus::Running(ref auth_status) => match auth_status {
+                ContextServerAuthStatus::Required => (
+                    Indicator::dot().color(Color::Warning).into_any_element(),
+                    "Authentication required",
+                ),
+                ContextServerAuthStatus::AwaitingAuthorization => (
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Accent)
+                        .with_keyed_rotate_animation(
+                            SharedString::from(format!("{}-awaiting-auth", context_server_id.0)),
+                            3,
+                        )
+                        .into_any_element(),
+                    "Waiting for auth...",
+                ),
+                _ => (
+                    Indicator::dot().color(Color::Success).into_any_element(),
+                    "Server is active.",
+                ),
+            },
             ContextServerStatus::Error(_) => (
                 Indicator::dot().color(Color::Error).into_any_element(),
                 "Server has an error.",
@@ -786,7 +798,7 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
-                        .when(is_remote && is_running, |menu| {
+                        .when(is_remote && is_authenticated, |menu| {
                             menu.entry("Log Out", None, {
                                 let context_server_id = context_server_id.clone();
                                 let context_server_store = context_server_store.clone();
