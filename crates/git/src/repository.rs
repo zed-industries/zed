@@ -809,6 +809,8 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>>;
 
     fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
+
+    fn commit_data_reader(&self) -> Result<CommitDataReader>;
 }
 
 pub enum DiffType {
@@ -2599,10 +2601,8 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
-}
 
-impl RealGitRepository {
-    pub fn commit_data_reader(&self) -> Result<CommitDataReader> {
+    fn commit_data_reader(&self) -> Result<CommitDataReader> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self
             .working_directory()

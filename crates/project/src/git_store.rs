@@ -30,9 +30,9 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
-        Worktree as GitWorktree,
+        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -41,8 +41,8 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Subscription, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -258,6 +258,12 @@ enum GraphDataState {
     Loaded(Vec<InitialGraphCommitData>),
 }
 
+#[derive(Clone)]
+pub enum CommitDataState {
+    Loading,
+    Loaded(GraphCommitData),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
@@ -300,6 +306,9 @@ pub struct Repository {
         (LogOrder, LogSource),
         Shared<Task<Result<Arc<Vec<InitialGraphCommitData>>, SharedString>>>,
     >,
+    commit_data: HashMap<Oid, CommitDataState>,
+    commit_data_request_tx: Option<smol::channel::Sender<Oid>>,
+    _commit_data_task: Option<Task<()>>,
 }
 
 impl std::ops::Deref for Repository {
@@ -3607,6 +3616,9 @@ impl Repository {
             job_id: 0,
             active_jobs: Default::default(),
             initial_graph_data: Default::default(),
+            commit_data: Default::default(),
+            commit_data_request_tx: None,
+            _commit_data_task: None,
         }
     }
 
@@ -3637,6 +3649,9 @@ impl Repository {
             active_jobs: Default::default(),
             job_id: 0,
             initial_graph_data: Default::default(),
+            commit_data: Default::default(),
+            commit_data_request_tx: None,
+            _commit_data_task: None,
         }
     }
 
@@ -4231,6 +4246,85 @@ impl Repository {
                 .shared()
             })
             .clone()
+    }
+
+    pub fn get_commit_data(&self, sha: &Oid) -> Option<&CommitDataState> {
+        self.commit_data.get(sha)
+    }
+
+    pub fn request_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) {
+        if self.commit_data.contains_key(&sha) {
+            return;
+        }
+
+        self.commit_data
+            .insert(sha.clone(), CommitDataState::Loading);
+
+        if self.commit_data_request_tx.is_none() {
+            let state = self.repository_state.clone();
+
+            let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
+            let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+
+            let task = cx.spawn(async move |this, cx| {
+                while let Ok((sha, commit_data)) = result_rx.recv().await {
+                    let result = this.update(cx, |this, cx| {
+                        this.commit_data
+                            .insert(sha, CommitDataState::Loaded(commit_data));
+                        cx.notify();
+                    });
+                    if result.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            self._commit_data_task = Some(task);
+
+            cx.background_spawn({
+                async move {
+                    let backend = match state.await {
+                        Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
+                        Ok(RepositoryState::Remote(_)) => {
+                            log::error!("commit_data_reader not supported for remote repositories");
+                            return;
+                        }
+                        Err(error) => {
+                            log::error!("failed to get repository state: {error}");
+                            return;
+                        }
+                    };
+
+                    let reader = match backend.commit_data_reader() {
+                        Ok(reader) => reader,
+                        Err(error) => {
+                            log::error!("failed to create commit data reader: {error:?}");
+                            return;
+                        }
+                    };
+
+                    while let Ok(sha) = request_rx.recv().await {
+                        match reader.read(sha.clone()).await {
+                            Ok(commit_data) => {
+                                if result_tx.send((sha, commit_data)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("failed to read commit data for {sha}: {error:?}");
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            self.commit_data_request_tx = Some(request_tx);
+        }
+
+        if let Some(request_tx) = &self.commit_data_request_tx {
+            request_tx.send_blocking(sha).ok();
+        }
     }
 
     pub fn commit_count(&mut self, source: LogSource) -> oneshot::Receiver<Result<usize>> {

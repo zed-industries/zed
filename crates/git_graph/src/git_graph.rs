@@ -11,7 +11,7 @@ use gpui::{
 use graph_rendering::accent_colors_count;
 use project::{
     Project,
-    git_store::{GitStoreEvent, RepositoryEvent},
+    git_store::{CommitDataState, GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
 use std::ops::Range;
@@ -160,13 +160,19 @@ impl GitGraph {
         &mut self,
         range: Range<usize>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Vec<Vec<AnyElement>> {
+        let repository = self
+            .project
+            .read_with(cx, |project, cx| project.active_repository(cx));
+
         let row_height = self.row_height;
 
         range
             .map(|idx| {
-                let Some(commit) = self.graph.commits.get(idx) else {
+                let Some((commit, repository)) =
+                    self.graph.commits.get(idx).zip(repository.as_ref())
+                else {
                     return vec![
                         div().h(row_height).into_any_element(),
                         div().h(row_height).into_any_element(),
@@ -175,10 +181,23 @@ impl GitGraph {
                     ];
                 };
 
+                let data = repository.update(cx, |repository, cx| {
+                    repository.request_commit_data(commit.data.sha, cx);
+                    repository.get_commit_data(&commit.data.sha).cloned()
+                });
+
                 let short_sha = commit.data.sha.display_short();
-                let subject: SharedString = "Loading...".into();
-                let author_name: SharedString = "".into();
                 let formatted_time = String::new();
+                let subject;
+                let author_name;
+
+                if let Some(CommitDataState::Loaded(data)) = data {
+                    subject = data.subject.clone();
+                    author_name = data.author_name.clone();
+                } else {
+                    subject = "Loading...".into();
+                    author_name = "".into();
+                }
 
                 vec![
                     div()

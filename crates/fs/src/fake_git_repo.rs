@@ -6,9 +6,9 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
-        RepoPath, ResetMode, Worktree,
+        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -749,6 +749,10 @@ impl GitRepository for FakeGitRepository {
 
     fn rev_list_count(&self, _source: LogSource) -> BoxFuture<'_, Result<usize>> {
         async { Ok(0) }.boxed()
+    }
+
+    fn commit_data_reader(&self) -> Result<CommitDataReader> {
+        anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
     }
 }
 
