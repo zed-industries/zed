@@ -542,10 +542,16 @@ impl Render for QuickSearch {
                                             cx,
                                         )
                                     })
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.picker.update(cx, |picker, _| {
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.picker.update(cx, |picker, cx| {
                                             picker.delegate.replace_enabled =
                                                 !picker.delegate.replace_enabled;
+                                            let focus_handle = if picker.delegate.replace_enabled {
+                                                picker.delegate.replace_editor.focus_handle(cx)
+                                            } else {
+                                                picker.focus_handle(cx)
+                                            };
+                                            window.focus(&focus_handle, cx);
                                         });
                                         cx.notify();
                                     }))
@@ -830,8 +836,7 @@ impl QuickSearchDelegate {
             let multi_buffer_snapshot = multi_buffer.read(cx);
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
                 // Highlight the entire row (including gutter)
-                let row_anchor =
-                    editor::Anchor::in_buffer(excerpt_id, anchor_range.start.clone());
+                let row_anchor = editor::Anchor::in_buffer(excerpt_id, anchor_range.start.clone());
                 editor.highlight_rows::<SearchMatchLineHighlight>(
                     row_anchor.clone()..row_anchor,
                     cx.theme().colors().editor_active_line_background,
