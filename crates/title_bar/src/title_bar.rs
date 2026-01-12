@@ -301,8 +301,8 @@ impl TitleBar {
                     // Clear override when user types in any editor,
                     // so the title bar reflects the project they're actually working in
                     this.clear_active_worktree_override(cx);
+                    cx.notify();
                 }
-                cx.notify();
             }),
         );
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
