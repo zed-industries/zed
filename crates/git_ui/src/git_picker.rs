@@ -7,7 +7,8 @@ use gpui::{
 };
 use project::git_store::Repository;
 use ui::{
-    FluentBuilder, ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, prelude::*,
+    FluentBuilder, ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
+    prelude::*,
 };
 use workspace::{ModalView, Workspace, pane};
 
@@ -216,6 +217,11 @@ impl GitPicker {
     }
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+        let branches_focus_handle = focus_handle.clone();
+        let worktrees_focus_handle = focus_handle.clone();
+        let stash_focus_handle = focus_handle;
+
         h_flex().p_2().pb_0p5().w_full().child(
             ToggleButtonGroup::single_row(
                 "git-picker-tabs",
@@ -228,7 +234,15 @@ impl GitPicker {
                             this.focus_active_picker(window, cx);
                             cx.notify();
                         }),
-                    ),
+                    )
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Branch Picker",
+                            &ActivateBranchesTab,
+                            &branches_focus_handle,
+                            cx,
+                        )
+                    }),
                     ToggleButtonSimple::new(
                         GitPickerTab::Worktrees.to_string(),
                         cx.listener(|this, _, window, cx| {
@@ -237,7 +251,15 @@ impl GitPicker {
                             this.focus_active_picker(window, cx);
                             cx.notify();
                         }),
-                    ),
+                    )
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Worktree Picker",
+                            &ActivateWorktreesTab,
+                            &worktrees_focus_handle,
+                            cx,
+                        )
+                    }),
                     ToggleButtonSimple::new(
                         GitPickerTab::Stash.to_string(),
                         cx.listener(|this, _, window, cx| {
@@ -246,7 +268,15 @@ impl GitPicker {
                             this.focus_active_picker(window, cx);
                             cx.notify();
                         }),
-                    ),
+                    )
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Stash Picker",
+                            &ActivateStashTab,
+                            &stash_focus_handle,
+                            cx,
+                        )
+                    }),
                 ],
             )
             .label_size(LabelSize::Default)
