@@ -7613,6 +7613,27 @@ if is_entire_line {
 }
 
 #[gpui::test]
+async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «    a
+            bˇ»
+    "});
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
+    cx.update_editor(|editor, window, cx| editor.copy_and_trim(&CopyAndTrim, window, cx));
+
+    let clipboard_contents = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .and_then(|text| Some(text.to_string()));
+
+    assert_eq!(clipboard_contents, Some("a\nb\n".to_string()));
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
