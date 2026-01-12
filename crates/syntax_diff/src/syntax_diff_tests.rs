@@ -2,7 +2,89 @@ use crate::SyntaxTree;
 
 use super::*;
 use indoc::indoc;
+use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
+use std::sync::Arc;
 use util::test::{generate_marked_text, marked_text_ranges};
+
+fn json_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Json".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["json".into()],
+                ..Default::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".into(),
+                        end: "]".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_json::LANGUAGE.into()),
+    ))
+}
+
+fn rust_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".into(),
+                        end: "]".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "<".into(),
+                        end: ">".into(),
+                        close: false,
+                        surround: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ))
+}
 
 fn parse_json(source: &str) -> SyntaxTree<'_> {
     let mut parser = tree_sitter::Parser::new();
@@ -10,7 +92,8 @@ fn parse_json(source: &str) -> SyntaxTree<'_> {
         .set_language(&tree_sitter_json::LANGUAGE.into())
         .expect("failed to set language");
     let tree = parser.parse(source, None).expect("failed to parse");
-    build_tree(tree.walk(), source)
+    let language = json_lang();
+    build_tree(tree.walk(), source, &language.default_scope())
 }
 
 fn parse_rust(source: &str) -> SyntaxTree<'_> {
@@ -19,7 +102,8 @@ fn parse_rust(source: &str) -> SyntaxTree<'_> {
         .set_language(&tree_sitter_rust::LANGUAGE.into())
         .expect("failed to set language");
     let tree = parser.parse(source, None).expect("failed to parse");
-    build_tree(tree.walk(), source)
+    let language = rust_lang();
+    build_tree(tree.walk(), source, &language.default_scope())
 }
 
 #[track_caller]

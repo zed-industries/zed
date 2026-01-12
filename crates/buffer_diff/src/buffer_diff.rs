@@ -1055,17 +1055,23 @@ fn process_patch_hunk(
         };
 
         let (base_diffs, buffer_diffs_relative) = match diff_options.diff_strategy {
-            DiffStrategy::Syntax => {
+            DiffStrategy::Syntax if diff_options.language_scope.is_some() => {
+                let language_scope = diff_options.language_scope.as_ref().unwrap();
                 let base_text = base_snapshot.text();
                 let buffer_text = buffer.text();
 
                 let base_syntax_tree = base_snapshot
                     .syntax_descendant(diff_base_byte_range.clone())
-                    .map(|ts_node| syntax_diff::build_tree(ts_node.walk(), &base_text));
+                    .map(|ts_node| {
+                        syntax_diff::build_tree(ts_node.walk(), &base_text, language_scope)
+                    });
 
-                let buffer_syntax_tree = buffer
-                    .syntax_descendant(buffer_byte_range.clone())
-                    .map(|ts_node| syntax_diff::build_tree(ts_node.walk(), &buffer_text));
+                let buffer_syntax_tree =
+                    buffer
+                        .syntax_descendant(buffer_byte_range.clone())
+                        .map(|ts_node| {
+                            syntax_diff::build_tree(ts_node.walk(), &buffer_text, language_scope)
+                        });
 
                 // We build the syntax trees before checking the graph size because our
                 // syntax tree can be smaller than tree-sitter's tree (due to flattening).

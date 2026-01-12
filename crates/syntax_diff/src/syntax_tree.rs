@@ -1,6 +1,9 @@
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::ops::Range;
+
+use language::LanguageScope;
 
 /// A unique identifier for a node within a `SyntaxTree`.
 ///
@@ -360,11 +363,20 @@ impl Hash for SyntaxTreeCursor<'_> {
 /// the actual content of leaf nodes, not just their types.
 ///
 /// Node byte ranges are stored as absolute positions in the source text.
-pub fn build_tree<'a>(mut cursor: tree_sitter::TreeCursor<'_>, source: &'a str) -> SyntaxTree<'a> {
+pub fn build_tree<'a>(
+    mut cursor: tree_sitter::TreeCursor<'_>,
+    source: &'a str,
+    language_scope: &LanguageScope,
+) -> SyntaxTree<'a> {
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
+    let brackets: HashSet<_> = language_scope
+        .brackets()
+        .filter(|(pair, _)| pair.surround)
+        .flat_map(|(pair, _)| [pair.start.as_str(), pair.end.as_str()])
+        .collect();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
-        build_tree_recursive(&mut cursor, &mut nodes, None, source);
+        build_tree_recursive(&mut cursor, &mut nodes, None, source, &brackets);
     }
 
     SyntaxTree { nodes }
@@ -375,6 +387,7 @@ fn build_tree_recursive<'a>(
     nodes: &mut Vec<SyntaxNode<'a>>,
     parent: Option<SyntaxId>,
     source: &'a str,
+    brackets: &HashSet<&str>,
 ) -> SyntaxId {
     let mut ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
@@ -422,7 +435,9 @@ fn build_tree_recursive<'a>(
             if first_child.start_byte() == ts_node.start_byte()
                 && last_child.end_byte() == ts_node.end_byte()
             {
-                if let Some((open, close)) = detect_delimiters(first_child, last_child, source) {
+                if let Some((open, close)) =
+                    detect_delimiters(first_child, last_child, source, brackets)
+                {
                     open.hash(&mut hasher);
                     close.hash(&mut hasher);
 
@@ -445,7 +460,7 @@ fn build_tree_recursive<'a>(
                 break;
             }
 
-            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source);
+            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source, brackets);
             let child_node = &nodes[child_id.index()];
 
             remaining_children -= 1;
@@ -470,6 +485,7 @@ fn build_tree_recursive<'a>(
             // https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
             if source == "," || source == ";" || source == "." {
                 hint = Some(SyntaxHint::Punctuation);
+            // TODO: we can use info provided by language scope here
             } else if ts_node.is_extra() {
                 hint = Some(SyntaxHint::Comment(source));
             }
@@ -494,16 +510,14 @@ fn detect_delimiters<'a>(
     first_child: tree_sitter::Node<'_>,
     last_child: tree_sitter::Node<'_>,
     source: &'a str,
+    delimiters: &HashSet<&str>,
 ) -> Option<(&'a str, &'a str)> {
     if first_child.child_count() != 0 || last_child.child_count() != 0 {
         return None;
     }
 
-    // TODO: the heuristic should directly check the content of the delimiters
     let is_delimiter = |delimiter: &str| {
-        !delimiter.is_empty()
-            && delimiter.len() <= 2
-            && !delimiter.chars().any(|c| c.is_alphanumeric())
+        !delimiter.is_empty() && delimiter.len() <= 2 && delimiters.contains(delimiter)
     };
 
     let open = source.get(first_child.byte_range())?;
