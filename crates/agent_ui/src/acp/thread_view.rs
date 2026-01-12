@@ -3291,8 +3291,9 @@ impl AcpThreadView {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
             ToolCallContent::SubagentThread(_thread) => {
-                // Subagent threads are rendered inline as part of the tool call
-                // The thread content is shown via the thread's own rendering
+                // The subagent's AcpThread entity stores the subagent's conversation
+                // (messages, tool calls, etc.) but we don't render it here. The entity
+                // is used for serialization (e.g., to_markdown) and data storage, not display.
                 Empty.into_any_element()
             }
         }
