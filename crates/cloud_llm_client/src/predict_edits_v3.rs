@@ -1,6 +1,7 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     fmt::{Display, Write as _},
     ops::{Add, Range, Sub},
     path::Path,
@@ -220,7 +221,7 @@ pub struct RawCompletionRequest {
     pub prompt: String,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
-    pub stop: Vec<String>,
+    pub stop: Vec<Cow<'static, str>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
