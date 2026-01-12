@@ -4,6 +4,7 @@ use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
+use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
@@ -72,6 +73,78 @@ pub struct GraphCommitData {
 pub struct InitialGraphCommitData {
     pub sha: Oid,
     pub parents: SmallVec<[Oid; 1]>,
+}
+
+struct CommitDataRequest {
+    sha: Oid,
+    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+}
+
+pub struct CommitDataReader {
+    request_tx: smol::channel::Sender<CommitDataRequest>,
+    _task: Task<()>,
+}
+
+impl CommitDataReader {
+    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.request_tx
+            .send(CommitDataRequest { sha, response_tx })
+            .await
+            .map_err(|_| anyhow!("commit data reader task closed"))?;
+        response_rx
+            .await
+            .map_err(|_| anyhow!("commit data reader task dropped response"))?
+    }
+}
+
+fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
+    let mut parents = SmallVec::new();
+    let mut author_name = SharedString::default();
+    let mut author_email = SharedString::default();
+    let mut commit_timestamp = 0i64;
+    let mut in_headers = true;
+    let mut subject = None;
+
+    for line in content.lines() {
+        if in_headers {
+            if line.is_empty() {
+                in_headers = false;
+                continue;
+            }
+
+            if let Some(parent_sha) = line.strip_prefix("parent ") {
+                if let Ok(oid) = Oid::from_str(parent_sha.trim()) {
+                    parents.push(oid);
+                }
+            } else if let Some(author_line) = line.strip_prefix("author ") {
+                if let Some((name_email, _timestamp_tz)) = author_line.rsplit_once(' ') {
+                    if let Some((name_email, timestamp_str)) = name_email.rsplit_once(' ') {
+                        if let Ok(ts) = timestamp_str.parse::<i64>() {
+                            commit_timestamp = ts;
+                        }
+                        if let Some((name, email)) = name_email.rsplit_once(" <") {
+                            author_name = SharedString::from(name.to_string());
+                            author_email =
+                                SharedString::from(email.trim_end_matches('>').to_string());
+                        }
+                    }
+                }
+            }
+        } else if subject.is_none() {
+            subject = Some(SharedString::from(line.to_string()));
+        }
+    }
+
+    Some(GraphCommitData {
+        sha,
+        parents,
+        author_name,
+        author_email,
+        commit_timestamp,
+        subject: subject.unwrap_or_default(),
+        ref_names: Vec::new(),
+    })
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -2526,6 +2599,98 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
+}
+
+impl RealGitRepository {
+    pub fn commit_data_reader(&self) -> Result<CommitDataReader> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self
+            .working_directory()
+            .map_err(|_| anyhow!("no working directory"))?;
+        let executor = self.executor.clone();
+
+        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+
+        let task = self.executor.spawn(async move {
+            if let Err(error) =
+                run_commit_data_reader(git_binary_path, working_directory, executor, request_rx)
+                    .await
+            {
+                log::error!("commit data reader failed: {error:?}");
+            }
+        });
+
+        Ok(CommitDataReader {
+            request_tx,
+            _task: task,
+        })
+    }
+}
+
+async fn run_commit_data_reader(
+    git_binary_path: PathBuf,
+    working_directory: PathBuf,
+    executor: BackgroundExecutor,
+    request_rx: smol::channel::Receiver<CommitDataRequest>,
+) -> Result<()> {
+    let git = GitBinary::new(git_binary_path, working_directory, executor);
+    let mut process = git
+        .build_command(["--no-optional-locks", "cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("starting git cat-file --batch process")?;
+
+    let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
+    let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
+
+    while let Ok(request) = request_rx.recv().await {
+        let result = async {
+            stdin.write_all(request.sha.as_bytes()).await?;
+            stdin.write_all(b"\n").await?;
+            stdin.flush().await?;
+
+            let mut header_line = String::new();
+            stdout.read_line(&mut header_line).await?;
+
+            let parts: Vec<&str> = header_line.trim().split(' ').collect();
+            if parts.len() < 3 {
+                bail!("invalid cat-file header: {header_line}");
+            }
+
+            let object_type = parts[1];
+            if object_type == "missing" {
+                bail!("object not found: {}", request.sha);
+            }
+
+            if object_type != "commit" {
+                bail!("expected commit object, got {object_type}");
+            }
+
+            let size: usize = parts[2]
+                .parse()
+                .with_context(|| format!("invalid object size: {}", parts[2]))?;
+
+            let mut content = vec![0u8; size];
+            stdout.read_exact(&mut content).await?;
+
+            let mut newline = [0u8; 1];
+            stdout.read_exact(&mut newline).await?;
+
+            let content_str = String::from_utf8_lossy(&content);
+            parse_cat_file_commit(request.sha.clone(), &content_str)
+                .ok_or_else(|| anyhow!("failed to parse commit {}", request.sha))
+        }
+        .await;
+
+        request.response_tx.send(result).ok();
+    }
+
+    drop(stdin);
+    process.kill().ok();
+
+    Ok(())
 }
 
 fn parse_rev_list_output(output: &str) -> Vec<InitialGraphCommitData> {
