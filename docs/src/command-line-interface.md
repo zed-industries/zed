@@ -21,13 +21,14 @@ General highlights:
 
 The Terminal CLI enables programmatic control of Zed's integrated terminals, allowing external tools, scripts, and AI agents to create, manage, and interact with terminal sessions.
 
-> **Note:** This feature is opt-in and disabled by default. Enable it in Settings > Terminal > CLI, or add `"terminal": { "cli_enabled": true }` to your settings.
+> **Note:** This feature is opt-in and disabled by default. Enable it in Settings > Terminal > CLI, or add `"terminal": { "cli_enabled": true }` to your settings. Once enabled, any local process running as your user can control terminals in the running Zed instance.
 
 ### Environment Variables
 
 Each terminal receives the following environment variable:
 
 - `ZED_TERM_ID` - The unique entity ID of the terminal, which can be used to reference it in CLI commands when enabled.
+  - Terminal IDs are stable for the lifetime of the running Zed instance and may change on restart.
 
 ### Commands
 
