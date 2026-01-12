@@ -1020,7 +1020,7 @@ impl VimCommand {
         self
     }
 
-    /// Emit action from argument with trailing whitespace allowed.
+    /// Set argument handler. Trailing whitespace in arguments will be preserved.
     fn args(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1029,7 +1029,8 @@ impl VimCommand {
         self
     }
 
-    /// Emit action from argument with trimmed whitespace. Supports filename autocompletion.
+    /// Set argument handler. Trailing whitespace in arguments will be trimmed.
+    /// Supports filename autocompletion.
     fn filename(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1175,18 +1176,14 @@ impl VimCommand {
             return None;
         };
 
+        // If the command does not accept args and we have args, we should do no
+        // action.
         let action = if args.is_empty() {
             action
+        } else if self.has_filename {
+            self.args.as_ref()?(action, args.trim().into())?
         } else {
-            // if command does not accept args and we have args then we should do no action
-            self.args.as_ref()?(
-                action,
-                if self.has_filename {
-                    args.trim().into()
-                } else {
-                    args
-                },
-            )?
+            self.args.as_ref()?(action, args)?
         };
 
         let range = range.as_ref().or(self.default_range.as_ref());
