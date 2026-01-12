@@ -862,7 +862,7 @@ impl TextThreadStore {
         match event {
             project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
-                    ContextServerStatus::Running => {
+                    ContextServerStatus::Running(_) => {
                         self.load_context_server_slash_commands(
                             server_id.clone(),
                             context_server_store,

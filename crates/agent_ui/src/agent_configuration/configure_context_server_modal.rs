@@ -877,7 +877,7 @@ fn wait_for_context_server(
     let subscription = cx.subscribe(context_server_store, move |_, event, _cx| match event {
         project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
             match status {
-                ContextServerStatus::Running => {
+                ContextServerStatus::Running(_) => {
                     if server_id == &context_server_id
                         && let Some(tx) = tx.lock().unwrap().take()
                     {

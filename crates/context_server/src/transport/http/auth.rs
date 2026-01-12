@@ -9,8 +9,6 @@ use smallvec::{SmallVec, smallvec};
 
 use anyhow::{Context as _, Result};
 use base64::Engine as _;
-use credentials_provider::CredentialsProvider;
-use gpui::AsyncApp;
 use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
 use rand::distr::Distribution;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -29,12 +27,9 @@ pub struct OAuthClient {
     scope: Option<String>,
     state: State,
     http_client: Arc<dyn HttpClient>,
-    endpoint_url: String,
 }
 
-const KEYCHAIN_USER: &str = "mcp";
-
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 enum State {
     #[default]
     Unauthenticated,
@@ -136,7 +131,6 @@ impl OAuthClient {
             scope,
             state: State::Unauthenticated,
             http_client: http_client.clone(),
-            endpoint_url: endpoint_url.to_owned(),
         })
     }
 
@@ -166,7 +160,7 @@ impl OAuthClient {
         anyhow::Ok(AuthorizeUrl { url })
     }
 
-    pub async fn exchange_token(&mut self, code: &str, cx: &AsyncApp) -> Result<()> {
+    pub async fn exchange_token(&mut self, code: &str) -> Result<()> {
         let State::WaitingForCode { code_verifier } = &self.state else {
             return Err(ExchangeTokenError::NotWaitingForAuthorizationCode.into());
         };
@@ -207,8 +201,6 @@ impl OAuthClient {
             refresh_token: token_response.refresh_token,
         };
 
-        self.save_to_keychain(cx).await?;
-
         anyhow::Ok(())
     }
 
@@ -233,14 +225,17 @@ impl OAuthClient {
         matches!(self.state, State::Authenticated { .. })
     }
 
-    pub async fn access_token(&mut self) -> Result<Option<&str>> {
+    pub async fn access_token(&mut self) -> Result<AccessToken<'_>> {
         let State::Authenticated {
             expires_at,
             refresh_token,
             ..
         } = &self.state
         else {
-            return Ok(None);
+            return Ok(AccessToken {
+                token: None,
+                refreshed: false,
+            });
         };
 
         if expires_at.is_some_and(|expires_at| expires_at <= SystemTime::now()) {
@@ -249,13 +244,31 @@ impl OAuthClient {
             }
 
             self.refresh_access_token().await?;
+
+            let State::Authenticated { access_token, .. } = &self.state else {
+                return Ok(AccessToken {
+                    token: None,
+                    refreshed: false,
+                });
+            };
+
+            return Ok(AccessToken {
+                token: Some(access_token.as_str()),
+                refreshed: true,
+            });
         }
 
         let State::Authenticated { access_token, .. } = &self.state else {
-            return Ok(None);
+            return Ok(AccessToken {
+                token: None,
+                refreshed: false,
+            });
         };
 
-        Ok(Some(access_token.as_str()))
+        Ok(AccessToken {
+            token: Some(access_token.as_str()),
+            refreshed: false,
+        })
     }
 
     async fn refresh_access_token(&mut self) -> Result<()> {
@@ -329,79 +342,34 @@ impl OAuthClient {
             refresh_token: token_response.refresh_token.or(previous_refresh_token),
         };
 
-        // todo! save to keychain
-
         Ok(())
     }
 
-    pub async fn load_from_keychain(
-        endpoint_url: &str,
+    pub fn from_credentials(
+        credentials: ContextServerCredentials,
         http_client: &Arc<dyn HttpClient>,
-        cx: &AsyncApp,
-    ) -> Result<Option<Self>> {
-        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
-
-        let Some((username, data)) = credentials_provider
-            .read_credentials(endpoint_url, cx)
-            .await?
-        else {
-            return Ok(None);
-        };
-
-        if username != KEYCHAIN_USER {
-            return Ok(None);
-        }
-
-        let persisted: PersistedOAuthState = serde_json::from_slice(&data)?;
-
-        Ok(Some(OAuthClient {
-            registration: persisted.registration,
-            server: persisted.server,
-            scope: persisted.scope,
-            state: persisted.state,
+    ) -> Self {
+        OAuthClient {
+            registration: credentials.registration,
+            server: credentials.server,
+            scope: credentials.scope,
+            state: credentials.state,
             http_client: http_client.clone(),
-            endpoint_url: endpoint_url.to_owned(),
-        }))
-    }
-
-    pub async fn logout(&mut self, cx: &AsyncApp) -> Result<()> {
-        self.state = State::Unauthenticated;
-        self.save_to_keychain(cx).await
-    }
-
-    async fn save_to_keychain(&self, cx: &AsyncApp) -> Result<()> {
-        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
-
-        if !matches!(self.state, State::Authenticated { .. }) {
-            credentials_provider
-                .delete_credentials(&self.endpoint_url, cx)
-                .await?;
-            return Ok(());
         }
+    }
 
-        let persisted = PersistedOAuthState {
+    pub fn to_credentials(&self) -> ContextServerCredentials {
+        ContextServerCredentials {
             registration: self.registration.clone(),
             server: self.server.clone(),
             scope: self.scope.clone(),
             state: self.state.clone(),
-        };
-
-        let json = serde_json::to_vec(&persisted)?;
-
-        credentials_provider
-            .write_credentials(&self.endpoint_url, KEYCHAIN_USER, &json, cx)
-            .await?;
-
-        Ok(())
+        }
     }
-}
 
-#[derive(Serialize, Deserialize)]
-struct PersistedOAuthState {
-    registration: ClientRegistration,
-    server: AuthorizationServer,
-    scope: Option<String>,
-    state: State,
+    pub fn logout(&mut self) {
+        self.state = State::Unauthenticated;
+    }
 }
 
 #[derive(Debug, Error)]
@@ -565,8 +533,8 @@ fn generate_code_verifier() -> String {
 }
 
 #[cfg_attr(test, derive(Default))]
-#[derive(Clone, Serialize, Deserialize)]
-struct ClientRegistration {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClientRegistration {
     client_id: String,
     #[serde(default)]
     client_secret: Option<String>,
@@ -918,6 +886,53 @@ async fn decode_response_json<T: DeserializeOwned>(
             String::from_utf8_lossy(&content)
         );
     }
+}
+
+// Types used externally for UI and persistance
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ContextServerAuthStatus {
+    None,
+    Authenticated,
+    AwaitingAuthorization,
+    Required { www_auth_header: Option<String> },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ContextServerCredentials {
+    registration: ClientRegistration,
+    server: AuthorizationServer,
+    scope: Option<String>,
+    state: State,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ContextServerAuth {
+    pub credentials: Option<ContextServerCredentials>,
+    pub(crate) www_auth_header: Option<String>,
+}
+
+impl ContextServerAuth {
+    pub fn status(&self) -> ContextServerAuthStatus {
+        if self.www_auth_header.is_some() {
+            return ContextServerAuthStatus::Required {
+                www_auth_header: self.www_auth_header.clone(),
+            };
+        }
+        match &self.credentials {
+            None => ContextServerAuthStatus::None,
+            Some(persisted) => match &persisted.state {
+                State::Unauthenticated => ContextServerAuthStatus::None,
+                State::WaitingForCode { .. } => ContextServerAuthStatus::AwaitingAuthorization,
+                State::Authenticated { .. } => ContextServerAuthStatus::Authenticated,
+            },
+        }
+    }
+}
+
+pub struct AccessToken<'a> {
+    pub token: Option<&'a str>,
+    pub refreshed: bool,
 }
 
 mod abs_uri {

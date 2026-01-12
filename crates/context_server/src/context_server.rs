@@ -11,7 +11,6 @@ use http_client::HttpClient;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, path::PathBuf};
-use util::ResultExt;
 
 use anyhow::Result;
 use client::Client;
@@ -20,10 +19,11 @@ use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
 use url::Url;
 
-use crate::transport::{AuthRequiredCallback, HttpTransport};
+use crate::transport::{ContextServerCredentials, HttpTransport, OnAuthUpdated};
 
-pub use crate::transport::AuthRequired;
-pub use crate::transport::http::{AuthorizeUrl, OAuthCallback};
+pub use crate::transport::http::{
+    AuthorizeUrl, ContextServerAuth, ContextServerAuthStatus, OAuthCallback,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -68,7 +68,7 @@ impl ContextServer {
         headers: HashMap<String, String>,
         http_client: Arc<dyn HttpClient>,
         executor: BackgroundExecutor,
-        on_auth_required: AuthRequiredCallback,
+        on_auth_updated: OnAuthUpdated,
     ) -> Result<Self> {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
@@ -78,7 +78,7 @@ impl ContextServer {
                     endpoint.to_string(),
                     headers,
                     executor,
-                    on_auth_required,
+                    on_auth_updated,
                 ))
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
@@ -107,9 +107,15 @@ impl ContextServer {
         self.client.read().clone()
     }
 
-    pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
+    pub async fn start(
+        &self,
+        persisted: Option<ContextServerCredentials>,
+        cx: &AsyncApp,
+    ) -> Result<()> {
         if let ContextServerTransport::Http(http) = &self.configuration {
-            http.restore_credentials(cx).await.log_err();
+            if let Some(persisted) = persisted {
+                http.restore_credentials(persisted).await;
+            }
         }
 
         self.initialize(self.new_client(cx)?).await
@@ -180,23 +186,19 @@ impl ContextServer {
         http.start_auth(www_auth_header).await
     }
 
-    pub async fn handle_oauth_callback(
-        &self,
-        callback: &OAuthCallback,
-        cx: &AsyncApp,
-    ) -> Result<()> {
+    pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
         let ContextServerTransport::Http(http) = &self.configuration else {
             anyhow::bail!("authorization is only supported for HTTP context servers");
         };
 
-        http.handle_oauth_callback(&callback, cx).await
+        http.handle_oauth_callback(&callback).await
     }
 
-    pub async fn logout(&self, cx: &AsyncApp) -> Result<()> {
+    pub async fn logout(&self) {
         let ContextServerTransport::Http(http) = &self.configuration else {
-            anyhow::bail!("logout is only supported for HTTP context servers");
+            return;
         };
 
-        http.logout(cx).await
+        http.logout().await
     }
 }

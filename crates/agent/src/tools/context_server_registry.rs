@@ -2,7 +2,7 @@ use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
-use context_server::{ContextServerId, client::NotificationSubscription};
+use context_server::{ContextServerAuthStatus, ContextServerId, client::NotificationSubscription};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
@@ -245,8 +245,11 @@ impl ContextServerRegistry {
         match event {
             project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
-                    ContextServerStatus::Starting | ContextServerStatus::AuthRequired => {}
-                    ContextServerStatus::Running => {
+                    ContextServerStatus::Starting => {}
+                    ContextServerStatus::Running(auth_status) => {
+                        if matches!(auth_status, ContextServerAuthStatus::Required { .. }) {
+                            return;
+                        }
                         self.reload_tools_for_server(server_id.clone(), cx);
                         self.reload_prompts_for_server(server_id.clone(), cx);
                     }

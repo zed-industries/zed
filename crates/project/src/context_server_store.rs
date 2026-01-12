@@ -5,9 +5,16 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use context_server::{AuthRequired, ContextServer, ContextServerCommand, ContextServerId};
+use context_server::{
+    ContextServer, ContextServerAuth, ContextServerAuthStatus, ContextServerCommand,
+    ContextServerId, transport::ContextServerCredentials,
+};
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt as _, channel::mpsc, future::join_all};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+    actions,
+};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
 use smol::stream::StreamExt;
@@ -34,8 +41,7 @@ actions!(
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextServerStatus {
     Starting,
-    Running,
-    AuthRequired,
+    Running(ContextServerAuthStatus),
     Stopped,
     Error(Arc<str>),
 }
@@ -44,8 +50,9 @@ impl ContextServerStatus {
     fn from_state(state: &ContextServerState) -> Self {
         match state {
             ContextServerState::Starting { .. } => ContextServerStatus::Starting,
-            ContextServerState::Running { .. } => ContextServerStatus::Running,
-            ContextServerState::AuthRequired { .. } => ContextServerStatus::AuthRequired,
+            ContextServerState::Running { auth_status, .. } => {
+                ContextServerStatus::Running(auth_status.clone())
+            }
             ContextServerState::Stopped { .. } => ContextServerStatus::Stopped,
             ContextServerState::Error { error, .. } => ContextServerStatus::Error(error.clone()),
         }
@@ -61,11 +68,7 @@ enum ContextServerState {
     Running {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
-    },
-    AuthRequired {
-        server: Arc<ContextServer>,
-        configuration: Arc<ContextServerConfiguration>,
-        www_auth_header: Option<String>,
+        auth_status: ContextServerAuthStatus,
     },
     Stopped {
         server: Arc<ContextServer>,
@@ -85,7 +88,6 @@ impl ContextServerState {
             ContextServerState::Running { server, .. } => server.clone(),
             ContextServerState::Stopped { server, .. } => server.clone(),
             ContextServerState::Error { server, .. } => server.clone(),
-            ContextServerState::AuthRequired { server, .. } => server.clone(),
         }
     }
 
@@ -95,7 +97,6 @@ impl ContextServerState {
             ContextServerState::Running { configuration, .. } => configuration.clone(),
             ContextServerState::Stopped { configuration, .. } => configuration.clone(),
             ContextServerState::Error { configuration, .. } => configuration.clone(),
-            ContextServerState::AuthRequired { configuration, .. } => configuration.clone(),
         }
     }
 }
@@ -181,8 +182,8 @@ pub struct ContextServerStore {
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
     needs_server_update: bool,
-    auth_required_tx: mpsc::UnboundedSender<AuthRequiredEvent>,
-    _auth_required_task: Task<()>,
+    auth_updated_tx: mpsc::UnboundedSender<AuthUpdatedEvent>,
+    _auth_updated_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -194,10 +195,12 @@ pub enum Event {
 }
 
 #[derive(Debug, Clone)]
-pub struct AuthRequiredEvent {
+pub struct AuthUpdatedEvent {
     pub server_id: ContextServerId,
-    pub www_authenticate_header: Option<String>,
+    pub auth: ContextServerAuth,
 }
+
+const KEYCHAIN_USER: &str = "mcp";
 
 impl EventEmitter<Event> for ContextServerStore {}
 
@@ -280,23 +283,10 @@ impl ContextServerStore {
             Vec::new()
         };
 
-        let (auth_required_tx, mut auth_required_rx) = mpsc::unbounded::<AuthRequiredEvent>();
-        let auth_required_task = cx.spawn(async move |this, cx| {
-            while let Some(event) = auth_required_rx.next().await {
-                this.update(cx, |this, cx| {
-                    if let Some(state) = this.servers.get(&event.server_id) {
-                        this.update_server_state(
-                            event.server_id.clone(),
-                            ContextServerState::AuthRequired {
-                                server: state.server(),
-                                configuration: state.configuration(),
-                                www_auth_header: event.www_authenticate_header,
-                            },
-                            cx,
-                        );
-                    }
-                })
-                .ok();
+        let (auth_updated_tx, mut auth_updated_rx) = mpsc::unbounded::<AuthUpdatedEvent>();
+        let auth_updated_task = cx.spawn(async move |this, cx| {
+            while let Some(event) = auth_updated_rx.next().await {
+                Self::handle_auth_updated(this.clone(), event, cx).await;
             }
         });
 
@@ -311,8 +301,8 @@ impl ContextServerStore {
             servers: HashMap::default(),
             update_servers_task: None,
             context_server_factory,
-            auth_required_tx,
-            _auth_required_task: auth_required_task,
+            auth_updated_tx,
+            _auth_updated_task: auth_updated_task,
         };
         if maintain_server_loop {
             this.available_context_servers_changed(cx);
@@ -451,13 +441,25 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
+
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
 
             async move |this, cx| {
-                match server.clone().start(cx).await {
+                let credentials = match configuration.as_ref() {
+                    ContextServerConfiguration::Http { url, .. } => {
+                        Self::load_credentials_from_keychain(url.as_str(), credentials_provider, cx)
+                            .await
+                    }
+                    ContextServerConfiguration::Custom { .. }
+                    | ContextServerConfiguration::Extension { .. } => None,
+                };
+
+                match server.clone().start(credentials, cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
 
@@ -467,6 +469,7 @@ impl ContextServerStore {
                                 ContextServerState::Running {
                                     server,
                                     configuration,
+                                    auth_status: ContextServerAuthStatus::None,
                                 },
                                 cx,
                             )
@@ -528,15 +531,15 @@ impl ContextServerStore {
 
         match configuration.as_ref() {
             ContextServerConfiguration::Http { url, headers } => {
-                let on_auth_required = {
-                    let auth_required_tx = self.auth_required_tx.clone();
+                let on_auth_updated = {
+                    let auth_updated_tx = self.auth_updated_tx.clone();
                     let id = id.clone();
 
-                    Arc::new(move |auth_required: AuthRequired| {
-                        auth_required_tx
-                            .unbounded_send(AuthRequiredEvent {
+                    Arc::new(move |auth: ContextServerAuth| {
+                        auth_updated_tx
+                            .unbounded_send(AuthUpdatedEvent {
                                 server_id: id.clone(),
-                                www_authenticate_header: auth_required.www_authenticate_header,
+                                auth,
                             })
                             .log_err();
                     })
@@ -547,7 +550,7 @@ impl ContextServerStore {
                     headers.clone(),
                     cx.http_client(),
                     cx.background_executor().clone(),
-                    on_auth_required,
+                    on_auth_updated,
                 )?))
             }
             _ => {
@@ -713,25 +716,110 @@ impl ContextServerStore {
         })?
     }
 
-    pub fn start_auth(&self, server_id: ContextServerId, cx: &mut Context<ContextServerStore>) {
-        let Some(server) = self.servers.get(&server_id) else {
+    async fn handle_auth_updated(
+        this: WeakEntity<Self>,
+        event: AuthUpdatedEvent,
+        cx: &mut AsyncApp,
+    ) {
+        let Some((endpoint_url, credentials_provider)) = this
+            .update(cx, |this, cx| {
+                let Some(state) = this.servers.get(&event.server_id) else {
+                    return None;
+                };
+
+                let ContextServerState::Running {
+                    server,
+                    configuration,
+                    ..
+                } = state
+                else {
+                    return None;
+                };
+
+                let ContextServerConfiguration::Http { url, .. } = configuration.as_ref() else {
+                    return None;
+                };
+
+                let endpoint_url = url.as_str().to_owned();
+
+                this.update_server_state(
+                    event.server_id.clone(),
+                    ContextServerState::Running {
+                        server: server.clone(),
+                        configuration: configuration.clone(),
+                        auth_status: event.auth.status(),
+                    },
+                    cx,
+                );
+
+                Some((endpoint_url, <dyn CredentialsProvider>::global(cx)))
+            })
+            .ok()
+            .flatten()
+        else {
             return;
         };
 
-        let ContextServerState::AuthRequired {
+        match event.auth.credentials {
+            Some(persisted) => {
+                if let Some(json) = cx
+                    .background_spawn(async move { serde_json::to_vec(&persisted) })
+                    .await
+                    .log_err()
+                {
+                    credentials_provider
+                        .write_credentials(&endpoint_url, KEYCHAIN_USER, &json, cx)
+                        .await
+                        .log_err();
+                }
+            }
+            None => {
+                credentials_provider
+                    .delete_credentials(&endpoint_url, cx)
+                    .await
+                    .log_err();
+            }
+        }
+    }
+
+    async fn load_credentials_from_keychain(
+        endpoint_url: &str,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &AsyncApp,
+    ) -> Option<ContextServerCredentials> {
+        let Some((username, data)) = credentials_provider
+            .read_credentials(endpoint_url, cx)
+            .await
+            .log_err()?
+        else {
+            return None;
+        };
+
+        if username != KEYCHAIN_USER {
+            return None;
+        }
+
+        Some(serde_json::from_slice(&data).log_err()?)
+    }
+
+    pub fn start_auth(&self, server_id: ContextServerId, cx: &mut Context<ContextServerStore>) {
+        let Some(state) = self.servers.get(&server_id) else {
+            return;
+        };
+
+        let ContextServerState::Running {
             server,
-            www_auth_header: www_authenticate_header,
+            auth_status: ContextServerAuthStatus::Required { www_auth_header },
             ..
-        } = server
+        } = state
         else {
             return;
         };
 
         let server = server.clone();
-        let www_auth_header = www_authenticate_header.clone();
+        let www_auth_header = www_auth_header.clone();
 
         cx.spawn(
-            // todo! show error somehow?
             async move |_, cx| match server.start_auth(www_auth_header.as_deref()).await {
                 Ok(auth_url) => {
                     let url = auth_url.url(server_id);
@@ -757,8 +845,8 @@ impl ContextServerStore {
             return;
         };
 
-        cx.spawn(async move |_, cx| {
-            server.logout(&cx).await.log_err();
+        cx.spawn(async move |_, _cx| {
+            server.logout().await;
         })
         .detach();
     }
@@ -779,9 +867,9 @@ impl ContextServerStore {
             }
         };
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, _cx| {
             server
-                .handle_oauth_callback(&callback, cx)
+                .handle_oauth_callback(&callback)
                 .await
                 .with_context(|| {
                     format!(
@@ -853,7 +941,7 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 store.read(cx).status_for_server(&server_1_id),
-                Some(ContextServerStatus::Running)
+                Some(ContextServerStatus::Running(ContextServerAuthStatus::None))
             );
             assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
         });
@@ -865,11 +953,11 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 store.read(cx).status_for_server(&server_1_id),
-                Some(ContextServerStatus::Running)
+                Some(ContextServerStatus::Running(ContextServerAuthStatus::None))
             );
             assert_eq!(
                 store.read(cx).status_for_server(&server_2_id),
-                Some(ContextServerStatus::Running)
+                Some(ContextServerStatus::Running(ContextServerAuthStatus::None))
             );
         });
 
@@ -880,7 +968,7 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 store.read(cx).status_for_server(&server_1_id),
-                Some(ContextServerStatus::Running)
+                Some(ContextServerStatus::Running(ContextServerAuthStatus::None))
             );
             assert_eq!(
                 store.read(cx).status_for_server(&server_2_id),
@@ -930,9 +1018,15 @@ mod tests {
             &store,
             vec![
                 (server_1_id.clone(), ContextServerStatus::Starting),
-                (server_1_id, ContextServerStatus::Running),
+                (
+                    server_1_id,
+                    ContextServerStatus::Running(ContextServerAuthStatus::None),
+                ),
                 (server_2_id.clone(), ContextServerStatus::Starting),
-                (server_2_id.clone(), ContextServerStatus::Running),
+                (
+                    server_2_id.clone(),
+                    ContextServerStatus::Running(ContextServerAuthStatus::None),
+                ),
                 (server_2_id.clone(), ContextServerStatus::Stopped),
             ],
             cx,
@@ -990,7 +1084,10 @@ mod tests {
                 (server_id.clone(), ContextServerStatus::Starting),
                 (server_id.clone(), ContextServerStatus::Stopped),
                 (server_id.clone(), ContextServerStatus::Starting),
-                (server_id.clone(), ContextServerStatus::Running),
+                (
+                    server_id.clone(),
+                    ContextServerStatus::Running(ContextServerAuthStatus::None),
+                ),
             ],
             cx,
         );
@@ -1007,7 +1104,7 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 store.read(cx).status_for_server(&server_id),
-                Some(ContextServerStatus::Running)
+                Some(ContextServerStatus::Running(ContextServerAuthStatus::None))
             );
         });
     }
@@ -1064,7 +1161,10 @@ mod tests {
                 &store,
                 vec![
                     (server_1_id.clone(), ContextServerStatus::Starting),
-                    (server_1_id.clone(), ContextServerStatus::Running),
+                    (
+                        server_1_id.clone(),
+                        ContextServerStatus::Running(ContextServerAuthStatus::None),
+                    ),
                 ],
                 cx,
             );
@@ -1078,7 +1178,10 @@ mod tests {
                 vec![
                     (server_1_id.clone(), ContextServerStatus::Stopped),
                     (server_1_id.clone(), ContextServerStatus::Starting),
-                    (server_1_id.clone(), ContextServerStatus::Running),
+                    (
+                        server_1_id.clone(),
+                        ContextServerStatus::Running(ContextServerAuthStatus::None),
+                    ),
                 ],
                 cx,
             );
@@ -1123,7 +1226,10 @@ mod tests {
                 &store,
                 vec![
                     (server_2_id.clone(), ContextServerStatus::Starting),
-                    (server_2_id.clone(), ContextServerStatus::Running),
+                    (
+                        server_2_id.clone(),
+                        ContextServerStatus::Running(ContextServerAuthStatus::None),
+                    ),
                 ],
                 cx,
             );
@@ -1164,7 +1270,10 @@ mod tests {
                 vec![
                     (server_2_id.clone(), ContextServerStatus::Stopped),
                     (server_2_id.clone(), ContextServerStatus::Starting),
-                    (server_2_id.clone(), ContextServerStatus::Running),
+                    (
+                        server_2_id.clone(),
+                        ContextServerStatus::Running(ContextServerAuthStatus::None),
+                    ),
                 ],
                 cx,
             );
@@ -1246,7 +1355,7 @@ mod tests {
             cx.update(|cx| {
                 assert_eq!(
                     store.read(cx).status_for_server(&server_1_id),
-                    Some(ContextServerStatus::Running)
+                    Some(ContextServerStatus::Running(ContextServerAuthStatus::None))
                 );
                 assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
             });
@@ -1300,7 +1409,10 @@ mod tests {
                 &store,
                 vec![
                     (server_1_id.clone(), ContextServerStatus::Starting),
-                    (server_1_id.clone(), ContextServerStatus::Running),
+                    (
+                        server_1_id.clone(),
+                        ContextServerStatus::Running(ContextServerAuthStatus::None),
+                    ),
                 ],
                 cx,
             );
@@ -1339,7 +1451,10 @@ mod tests {
                 &store,
                 vec![
                     (server_1_id.clone(), ContextServerStatus::Starting),
-                    (server_1_id.clone(), ContextServerStatus::Running),
+                    (
+                        server_1_id.clone(),
+                        ContextServerStatus::Running(ContextServerAuthStatus::None),
+                    ),
                 ],
                 cx,
             );
@@ -1439,7 +1554,10 @@ mod tests {
             &store,
             vec![
                 (server_id.clone(), ContextServerStatus::Starting),
-                (server_id.clone(), ContextServerStatus::Running),
+                (
+                    server_id.clone(),
+                    ContextServerStatus::Running(ContextServerAuthStatus::None),
+                ),
             ],
             cx,
         );

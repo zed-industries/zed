@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Stream, StreamExt, lock::Mutex};
-use gpui::{AsyncApp, BackgroundExecutor};
+use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
 use smol::channel;
@@ -15,14 +15,12 @@ use crate::transport::Transport;
 use auth::OAuthClient;
 use www_authenticate::WwwAuthenticate;
 
-pub use auth::{AuthorizeUrl, OAuthCallback};
+pub use auth::{
+    AuthorizeUrl, ContextServerAuth, ContextServerAuthStatus, ContextServerCredentials,
+    OAuthCallback,
+};
 
-#[derive(Debug)]
-pub struct AuthRequired {
-    pub www_authenticate_header: Option<String>,
-}
-
-pub type AuthRequiredCallback = Arc<dyn Fn(AuthRequired) + Send + Sync>;
+pub type OnAuthUpdated = Arc<dyn Fn(ContextServerAuth) + Send + Sync>;
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
@@ -39,9 +37,8 @@ pub struct HttpTransport {
     response_rx: channel::Receiver<String>,
     error_tx: channel::Sender<String>,
     error_rx: channel::Receiver<String>,
-    // Authentication headers to include in requests
     headers: HashMap<String, String>,
-    on_auth_required: AuthRequiredCallback,
+    on_auth_updated: OnAuthUpdated,
     oauth_client: Arc<Mutex<Option<OAuthClient>>>,
 }
 
@@ -51,7 +48,7 @@ impl HttpTransport {
         endpoint: String,
         headers: HashMap<String, String>,
         executor: BackgroundExecutor,
-        on_auth_required: AuthRequiredCallback,
+        on_auth_updated: OnAuthUpdated,
     ) -> Self {
         let (response_tx, response_rx) = channel::unbounded();
         let (error_tx, error_rx) = channel::unbounded();
@@ -66,7 +63,7 @@ impl HttpTransport {
             error_tx,
             error_rx,
             headers,
-            on_auth_required,
+            on_auth_updated,
             oauth_client: Arc::new(Mutex::new(None)),
         }
     }
@@ -92,12 +89,22 @@ impl HttpTransport {
         let access_token: Option<String> = {
             let mut oauth_client_guard = self.oauth_client.lock().await;
             if let Some(oauth_client) = oauth_client_guard.as_mut() {
-                match oauth_client.access_token().await {
-                    Ok(Some(access_token)) => Some(access_token.to_owned()),
-                    Ok(None) => None,
+                let result = oauth_client.access_token().await;
+                match result {
+                    Ok(access_token) => {
+                        let token = access_token.token.map(|t| t.to_owned());
+                        if access_token.refreshed {
+                            (self.on_auth_updated)(ContextServerAuth {
+                                credentials: Some(oauth_client.to_credentials()),
+                                www_auth_header: None,
+                            });
+                        }
+                        token
+                    }
                     Err(error) => {
-                        (self.on_auth_required)(AuthRequired {
-                            www_authenticate_header: None,
+                        (self.on_auth_updated)(ContextServerAuth {
+                            credentials: Some(oauth_client.to_credentials()),
+                            www_auth_header: None,
                         });
                         return Err(error);
                     }
@@ -173,28 +180,34 @@ impl HttpTransport {
                 log::debug!("Notification accepted");
             }
             status if status.as_u16() == 401 => {
-                let www_authenticate_header = response
+                let www_auth_header = response
                     .headers()
                     .get("WWW-Authenticate")
                     .and_then(|value| Some(value.to_str().ok()?.to_string()));
 
-                if www_authenticate_header
+                let invalid_client = www_auth_header
                     .as_deref()
                     .and_then(WwwAuthenticate::parse)
                     .and_then(|www_auth| www_auth.error)
-                    .is_some_and(|error| error.indicates_invalid_client())
-                {
+                    .is_some_and(|error| error.indicates_invalid_client());
+
+                let credentials = if invalid_client {
                     self.oauth_client
                         .lock()
                         .await
                         .take_if(|client| client.is_authenticated());
+                    None
+                } else {
+                    self.oauth_client
+                        .lock()
+                        .await
+                        .as_ref()
+                        .map(|client| client.to_credentials())
+                };
 
-                    // todo! remove from credentials manager
-                    // todo! test
-                }
-
-                (self.on_auth_required)(AuthRequired {
-                    www_authenticate_header,
+                (self.on_auth_updated)(ContextServerAuth {
+                    credentials,
+                    www_auth_header,
                 });
 
                 anyhow::bail!("Unauthorized");
@@ -279,20 +292,15 @@ impl HttpTransport {
         Ok(())
     }
 
-    pub async fn restore_credentials(&self, cx: &AsyncApp) -> Result<()> {
+    pub async fn restore_credentials(&self, credentials: ContextServerCredentials) {
         let mut client_guard = self.oauth_client.lock().await;
 
         if client_guard.is_some() {
-            return Ok(());
+            return;
         }
 
-        if let Some(restored) =
-            OAuthClient::load_from_keychain(&self.endpoint, &self.http_client, cx).await?
-        {
-            client_guard.replace(restored);
-        };
-
-        Ok(())
+        let client = OAuthClient::from_credentials(credentials, &self.http_client);
+        client_guard.replace(client);
     }
 
     pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
@@ -313,31 +321,40 @@ impl HttpTransport {
 
         let url = client.authorize_url()?;
 
+        (self.on_auth_updated)(ContextServerAuth {
+            credentials: Some(client.to_credentials()),
+            www_auth_header: None,
+        });
+
         Ok(url)
     }
 
-    pub async fn handle_oauth_callback(
-        &self,
-        callback: &OAuthCallback,
-        cx: &AsyncApp,
-    ) -> Result<()> {
+    pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
         let mut client_guard = self.oauth_client.lock().await;
         let client = match client_guard.as_mut() {
             Some(client) => client,
             None => return Err(anyhow!("oauth client is not initialized; start auth first")),
         };
 
-        client.exchange_token(&callback.code, cx).await?;
+        client.exchange_token(&callback.code).await?;
+
+        (self.on_auth_updated)(ContextServerAuth {
+            credentials: Some(client.to_credentials()),
+            www_auth_header: None,
+        });
 
         Ok(())
     }
 
-    pub async fn logout(&self, cx: &AsyncApp) -> Result<()> {
+    pub async fn logout(&self) {
         let mut client_guard = self.oauth_client.lock().await;
         if let Some(client) = client_guard.as_mut() {
-            client.logout(cx).await?;
+            client.logout();
+            (self.on_auth_updated)(ContextServerAuth {
+                credentials: Some(client.to_credentials()),
+                www_auth_header: None,
+            });
         }
-        Ok(())
     }
 }
 

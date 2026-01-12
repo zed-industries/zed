@@ -11,7 +11,7 @@ use anyhow::Result;
 use client::zed_urls;
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
-use context_server::ContextServerId;
+use context_server::{ContextServerAuthStatus, ContextServerId};
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
@@ -653,7 +653,7 @@ impl AgentConfiguration {
             .read(cx)
             .configuration_for_server(&context_server_id);
 
-        let is_running = matches!(server_status, ContextServerStatus::Running);
+        let is_running = matches!(server_status, ContextServerStatus::Running(_));
         let item_id = SharedString::from(context_server_id.0.clone());
         // Servers without a configuration can only be provided by extensions.
         let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
@@ -699,14 +699,19 @@ impl AgentConfiguration {
                     .into_any_element(),
                 "Server is starting.",
             ),
-            ContextServerStatus::Running => (
-                Indicator::dot().color(Color::Success).into_any_element(),
-                "Server is active.",
-            ),
-            ContextServerStatus::AuthRequired => (
-                Indicator::dot().color(Color::Warning).into_any_element(),
-                "Authentication required",
-            ),
+            ContextServerStatus::Running(ref auth_status) => {
+                if matches!(auth_status, ContextServerAuthStatus::Required { .. }) {
+                    (
+                        Indicator::dot().color(Color::Warning).into_any_element(),
+                        "Authentication required",
+                    )
+                } else {
+                    (
+                        Indicator::dot().color(Color::Success).into_any_element(),
+                        "Server is active.",
+                    )
+                }
+            }
             ContextServerStatus::Error(_) => (
                 Indicator::dot().color(Color::Error).into_any_element(),
                 "Server has an error.",
@@ -847,7 +852,10 @@ impl AgentConfiguration {
                 }
             });
 
-        let action = if matches!(server_status, ContextServerStatus::AuthRequired) {
+        let action = if matches!(
+            server_status,
+            ContextServerStatus::Running(ContextServerAuthStatus::Required { .. })
+        ) {
             Button::new("context-server-authenticate", "Authenticate")
                 .style(ButtonStyle::Filled)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
