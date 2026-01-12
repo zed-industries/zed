@@ -374,16 +374,13 @@ impl TerminalElement {
                     let col = cell.point.column.0 as i32;
 
                     // Try to extend the last region if it's on the same line with the same color
-                    if let Some(last_region) = background_regions.last_mut() {
-                        if last_region.color == color
-                            && last_region.start_line == alac_line
-                            && last_region.end_line == alac_line
-                            && last_region.end_col + 1 == col
-                        {
-                            last_region.end_col = col;
-                        } else {
-                            background_regions.push(BackgroundRegion::new(alac_line, col, color));
-                        }
+                    if let Some(last_region) = background_regions.last_mut()
+                        && last_region.color == color
+                        && last_region.start_line == alac_line
+                        && last_region.end_line == alac_line
+                        && last_region.end_col + 1 == col
+                    {
+                        last_region.end_col = col;
                     } else {
                         background_regions.push(BackgroundRegion::new(alac_line, col, color));
                     }
