@@ -166,12 +166,34 @@ pub trait ParentElement {
         self
     }
 
+    /// Add an optional child element to this element.
+    fn maybe_child(mut self, child: Option<impl IntoElement>) -> Self
+    where
+        Self: Sized,
+    {   
+        if let Some(child) = child {
+            self.extend(std::iter::once(child.into_element().into_any()));
+        }
+        self
+    }
+
     /// Add multiple child elements to this element.
     fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
     where
         Self: Sized,
     {
         self.extend(children.into_iter().map(|child| child.into_any_element()));
+        self
+    }
+
+    /// Add multiple optional child elements to this element.
+    fn maybe_children(mut self, children: Option<impl IntoIterator<Item = impl IntoElement>>) -> Self
+    where
+        Self: Sized,
+    {
+        if let Some(children) = children {
+            self.extend(children.into_iter().map(|child| child.into_any_element()));
+        }
         self
     }
 }
