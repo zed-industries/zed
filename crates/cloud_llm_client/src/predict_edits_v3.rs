@@ -214,6 +214,38 @@ impl Sub for Line {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RawCompletionRequest {
+    pub model: String,
+    pub prompt: String,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub stop: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RawCompletionResponse {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<RawCompletionChoice>,
+    pub usage: RawCompletionUsage,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RawCompletionChoice {
+    pub text: String,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RawCompletionUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
