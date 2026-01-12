@@ -200,17 +200,53 @@ impl AcpThreadHistory {
             return;
         };
 
-        let task = session_list.list_sessions(AgentSessionListRequest::default(), cx);
-        self._update_task = cx.spawn(async move |this, cx| match task.await {
-            Ok(response) => {
+        self._update_task = cx.spawn(async move |this, cx| {
+            let mut cursor: Option<String> = None;
+            let mut is_first_page = true;
+
+            loop {
+                let request = AgentSessionListRequest {
+                    cursor: cursor.clone(),
+                    ..Default::default()
+                };
+                let task = cx.update(|cx| session_list.list_sessions(request, cx));
+                let response = match task.await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        log::error!("Failed to load session history: {error:#}");
+                        return;
+                    }
+                };
+
+                let acp_thread::AgentSessionListResponse {
+                    sessions: page_sessions,
+                    next_cursor,
+                    ..
+                } = response;
+
                 this.update(cx, |this, cx| {
-                    this.sessions = response.sessions;
+                    if is_first_page {
+                        this.sessions = page_sessions;
+                    } else {
+                        this.sessions.extend(page_sessions);
+                    }
                     this.update_visible_items(preserve_selected_item, cx);
                 })
                 .ok();
-            }
-            Err(error) => {
-                log::error!("Failed to load session history: {error:#}");
+
+                is_first_page = false;
+                match next_cursor {
+                    Some(next_cursor) => {
+                        if cursor.as_ref() == Some(&next_cursor) {
+                            log::warn!(
+                                "Session list pagination returned the same cursor; stopping to avoid a loop."
+                            );
+                            break;
+                        }
+                        cursor = Some(next_cursor);
+                    }
+                    None => break,
+                }
             }
         });
     }

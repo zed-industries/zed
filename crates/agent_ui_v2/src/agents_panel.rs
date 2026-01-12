@@ -64,6 +64,7 @@ pub struct AgentsPanel {
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
+    pending_restore: Option<SerializedAgentThreadPane>,
     pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -162,6 +163,7 @@ impl AgentsPanel {
         let this = cx.weak_entity();
         let subscriptions = vec![
             cx.subscribe_in(&history, window, Self::handle_history_event),
+            cx.observe_in(&history, window, Self::handle_history_updated),
             cx.on_flags_ready(move |_, cx| {
                 this.update(cx, |_, cx| {
                     cx.notify();
@@ -180,6 +182,7 @@ impl AgentsPanel {
             prompt_store,
             fs,
             width: None,
+            pending_restore: None,
             pending_serialization: Task::ready(None),
             _subscriptions: subscriptions,
         }
@@ -197,18 +200,17 @@ impl AgentsPanel {
 
         let SerializedHistoryEntryId::AcpThread(id) = thread_id;
         let session_id = acp::SessionId::new(id.clone());
-        let entry = self
-            .history
-            .read(cx)
-            .session_for_id(&session_id)
-            .unwrap_or_else(|| AgentSessionInfo::new(session_id));
-        self.open_thread(
-            entry,
-            serialized_pane.expanded,
-            serialized_pane.width,
-            window,
-            cx,
-        );
+        if let Some(entry) = self.history.read(cx).session_for_id(&session_id) {
+            self.open_thread(
+                entry,
+                serialized_pane.expanded,
+                serialized_pane.width,
+                window,
+                cx,
+            );
+        } else {
+            self.pending_restore = Some(serialized_pane);
+        }
     }
 
     fn handle_utility_pane_event(
@@ -236,6 +238,15 @@ impl AgentsPanel {
         cx.notify();
     }
 
+    fn handle_history_updated(
+        &mut self,
+        _history: &Entity<AcpThreadHistory>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.maybe_restore_pending(window, cx);
+    }
+
     fn handle_history_event(
         &mut self,
         _history: &Entity<AcpThreadHistory>,
@@ -250,6 +261,30 @@ impl AgentsPanel {
         }
     }
 
+    fn maybe_restore_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.agent_thread_pane.is_some() {
+            self.pending_restore = None;
+            return;
+        }
+
+        let Some(pending) = self.pending_restore.as_ref() else {
+            return;
+        };
+        let Some(thread_id) = &pending.thread_id else {
+            self.pending_restore = None;
+            return;
+        };
+
+        let SerializedHistoryEntryId::AcpThread(id) = thread_id;
+        let session_id = acp::SessionId::new(id.clone());
+        let Some(entry) = self.history.read(cx).session_for_id(&session_id) else {
+            return;
+        };
+
+        let pending = self.pending_restore.take().expect("pending restore");
+        self.open_thread(entry, pending.expanded, pending.width, window, cx);
+    }
+
     fn open_thread(
         &mut self,
         entry: AgentSessionInfo,
@@ -259,6 +294,7 @@ impl AgentsPanel {
         cx: &mut Context<Self>,
     ) {
         let entry_id = entry.session_id.clone();
+        self.pending_restore = None;
 
         if let Some(existing_pane) = &self.agent_thread_pane {
             if existing_pane.read(cx).thread_id() == Some(entry_id) {
