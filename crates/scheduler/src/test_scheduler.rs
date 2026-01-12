@@ -516,6 +516,12 @@ impl Scheduler for TestScheduler {
         self.thread.unpark();
     }
 
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            f();
+        });
+    }
+
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
         let state = &mut *self.state.lock();
