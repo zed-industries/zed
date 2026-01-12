@@ -97,7 +97,7 @@ impl Render for EditPredictionButton {
         match all_language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = EditPredictionStore::try_global(cx)
-                    .and_then(|store| store.read(cx).copilot.get(&self.project))
+                    .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
                 else {
                     return div().hidden();
                 };
@@ -151,7 +151,9 @@ impl Render for EditPredictionButton {
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
                             let current_status = EditPredictionStore::try_global(cx)
-                                .and_then(|store| store.read(cx).copilot.get(&project))?
+                                .and_then(|store| {
+                                    store.read(cx).copilot_for_project(&project.upgrade()?)
+                                })?
                                 .read(cx)
                                 .status();
                             match current_status {
@@ -538,7 +540,7 @@ impl EditPredictionButton {
         }
 
         if let Some(_) = EditPredictionStore::try_global(cx)
-            .and_then(|store| store.read(cx).copilot.get(&self.project))
+            .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
         {
             providers.push(EditPredictionProvider::Copilot);
         }

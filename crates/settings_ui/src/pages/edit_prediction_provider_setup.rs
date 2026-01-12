@@ -356,9 +356,7 @@ fn render_github_copilot_provider(
 ) -> Option<impl IntoElement> {
     let copilot = EditPredictionStore::try_global(cx)?
         .read(cx)
-        .copilot
-        .get(&project.downgrade())
-        .cloned();
+        .copilot_for_project(&project);
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
             move |cx| {

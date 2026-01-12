@@ -121,8 +121,7 @@ pub fn init(on_headless_host: bool, cx: &mut App) {
         });
         let project = workspace.project().clone();
         let copilot = EditPredictionStore::try_global(cx)
-            .and_then(|store| store.read(cx).copilot.get(&project.downgrade()))
-            .cloned();
+            .and_then(|store| store.read(cx).copilot_for_project(&project));
         if let Some(copilot) = copilot {
             log_store.update(cx, |_, cx| {
                 cx.subscribe(

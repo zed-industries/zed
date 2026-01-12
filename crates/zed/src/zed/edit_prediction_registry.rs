@@ -1,7 +1,7 @@
 use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
-use copilot::{Copilot, CopilotEditPredictionDelegate};
+use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{
     MercuryFeatureFlag, SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag,
 };
@@ -169,24 +169,8 @@ fn assign_edit_prediction_provider(
             let Some(project) = editor.project().cloned() else {
                 return;
             };
-            let weak_project = project.downgrade();
-            let copilot = ep_store.update(cx, |this, cx| {
-                let project = project.read(cx);
-                let node = project.node_runtime().cloned()?;
-                let languages = project.languages().clone();
-                let fs = project.fs().clone();
-
-                let entry = this
-                    .copilot
-                    .entry(weak_project)
-                    .or_insert_with(move || {
-                        let next_server_id = languages.next_language_server_id();
-
-                        cx.new(|cx| Copilot::new(next_server_id, fs, node, cx))
-                    })
-                    .clone();
-                Some(entry)
-            });
+            let copilot =
+                ep_store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx));
 
             if let Some(copilot) = copilot {
                 if let Some(buffer) = singleton_buffer

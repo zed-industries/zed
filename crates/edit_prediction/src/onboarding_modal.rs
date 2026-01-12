@@ -50,11 +50,11 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let project = workspace.project().downgrade();
+        let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |_window, cx| {
             let weak_entity = cx.weak_entity();
             let copilot = EditPredictionStore::try_global(cx)
-                .and_then(|store| store.read(cx).copilot.get(&project).cloned());
+                .and_then(|store| store.read(cx).copilot_for_project(&project));
             Self {
                 onboarding: cx.new(|cx| {
                     EditPredictionOnboarding::new(
