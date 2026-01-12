@@ -3083,19 +3083,12 @@ impl EditorElement {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn layout_diff_review_button(
+    fn should_render_diff_review_button(
         &self,
-        line_height: Pixels,
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
+        cx: &App,
+    ) -> Option<DisplayRow> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
             return None;
         }
@@ -3105,7 +3098,6 @@ impl EditorElement {
             return None;
         }
 
-        // Only show button when hovering over gutter and the indicator is active
         let indicator = self.editor.read(cx).gutter_diff_review_indicator.0?;
         if !indicator.is_active {
             return None;
@@ -3121,25 +3113,7 @@ impl EditorElement {
             return None;
         }
 
-        let button = self.editor.update(cx, |editor, cx| {
-            editor
-                .render_diff_review_button(display_row, cx)
-                .into_any_element()
-        });
-
-        let button = prepaint_gutter_button(
-            button,
-            display_row,
-            line_height,
-            gutter_dimensions,
-            scroll_position,
-            gutter_hitbox,
-            display_hunks,
-            window,
-            cx,
-        );
-
-        Some(button)
+        Some(display_row)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -8130,6 +8104,8 @@ pub fn render_breadcrumb_text(
         .downcast::<Editor>()
         .map(|editor| editor.downgrade());
 
+    let has_project_path = active_item.project_path(cx).is_some();
+
     match editor {
         Some(editor) => element
             .id("breadcrumb_container")
@@ -8143,14 +8119,33 @@ pub fn render_breadcrumb_text(
                     .when(!multibuffer_header, |this| {
                         let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
 
-                        this.tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
-                                &focus_handle,
-                                cx,
-                            )
-                        })
+                        this.tooltip(Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .justify_between()
+                                        .child(Label::new("Show Symbol Outline"))
+                                        .child(ui::KeyBinding::for_action_in(
+                                            &zed_actions::outline::ToggleOutline,
+                                            &focus_handle,
+                                            cx,
+                                        )),
+                                )
+                                .when(has_project_path, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_between()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(Label::new("Right-Click to Copy Path")),
+                                    )
+                                })
+                                .into_any_element()
+                        }))
                         .on_click({
                             let editor = editor.clone();
                             move |_, window, cx| {
@@ -8162,12 +8157,29 @@ pub fn render_breadcrumb_text(
                                 }
                             }
                         })
+                        .when(has_project_path, |this| {
+                            this.on_right_click({
+                                let editor = editor.clone();
+                                move |_, _, cx| {
+                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.target_file_abs_path(cx)
+                                        })
+                                    }) {
+                                        if let Some(path_str) = abs_path.to_str() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                path_str.to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            })
+                        })
                     }),
             )
             .into_any_element(),
         None => element
-            // Match the height and padding of the `ButtonLike` in the other arm.
-            .h(rems_from_px(22.))
+            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),
@@ -10405,17 +10417,26 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let diff_review_button = self.layout_diff_review_button(
-                        line_height,
-                        start_row..end_row,
-                        &row_infos,
-                        scroll_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &display_hunks,
-                        window,
-                        cx,
-                    );
+                    let diff_review_button = self
+                        .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
+                        .map(|display_row| {
+                            let button = self.editor.update(cx, |editor, cx| {
+                                editor
+                                    .render_diff_review_button(display_row, cx)
+                                    .into_any_element()
+                            });
+                            prepaint_gutter_button(
+                                button,
+                                display_row,
+                                line_height,
+                                &gutter_dimensions,
+                                scroll_position,
+                                &gutter_hitbox,
+                                &display_hunks,
+                                window,
+                                cx,
+                            )
+                        });
 
                     self.layout_signature_help(
                         &hitbox,

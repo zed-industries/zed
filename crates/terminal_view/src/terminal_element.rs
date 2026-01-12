@@ -43,6 +43,7 @@ pub struct LayoutState {
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
     cursor: Option<CursorLayout>,
+    ime_cursor_bounds: Option<Bounds<Pixels>>,
     background_color: Hsla,
     dimensions: TerminalBounds,
     mode: TermMode,
@@ -374,16 +375,13 @@ impl TerminalElement {
                     let col = cell.point.column.0 as i32;
 
                     // Try to extend the last region if it's on the same line with the same color
-                    if let Some(last_region) = background_regions.last_mut() {
-                        if last_region.color == color
-                            && last_region.start_line == alac_line
-                            && last_region.end_line == alac_line
-                            && last_region.end_col + 1 == col
-                        {
-                            last_region.end_col = col;
-                        } else {
-                            background_regions.push(BackgroundRegion::new(alac_line, col, color));
-                        }
+                    if let Some(last_region) = background_regions.last_mut()
+                        && last_region.color == color
+                        && last_region.start_line == alac_line
+                        && last_region.end_line == alac_line
+                        && last_region.end_col + 1 == col
+                    {
+                        last_region.end_col = col;
                     } else {
                         background_regions.push(BackgroundRegion::new(alac_line, col, color));
                     }
@@ -1109,21 +1107,18 @@ impl Element for TerminalElement {
                     let visible_row_count =
                         (intersection.size.height / line_height_px).ceil() as usize + 1;
 
-                    // Group cells by line and filter to only the visible screen rows.
-                    // skip() and take() work on enumerated line groups (screen position),
-                    // making this work regardless of the actual cell.point.line values.
-                    let visible_cells: Vec<_> = cells
-                        .iter()
-                        .chunk_by(|c| c.point.line)
-                        .into_iter()
-                        .skip(rows_above_viewport)
-                        .take(visible_row_count)
-                        .flat_map(|(_, line_cells)| line_cells)
-                        .cloned()
-                        .collect();
-
                     TerminalElement::layout_grid(
-                        visible_cells.into_iter(),
+                        // Group cells by line and filter to only the visible screen rows.
+                        // skip() and take() work on enumerated line groups (screen position),
+                        // making this work regardless of the actual cell.point.line values.
+                        cells
+                            .iter()
+                            .chunk_by(|c| c.point.line)
+                            .into_iter()
+                            .skip(rows_above_viewport)
+                            .take(visible_row_count)
+                            .flat_map(|(_, line_cells)| line_cells)
+                            .cloned(),
                         rows_above_viewport as i32,
                         &text_style,
                         last_hovered_word
@@ -1136,49 +1131,54 @@ impl Element for TerminalElement {
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
+                let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+                let cursor_text = {
+                    let str_trxt = cursor_char.to_string();
+                    let len = str_trxt.len();
+                    window.text_system().shape_line(
+                        str_trxt.into(),
+                        text_style.font_size.to_pixels(window.rem_size()),
+                        &[TextRun {
+                            len,
+                            font: text_style.font(),
+                            color: theme.colors().terminal_ansi_background,
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                };
+
+                let ime_cursor_bounds =
+                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                        |(cursor_position, block_width)| Bounds {
+                            origin: cursor_position,
+                            size: size(block_width, dimensions.line_height),
+                        },
+                    );
+
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
                 } else {
-                    let cursor_point = DisplayCursor::from(cursor.point, display_offset);
-                    let cursor_text = {
-                        let str_trxt = cursor_char.to_string();
-                        let len = str_trxt.len();
-                        window.text_system().shape_line(
-                            str_trxt.into(),
-                            text_style.font_size.to_pixels(window.rem_size()),
-                            &[TextRun {
-                                len,
-                                font: text_style.font(),
-                                color: theme.colors().terminal_ansi_background,
-                                ..Default::default()
-                            }],
-                            None,
-                        )
-                    };
-
                     let focused = self.focused;
-                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                        move |(cursor_position, block_width)| {
-                            let (shape, text) = match cursor.shape {
-                                AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
-                                AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
-                                AlacCursorShape::Underline => (CursorShape::Underline, None),
-                                AlacCursorShape::Beam => (CursorShape::Bar, None),
-                                AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
-                                //This case is handled in the if wrapping the whole cursor layout
-                                AlacCursorShape::Hidden => unreachable!(),
-                            };
+                    ime_cursor_bounds.map(move |bounds| {
+                        let (shape, text) = match cursor.shape {
+                            AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
+                            AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                            AlacCursorShape::Underline => (CursorShape::Underline, None),
+                            AlacCursorShape::Beam => (CursorShape::Bar, None),
+                            AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
+                            AlacCursorShape::Hidden => unreachable!(),
+                        };
 
-                            CursorLayout::new(
-                                cursor_position,
-                                block_width,
-                                dimensions.line_height,
-                                theme.players().local().cursor,
-                                shape,
-                                text,
-                            )
-                        },
-                    )
+                        CursorLayout::new(
+                            bounds.origin,
+                            bounds.size.width,
+                            bounds.size.height,
+                            theme.players().local().cursor,
+                            shape,
+                            text,
+                        )
+                    })
                 };
 
                 let block_below_cursor_element = if let Some(block) = &self.block_below_cursor {
@@ -1217,6 +1217,7 @@ impl Element for TerminalElement {
                     hitbox,
                     batched_text_runs,
                     cursor,
+                    ime_cursor_bounds,
                     background_color,
                     dimensions,
                     rects,
@@ -1259,10 +1260,7 @@ impl Element for TerminalElement {
             let terminal_input_handler = TerminalInputHandler {
                 terminal: self.terminal.clone(),
                 terminal_view: self.terminal_view.clone(),
-                cursor_bounds: layout
-                    .cursor
-                    .as_ref()
-                    .map(|cursor| cursor.bounding_rect(origin)),
+                cursor_bounds: layout.ime_cursor_bounds.map(|bounds| bounds + origin),
                 workspace: self.workspace.clone(),
             };
 
@@ -1342,8 +1340,8 @@ impl Element for TerminalElement {
 
                     if let Some(text_to_mark) = &marked_text_cloned
                         && !text_to_mark.is_empty()
-                            && let Some(cursor_layout) = &original_cursor {
-                                let ime_position = cursor_layout.bounding_rect(origin).origin;
+                            && let Some(ime_bounds) = layout.ime_cursor_bounds {
+                                let ime_position = (ime_bounds + origin).origin;
                                 let mut ime_style = layout.base_text_style.clone();
                                 ime_style.underline = Some(UnderlineStyle {
                                     color: Some(ime_style.color),
@@ -1363,6 +1361,14 @@ impl Element for TerminalElement {
                                     }],
                                     None
                                 );
+
+                                // Paint background to cover terminal text behind marked text
+                                let ime_background_bounds = Bounds::new(
+                                    ime_position,
+                                    size(shaped_line.width, layout.dimensions.line_height),
+                                );
+                                window.paint_quad(fill(ime_background_bounds, layout.background_color));
+
                                 shaped_line.paint(
                                     ime_position,
                                     layout.dimensions.line_height,
