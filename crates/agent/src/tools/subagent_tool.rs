@@ -405,6 +405,7 @@ fn forward_event_to_acp_thread(
             tool_call,
             options,
             response,
+            ..
         }) => {
             let outcome_task = acp_thread.update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(tool_call, options, true, cx)
