@@ -1,3 +1,6 @@
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [test-groups]
 sequential-db-tests = { max-threads = 1 }
 
