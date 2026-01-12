@@ -667,6 +667,7 @@ impl ProjectDiff {
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn refresh(
         this: WeakEntity<Self>,
         reason: RefreshReason,
