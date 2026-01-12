@@ -14158,7 +14158,7 @@ impl Editor {
 
     pub fn delete_to_previous_subword_start(
         &mut self,
-        _: &DeleteToPreviousSubwordStart,
+        action: &DeleteToPreviousSubwordStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -14168,9 +14168,17 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        let mut cursor = movement::previous_subword_start(map, selection.head());
-                        cursor =
-                            movement::adjust_greedy_deletion(map, selection.head(), cursor, false);
+                        let mut cursor = if action.ignore_newlines {
+                            movement::previous_subword_start(map, selection.head())
+                        } else {
+                            movement::previous_subword_start_or_newline(map, selection.head())
+                        };
+                        cursor = movement::adjust_greedy_deletion(
+                            map,
+                            selection.head(),
+                            cursor,
+                            action.ignore_brackets,
+                        );
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -14267,7 +14275,7 @@ impl Editor {
 
     pub fn delete_to_next_subword_end(
         &mut self,
-        _: &DeleteToNextSubwordEnd,
+        action: &DeleteToNextSubwordEnd,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -14276,9 +14284,17 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        let mut cursor = movement::next_subword_end(map, selection.head());
-                        cursor =
-                            movement::adjust_greedy_deletion(map, selection.head(), cursor, false);
+                        let mut cursor = if action.ignore_newlines {
+                            movement::next_subword_end(map, selection.head())
+                        } else {
+                            movement::next_subword_end_or_newline(map, selection.head())
+                        };
+                        cursor = movement::adjust_greedy_deletion(
+                            map,
+                            selection.head(),
+                            cursor,
+                            action.ignore_brackets,
+                        );
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -15342,12 +15358,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
-        let Some(select_next_state) = self.select_next_state.as_mut() else {
+        let Some(select_next_state) = self.select_next_state.as_mut().filter(|state| !state.done)
+        else {
             return Ok(());
         };
-        if select_next_state.done {
-            return Ok(());
-        }
 
         let mut new_selections = Vec::new();
 
@@ -15383,7 +15397,7 @@ impl Editor {
             return Ok(());
         }
 
-        self.unfold_ranges(&new_selections.clone(), false, false, cx);
+        self.unfold_ranges(&new_selections, false, false, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(new_selections)
         });
@@ -15405,8 +15419,7 @@ impl Editor {
             Some(Autoscroll::newest()),
             window,
             cx,
-        )?;
-        Ok(())
+        )
     }
 
     pub fn select_previous(

@@ -450,7 +450,7 @@ alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12.1", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
