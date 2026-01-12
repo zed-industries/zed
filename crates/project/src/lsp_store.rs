@@ -98,7 +98,6 @@ use serde::Serialize;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
-use smol::channel::{Receiver, Sender};
 use snippet::Snippet;
 use std::{
     any::TypeId,
@@ -300,7 +299,7 @@ pub struct LocalLspStore {
         LanguageServerId,
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
-    restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, Receiver<()>)>,
+    restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
 }
 
 impl LocalLspStore {
@@ -385,7 +384,7 @@ impl LocalLspStore {
             adapter.name.0
         );
 
-        let untrusted_worktree_task =
+        let wait_until_worktree_trust =
             TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
                 let can_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                     trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
@@ -397,11 +396,23 @@ impl LocalLspStore {
                     match self.restricted_worktrees_tasks.entry(worktree_id) {
                         hash_map::Entry::Occupied(o) => Some(o.get().1.clone()),
                         hash_map::Entry::Vacant(v) => {
-                            let (tx, rx) = smol::channel::bounded::<()>(1);
-                            let subscription = cx.subscribe(&trusted_worktrees, move |_, e, _| {
+                            let (mut tx, rx) = watch::channel::<bool>();
+                            let lsp_store = self.weak.clone();
+                            let subscription = cx.subscribe(&trusted_worktrees, move |_, e, cx| {
                                 if let TrustedWorktreesEvent::Trusted(_, trusted_paths) = e {
                                     if trusted_paths.contains(&PathTrust::Worktree(worktree_id)) {
-                                        tx.send_blocking(()).ok();
+                                        tx.blocking_send(true).ok();
+                                        lsp_store
+                                            .update(cx, |lsp_store, _| {
+                                                if let Some(local_lsp_store) =
+                                                    lsp_store.as_local_mut()
+                                                {
+                                                    local_lsp_store
+                                                        .restricted_worktrees_tasks
+                                                        .remove(&worktree_id);
+                                                }
+                                            })
+                                            .ok();
                                     }
                                 }
                             });
@@ -411,7 +422,7 @@ impl LocalLspStore {
                     }
                 }
             });
-        let update_binary_status = untrusted_worktree_task.is_none();
+        let update_binary_status = wait_until_worktree_trust.is_none();
 
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),
@@ -420,7 +431,7 @@ impl LocalLspStore {
             toolchain.clone(),
             delegate.clone(),
             true,
-            untrusted_worktree_task,
+            wait_until_worktree_trust,
             cx,
         );
         let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
@@ -616,7 +627,7 @@ impl LocalLspStore {
         toolchain: Option<Toolchain>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
-        untrusted_worktree_task: Option<Receiver<()>>,
+        wait_until_worktree_trust: Option<watch::Receiver<bool>>,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
         if let Some(settings) = &settings.binary
@@ -625,16 +636,23 @@ impl LocalLspStore {
             let settings = settings.clone();
             let languages = self.languages.clone();
             return cx.background_spawn(async move {
-                if let Some(untrusted_worktree_task) = untrusted_worktree_task {
-                    log::info!(
-                        "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
-                        adapter.name(),
-                    );
-                    untrusted_worktree_task.recv().await.ok();
-                    log::info!(
-                        "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
-                        adapter.name(),
-                    );
+                if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
+                    let already_trusted =  *wait_until_worktree_trust.borrow();
+                    if !already_trusted {
+                        log::info!(
+                            "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
+                            adapter.name(),
+                        );
+                        while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
+                            if worktree_trusted {
+                                break;
+                            }
+                        }
+                        log::info!(
+                            "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
+                            adapter.name(),
+                        );
+                    }
                     languages
                         .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
                 }
@@ -668,16 +686,23 @@ impl LocalLspStore {
         };
 
         cx.spawn(async move |cx| {
-            if let Some(untrusted_worktree_task) = untrusted_worktree_task {
-                log::info!(
-                    "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
-                    adapter.name(),
-                );
-                untrusted_worktree_task.recv().await.ok();
-                log::info!(
-                    "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
-                    adapter.name(),
-                );
+            if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
+                let already_trusted =  *wait_until_worktree_trust.borrow();
+                if !already_trusted {
+                    log::info!(
+                        "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
+                        adapter.name(),
+                    );
+                    while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
+                        if worktree_trusted {
+                            break;
+                        }
+                    }
+                    log::info!(
+                        "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
+                            adapter.name(),
+                    );
+                }
             }
 
             let (existing_binary, maybe_download_binary) = adapter
@@ -1036,7 +1061,6 @@ impl LocalLspStore {
                     async move {
                         this.update(&mut cx, |lsp_store, cx| {
                             lsp_store.pull_workspace_diagnostics(server_id);
-                            lsp_store.pull_document_diagnostics_for_server(server_id, cx);
                             lsp_store
                                 .downstream_client
                                 .as_ref()
@@ -1046,8 +1070,12 @@ impl LocalLspStore {
                                         server_id: server_id.to_proto(),
                                     })
                                 })
-                        })?
-                        .transpose()?;
+                                .transpose()?;
+                            anyhow::Ok(
+                                lsp_store.pull_document_diagnostics_for_server(server_id, cx),
+                            )
+                        })??
+                        .await;
                         Ok(())
                     }
                 }
@@ -7789,46 +7817,62 @@ impl LspStore {
                 let worktree_handle = worktree_handle.clone();
                 let server_id = server.server_id();
                 requests.push(
-                        server
-                            .request::<lsp::request::WorkspaceSymbolRequest>(
-                                lsp::WorkspaceSymbolParams {
-                                    query: query.to_string(),
-                                    ..Default::default()
-                                },
-                            )
-                            .map(move |response| {
-                                let lsp_symbols = response.into_response()
-                                    .context("workspace symbols request")
-                                    .log_err()
-                                    .flatten()
-                                    .map(|symbol_response| match symbol_response {
-                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                            flat_responses.into_iter().map(|lsp_symbol| {
-                                            (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                            }).collect::<Vec<_>>()
-                                        }
-                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
+                    server
+                        .request::<lsp::request::WorkspaceSymbolRequest>(
+                            lsp::WorkspaceSymbolParams {
+                                query: query.to_string(),
+                                ..Default::default()
+                            },
+                        )
+                        .map(move |response| {
+                            let lsp_symbols = response
+                                .into_response()
+                                .context("workspace symbols request")
+                                .log_err()
+                                .flatten()
+                                .map(|symbol_response| match symbol_response {
+                                    lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                        flat_responses
+                                            .into_iter()
+                                            .map(|lsp_symbol| {
+                                                (
+                                                    lsp_symbol.name,
+                                                    lsp_symbol.kind,
+                                                    lsp_symbol.location,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }
+                                    lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                        nested_responses
+                                            .into_iter()
+                                            .filter_map(|lsp_symbol| {
                                                 let location = match lsp_symbol.location {
                                                     OneOf::Left(location) => location,
                                                     OneOf::Right(_) => {
-                                                        log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                        return None
+                                                        log::error!(
+                                                            "Unexpected: client capabilities \
+                                                            forbid symbol resolutions in \
+                                                            workspace.symbol.resolveSupport"
+                                                        );
+                                                        return None;
                                                     }
                                                 };
                                                 Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                            }).collect::<Vec<_>>()
-                                        }
-                                    }).unwrap_or_default();
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }
+                                })
+                                .unwrap_or_default();
 
-                                WorkspaceSymbolsResult {
-                                    server_id,
-                                    lsp_adapter,
-                                    worktree: worktree_handle.downgrade(),
-                                    lsp_symbols,
-                                }
-                            }),
-                    );
+                            WorkspaceSymbolsResult {
+                                server_id,
+                                lsp_adapter,
+                                worktree: worktree_handle.downgrade(),
+                                lsp_symbols,
+                            }
+                        }),
+                );
             }
 
             cx.spawn(async move |this, cx| {
@@ -12180,8 +12224,8 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
-    ) {
-        let buffers_to_pull: Vec<_> = self
+    ) -> Task<()> {
+        let buffers_to_pull = self
             .as_local()
             .into_iter()
             .flat_map(|local| {
@@ -12193,12 +12237,25 @@ impl LspStore {
                         .is_some_and(|servers| servers.contains(&server_id))
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        for buffer in buffers_to_pull {
-            self.pull_diagnostics_for_buffer(buffer, cx)
-                .detach_and_log_err(cx);
-        }
+        let pulls = join_all(buffers_to_pull.into_iter().map(|buffer| {
+            let buffer_path = buffer.read(cx).file().map(|f| f.full_path(cx));
+            let pull_task = self.pull_diagnostics_for_buffer(buffer, cx);
+            async move { (buffer_path, pull_task.await) }
+        }));
+        cx.background_spawn(async move {
+            for (pull_task_path, pull_task_result) in pulls.await {
+                if let Err(e) = pull_task_result {
+                    match pull_task_path {
+                        Some(path) => {
+                            log::error!("Failed to pull diagnostics for buffer {path:?}: {e:#}");
+                        }
+                        None => log::error!("Failed to pull diagnostics: {e:#}"),
+                    }
+                }
+            }
+        })
     }
 
     fn apply_workspace_diagnostic_report(
@@ -12641,7 +12698,8 @@ impl LspStore {
 
                         notify_server_capabilities_updated(&server, cx);
 
-                        self.pull_document_diagnostics_for_server(server_id, cx);
+                        self.pull_document_diagnostics_for_server(server_id, cx)
+                            .detach();
                     }
                 }
                 "textDocument/documentColor" => {
@@ -13673,7 +13731,7 @@ pub struct LanguageServerPromptRequest {
     pub message: String,
     pub actions: Vec<MessageActionItem>,
     pub lsp_name: String,
-    pub(crate) response_channel: Sender<MessageActionItem>,
+    pub(crate) response_channel: smol::channel::Sender<MessageActionItem>,
 }
 
 impl LanguageServerPromptRequest {

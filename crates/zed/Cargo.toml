@@ -46,6 +46,8 @@ visual-tests = [
     "agent/test-support",
     "language_model/test-support",
     "fs/test-support",
+    "recent_projects/test-support",
+    "title_bar/test-support",
 ]
 
 [[bin]]
@@ -191,11 +193,13 @@ tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
+telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+time_format.workspace = true
 title_bar.workspace = true
 ztracing.workspace = true
 tracing.workspace = true

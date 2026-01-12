@@ -128,9 +128,9 @@ impl BranchList {
         let all_branches_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.branches()));
-        let default_branch_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+        let default_branch_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, _| repository.default_branch(false))
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request

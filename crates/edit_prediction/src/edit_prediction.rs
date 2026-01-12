@@ -1749,6 +1749,7 @@ impl EditPredictionStore {
                 active_buffer.clone(),
                 position,
                 events_for_capture,
+                false,
                 cx,
             ) {
                 cx.spawn(async move |_this, _cx| {
