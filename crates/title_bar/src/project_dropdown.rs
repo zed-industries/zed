@@ -5,6 +5,7 @@ use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
     WeakEntity,
 };
+use menu;
 use project::{Project, Worktree, git_store::Repository};
 use settings::WorktreeId;
 use ui::{ContextMenu, prelude::*};
@@ -147,6 +148,7 @@ impl ProjectDropdown {
                     },
                     move |window, cx| {
                         Self::handle_select(workspace_for_select.clone(), worktree_id, window, cx);
+                        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
                     },
                 );
             }
