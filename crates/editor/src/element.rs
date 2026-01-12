@@ -3083,19 +3083,12 @@ impl EditorElement {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn layout_diff_review_button(
+    fn should_render_diff_review_button(
         &self,
-        line_height: Pixels,
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
+        cx: &App,
+    ) -> Option<DisplayRow> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
             return None;
         }
@@ -3105,7 +3098,6 @@ impl EditorElement {
             return None;
         }
 
-        // Only show button when hovering over gutter and the indicator is active
         let indicator = self.editor.read(cx).gutter_diff_review_indicator.0?;
         if !indicator.is_active {
             return None;
@@ -3121,6 +3113,21 @@ impl EditorElement {
             return None;
         }
 
+        Some(display_row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_diff_review_button(
+        &self,
+        display_row: DisplayRow,
+        line_height: Pixels,
+        scroll_position: gpui::Point<ScrollOffset>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         let button = IconButton::new("diff_review_button", ui::IconName::Plus)
             .icon_size(ui::IconSize::XSmall)
             .size(ui::ButtonSize::None)
@@ -3130,7 +3137,7 @@ impl EditorElement {
             .tooltip(Tooltip::text("Add Review"))
             .into_any_element();
 
-        let button = prepaint_gutter_button(
+        prepaint_gutter_button(
             button,
             display_row,
             line_height,
@@ -3140,9 +3147,7 @@ impl EditorElement {
             display_hunks,
             window,
             cx,
-        );
-
-        Some(button)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -10446,17 +10451,20 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let diff_review_button = self.layout_diff_review_button(
-                        line_height,
-                        start_row..end_row,
-                        &row_infos,
-                        scroll_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &display_hunks,
-                        window,
-                        cx,
-                    );
+                    let diff_review_button = self
+                        .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
+                        .map(|display_row| {
+                            self.layout_diff_review_button(
+                                display_row,
+                                line_height,
+                                scroll_position,
+                                &gutter_dimensions,
+                                &gutter_hitbox,
+                                &display_hunks,
+                                window,
+                                cx,
+                            )
+                        });
 
                     self.layout_signature_help(
                         &hitbox,
