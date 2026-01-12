@@ -459,7 +459,7 @@ impl Render for CopilotCodeVerification {
 
 pub struct ConfigurationView {
     copilot_status: Option<Status>,
-    is_authenticated: fn(cx: &App) -> bool,
+    is_authenticated: Box<dyn Fn(&App) -> bool + 'static>,
     edit_prediction: bool,
     _subscription: Option<Subscription>,
 }
@@ -471,7 +471,7 @@ pub enum ConfigurationMode {
 
 impl ConfigurationView {
     pub fn new(
-        is_authenticated: fn(cx: &App) -> bool,
+        is_authenticated: impl Fn(&App) -> bool + 'static,
         mode: ConfigurationMode,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -479,7 +479,7 @@ impl ConfigurationView {
 
         Self {
             copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
-            is_authenticated,
+            is_authenticated: Box::new(is_authenticated),
             edit_prediction: matches!(mode, ConfigurationMode::EditPrediction),
             _subscription: copilot.as_ref().map(|copilot| {
                 cx.observe(copilot, |this, model, cx| {
@@ -678,7 +678,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_authenticated = self.is_authenticated;
+        let is_authenticated = &self.is_authenticated;
 
         if is_authenticated(cx) {
             return ConfiguredApiCard::new("Authorized")

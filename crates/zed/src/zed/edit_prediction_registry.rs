@@ -165,7 +165,30 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(None, window, cx);
         }
         EditPredictionProvider::Copilot => {
-            if let Some(copilot) = Copilot::global(cx) {
+            let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
+            let Some(project) = editor.project().cloned() else {
+                return;
+            };
+            let weak_project = project.downgrade();
+            let copilot = ep_store.update(cx, |this, cx| {
+                let project = project.read(cx);
+                let node = project.node_runtime().cloned()?;
+                let languages = project.languages().clone();
+                let fs = project.fs().clone();
+
+                let entry = this
+                    .copilot
+                    .entry(weak_project)
+                    .or_insert_with(move || {
+                        let next_server_id = languages.next_language_server_id();
+
+                        cx.new(|cx| Copilot::new(next_server_id, fs, node, cx))
+                    })
+                    .clone();
+                Some(entry)
+            });
+
+            if let Some(copilot) = copilot {
                 if let Some(buffer) = singleton_buffer
                     && buffer.read(cx).file().is_some()
                 {

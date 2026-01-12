@@ -1,11 +1,12 @@
 use edit_prediction::{
-    ApiKeyState, MercuryFeatureFlag, SweepFeatureFlag,
+    ApiKeyState, EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
+use project::Project;
 use ui::{ButtonLink, ConfiguredApiCard, WithScrollbar, prelude::*};
 
 use crate::{
@@ -30,9 +31,20 @@ impl EditPredictionSetupPage {
 impl Render for EditPredictionSetupPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings_window = self.settings_window.clone();
-
+        let project = settings_window
+            .read(cx)
+            .original_window
+            .as_ref()
+            .map(|window| {
+                window
+                    .read_with(cx, |workspace, _| workspace.project().clone())
+                    .ok()
+            })
+            .flatten();
         let providers = [
-            Some(render_github_copilot_provider(window, cx).into_any_element()),
+            project.and_then(|project| {
+                Some(render_github_copilot_provider(project, window, cx)?.into_any_element())
+            }),
             cx.has_flag::<MercuryFeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::Inception,
@@ -337,14 +349,21 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
     ])
 }
 
-pub(crate) fn render_github_copilot_provider(
+fn render_github_copilot_provider(
+    project: Entity<Project>,
     window: &mut Window,
     cx: &mut App,
-) -> impl IntoElement {
+) -> Option<impl IntoElement> {
+    let copilot = EditPredictionStore::try_global(cx)?
+        .read(cx)
+        .copilot
+        .get(&project.downgrade())
+        .cloned();
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
-            |cx| {
-                copilot::Copilot::global(cx)
+            move |cx| {
+                copilot
+                    .as_ref()
                     .is_some_and(|copilot| copilot.read(cx).is_authenticated())
             },
             copilot_ui::ConfigurationMode::EditPrediction,
@@ -352,14 +371,16 @@ pub(crate) fn render_github_copilot_provider(
         )
     });
 
-    v_flex()
-        .id("github-copilot")
-        .min_w_0()
-        .gap_1p5()
-        .child(
-            SettingsSectionHeader::new("GitHub Copilot")
-                .icon(IconName::Copilot)
-                .no_padding(true),
-        )
-        .child(configuration_view)
+    Some(
+        v_flex()
+            .id("github-copilot")
+            .min_w_0()
+            .gap_1p5()
+            .child(
+                SettingsSectionHeader::new("GitHub Copilot")
+                    .icon(IconName::Copilot)
+                    .no_padding(true),
+            )
+            .child(configuration_view),
+    )
 }

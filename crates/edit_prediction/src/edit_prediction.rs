@@ -8,6 +8,7 @@ use cloud_llm_client::{
     PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
+use copilot::Copilot;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::EditPredictionExcerptOptions;
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
@@ -170,6 +171,7 @@ pub struct EditPredictionStore {
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
+    pub copilot: HashMap<WeakEntity<Project>, Entity<Copilot>>,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -655,6 +657,7 @@ impl EditPredictionStore {
             edit_prediction_model: EditPredictionModel::Zeta2,
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
+            copilot: Default::default(),
             data_collection_choice,
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),

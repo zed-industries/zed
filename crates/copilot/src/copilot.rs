@@ -64,7 +64,7 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
+    let copilot = cx.new(move |cx| Copilot::new(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
         copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
@@ -301,7 +301,7 @@ impl Copilot {
         cx.set_global(GlobalCopilot(copilot));
     }
 
-    fn start(
+    pub fn new(
         new_server_id: LanguageServerId,
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
