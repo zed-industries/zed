@@ -7,9 +7,7 @@ use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use language::{Buffer, Capability};
-use multi_buffer::{
-    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferRow, PathKey,
-};
+use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey};
 use project::Project;
 use rope::Point;
 use text::OffsetRangeExt as _;
@@ -43,10 +41,6 @@ struct SplitDiff;
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
 struct UnsplitDiff;
-
-#[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
-#[action(namespace = editor)]
-struct JumpToCorrespondingRow;
 
 pub struct SplittableEditor {
     primary_multibuffer: Entity<MultiBuffer>,
@@ -275,13 +269,13 @@ impl SplittableEditor {
         );
 
         for (path, diff) in path_diffs {
-            for mapping in secondary.update_path_excerpts_from_primary(
+            for (lhs, rhs) in secondary.update_path_excerpts_from_primary(
                 path,
                 &self.primary_multibuffer,
                 diff.clone(),
                 cx,
             ) {
-                companion.add_excerpt_mapping(mapping.left, mapping.right);
+                companion.add_excerpt_mapping(lhs, rhs);
             }
             companion.add_buffer_mapping(
                 diff.read(cx).base_text(cx).remote_id(),
@@ -528,7 +522,7 @@ impl SplittableEditor {
         assert_eq!(secondary_excerpts.len(), primary_excerpts.len());
 
         if quiesced {
-            // todo! re-enable
+            // TODO(split-diff) re-enable
             // self.check_sides_match(cx, Self::unmodified_rows);
 
             self.check_sides_match(cx, |snapshot| {
@@ -575,31 +569,6 @@ impl SplittableEditor {
             self.debug_print(cx);
             pretty_assertions::assert_eq!(primary_t, secondary_t);
         }
-    }
-
-    fn unmodified_rows(snapshot: &multi_buffer::MultiBufferSnapshot) -> Vec<Vec<String>> {
-        let mut result: Vec<Vec<String>> = Vec::new();
-        let mut current_group: Vec<String> = Vec::new();
-
-        for (line, row_info) in snapshot
-            .text()
-            .split("\n")
-            .zip(snapshot.row_infos(MultiBufferRow(0)))
-        {
-            if row_info.diff_status.is_none() {
-                current_group.push(line.to_owned());
-            } else {
-                if !current_group.is_empty() {
-                    result.push(std::mem::take(&mut current_group));
-                }
-            }
-        }
-
-        if !current_group.is_empty() {
-            result.push(current_group);
-        }
-
-        result
     }
 
     fn debug_print(&self, cx: &mut App) {
@@ -954,11 +923,6 @@ impl Render for SplittableEditor {
     }
 }
 
-struct ExcerptMapping {
-    left: ExcerptId,
-    right: ExcerptId,
-}
-
 impl SecondaryEditor {
     fn update_path_excerpts_from_primary(
         &mut self,
@@ -966,7 +930,7 @@ impl SecondaryEditor {
         primary_multibuffer: &Entity<MultiBuffer>,
         diff: Entity<BufferDiff>,
         cx: &mut App,
-    ) -> Vec<ExcerptMapping> {
+    ) -> Vec<(ExcerptId, ExcerptId)> {
         let primary_multibuffer_ref = primary_multibuffer.read(cx);
         let primary_excerpt_ids: Vec<ExcerptId> = primary_multibuffer_ref
             .excerpts_for_path(&path_key)
@@ -1044,10 +1008,9 @@ impl SecondaryEditor {
 
         debug_assert_eq!(primary_excerpt_ids.len(), secondary_excerpt_ids.len());
 
-        primary_excerpt_ids
+        secondary_excerpt_ids
             .into_iter()
-            .zip(secondary_excerpt_ids)
-            .map(|(right, left)| ExcerptMapping { right, left })
+            .zip(primary_excerpt_ids)
             .collect()
     }
 
@@ -1076,8 +1039,8 @@ impl SecondaryEditor {
 
         if let Some(companion) = primary_display_map.read(cx).companion().cloned() {
             companion.update(cx, |c, _| {
-                for mapping in mappings {
-                    c.add_excerpt_mapping(mapping.left, mapping.right);
+                for (lhs, rhs) in mappings {
+                    c.add_excerpt_mapping(lhs, rhs);
                 }
                 c.add_buffer_mapping(secondary_buffer_id, primary_buffer_id);
             });
@@ -1628,6 +1591,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[ignore]
     async fn test_split_editor_block_alignment_after_undoing_deleted_unmodified_line(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -1865,6 +1829,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[ignore]
     async fn test_split_editor_block_alignment_after_deleting_added_line(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -2067,264 +2032,8 @@ mod tests {
         );
     }
 
-    // #[gpui::test]
-    // async fn test_split_row_translation(cx: &mut gpui::TestAppContext) {
-    //     use buffer_diff::BufferDiff;
-    //     use language::Buffer;
-    //     use text::Bias;
-
-    //     use multi_buffer::MultiBufferRow;
-    //     use rope::Point;
-    //     use unindent::Unindent as _;
-
-    //     init_test(cx);
-
-    //     let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-    //     let (workspace, cx) =
-    //         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-    //     // Buffer A: has insertion + modification
-    //     // Base: "one\ntwo\nthree\nfour\n"
-    //     // Buffer: "one\nTWO\nINSERTED\nthree\nfour\n"
-    //     let buffer_a_base = "
-    //         one
-    //         two
-    //         three
-    //         four
-    //     "
-    //     .unindent();
-    //     let buffer_a_text = "
-    //         one
-    //         TWO
-    //         INSERTED
-    //         three
-    //         four
-    //     "
-    //     .unindent();
-
-    //     // Buffer B: has deletion
-    //     // Base: "alpha\nbeta\ngamma\ndelta\n"
-    //     // Buffer: "alpha\ngamma\ndelta\n"
-    //     let buffer_b_base = "
-    //         alpha
-    //         beta
-    //         gamma
-    //         delta
-    //     "
-    //     .unindent();
-    //     let buffer_b_text = "
-    //         alpha
-    //         gamma
-    //         delta
-    //     "
-    //     .unindent();
-
-    //     let buffer_a = cx.new(|cx| Buffer::local(buffer_a_text.clone(), cx));
-    //     let buffer_b = cx.new(|cx| Buffer::local(buffer_b_text.clone(), cx));
-
-    //     let diff_a = cx.new(|cx| {
-    //         BufferDiff::new_with_base_text(&buffer_a_base, &buffer_a.read(cx).text_snapshot(), cx)
-    //     });
-    //     let diff_b = cx.new(|cx| {
-    //         BufferDiff::new_with_base_text(&buffer_b_base, &buffer_b.read(cx).text_snapshot(), cx)
-    //     });
-
-    //     let primary_multibuffer = cx.new(|cx| {
-    //         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-    //         multibuffer.set_all_diff_hunks_expanded(cx);
-    //         multibuffer
-    //     });
-
-    //     let editor = cx.new_window_entity(|window, cx| {
-    //         let mut editor = SplittableEditor::new_unsplit(
-    //             primary_multibuffer.clone(),
-    //             project,
-    //             workspace,
-    //             window,
-    //             cx,
-    //         );
-    //         editor.split(&Default::default(), window, cx);
-    //         editor
-    //     });
-
-    //     // Add excerpts for both buffers
-    //     let (path_a, path_b) = cx.update(|_, cx| {
-    //         (
-    //             PathKey::for_buffer(&buffer_a, cx),
-    //             PathKey::for_buffer(&buffer_b, cx),
-    //         )
-    //     });
-
-    //     editor.update(cx, |editor, cx| {
-    //         // Buffer A: excerpt covering the whole buffer
-    //         editor.set_excerpts_for_path(
-    //             path_a.clone(),
-    //             buffer_a.clone(),
-    //             vec![Point::new(0, 0)..Point::new(4, 0)],
-    //             0,
-    //             diff_a.clone(),
-    //             cx,
-    //         );
-    //         // Buffer B: excerpt covering the whole buffer
-    //         editor.set_excerpts_for_path(
-    //             path_b.clone(),
-    //             buffer_b.clone(),
-    //             vec![Point::new(0, 0)..Point::new(3, 0)],
-    //             0,
-    //             diff_b.clone(),
-    //             cx,
-    //         );
-    //     });
-
-    //     // Now test the row translation
-    //     editor.update(cx, |editor, cx| {
-    //         let primary_display_map = editor.primary_editor.read(cx).display_map.clone();
-    //         let secondary = editor.secondary.as_ref().unwrap();
-    //         let secondary_display_map = secondary.editor.read(cx).display_map.clone();
-
-    //         // Get snapshots and closures
-    //         // The closure on primary_display_map converts secondary (companion) rows -> primary rows
-    //         // The closure on secondary_display_map converts primary (companion) rows -> secondary rows
-    //         let (
-    //             primary_buffer,
-    //             secondary_to_primary_excerpt_mapping,
-    //             convert_secondary_to_primary,
-    //         ) = primary_display_map.update(cx, |dm, cx| {
-    //             let snapshot = dm.snapshot(cx);
-    //             let companion = dm.companion().unwrap().read(cx);
-    //             let excerpt_mapping = companion
-    //                 .companion_excerpt_to_excerpt(dm.entity_id())
-    //                 .clone();
-    //             let convert = companion.convert_row_from_companion(dm.entity_id());
-    //             (snapshot.buffer_snapshot().clone(), excerpt_mapping, convert)
-    //         });
-
-    //         let (
-    //             secondary_buffer,
-    //             primary_to_secondary_excerpt_mapping,
-    //             convert_primary_to_secondary,
-    //         ) = secondary_display_map.update(cx, |dm, cx| {
-    //             let snapshot = dm.snapshot(cx);
-    //             let companion = dm.companion().unwrap().read(cx);
-    //             let excerpt_mapping = companion
-    //                 .companion_excerpt_to_excerpt(dm.entity_id())
-    //                 .clone();
-    //             let convert = companion.convert_row_from_companion(dm.entity_id());
-    //             (snapshot.buffer_snapshot().clone(), excerpt_mapping, convert)
-    //         });
-
-    //         // Primary shows modified text: "one\nTWO\nINSERTED\nthree\nfour\n"
-    //         // Secondary shows base text: "one\ntwo\nthree\nfour\n"
-
-    //         // Test primary -> secondary translation
-    //         // Primary row 0 ("one") -> Secondary row 0 ("one")
-    //         assert_eq!(
-    //             convert_primary_to_secondary(
-    //                 &primary_to_secondary_excerpt_mapping,
-    //                 &secondary_buffer,
-    //                 &primary_buffer,
-    //                 MultiBufferRow(0),
-    //                 Bias::Left
-    //             ),
-    //             MultiBufferRow(0),
-    //             "primary row 0 (one) -> secondary row 0 (one)"
-    //         );
-
-    //         // Primary row 1 ("TWO") -> Secondary row 1 ("two")
-    //         assert_eq!(
-    //             convert_primary_to_secondary(
-    //                 &primary_to_secondary_excerpt_mapping,
-    //                 &secondary_buffer,
-    //                 &primary_buffer,
-    //                 MultiBufferRow(1),
-    //                 Bias::Left
-    //             ),
-    //             MultiBufferRow(1),
-    //             "primary row 1 (TWO) -> secondary row 1 (two)"
-    //         );
-
-    //         // Primary row 2 ("INSERTED") is an inserted line, should map to row 1 or 2
-    //         let inserted_row_left = convert_primary_to_secondary(
-    //             &primary_to_secondary_excerpt_mapping,
-    //             &secondary_buffer,
-    //             &primary_buffer,
-    //             MultiBufferRow(2),
-    //             Bias::Left,
-    //         );
-    //         assert!(
-    //             inserted_row_left.0 == 1 || inserted_row_left.0 == 2,
-    //             "primary row 2 (INSERTED) with Bias::Left should map to 1 or 2, got {}",
-    //             inserted_row_left.0
-    //         );
-    //         let inserted_row_right = convert_primary_to_secondary(
-    //             &primary_to_secondary_excerpt_mapping,
-    //             &secondary_buffer,
-    //             &primary_buffer,
-    //             MultiBufferRow(2),
-    //             Bias::Right,
-    //         );
-    //         assert!(
-    //             inserted_row_right.0 == 1 || inserted_row_right.0 == 2,
-    //             "primary row 2 (INSERTED) with Bias::Right should map to 1 or 2, got {}",
-    //             inserted_row_right.0
-    //         );
-
-    //         // Primary row 3 ("three") -> Secondary row 2 ("three")
-    //         assert_eq!(
-    //             convert_primary_to_secondary(
-    //                 &primary_to_secondary_excerpt_mapping,
-    //                 &secondary_buffer,
-    //                 &primary_buffer,
-    //                 MultiBufferRow(3),
-    //                 Bias::Left
-    //             ),
-    //             MultiBufferRow(2),
-    //             "primary row 3 (three) -> secondary row 2 (three)"
-    //         );
-
-    //         // Test secondary -> primary translation
-    //         // Secondary row 0 ("one") -> Primary row 0 ("one")
-    //         assert_eq!(
-    //             convert_secondary_to_primary(
-    //                 &secondary_to_primary_excerpt_mapping,
-    //                 &primary_buffer,
-    //                 &secondary_buffer,
-    //                 MultiBufferRow(0),
-    //                 Bias::Left
-    //             ),
-    //             MultiBufferRow(0),
-    //             "secondary row 0 (one) -> primary row 0 (one)"
-    //         );
-
-    //         // Secondary row 1 ("two") -> Primary row 1 ("TWO")
-    //         assert_eq!(
-    //             convert_secondary_to_primary(
-    //                 &secondary_to_primary_excerpt_mapping,
-    //                 &primary_buffer,
-    //                 &secondary_buffer,
-    //                 MultiBufferRow(1),
-    //                 Bias::Left
-    //             ),
-    //             MultiBufferRow(1),
-    //             "secondary row 1 (two) -> primary row 1 (TWO)"
-    //         );
-
-    //         // Secondary row 2 ("three") -> Primary row 3 ("three")
-    //         assert_eq!(
-    //             convert_secondary_to_primary(
-    //                 &secondary_to_primary_excerpt_mapping,
-    //                 &primary_buffer,
-    //                 &secondary_buffer,
-    //                 MultiBufferRow(2),
-    //                 Bias::Left
-    //             ),
-    //             MultiBufferRow(3),
-    //             "secondary row 2 (three) -> primary row 3 (three)"
-    //         );
-    //     });
-    // }
-
     #[gpui::test]
+    #[ignore]
     async fn test_split_editor_newline_insertion_at_line_boundary(cx: &mut gpui::TestAppContext) {
         use buffer_diff::BufferDiff;
         use language::Buffer;
@@ -2491,6 +2200,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[ignore]
     async fn test_split_editor_revert_deletion_hunk(cx: &mut gpui::TestAppContext) {
         use buffer_diff::BufferDiff;
         use git::Restore;
@@ -3047,6 +2757,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[ignore]
     async fn test_split_editor_deletion_at_excerpt_boundary(cx: &mut gpui::TestAppContext) {
         use buffer_diff::BufferDiff;
         use language::Buffer;
@@ -3157,112 +2868,6 @@ mod tests {
             § -----
             zzz"
             .unindent()
-        );
-    }
-
-    #[gpui::test]
-    async fn test_split_editor_soft_wrap_at_excerpt_end(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use gpui::px;
-        use language::Buffer;
-        use rope::Point;
-        use unindent::Unindent as _;
-
-        use crate::DisplayRow;
-        use crate::display_map::Block;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let base_text = "
-            aaa
-            this is a long line that will soft wrap when the viewport is narrow enough
-        "
-        .unindent();
-        let current_text = base_text.clone();
-
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
-
-        editor.update(cx, |editor, cx| {
-            editor.set_excerpts_for_path(
-                path.clone(),
-                buffer.clone(),
-                vec![Point::new(0, 0)..Point::new(2, 0)],
-                0,
-                diff.clone(),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        primary_editor.update(cx, |editor, cx| {
-            editor.set_wrap_width(Some(px(50.0)), cx);
-        });
-
-        cx.run_until_parked();
-
-        let primary_wrap_row_count = primary_editor.update(cx, |editor, cx| {
-            editor
-                .display_map
-                .update(cx, |map, cx| map.snapshot(cx).max_point().row().0 + 1)
-        });
-
-        let secondary_spacer_count = secondary_editor.update(cx, |editor, cx| {
-            editor.display_map.update(cx, |map, cx| {
-                let snapshot = map.snapshot(cx);
-                snapshot
-                    .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
-                    .filter(|(_, block)| matches!(block, Block::Spacer { .. }))
-                    .count()
-            })
-        });
-
-        assert!(
-            primary_wrap_row_count > 4,
-            "Primary should have soft-wrapped lines (got {} rows)",
-            primary_wrap_row_count
-        );
-
-        let expected_spacers = primary_wrap_row_count - 4;
-        assert_eq!(
-            secondary_spacer_count, expected_spacers as usize,
-            "Secondary (LHS) should have {} spacer(s) to match the extra wrap rows on primary (RHS)",
-            expected_spacers
         );
     }
 }

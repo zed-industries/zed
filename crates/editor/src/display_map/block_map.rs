@@ -885,7 +885,6 @@ impl BlockMap {
                 let new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
                 blocks_in_edit.extend(self.spacer_blocks(
                     new_buffer_start..new_buffer_end,
-                    new_start..new_end,
                     wrap_snapshot,
                     companion_snapshot,
                     companion,
@@ -1059,8 +1058,7 @@ impl BlockMap {
 
     fn spacer_blocks(
         &self,
-        mut new_buffer_range: Range<MultiBufferPoint>,
-        _new_wrap_row_range: Range<WrapRow>,
+        new_buffer_range: Range<MultiBufferPoint>,
         wrap_snapshot: &WrapSnapshot,
         companion_snapshot: &WrapSnapshot,
         companion: &Companion,
@@ -1068,11 +1066,6 @@ impl BlockMap {
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
-
-        if new_buffer_range.end.column > 0 {
-            new_buffer_range.end.row += 1;
-            new_buffer_range.end.column = 0;
-        }
 
         let row_range =
             MultiBufferRow(new_buffer_range.start.row)..MultiBufferRow(new_buffer_range.end.row);
@@ -1127,24 +1120,15 @@ impl BlockMap {
                 let companion_wrap = companion_snapshot
                     .make_wrap_point(Point::new(current_range.end.0, 0), Bias::Left)
                     .row();
-                dbg!(our_wrap, companion_wrap, current_boundary, excerpt_end);
 
                 let expected_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
-                if dbg!(expected_delta) > dbg!(delta) {
+                if expected_delta > delta {
                     let spacer_height = (expected_delta - delta) as u32;
                     let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
 
-                    let is_excerpt_boundary =
-                        current_boundary == excerpt_end && !is_last_excerpt && our_wrap.0 > 0;
-                    let placement = if is_excerpt_boundary {
-                        BlockPlacement::Below(WrapRow(our_wrap.0 - 1))
-                    } else {
-                        BlockPlacement::Above(our_wrap)
-                    };
-
                     result.push((
-                        placement,
+                        BlockPlacement::Above(our_wrap),
                         Block::Spacer {
                             id: spacer_id,
                             height: spacer_height,
@@ -4294,10 +4278,8 @@ mod tests {
             multibuffer.snapshot(cx)
         });
 
-        let (rhs_inlay_snapshot, rhs_inlay_edits) = rhs_inlay_map.sync(
-            rhs_buffer_snapshot.clone(),
-            subscription.consume().into_inner(),
-        );
+        let (rhs_inlay_snapshot, rhs_inlay_edits) =
+            rhs_inlay_map.sync(rhs_buffer_snapshot, subscription.consume().into_inner());
         let (rhs_fold_snapshot, rhs_fold_edits) =
             rhs_fold_map.read(rhs_inlay_snapshot, rhs_inlay_edits);
         let (rhs_tab_snapshot, rhs_tab_edits) =

@@ -18,6 +18,35 @@ use text::{
 };
 use util::ResultExt;
 
+fn patch_old_to_new_with_bias(patch: &Patch<Point>, old: Point, bias: Bias) -> Point {
+    let edits = patch.edits();
+    let ix = match edits.binary_search_by(|probe| probe.old.start.cmp(&old)) {
+        Ok(ix) => ix,
+        Err(ix) => {
+            if ix == 0 {
+                return old;
+            } else {
+                ix - 1
+            }
+        }
+    };
+    if let Some(edit) = edits.get(ix) {
+        let dominated_by_edit =
+            old > edit.old.end || (old == edit.old.end && edit.old.start < edit.old.end);
+        if dominated_by_edit {
+            edit.new.end + (old - edit.old.end)
+        } else {
+            if bias == Bias::Left {
+                edit.new.start
+            } else {
+                edit.new.end
+            }
+        }
+    } else {
+        old
+    }
+}
+
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
@@ -378,7 +407,7 @@ impl BufferDiffSnapshot {
                 // Found a hunk that starts before the target.
                 let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
                 let prev_hunk_buffer_end = hunk.buffer_range.end;
-                // FIXME ge?
+                // TODO(split-diff) ge?
                 if target.cmp(&prev_hunk_buffer_end, buffer).is_gt() {
                     // Target boundary lies between hunks (i.e. in an unmodified region).
                     cursor.next();
@@ -391,13 +420,16 @@ impl BufferDiffSnapshot {
                     let edits: Vec<Edit<Point>> = buffer
                         .edits_since_in_range::<Point>(self.buffer_version(), inter_hunk_range)
                         .collect();
-                    let patch = Patch::new(edits);
+                    let mut patch = Patch::new(edits);
+                    patch.invert();
 
                     let relative_target_point =
                         target_point - prev_hunk_buffer_end.to_point(buffer);
                     let base = prev_hunk_base_text_end.to_point(self.base_text());
-                    let start = base + patch.new_to_old(relative_target_point, Bias::Left);
-                    let end = base + patch.new_to_old(relative_target_point, Bias::Right);
+                    let start = base
+                        + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Left);
+                    let end = base
+                        + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Right);
                     start.row..end.row
                 } else {
                     // Target boundary lies inside the added range of a hunk.
@@ -422,10 +454,11 @@ impl BufferDiffSnapshot {
                 let edits: Vec<Edit<Point>> = buffer
                     .edits_since_in_range::<Point>(self.buffer_version(), inter_hunk_range)
                     .collect();
-                let patch = Patch::new(edits);
+                let mut patch = Patch::new(edits);
+                patch.invert();
 
-                let start = patch.new_to_old(target_point, Bias::Left);
-                let end = patch.new_to_old(target_point, Bias::Right);
+                let start = patch_old_to_new_with_bias(&patch, target_point, Bias::Left);
+                let end = patch_old_to_new_with_bias(&patch, target_point, Bias::Right);
                 start.row..end.row
             }
         })
@@ -457,7 +490,7 @@ impl BufferDiffSnapshot {
                 // Found a hunk that starts before the target.
                 let prev_hunk_buffer_end = cursor.end().buffer_range.end;
                 let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
-                // FIXME ge?
+                // TODO(split-diff) ge?
                 if target > prev_hunk_base_text_end {
                     cursor.next();
                     let inter_hunk_range = prev_hunk_buffer_end
@@ -474,8 +507,10 @@ impl BufferDiffSnapshot {
                     let relative_target_point =
                         target_point - prev_hunk_base_text_end.to_point(self.base_text());
                     let base = prev_hunk_buffer_end.to_point(buffer);
-                    let start = base + patch.old_to_new(relative_target_point, Bias::Left);
-                    let end = base + patch.old_to_new(relative_target_point, Bias::Right);
+                    let start = base
+                        + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Left);
+                    let end = base
+                        + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Right);
                     start.row..end.row
                 } else {
                     let buffer_start = hunk.buffer_range.start.to_point(buffer);
@@ -502,8 +537,8 @@ impl BufferDiffSnapshot {
                     .collect();
                 let patch = Patch::new(edits);
 
-                let start = patch.old_to_new(target_point, Bias::Left);
-                let end = patch.old_to_new(target_point, Bias::Right);
+                let start = patch_old_to_new_with_bias(&patch, target_point, Bias::Left);
+                let end = patch_old_to_new_with_bias(&patch, target_point, Bias::Right);
                 start.row..end.row
             }
         })
@@ -2772,7 +2807,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
+        let diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base, cx);
 
         let base_rows: Vec<_> = diff.rows_to_base_text_rows(0..8, &buffer).collect();
         assert_eq!(
@@ -2809,7 +2844,7 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
+        let diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base, cx);
 
         let base_rows: Vec<_> = diff.rows_to_base_text_rows(0..6, &buffer).collect();
         assert_eq!(base_rows, vec![0..1, 2..2, 3..3, 4..4, 5..5, 5..5, 5..5]);
@@ -2829,5 +2864,157 @@ mod tests {
 
         let buffer_rows: Vec<_> = diff.base_text_rows_to_rows(0..5, &buffer).collect();
         assert_eq!(buffer_rows, vec![0..0, 0..0, 1..5, 1..5, 5..5, 6..8]);
+    }
+
+    #[gpui::test]
+    fn test_patch_old_to_new_with_bias() {
+        let patch = Patch::new(vec![
+            Edit {
+                old: Point::new(2, 0)..Point::new(4, 0),
+                new: Point::new(2, 0)..Point::new(4, 0),
+            },
+            Edit {
+                old: Point::new(7, 0)..Point::new(8, 0),
+                new: Point::new(7, 0)..Point::new(11, 0),
+            },
+        ]);
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(0, 0), Bias::Left),
+            Point::new(0, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(0, 0), Bias::Right),
+            Point::new(0, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(1, 0), Bias::Left),
+            Point::new(1, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(1, 0), Bias::Right),
+            Point::new(1, 0)
+        );
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(2, 0), Bias::Left),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(2, 0), Bias::Right),
+            Point::new(4, 0)
+        );
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(3, 0), Bias::Left),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(3, 0), Bias::Right),
+            Point::new(4, 0)
+        );
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(4, 0), Bias::Left),
+            Point::new(4, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(4, 0), Bias::Right),
+            Point::new(4, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(5, 0), Bias::Left),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(6, 0), Bias::Left),
+            Point::new(6, 0)
+        );
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(7, 0), Bias::Left),
+            Point::new(7, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(7, 0), Bias::Right),
+            Point::new(11, 0)
+        );
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(8, 0), Bias::Left),
+            Point::new(11, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(8, 0), Bias::Right),
+            Point::new(11, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(9, 0), Bias::Left),
+            Point::new(12, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&patch, Point::new(9, 0), Bias::Right),
+            Point::new(12, 0)
+        );
+
+        let deletion_patch = Patch::new(vec![Edit {
+            old: Point::new(5, 0)..Point::new(10, 0),
+            new: Point::new(5, 0)..Point::new(5, 0),
+        }]);
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(4, 0), Bias::Left),
+            Point::new(4, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(5, 0), Bias::Left),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(5, 0), Bias::Right),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(7, 0), Bias::Left),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(7, 0), Bias::Right),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(10, 0), Bias::Left),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(10, 0), Bias::Right),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&deletion_patch, Point::new(11, 0), Bias::Left),
+            Point::new(6, 0)
+        );
+
+        let insertion_patch = Patch::new(vec![Edit {
+            old: Point::new(5, 0)..Point::new(5, 0),
+            new: Point::new(5, 0)..Point::new(10, 0),
+        }]);
+
+        assert_eq!(
+            patch_old_to_new_with_bias(&insertion_patch, Point::new(4, 0), Bias::Left),
+            Point::new(4, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&insertion_patch, Point::new(5, 0), Bias::Left),
+            Point::new(5, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&insertion_patch, Point::new(5, 0), Bias::Right),
+            Point::new(10, 0)
+        );
+        assert_eq!(
+            patch_old_to_new_with_bias(&insertion_patch, Point::new(6, 0), Bias::Left),
+            Point::new(11, 0)
+        );
     }
 }

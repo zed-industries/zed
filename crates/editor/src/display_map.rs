@@ -432,7 +432,6 @@ fn buffer_row_to_multibuffer_row(
 ///
 /// See the [module level documentation](self) for more information.
 pub struct DisplayMap {
-    /// The entity ID of this display map, used to determine lhs/rhs in companion relationships.
     entity_id: EntityId,
     /// The buffer that we are displaying.
     buffer: Entity<MultiBuffer>,
@@ -515,17 +514,6 @@ impl Companion {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         };
         convert_fn(excerpt_map, our_snapshot, companion_snapshot, rows)
-    }
-
-    pub(crate) fn excerpt_to_companion_excerpt(
-        &self,
-        display_map_id: EntityId,
-    ) -> &HashMap<ExcerptId, ExcerptId> {
-        if display_map_id == self.rhs_display_map_id {
-            &self.rhs_excerpt_to_lhs_excerpt
-        } else {
-            &self.lhs_excerpt_to_rhs_excerpt
-        }
     }
 
     pub(crate) fn companion_excerpt_to_excerpt(
@@ -655,7 +643,7 @@ impl DisplayMap {
             snapshot.clone(),
             edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         if let Some((companion_dm, _)) = &self.companion {
@@ -666,7 +654,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&snapshot, &edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -675,10 +663,6 @@ impl DisplayMap {
 
     pub(crate) fn companion(&self) -> Option<&Entity<Companion>> {
         self.companion.as_ref().map(|(_, c)| c)
-    }
-
-    pub(crate) fn entity_id(&self) -> EntityId {
-        self.entity_id
     }
 
     pub(crate) fn companion_excerpt_to_my_excerpt(
@@ -725,7 +709,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
-                companion_ref.as_deref().map(|c| (c, self.entity_id)),
+                companion_ref.map(|c| (c, self.entity_id)),
             )
             .snapshot;
 
@@ -737,7 +721,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -800,7 +784,7 @@ impl DisplayMap {
             snapshot,
             edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         let inline = creases.iter().filter_map(|crease| {
@@ -832,7 +816,7 @@ impl DisplayMap {
             self_new_wrap_snapshot,
             self_new_wrap_edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         let blocks = creases.into_iter().filter_map(|crease| {
             if let Crease::Block {
@@ -879,7 +863,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -920,7 +904,7 @@ impl DisplayMap {
             snapshot,
             edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         let (snapshot, edits) = fold_map.remove_folds(ranges, type_id);
@@ -941,7 +925,7 @@ impl DisplayMap {
             self_new_wrap_snapshot,
             self_new_wrap_edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         if let Some((companion_dm, _)) = &self.companion {
@@ -952,7 +936,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -997,7 +981,7 @@ impl DisplayMap {
             snapshot,
             edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         let (snapshot, edits) =
@@ -1019,7 +1003,7 @@ impl DisplayMap {
             self_new_wrap_snapshot,
             self_new_wrap_edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
 
@@ -1031,7 +1015,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1057,7 +1041,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         block_map.disable_header_for_buffer(buffer_id);
 
@@ -1069,7 +1053,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1101,7 +1085,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         block_map.fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
@@ -1121,7 +1105,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                     if !their_buffer_ids.is_empty() {
                         block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
@@ -1156,7 +1140,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         block_map.unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
@@ -1176,7 +1160,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                     if !their_buffer_ids.is_empty() {
                         block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
@@ -1239,7 +1223,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         let result = block_map.insert(blocks);
 
@@ -1251,7 +1235,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1279,7 +1263,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         block_map.resize(heights);
 
@@ -1291,7 +1275,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1322,7 +1306,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         block_map.remove(ids);
 
@@ -1334,7 +1318,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1364,7 +1348,7 @@ impl DisplayMap {
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
         let block_row = block_map.row_for_block(block_id)?;
 
@@ -1376,7 +1360,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1507,7 +1491,7 @@ impl DisplayMap {
             snapshot,
             edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         let (snapshot, edits) = fold_map.update_fold_widths(widths);
@@ -1529,7 +1513,7 @@ impl DisplayMap {
             self_new_wrap_snapshot,
             self_new_wrap_edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         if let Some((companion_dm, _)) = &self.companion {
@@ -1540,7 +1524,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });
@@ -1589,7 +1573,7 @@ impl DisplayMap {
             snapshot,
             edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
@@ -1611,7 +1595,7 @@ impl DisplayMap {
             self_new_wrap_snapshot,
             self_new_wrap_edits,
             companion_wrap_edits,
-            companion_ref.as_deref().map(|c| (c, self.entity_id)),
+            companion_ref.map(|c| (c, self.entity_id)),
         );
 
         if let Some((companion_dm, _)) = &self.companion {
@@ -1622,7 +1606,7 @@ impl DisplayMap {
                         companion_snapshot,
                         companion_edits,
                         Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.as_deref().map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
             });

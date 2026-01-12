@@ -3,7 +3,6 @@ use std::{
     cmp, mem,
     ops::{Add, AddAssign, Sub},
 };
-use sum_tree::Bias;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Patch<T>(Vec<Edit<T>>);
@@ -205,7 +204,7 @@ where
         composed
     }
 
-    pub fn old_to_new(&self, old: T, bias: Bias) -> T {
+    pub fn old_to_new(&self, old: T) -> T {
         let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
             Ok(ix) => ix,
             Err(ix) => {
@@ -217,47 +216,13 @@ where
             }
         };
         if let Some(edit) = self.0.get(ix) {
-            let dominated_by_edit =
-                old > edit.old.end || (old == edit.old.end && edit.old.start < edit.old.end);
-            if dominated_by_edit {
+            if old >= edit.old.end {
                 edit.new.end + (old - edit.old.end)
             } else {
-                if bias == Bias::Left {
-                    edit.new.start
-                } else {
-                    edit.new.end
-                }
+                edit.new.start
             }
         } else {
             old
-        }
-    }
-
-    pub fn new_to_old(&self, new: T, bias: Bias) -> T {
-        let ix = match self.0.binary_search_by(|probe| probe.new.start.cmp(&new)) {
-            Ok(ix) => ix,
-            Err(ix) => {
-                if ix == 0 {
-                    return new;
-                } else {
-                    ix - 1
-                }
-            }
-        };
-        if let Some(edit) = self.0.get(ix) {
-            let dominated_by_edit =
-                new > edit.new.end || (new == edit.new.end && edit.new.start < edit.new.end);
-            if dominated_by_edit {
-                edit.old.end + (new - edit.new.end)
-            } else {
-                if bias == Bias::Left {
-                    edit.old.start
-                } else {
-                    edit.old.end
-                }
-            }
-        } else {
-            new
         }
     }
 }
@@ -517,130 +482,16 @@ mod tests {
                 new: 7..11,
             },
         ]);
-
-        assert_eq!(patch.old_to_new(0, Bias::Left), 0);
-        assert_eq!(patch.old_to_new(0, Bias::Right), 0);
-        assert_eq!(patch.old_to_new(1, Bias::Left), 1);
-        assert_eq!(patch.old_to_new(1, Bias::Right), 1);
-
-        assert_eq!(patch.old_to_new(2, Bias::Left), 2);
-        assert_eq!(patch.old_to_new(2, Bias::Right), 4);
-
-        assert_eq!(patch.old_to_new(3, Bias::Left), 2);
-        assert_eq!(patch.old_to_new(3, Bias::Right), 4);
-
-        assert_eq!(patch.old_to_new(4, Bias::Left), 4);
-        assert_eq!(patch.old_to_new(4, Bias::Right), 4);
-        assert_eq!(patch.old_to_new(5, Bias::Left), 5);
-        assert_eq!(patch.old_to_new(6, Bias::Left), 6);
-
-        assert_eq!(patch.old_to_new(7, Bias::Left), 7);
-        assert_eq!(patch.old_to_new(7, Bias::Right), 11);
-
-        assert_eq!(patch.old_to_new(8, Bias::Left), 11);
-        assert_eq!(patch.old_to_new(8, Bias::Right), 11);
-        assert_eq!(patch.old_to_new(9, Bias::Left), 12);
-        assert_eq!(patch.old_to_new(9, Bias::Right), 12);
-
-        let deletion_patch = Patch(vec![Edit {
-            old: 5..10,
-            new: 5..5,
-        }]);
-
-        assert_eq!(deletion_patch.old_to_new(4, Bias::Left), 4);
-        assert_eq!(deletion_patch.old_to_new(5, Bias::Left), 5);
-        assert_eq!(deletion_patch.old_to_new(5, Bias::Right), 5);
-        assert_eq!(deletion_patch.old_to_new(7, Bias::Left), 5);
-        assert_eq!(deletion_patch.old_to_new(7, Bias::Right), 5);
-        assert_eq!(deletion_patch.old_to_new(10, Bias::Left), 5);
-        assert_eq!(deletion_patch.old_to_new(10, Bias::Right), 5);
-        assert_eq!(deletion_patch.old_to_new(11, Bias::Left), 6);
-
-        let insertion_patch = Patch(vec![Edit {
-            old: 5..5,
-            new: 5..10,
-        }]);
-
-        assert_eq!(insertion_patch.old_to_new(4, Bias::Left), 4);
-        assert_eq!(insertion_patch.old_to_new(5, Bias::Left), 10);
-        assert_eq!(insertion_patch.old_to_new(5, Bias::Right), 10);
-        assert_eq!(insertion_patch.old_to_new(6, Bias::Left), 11);
-    }
-
-    #[gpui::test]
-    fn test_new_to_old() {
-        let patch = Patch(vec![
-            Edit {
-                old: 2..4,
-                new: 2..4,
-            },
-            Edit {
-                old: 7..8,
-                new: 7..11,
-            },
-        ]);
-
-        // Positions before any edit
-        assert_eq!(patch.new_to_old(0, Bias::Left), 0);
-        assert_eq!(patch.new_to_old(0, Bias::Right), 0);
-        assert_eq!(patch.new_to_old(1, Bias::Left), 1);
-        assert_eq!(patch.new_to_old(1, Bias::Right), 1);
-
-        // Position at start of first edit (same-size replacement)
-        assert_eq!(patch.new_to_old(2, Bias::Left), 2);
-        assert_eq!(patch.new_to_old(2, Bias::Right), 4);
-
-        // Position inside first edit
-        assert_eq!(patch.new_to_old(3, Bias::Left), 2);
-        assert_eq!(patch.new_to_old(3, Bias::Right), 4);
-
-        // Position after first edit
-        assert_eq!(patch.new_to_old(4, Bias::Left), 4);
-        assert_eq!(patch.new_to_old(4, Bias::Right), 4);
-        assert_eq!(patch.new_to_old(5, Bias::Left), 5);
-        assert_eq!(patch.new_to_old(6, Bias::Left), 6);
-
-        // Position at start of second edit (insertion: old 7..8 -> new 7..11)
-        assert_eq!(patch.new_to_old(7, Bias::Left), 7);
-        assert_eq!(patch.new_to_old(7, Bias::Right), 8);
-
-        // Position inside second edit's new range
-        assert_eq!(patch.new_to_old(8, Bias::Left), 7);
-        assert_eq!(patch.new_to_old(8, Bias::Right), 8);
-        assert_eq!(patch.new_to_old(9, Bias::Left), 7);
-        assert_eq!(patch.new_to_old(10, Bias::Right), 8);
-
-        // Position after second edit
-        assert_eq!(patch.new_to_old(11, Bias::Left), 8);
-        assert_eq!(patch.new_to_old(11, Bias::Right), 8);
-        assert_eq!(patch.new_to_old(12, Bias::Left), 9);
-        assert_eq!(patch.new_to_old(15, Bias::Right), 12);
-
-        // Test with pure insertion (old range has zero width)
-        let insertion_patch = Patch(vec![Edit {
-            old: 5..5,
-            new: 5..10,
-        }]);
-
-        assert_eq!(insertion_patch.new_to_old(4, Bias::Left), 4);
-        assert_eq!(insertion_patch.new_to_old(5, Bias::Left), 5);
-        assert_eq!(insertion_patch.new_to_old(5, Bias::Right), 5);
-        assert_eq!(insertion_patch.new_to_old(7, Bias::Left), 5);
-        assert_eq!(insertion_patch.new_to_old(7, Bias::Right), 5);
-        assert_eq!(insertion_patch.new_to_old(10, Bias::Left), 5);
-        assert_eq!(insertion_patch.new_to_old(10, Bias::Right), 5);
-        assert_eq!(insertion_patch.new_to_old(11, Bias::Left), 6);
-
-        // Test with pure deletion (new range has zero width - position can't fall inside)
-        let deletion_patch = Patch(vec![Edit {
-            old: 5..10,
-            new: 5..5,
-        }]);
-
-        assert_eq!(deletion_patch.new_to_old(4, Bias::Left), 4);
-        assert_eq!(deletion_patch.new_to_old(5, Bias::Left), 10);
-        assert_eq!(deletion_patch.new_to_old(5, Bias::Right), 10);
-        assert_eq!(deletion_patch.new_to_old(6, Bias::Left), 11);
+        assert_eq!(patch.old_to_new(0), 0);
+        assert_eq!(patch.old_to_new(1), 1);
+        assert_eq!(patch.old_to_new(2), 2);
+        assert_eq!(patch.old_to_new(3), 2);
+        assert_eq!(patch.old_to_new(4), 4);
+        assert_eq!(patch.old_to_new(5), 5);
+        assert_eq!(patch.old_to_new(6), 6);
+        assert_eq!(patch.old_to_new(7), 7);
+        assert_eq!(patch.old_to_new(8), 11);
+        assert_eq!(patch.old_to_new(9), 12);
     }
 
     #[gpui::test(iterations = 100)]
