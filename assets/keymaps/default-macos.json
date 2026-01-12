@@ -446,6 +446,12 @@
       "alt-cmd-r": "search::ToggleReplace",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
+    },
+  },
+  {
+    "context": "QuickSearch && in_replace",
+    "use_key_equivalents": true,
+    "bindings": {
       "enter": "quick_search::ReplaceNext",
       "cmd-enter": "quick_search::ReplaceAll",
     },
