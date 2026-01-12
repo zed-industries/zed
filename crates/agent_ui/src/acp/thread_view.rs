@@ -2354,6 +2354,9 @@ impl AcpThreadView {
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
 
+                let can_edit_message = message.id.is_some();
+                let is_editable_message = entry_ix == 0 && can_edit_message;
+
                 let rules_item = if entry_ix == 0 {
                     self.render_rules_item(cx)
                 } else {
@@ -2381,7 +2384,7 @@ impl AcpThreadView {
                         }
                     })
                     .pb_3()
-                    .px_2()
+                    .px_3()
                     .gap_1p5()
                     .w_full()
                     .children(rules_item)
@@ -2417,16 +2420,19 @@ impl AcpThreadView {
                                     .rounded_md()
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
+                                    .when(is_editable_message, |this| {
+                                        this.bg(cx.theme().colors().editor_background.opacity(0.92))
+                                    })
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().shadow_sm()
                                     })
                                     .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
-                                    .map(|this|{
+                                    .map(|this| {
                                         if editing && editor_focus {
                                             this.border_color(focus_border)
-                                        } else if message.id.is_some() {
+                                        } else if can_edit_message {
                                             this.hover(|s| s.border_color(focus_border.opacity(0.8)))
                                         } else {
                                             this
@@ -2447,7 +2453,7 @@ impl AcpThreadView {
                                     .bg(cx.theme().colors().editor_background)
                                     .overflow_hidden();
 
-                                if message.id.is_some() {
+                                if can_edit_message {
                                     this.child(
                                         base_container
                                             .child(
@@ -2464,7 +2470,7 @@ impl AcpThreadView {
                                                         .tooltip(Tooltip::text("Loading Added Context…"))
                                                         .child(loading_contents_spinner(IconSize::XSmall))
                                                         .into_any_element()
-                                                } else {
+                                                } else if is_editable_message {
                                                     IconButton::new("regenerate", IconName::Return)
                                                         .icon_color(Color::Muted)
                                                         .icon_size(IconSize::XSmall)
@@ -2478,7 +2484,23 @@ impl AcpThreadView {
                                                                     entry_ix, editor.clone(), window, cx,
                                                                 );
                                                             }
-                                                        })).into_any_element()
+                                                        }))
+                                                        .into_any_element()
+                                                } else {
+                                                    // For now, reuse the existing editing flow:
+                                                    // - Click pencil to focus the message editor (which activates editing state)
+                                                    // - Use the existing close/return controls once focused
+                                                    IconButton::new("edit", IconName::Pencil)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .tooltip(Tooltip::text("Edit"))
+                                                        .on_click(cx.listener({
+                                                            let focus_handle = editor.focus_handle(cx);
+                                                            move |_, _, window, cx| {
+                                                                focus_handle.focus(window, cx);
+                                                            }
+                                                        }))
+                                                        .into_any_element()
                                                 }
                                             )
                                     )

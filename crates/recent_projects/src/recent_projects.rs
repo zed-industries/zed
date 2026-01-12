@@ -721,6 +721,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         RemoteConnectionOptions::Docker(_) => IconName::Box,
                                         #[cfg(any(test, feature = "test-support"))]
                                         RemoteConnectionOptions::Mock(_) => IconName::Server,
+                                        #[allow(unreachable_patterns)]
+                                        _ => IconName::Server,
                                     })
                                     .color(Color::Muted)
                                     .into_any_element()

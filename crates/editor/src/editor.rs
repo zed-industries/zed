@@ -20865,42 +20865,46 @@ impl Editor {
         let theme = cx.theme();
         let colors = theme.colors();
 
-        // Hardcoded review comments for now (icon path, comment text, timestamp)
+        // Hardcoded review comments for now (icon path, comment text)
         let hardcoded_comments = vec![
             (
                 "icons/ai_claude.svg",
-                "This looks good, but consider adding error handling here.",
-                "2 hours ago",
+                "The UserMessage component shouldn't have been deleted.",
             ),
             (
                 "icons/ai_gemini.svg",
-                "Can we add a test for this case?",
-                "1 day ago",
+                "We should prefer to always use the import alias `@/`.",
             ),
         ];
 
         let avatar_size = px(20.);
+        let action_icon_size = IconSize::XSmall;
 
         v_flex()
             .w_full()
             .bg(colors.editor_background)
             .border_b_1()
             .border_color(colors.border)
+            .px_2()
             .pb_2()
             .gap_2()
-            // Top row: editable input with user's avatar (Zed logo)
+            // Top row: editable input with user's avatar, with darker background and close/return actions.
             .child(
                 h_flex()
                     .w_full()
                     .items_center()
                     .gap_2()
-                    .px_3()
-                    .py_1()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .bg(colors.surface_background)
                     .child(
                         div().size(avatar_size).flex_shrink_0().child(
-                            Icon::new(IconName::ZedAssistant)
+                            // Placeholder for the user's avatar (should match "Toggle User Menu" avatar elsewhere).
+                            // We don't have access to user state here, so use an icon placeholder for now.
+                            Icon::new(IconName::Person)
                                 .size(IconSize::Small)
-                                .color(ui::Color::Accent),
+                                .color(ui::Color::Muted),
                         ),
                     )
                     .child(
@@ -20913,40 +20917,76 @@ impl Editor {
                             .px_2()
                             .py_1()
                             .child(prompt_editor.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap_1()
+                            .child(
+                                IconButton::new("diff-review-close", IconName::Close)
+                                    .icon_color(ui::Color::Muted)
+                                    .icon_size(action_icon_size)
+                                    .tooltip(Tooltip::text("Close")),
+                            )
+                            .child(
+                                IconButton::new("diff-review-regenerate", IconName::Return)
+                                    .icon_color(ui::Color::Muted)
+                                    .icon_size(action_icon_size)
+                                    .tooltip(Tooltip::text(
+                                        "Editing will restart the thread from this point.",
+                                    )),
+                            ),
                     ),
             )
-            // Hardcoded review comments below
-            .children(
-                hardcoded_comments
-                    .into_iter()
-                    .map(|(icon_path, comment, time)| {
-                        h_flex()
-                            .w_full()
-                            .items_start()
-                            .gap_2()
-                            .px_3()
-                            .py_1()
-                            .mx_1()
-                            .bg(colors.surface_background)
-                            .rounded_md()
-                            .child(
-                                div().size(avatar_size).flex_shrink_0().child(
-                                    Icon::from_path(icon_path)
-                                        .size(IconSize::Small)
-                                        .color(ui::Color::Muted),
+            // Hardcoded review comments below (each gets edit + delete actions on the right).
+            .children(hardcoded_comments.into_iter().enumerate().map(
+                |(comment_ix, (icon_path, comment))| {
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(colors.surface_background)
+                        .child(
+                            div().size(avatar_size).flex_shrink_0().child(
+                                Icon::from_path(icon_path)
+                                    .size(IconSize::Small)
+                                    .color(ui::Color::Muted),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_sm()
+                                .text_color(colors.text)
+                                .child(comment),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    IconButton::new(
+                                        format!("diff-review-edit-{comment_ix}"),
+                                        IconName::Pencil,
+                                    )
+                                    .icon_color(ui::Color::Muted)
+                                    .icon_size(action_icon_size)
+                                    .tooltip(Tooltip::text("Edit")),
+                                )
+                                .child(
+                                    IconButton::new(
+                                        format!("diff-review-delete-{comment_ix}"),
+                                        IconName::Trash,
+                                    )
+                                    .icon_color(ui::Color::Muted)
+                                    .icon_size(action_icon_size)
+                                    .tooltip(Tooltip::text("Delete")),
                                 ),
-                            )
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .gap_1()
-                                    .child(div().text_sm().text_color(colors.text).child(comment))
-                                    .child(
-                                        div().text_xs().text_color(colors.text_muted).child(time),
-                                    ),
-                            )
-                    }),
-            )
+                        )
+                },
+            ))
             .into_any_element()
     }
 
