@@ -247,7 +247,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         };
         let label = symbol.label.text.clone();
         let line_number = symbol.range.start.0.row + 1;
-        let path = format!("{}:{}", path, line_number);
+        let path = path.into_owned();
 
         let settings = ThemeSettings::get_global(cx);
 
@@ -283,7 +283,15 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .child(LabelLike::new().child(
                             StyledText::new(label).with_default_highlights(&text_style, highlights),
                         ))
-                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            h_flex()
+                                .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(":{}", line_number))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder),
+                                ),
+                        ),
                 ),
         )
     }
