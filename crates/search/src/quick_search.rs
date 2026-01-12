@@ -88,7 +88,7 @@ const MAX_PREVIEW_HEIGHT: f32 = 600.0;
 pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
     preview_editor: Entity<Editor>,
-    replace_editor: Entity<Editor>,
+    replacement_editor: Entity<Editor>,
     focus_handle: FocusHandle,
     offset: gpui::Point<Pixels>,
     results_height: Pixels,
@@ -162,19 +162,19 @@ impl QuickSearch {
             editor
         });
 
-        let replace_editor = cx.new(|cx| {
+        let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Replace in project…", window, cx);
             editor
         });
 
-        let include_editor = cx.new(|cx| {
+        let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Include: e.g. src/**/*.rs", window, cx);
             editor
         });
 
-        let exclude_editor = cx.new(|cx| {
+        let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Exclude: e.g. vendor/*, *.lock", window, cx);
             editor
@@ -186,9 +186,9 @@ impl QuickSearch {
             workspace,
             project,
             preview_editor.clone(),
-            replace_editor.clone(),
-            include_editor.clone(),
-            exclude_editor.clone(),
+            replacement_editor.clone(),
+            included_files_editor.clone(),
+            excluded_files_editor.clone(),
             get_recent_query(cx),
             cx,
         );
@@ -199,7 +199,7 @@ impl QuickSearch {
                 cx.emit(DismissEvent);
             }),
             cx.subscribe_in(
-                &include_editor,
+                &included_files_editor,
                 window,
                 |this, _, event: &EditorEvent, window, cx| {
                     if matches!(event, EditorEvent::Edited { .. }) {
@@ -210,7 +210,7 @@ impl QuickSearch {
                 },
             ),
             cx.subscribe_in(
-                &exclude_editor,
+                &excluded_files_editor,
                 window,
                 |this, _, event: &EditorEvent, window, cx| {
                     if matches!(event, EditorEvent::Edited { .. }) {
@@ -257,7 +257,7 @@ impl QuickSearch {
         Self {
             picker,
             preview_editor,
-            replace_editor,
+            replacement_editor,
             focus_handle,
             offset: gpui::Point::default(),
             results_height: px(DEFAULT_RESULTS_HEIGHT),
@@ -267,8 +267,8 @@ impl QuickSearch {
         }
     }
 
-    fn replacement_text(&self, cx: &App) -> String {
-        self.replace_editor.read(cx).text(cx)
+    fn replacement(&self, cx: &App) -> String {
+        self.replacement_editor.read(cx).text(cx)
     }
 
     fn replace_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -277,7 +277,7 @@ impl QuickSearch {
             return;
         };
 
-        let replacement = self.replacement_text(cx);
+        let replacement = self.replacement(cx);
         let buffer = selected_match.buffer.clone();
         let project = delegate.project.clone();
         let anchor_range = selected_match.anchor_range.clone();
@@ -303,7 +303,7 @@ impl QuickSearch {
     }
 
     fn replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let replacement = self.replacement_text(cx);
+        let replacement = self.replacement(cx);
 
         let delegate = &self.picker.read(cx).delegate;
         let matches: Vec<_> = delegate.matches.clone();
@@ -377,7 +377,7 @@ impl Render for QuickSearch {
         let has_matches = match_count > 0;
 
         let focus_handle = self.focus_handle.clone();
-        let in_replace = self.replace_editor.focus_handle(cx).is_focused(window);
+        let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("QuickSearch");
@@ -402,7 +402,7 @@ impl Render for QuickSearch {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
                     let focus_handle = if picker.delegate.filters_enabled {
-                        picker.delegate.include_editor.focus_handle(cx)
+                        picker.delegate.included_files_editor.focus_handle(cx)
                     } else {
                         picker.focus_handle(cx)
                     };
@@ -447,7 +447,7 @@ impl Render for QuickSearch {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
                     let focus_handle = if picker.delegate.replace_enabled {
-                        picker.delegate.replace_editor.focus_handle(cx)
+                        picker.delegate.replacement_editor.focus_handle(cx)
                     } else {
                         picker.focus_handle(cx)
                     };
@@ -556,7 +556,7 @@ impl Render for QuickSearch {
                                             picker.delegate.replace_enabled =
                                                 !picker.delegate.replace_enabled;
                                             let focus_handle = if picker.delegate.replace_enabled {
-                                                picker.delegate.replace_editor.focus_handle(cx)
+                                                picker.delegate.replacement_editor.focus_handle(cx)
                                             } else {
                                                 picker.focus_handle(cx)
                                             };
@@ -741,9 +741,9 @@ pub struct QuickSearchDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     preview_editor: Entity<Editor>,
-    replace_editor: Entity<Editor>,
-    include_editor: Entity<Editor>,
-    exclude_editor: Entity<Editor>,
+    replacement_editor: Entity<Editor>,
+    included_files_editor: Entity<Editor>,
+    excluded_files_editor: Entity<Editor>,
     replace_enabled: bool,
     filters_enabled: bool,
     opened_only: bool,
@@ -762,9 +762,9 @@ impl QuickSearchDelegate {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         preview_editor: Entity<Editor>,
-        replace_editor: Entity<Editor>,
-        include_editor: Entity<Editor>,
-        exclude_editor: Entity<Editor>,
+        replacement_editor: Entity<Editor>,
+        included_files_editor: Entity<Editor>,
+        excluded_files_editor: Entity<Editor>,
         initial_query: Option<String>,
         cx: &App,
     ) -> Self {
@@ -772,9 +772,9 @@ impl QuickSearchDelegate {
             workspace,
             project,
             preview_editor,
-            replace_editor,
-            include_editor,
-            exclude_editor,
+            replacement_editor,
+            included_files_editor,
+            excluded_files_editor,
             replace_enabled: false,
             filters_enabled: false,
             opened_only: false,
@@ -899,14 +899,14 @@ impl QuickSearchDelegate {
         }
 
         let files_to_include = if self.filters_enabled {
-            let include_text = self.include_editor.read(cx).text(cx);
+            let include_text = self.included_files_editor.read(cx).text(cx);
             self.parse_path_matches(include_text, cx)
         } else {
             PathMatcher::default()
         };
 
         let files_to_exclude = if self.filters_enabled {
-            let exclude_text = self.exclude_editor.read(cx).text(cx);
+            let exclude_text = self.excluded_files_editor.read(cx).text(cx);
             self.parse_path_matches(exclude_text, cx)
         } else {
             PathMatcher::default()
@@ -1142,7 +1142,7 @@ impl PickerDelegate for QuickSearchDelegate {
                             div()
                                 .flex_1()
                                 .overflow_hidden()
-                                .child(self.replace_editor.clone()),
+                                .child(self.replacement_editor.clone()),
                         )
                         .child({
                             h_flex()
@@ -1203,7 +1203,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                     div()
                                         .flex_1()
                                         .overflow_hidden()
-                                        .child(self.include_editor.clone()),
+                                        .child(self.included_files_editor.clone()),
                                 ),
                         )
                         .child(
@@ -1219,7 +1219,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                     div()
                                         .flex_1()
                                         .overflow_hidden()
-                                        .child(self.exclude_editor.clone()),
+                                        .child(self.excluded_files_editor.clone()),
                                 ),
                         )
                         .child(
@@ -1393,7 +1393,7 @@ impl PickerDelegate for QuickSearchDelegate {
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let in_replace =
-            self.replace_enabled && self.replace_editor.focus_handle(cx).is_focused(window);
+            self.replace_enabled && self.replacement_editor.focus_handle(cx).is_focused(window);
 
         if in_replace {
             if secondary {
