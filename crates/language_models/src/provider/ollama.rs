@@ -625,9 +625,11 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut App) {
-        self.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    fn retry_connection(&self, cx: &mut Context<Self>) {
+        self.save_api_url(cx);
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -664,7 +666,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+    fn save_api_url(&self, cx: &mut Context<Self>) {
         let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
