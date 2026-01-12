@@ -1443,6 +1443,15 @@
     },
   },
   {
+    "context": "RunModal",
+    "bindings": {
+      "cmd-1": "new_process_modal::ActivateTaskTab",
+      "cmd-2": "new_process_modal::ActivateDebugTab",
+      "cmd-3": "new_process_modal::ActivateAttachTab",
+      "cmd-4": "new_process_modal::ActivateLaunchTab",
+    },
+  },
+  {
     "context": "GitPicker",
     "bindings": {
       "cmd-1": "git_picker::ActivateBranchesTab",
