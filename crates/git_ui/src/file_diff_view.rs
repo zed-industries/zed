@@ -138,17 +138,20 @@ impl FileDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    let (old_snapshot, new_snapshot) = this.update(cx, |this, cx| {
-                        (
-                            this.old_buffer.read(cx).snapshot(),
-                            this.new_buffer.read(cx).snapshot(),
-                        )
-                    })?;
+                    let (language_registry, old_snapshot, new_snapshot) =
+                        this.update(cx, |this, cx| {
+                            (
+                                this.old_buffer.read(cx).language_registry(),
+                                this.old_buffer.read(cx).snapshot(),
+                                this.new_buffer.read(cx).snapshot(),
+                            )
+                        })?;
                     diff.update(cx, |diff, cx| {
                         diff.set_base_text(
                             Some(old_snapshot.text().as_str().into()),
                             old_snapshot.language().cloned(),
-                            new_snapshot.text.clone(),
+                            language_registry,
+                            new_snapshot.clone(),
                             cx,
                         )
                     })
@@ -176,10 +179,11 @@ async fn build_buffer_diff(
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                new_buffer_snapshot.text.clone(),
+                new_buffer_snapshot.clone(),
                 Some(old_buffer_snapshot.text().into()),
                 true,
                 new_buffer_snapshot.language().cloned(),
+                Some(language_registry.clone()),
                 cx,
             )
         })

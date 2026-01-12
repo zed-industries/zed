@@ -568,7 +568,6 @@ impl SplittableEditor {
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_edit(rng, 1, cx);
                 });
-                let buffer_snapshot = buffer.read(cx).text_snapshot();
                 let ranges = diff.update(cx, |diff, cx| {
                     diff.recalculate_diff_sync(&buffer_snapshot, cx);
                     diff.snapshot(cx)
@@ -819,7 +818,7 @@ mod tests {
                             .read(cx)
                             .diff_for(buffer.read(cx).remote_id())
                             .unwrap();
-                        let buffer_snapshot = buffer.read(cx).text_snapshot();
+                        let buffer_snapshot = buffer.read(cx).snapshot();
                         diff.update(cx, |diff, cx| {
                             diff.recalculate_diff_sync(&buffer_snapshot, cx);
                         });
@@ -828,7 +827,7 @@ mod tests {
                     _ => {
                         log::info!("quiescing");
                         for buffer in buffers {
-                            let buffer_snapshot = buffer.read(cx).text_snapshot();
+                            let buffer_snapshot = buffer.read(cx).snapshot();
                             let diff = editor
                                 .primary_multibuffer
                                 .read(cx)

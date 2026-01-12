@@ -5654,7 +5654,7 @@ impl EditorElement {
         }
     }
 
-    fn layout_word_diff_highlights(
+    fn layout_diffs_highlights(
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         row_infos: &[RowInfo],
         start_row: DisplayRow,
@@ -5664,12 +5664,10 @@ impl EditorElement {
     ) {
         let colors = cx.theme().colors();
 
-        let word_highlights = display_hunks
+        let highlights = display_hunks
             .into_iter()
             .filter_map(|(hunk, _)| match hunk {
-                DisplayDiffHunk::Unfolded {
-                    word_diffs, status, ..
-                } => Some((word_diffs, status)),
+                DisplayDiffHunk::Unfolded { diffs, status, .. } => Some((diffs, status)),
                 _ => None,
             })
             .filter(|(_, status)| status.is_modified())
@@ -5695,7 +5693,7 @@ impl EditorElement {
                     })
             });
 
-        highlighted_ranges.extend(word_highlights);
+        highlighted_ranges.extend(highlights);
     }
 
     fn layout_diff_hunk_controls(
@@ -9794,7 +9792,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    Self::layout_word_diff_highlights(
+                    Self::layout_diffs_highlights(
                         &display_hunks,
                         &row_infos,
                         start_row,

@@ -11,8 +11,8 @@ use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 
 pub use settings::{
-    CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
+    CompletionSettingsContent, DiffStrategy, EditPredictionProvider, EditPredictionsMode,
+    FormatOnSave, Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
@@ -157,13 +157,14 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
-    /// Whether to enable word diff highlighting in the editor.
+    /// Controls how diffs are displayed in the editor.
     ///
-    /// When enabled, changed words within modified lines are highlighted
-    /// to show exactly what changed.
+    /// - `Line`: Show only line-level diffs without any word or syntax highlighting.
+    /// - `Word`: Highlight changed words within modified lines.
+    /// - `Syntax`: Use AST-based diff highlighting for more precise change detection.
     ///
-    /// Default: `true`
-    pub word_diff_enabled: bool,
+    /// Default: `Word`
+    pub diff_strategy: DiffStrategy,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -612,7 +613,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
-                word_diff_enabled: settings.word_diff_enabled.unwrap(),
+                diff_strategy: settings.diff_strategy.unwrap(),
             }
         }
 

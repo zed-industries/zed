@@ -5,10 +5,14 @@ use imara_diff::{
     intern::{InternedInput, Interner, Token},
     sources::lines_with_terminator,
 };
+use settings::DiffStrategy;
 use std::{fmt::Write, iter, ops::Range, sync::Arc};
 
 const MAX_WORD_DIFF_LEN: usize = 512;
 const MAX_WORD_DIFF_LINE_COUNT: usize = 8;
+
+/// Difftastic uses a higher value: https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/options.rs#L25
+pub const MAX_SYNTAX_DIFF_GRAPH_SIZE: usize = 1_000_000;
 
 /// Computes a diff between two strings, returning a unified diff string.
 pub fn unified_diff(old_text: &str, new_text: &str) -> String {
@@ -201,16 +205,20 @@ pub fn word_diff_ranges(
 
 pub struct DiffOptions {
     pub language_scope: Option<LanguageScope>,
+    pub diff_strategy: DiffStrategy,
     pub max_word_diff_len: usize,
     pub max_word_diff_line_count: usize,
+    pub max_syntax_diff_graph_size: usize,
 }
 
 impl Default for DiffOptions {
     fn default() -> Self {
         Self {
+            diff_strategy: Default::default(),
             language_scope: Default::default(),
             max_word_diff_len: MAX_WORD_DIFF_LEN,
             max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+            max_syntax_diff_graph_size: MAX_SYNTAX_DIFF_GRAPH_SIZE,
         }
     }
 }

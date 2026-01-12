@@ -1345,13 +1345,14 @@
   "tab_size": 4,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
-  // Whether to enable word diff highlighting in the editor.
+  // Controls how diffs are displayed in the editor.
   //
-  // When enabled, changed words within modified lines are highlighted
-  // to show exactly what changed.
+  // - "line": Show only line-level diffs without any word or syntax highlighting.
+  // - "word": Highlight changed words within modified lines.
+  // - "syntax": Use AST-based diff highlighting for more precise change detection.
   //
-  // Default: true
-  "word_diff_enabled": true,
+  // Default: "word"
+  "diff_strategy": "word",
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.

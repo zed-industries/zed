@@ -169,6 +169,7 @@ members = [
     "crates/supermaven_api",
     "crates/codestral",
     "crates/svg_preview",
+    "crates/syntax_diff",
     "crates/system_specs",
     "crates/tab_switcher",
     "crates/task",
@@ -396,6 +397,7 @@ story = { path = "crates/story" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
+syntax_diff = { path = "crates/syntax_diff" }
 supermaven_api = { path = "crates/supermaven_api" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }

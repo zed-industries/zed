@@ -140,8 +140,7 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<BufferOffset>,
     /// The status of this hunk (added/modified/deleted and secondary status).
     pub status: DiffHunkStatus,
-    /// The word diffs for this hunk.
-    pub word_diffs: Vec<Range<MultiBufferOffset>>,
+    pub diffs: Vec<Range<MultiBufferOffset>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -3983,36 +3982,37 @@ impl MultiBufferSnapshot {
                 range.end.row + 1
             };
 
-            let word_diffs =
-                (!hunk.base_word_diffs.is_empty() || !hunk.buffer_word_diffs.is_empty())
-                    .then(|| {
-                        let mut word_diffs = Vec::new();
+            let diffs = (!hunk.base_diffs.is_empty() || !hunk.buffer_diffs.is_empty())
+                .then(|| {
+                    let mut diffs = Vec::new();
 
-                        if self.show_deleted_hunks || is_inverted {
-                            let hunk_start_offset = if is_inverted {
-                                Anchor::in_buffer(
-                                    excerpt.id,
-                                    excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
-                                )
-                                .to_offset(self)
-                            } else {
-                                Anchor::in_buffer(excerpt.id, hunk.buffer_range.start)
-                                    .to_offset(self)
-                            };
+                    if self.show_deleted_hunks || is_inverted {
+                        let hunk_start_offset = if is_inverted {
+                            Anchor::in_buffer(
+                                excerpt.id,
+                                excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
+                            )
+                            .to_offset(self)
+                        } else {
+                            Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self)
+                        };
 
-                            word_diffs.extend(hunk.base_word_diffs.iter().map(|diff| {
-                                hunk_start_offset + diff.start..hunk_start_offset + diff.end
-                            }));
-                        }
+                        diffs.extend(hunk.base_diffs.iter().map(|diff| {
+                            hunk_start_offset + diff.start..hunk_start_offset + diff.end
+                        }));
+                    }
 
-                        if !is_inverted {
-                            word_diffs.extend(hunk.buffer_word_diffs.into_iter().map(|diff| {
+                    if !is_inverted {
+                        diffs.extend(
+                            hunk.buffer_diffs.into_iter().map(|diff| {
                                 Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)
-                            }));
-                        }
-                        word_diffs
-                    })
-                    .unwrap_or_default();
+                            }),
+                        );
+                    }
+
+                    diffs
+                })
+                .unwrap_or_default();
 
             let buffer_range = if is_inverted {
                 excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start)
@@ -4027,12 +4027,13 @@ impl MultiBufferSnapshot {
             } else {
                 DiffHunkStatusKind::Modified
             };
+
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range,
-                word_diffs,
+                diffs,
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
                 status: DiffHunkStatus {

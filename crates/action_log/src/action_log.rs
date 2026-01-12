@@ -78,6 +78,7 @@ impl ActionLog {
                     project.register_buffer_with_language_servers(&buffer, cx)
                 });
 
+                let snapshot = buffer.read(cx).snapshot();
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
@@ -103,7 +104,7 @@ impl ActionLog {
                     buffer: buffer.clone(),
                     diff_base,
                     unreviewed_edits,
-                    snapshot: text_snapshot,
+                    snapshot,
                     status,
                     version: buffer.read(cx).version(),
                     diff,
@@ -193,7 +194,7 @@ impl ActionLog {
     async fn maintain_diff(
         this: WeakEntity<Self>,
         buffer: Entity<Buffer>,
-        mut buffer_updates: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
+        mut buffer_updates: mpsc::UnboundedReceiver<(ChangeAuthor, language::BufferSnapshot)>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let git_store = this.read_with(cx, |this, cx| this.project.read(cx).git_store().clone())?;
@@ -252,7 +253,7 @@ impl ActionLog {
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
         author: ChangeAuthor,
-        buffer_snapshot: text::BufferSnapshot,
+        buffer_snapshot: language::BufferSnapshot,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let rebase = this.update(cx, |this, cx| {
@@ -388,12 +389,12 @@ impl ActionLog {
     async fn update_diff(
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
-        buffer_snapshot: text::BufferSnapshot,
+        buffer_snapshot: language::BufferSnapshot,
         new_base_text: Arc<str>,
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, language) = this.read_with(cx, |this, cx| {
+        let (diff, language, language_registry) = this.read_with(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
@@ -401,6 +402,7 @@ impl ActionLog {
             anyhow::Ok((
                 tracked_buffer.diff.clone(),
                 buffer.read(cx).language().cloned(),
+                buffer.read(cx).language_registry(),
             ))
         })??;
         let update = diff
@@ -410,6 +412,7 @@ impl ActionLog {
                     Some(new_base_text),
                     true,
                     language,
+                    language_registry,
                     cx,
                 )
             })
@@ -980,8 +983,8 @@ struct TrackedBuffer {
     status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
-    snapshot: text::BufferSnapshot,
-    diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
+    snapshot: language::BufferSnapshot,
+    diff_update: mpsc::UnboundedSender<(ChangeAuthor, language::BufferSnapshot)>,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -999,7 +1002,7 @@ impl TrackedBuffer {
 
     fn schedule_diff_update(&self, author: ChangeAuthor, cx: &App) {
         self.diff_update
-            .unbounded_send((author, self.buffer.read(cx).text_snapshot()))
+            .unbounded_send((author, self.buffer.read(cx).snapshot()))
             .ok();
     }
 }

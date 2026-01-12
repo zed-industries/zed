@@ -204,15 +204,18 @@ impl PendingDiff {
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
         self.update_diff = cx.spawn(async move |diff, cx| {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
             let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
+            let language_registry = buffer.read_with(cx, |buffer, _| buffer.language_registry());
             let update = buffer_diff
                 .update(cx, |diff, cx| {
                     diff.update_diff(
-                        text_snapshot.clone(),
+                        snapshot,
                         Some(base_text.clone()),
                         false,
                         language,
+                        language_registry,
                         cx,
                     )
                 })
@@ -373,7 +376,6 @@ async fn build_buffer_diff(
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
-    let text_snapshot = cx.update(|cx| buffer.read(cx).text_snapshot());
     let buffer = cx.update(|cx| buffer.read(cx).snapshot());
 
     let secondary_diff = cx.new(|cx| BufferDiff::new(&buffer, cx));
@@ -381,10 +383,11 @@ async fn build_buffer_diff(
     let update = secondary_diff
         .update(cx, |secondary_diff, cx| {
             secondary_diff.update_diff(
-                text_snapshot.clone(),
+                buffer.clone(),
                 Some(old_text),
                 true,
                 language.clone(),
+                language_registry.clone(),
                 cx,
             )
         })

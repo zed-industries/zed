@@ -881,10 +881,11 @@ async fn build_buffer_diff(
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                buffer.text.clone(),
+                buffer.clone(),
                 old_text.map(|old_text| Arc::from(old_text.as_str())),
                 true,
                 language.clone(),
+                Some(language_registry.clone()),
                 cx,
             )
         })
