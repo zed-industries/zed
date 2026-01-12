@@ -217,7 +217,9 @@ where
             }
         };
         if let Some(edit) = self.0.get(ix) {
-            if old >= edit.old.end {
+            let dominated_by_edit =
+                old > edit.old.end || (old == edit.old.end && edit.old.start < edit.old.end);
+            if dominated_by_edit {
                 edit.new.end + (old - edit.old.end)
             } else {
                 if bias == Bias::Left {
@@ -243,7 +245,9 @@ where
             }
         };
         if let Some(edit) = self.0.get(ix) {
-            if new >= edit.new.end {
+            let dominated_by_edit =
+                new > edit.new.end || (new == edit.new.end && edit.new.start < edit.new.end);
+            if dominated_by_edit {
                 edit.old.end + (new - edit.new.end)
             } else {
                 if bias == Bias::Left {
@@ -565,7 +569,6 @@ mod tests {
 
     #[gpui::test]
     fn test_new_to_old() {
-        // Test with the inverse of the patch used in test_old_to_new
         let patch = Patch(vec![
             Edit {
                 old: 2..4,

@@ -622,8 +622,7 @@ impl BlockMap {
         if let Some((companion_new_snapshot, companion_edits)) = companion_wrap_edits
             && let Some((companion, display_map_id)) = companion
         {
-            let excerpt_map = companion.companion_excerpt_to_excerpt(display_map_id);
-            let convert = companion.convert_row_from_companion(display_map_id);
+            let max_row = MultiBufferRow(wrap_snapshot.buffer_snapshot().max_point().row);
             let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
                 .clone()
                 .into_inner()
@@ -640,20 +639,28 @@ impl BlockMap {
                             .row,
                     );
 
-                    let my_start_row = convert(
-                        excerpt_map,
-                        wrap_snapshot.buffer_snapshot(),
-                        companion_new_snapshot.buffer_snapshot(),
-                        companion_start_row,
-                    )
-                    .start;
-                    let my_end_row = convert(
-                        excerpt_map,
-                        wrap_snapshot.buffer_snapshot(),
-                        companion_new_snapshot.buffer_snapshot(),
-                        companion_end_row,
-                    )
-                    .end;
+                    let my_start_row = companion
+                        .convert_rows_from_companion(
+                            display_map_id,
+                            wrap_snapshot.buffer_snapshot(),
+                            companion_new_snapshot.buffer_snapshot(),
+                            companion_start_row..companion_start_row,
+                        )
+                        .first()
+                        .and_then(|t| t.boundaries.first())
+                        .map(|(_, range)| range.start)
+                        .unwrap_or(max_row);
+                    let my_end_row = companion
+                        .convert_rows_from_companion(
+                            display_map_id,
+                            wrap_snapshot.buffer_snapshot(),
+                            companion_new_snapshot.buffer_snapshot(),
+                            companion_end_row..companion_end_row,
+                        )
+                        .first()
+                        .and_then(|t| t.boundaries.first())
+                        .map(|(_, range)| range.end)
+                        .unwrap_or(max_row);
 
                     let my_start = wrap_snapshot
                         .make_wrap_point(Point::new(my_start_row.0, 0), Bias::Left)
@@ -2370,9 +2377,8 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, convert_lhs_row_to_rhs, convert_lhs_rows_to_rhs, convert_rhs_row_to_lhs,
-            convert_rhs_rows_to_lhs, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap,
-            wrap_map::WrapMap,
+            Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs, fold_map::FoldMap,
+            inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
         },
         test::test_font,
     };
@@ -4175,8 +4181,6 @@ mod tests {
         let companion = cx.new(|_| {
             let mut c = Companion::new(
                 rhs_entity_id,
-                convert_rhs_row_to_lhs,
-                convert_lhs_row_to_rhs,
                 convert_rhs_rows_to_lhs,
                 convert_lhs_rows_to_rhs,
             );
@@ -4228,7 +4232,7 @@ mod tests {
         //   aaa
         //   <extra line>
         //   <extra line>
-        //   *ddd
+        //   ddd
         //   ddd
         //   ddd
         // + XXX

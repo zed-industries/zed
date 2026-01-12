@@ -378,6 +378,7 @@ impl BufferDiffSnapshot {
                 // Found a hunk that starts before the target.
                 let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
                 let prev_hunk_buffer_end = hunk.buffer_range.end;
+                // FIXME ge?
                 if target.cmp(&prev_hunk_buffer_end, buffer).is_gt()
                     || (!prev_hunk_buffer_end.is_valid(buffer)
                         && target_point > prev_hunk_buffer_end.to_point(buffer))
@@ -459,6 +460,7 @@ impl BufferDiffSnapshot {
                 // Found a hunk that starts before the target.
                 let prev_hunk_buffer_end = cursor.end().buffer_range.end;
                 let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
+                // FIXME ge?
                 if target > prev_hunk_base_text_end {
                     cursor.next();
                     let inter_hunk_range = prev_hunk_buffer_end
@@ -475,9 +477,8 @@ impl BufferDiffSnapshot {
                     let relative_target_point =
                         target_point - prev_hunk_base_text_end.to_point(self.base_text());
                     let base = prev_hunk_buffer_end.to_point(buffer);
-                    let old_position = base + relative_target_point;
-                    let start = patch.old_to_new(old_position, Bias::Left);
-                    let end = patch.old_to_new(old_position, Bias::Right);
+                    let start = base + patch.old_to_new(relative_target_point, Bias::Left);
+                    let end = base + patch.old_to_new(relative_target_point, Bias::Right);
                     start.row..end.row
                 } else {
                     let buffer_start = hunk.buffer_range.start.to_point(buffer);

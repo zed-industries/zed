@@ -150,13 +150,6 @@ type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Ancho
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 pub type AlignCheckpoint = MultiBufferRow;
-pub type ConvertMultiBufferRow = fn(
-    &HashMap<ExcerptId, ExcerptId>,
-    &MultiBufferSnapshot,
-    &MultiBufferSnapshot,
-    MultiBufferRow,
-) -> Range<MultiBufferRow>;
-
 pub struct ExcerptRowTranslation {
     pub excerpt_id: ExcerptId,
     pub boundaries: Vec<(MultiBufferRow, Range<MultiBufferRow>)>,
@@ -169,110 +162,6 @@ pub type ConvertMultiBufferRows = fn(
     &MultiBufferSnapshot,
     Range<MultiBufferRow>,
 ) -> Vec<ExcerptRowTranslation>;
-
-pub(crate) fn convert_lhs_row_to_rhs(
-    lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
-    rhs_snapshot: &MultiBufferSnapshot,
-    lhs_snapshot: &MultiBufferSnapshot,
-    lhs_row: MultiBufferRow,
-) -> Range<MultiBufferRow> {
-    let lhs_point = Point::new(lhs_row.0, 0);
-    let Some((_lhs_buffer_snapshot, lhs_buffer_point, lhs_excerpt_id)) =
-        lhs_snapshot.point_to_buffer_point(lhs_point)
-    else {
-        let row = MultiBufferRow(rhs_snapshot.max_point().row);
-        return row..row;
-    };
-    let rhs_excerpt_id = lhs_excerpt_to_rhs_excerpt
-        .get(&lhs_excerpt_id)
-        .copied()
-        .unwrap();
-    let rhs_buffer_snapshot = rhs_snapshot.buffer_for_excerpt(rhs_excerpt_id).unwrap();
-    let diff = rhs_snapshot
-        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
-        .unwrap();
-    let rhs_row_range = diff
-        .base_text_rows_to_rows(
-            lhs_buffer_point.row..lhs_buffer_point.row,
-            &rhs_buffer_snapshot,
-        )
-        .next()
-        .unwrap();
-    let rhs_start_point = Point::new(rhs_row_range.start, 0);
-    let rhs_end_point = Point::new(rhs_row_range.end, 0);
-    let start_anchor = rhs_buffer_snapshot.anchor_before(rhs_start_point);
-    let end_anchor = rhs_buffer_snapshot.anchor_before(rhs_end_point);
-    let context_range = rhs_snapshot
-        .context_range_for_excerpt(rhs_excerpt_id)
-        .unwrap();
-    let start_anchor = *start_anchor
-        .max(&context_range.start, &rhs_buffer_snapshot)
-        .min(&context_range.end, &rhs_buffer_snapshot);
-    let end_anchor = *end_anchor
-        .max(&context_range.start, &rhs_buffer_snapshot)
-        .min(&context_range.end, &rhs_buffer_snapshot);
-    let start_anchor = rhs_snapshot
-        .anchor_in_excerpt(rhs_excerpt_id, start_anchor)
-        .unwrap();
-    let end_anchor = rhs_snapshot
-        .anchor_in_excerpt(rhs_excerpt_id, end_anchor)
-        .unwrap();
-    let start_row = start_anchor.to_point(rhs_snapshot).row;
-    let end_row = end_anchor.to_point(rhs_snapshot).row;
-    MultiBufferRow(start_row)..MultiBufferRow(end_row)
-}
-
-pub(crate) fn convert_rhs_row_to_lhs(
-    rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
-    lhs_snapshot: &MultiBufferSnapshot,
-    rhs_snapshot: &MultiBufferSnapshot,
-    rhs_row: MultiBufferRow,
-) -> Range<MultiBufferRow> {
-    let rhs_point = Point::new(rhs_row.0, 0);
-    let Some((rhs_buffer_snapshot, rhs_buffer_point, rhs_excerpt_id)) =
-        rhs_snapshot.point_to_buffer_point(rhs_point)
-    else {
-        let row = MultiBufferRow(lhs_snapshot.max_point().row);
-        return row..row;
-    };
-    let lhs_excerpt_id = rhs_excerpt_to_lhs_excerpt
-        .get(&rhs_excerpt_id)
-        .copied()
-        .unwrap();
-    let lhs_buffer_snapshot = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id).unwrap();
-    let diff = rhs_snapshot
-        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
-        .unwrap();
-    let lhs_row_range = diff
-        .rows_to_base_text_rows(
-            rhs_buffer_point.row..rhs_buffer_point.row,
-            &rhs_buffer_snapshot,
-        )
-        .next()
-        .unwrap();
-    let lhs_start_point = Point::new(lhs_row_range.start, 0);
-    let lhs_end_point = Point::new(lhs_row_range.end, 0);
-    let start_anchor = lhs_buffer_snapshot.anchor_before(lhs_start_point);
-    let end_anchor = lhs_buffer_snapshot.anchor_after(lhs_end_point);
-    let context_range = lhs_snapshot
-        .context_range_for_excerpt(lhs_excerpt_id)
-        .unwrap();
-    let start_anchor = *start_anchor
-        .max(&context_range.start, &lhs_buffer_snapshot)
-        .min(&context_range.end, &lhs_buffer_snapshot);
-    let end_anchor = *end_anchor
-        .max(&context_range.start, &lhs_buffer_snapshot)
-        .min(&context_range.end, &lhs_buffer_snapshot);
-    let start_anchor = lhs_snapshot
-        .anchor_in_excerpt(lhs_excerpt_id, start_anchor)
-        .unwrap();
-    let end_anchor = lhs_snapshot
-        .anchor_in_excerpt(lhs_excerpt_id, end_anchor)
-        .unwrap();
-    let start_row = start_anchor.to_point(lhs_snapshot).row;
-    let end_row = end_anchor.to_point(lhs_snapshot).row;
-    MultiBufferRow(start_row)..MultiBufferRow(end_row)
-}
 
 pub(crate) fn convert_lhs_rows_to_rhs(
     lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
@@ -567,14 +456,10 @@ pub struct DisplayMap {
 
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
-    // used for buffer folding
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
     lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
-    // used for anchor conversion
     rhs_excerpt_to_lhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
-    rhs_row_to_lhs_row: ConvertMultiBufferRow,
-    lhs_row_to_rhs_row: ConvertMultiBufferRow,
     rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
     lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
 }
@@ -582,8 +467,6 @@ pub(crate) struct Companion {
 impl Companion {
     pub(crate) fn new(
         rhs_display_map_id: EntityId,
-        rhs_row_to_lhs_row: ConvertMultiBufferRow,
-        lhs_row_to_rhs_row: ConvertMultiBufferRow,
         rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
         lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
     ) -> Self {
@@ -593,32 +476,8 @@ impl Companion {
             lhs_buffer_to_rhs_buffer: Default::default(),
             rhs_excerpt_to_lhs_excerpt: Default::default(),
             lhs_excerpt_to_rhs_excerpt: Default::default(),
-            rhs_row_to_lhs_row,
-            lhs_row_to_rhs_row,
             rhs_rows_to_lhs_rows,
             lhs_rows_to_rhs_rows,
-        }
-    }
-
-    pub(crate) fn convert_row_from_companion(
-        &self,
-        display_map_id: EntityId,
-    ) -> ConvertMultiBufferRow {
-        if display_map_id == self.rhs_display_map_id {
-            self.lhs_row_to_rhs_row
-        } else {
-            self.rhs_row_to_lhs_row
-        }
-    }
-
-    pub(crate) fn convert_row_to_companion(
-        &self,
-        display_map_id: EntityId,
-    ) -> ConvertMultiBufferRow {
-        if display_map_id == self.rhs_display_map_id {
-            self.rhs_row_to_lhs_row
-        } else {
-            self.lhs_row_to_rhs_row
         }
     }
 
