@@ -7091,6 +7091,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
