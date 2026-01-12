@@ -40,7 +40,7 @@ impl ProjectDropdown {
         let worktree_ids: Rc<RefCell<Vec<WorktreeId>>> = Rc::new(RefCell::new(Vec::new()));
 
         let menu = Self::build_menu(
-            project.clone(),
+            project,
             workspace.clone(),
             initial_active_worktree_id,
             menu_shell.clone(),
@@ -136,7 +136,7 @@ impl ProjectDropdown {
                                     ("remove", worktree_id.to_usize()),
                                     IconName::Close,
                                 )
-                                .visible_on_hover(name.clone())
+                                .visible_on_hover(name)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip(move |_, cx| {
@@ -148,7 +148,7 @@ impl ProjectDropdown {
                                     )
                                 })
                                 .on_click({
-                                    let workspace = workspace_for_remove.clone();
+                                    let workspace = workspace_for_remove;
                                     move |_, window, cx| {
                                         Self::handle_remove(
                                             workspace.clone(),

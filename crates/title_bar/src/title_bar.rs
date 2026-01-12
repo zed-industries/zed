@@ -76,7 +76,7 @@ pub fn init(cx: &mut App) {
             return;
         };
         let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-        workspace.set_titlebar_item(item.clone().into(), window, cx);
+        workspace.set_titlebar_item(item.into(), window, cx);
 
         workspace.register_action(|workspace, _: &SwitchProject, window, cx| {
             if let Some(titlebar) = workspace
@@ -787,7 +787,7 @@ impl TitleBar {
 
         let settings = TitleBarSettings::get_global(cx);
 
-        let effective_repository = Some(repository.clone());
+        let effective_repository = Some(repository);
 
         Some(
             PopoverMenu::new("branch-menu")
