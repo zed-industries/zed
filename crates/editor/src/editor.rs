@@ -1046,6 +1046,15 @@ pub(crate) struct DiffReviewOverlay {
     _subscription: Subscription,
 }
 
+/// Data for a pending diff review comment waiting to be sent to the agent panel.
+#[derive(Clone)]
+pub struct PendingDiffReview {
+    /// The comment text entered by the user.
+    pub comment: String,
+    /// The code range being reviewed as anchors.
+    pub anchor_range: Range<Anchor>,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1211,6 +1220,8 @@ pub struct Editor {
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     pub(crate) diff_review_overlay: Option<DiffReviewOverlay>,
+    /// Pending diff review data waiting to be sent to the agent panel.
+    pending_diff_review: Option<PendingDiffReview>,
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
@@ -2377,6 +2388,7 @@ impl Editor {
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
             diff_review_overlay: None,
+            pending_diff_review: None,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
@@ -20881,10 +20893,61 @@ impl Editor {
     }
 
     /// Submits the diff review comment to the agent panel.
-    /// Dispatches the SubmitDiffReviewComment action which is handled by the workspace.
+    /// Extracts the data from the overlay BEFORE dismissing it, then dispatches the action.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        log::info!("submit_diff_review_comment called, dispatching SubmitDiffReviewComment action");
-        // Just dispatch the action - the handler in text_thread_editor.rs does all the work
+        log::info!("submit_diff_review_comment called");
+
+        let Some(overlay) = self.diff_review_overlay.as_ref() else {
+            log::warn!("No diff review overlay found");
+            return;
+        };
+
+        // Get the comment text from the prompt editor
+        let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
+        log::info!("Comment text: '{}'", comment_text);
+
+        // Don't submit if the comment is empty
+        if comment_text.is_empty() {
+            log::info!("Comment is empty, not submitting");
+            return;
+        }
+
+        // Get the display row and convert to buffer position
+        let display_row = overlay.display_row;
+        let snapshot = self.snapshot(window, cx);
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_point = snapshot
+            .display_snapshot
+            .display_point_to_point(display_point, Bias::Left);
+
+        // Get the line range
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let line_start = Point::new(buffer_point.row, 0);
+        let line_end = Point::new(
+            buffer_point.row,
+            buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)),
+        );
+
+        // Create anchors for the selection
+        let anchor_start = buffer_snapshot.anchor_after(line_start);
+        let anchor_end = buffer_snapshot.anchor_before(line_end);
+
+        log::info!(
+            "Extracted review data: comment='{}', range={:?}",
+            comment_text,
+            line_start..line_end
+        );
+
+        // Store the pending review data for the action handler to retrieve
+        self.pending_diff_review = Some(PendingDiffReview {
+            comment: comment_text,
+            anchor_range: anchor_start..anchor_end,
+        });
+
+        // Dismiss the overlay AFTER extracting data
+        self.dismiss_diff_review_overlay(cx);
+
+        // Now dispatch the action - the handler will retrieve the pending data
         window.dispatch_action(Box::new(crate::actions::SubmitDiffReviewComment), cx);
     }
 
@@ -20901,6 +20964,16 @@ impl Editor {
         self.diff_review_overlay
             .as_ref()
             .map(|overlay| overlay.display_row)
+    }
+
+    /// Returns and clears the pending diff review data, if any.
+    pub fn take_pending_diff_review(&mut self) -> Option<PendingDiffReview> {
+        self.pending_diff_review.take()
+    }
+
+    /// Returns true if there is pending diff review data.
+    pub fn has_pending_diff_review(&self) -> bool {
+        self.pending_diff_review.is_some()
     }
 
     fn render_diff_review_overlay(

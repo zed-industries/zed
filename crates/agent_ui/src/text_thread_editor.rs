@@ -10,7 +10,7 @@ use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
-    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint,
+    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint as _,
     actions::{MoveToEndOfLine, Newline, ShowCompletions, SubmitDiffReviewComment},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
@@ -1531,66 +1531,84 @@ impl TextThreadEditor {
     ) {
         log::info!("handle_submit_diff_review_comment called");
 
-        // Find the editor that has the diff review overlay
-        // We can't use active_item because the prompt editor inside the overlay has focus
+        // Try two approaches:
+        // 1. First check for pending diff review data (set by Enter key path via submit_diff_review_comment)
+        // 2. If not found, try to extract from the overlay directly (for button click path)
         let Some((comment_text, point_range, buffer)) = maybe!({
-            let editor = workspace
+            // First, try to find an editor with pending diff review data
+            let editor_with_pending = workspace
+                .items_of_type::<Editor>(cx)
+                .find(|editor| editor.read(cx).has_pending_diff_review());
+
+            if let Some(editor) = editor_with_pending {
+                log::info!("Found editor with pending diff review data");
+                return editor.update(cx, |editor, cx| {
+                    let pending = editor.take_pending_diff_review()?;
+                    let buffer = editor.buffer().clone();
+                    let snapshot = buffer.read(cx).snapshot(cx);
+                    let point_range = pending.anchor_range.start.to_point(&snapshot)
+                        ..pending.anchor_range.end.to_point(&snapshot);
+                    log::info!(
+                        "Retrieved pending review data: comment='{}'",
+                        pending.comment
+                    );
+                    Some((pending.comment, point_range, buffer))
+                });
+            }
+
+            // Second, try to find an editor with an active overlay (button click path)
+            let editor_with_overlay = workspace
                 .items_of_type::<Editor>(cx)
                 .find(|editor| editor.read(cx).diff_review_prompt_editor().is_some());
 
-            let editor = match editor {
-                Some(e) => {
-                    log::info!("Found editor with diff review overlay");
-                    e
-                }
-                None => {
-                    log::warn!("No editor found with diff review overlay");
-                    return None;
-                }
-            };
+            if let Some(editor) = editor_with_overlay {
+                log::info!("Found editor with diff review overlay (button click path)");
+                return editor.update(cx, |editor, cx| {
+                    // Get the prompt editor from the overlay
+                    let prompt_editor = editor.diff_review_prompt_editor()?.clone();
+                    let comment_text = prompt_editor.read(cx).text(cx).trim().to_string();
+                    log::info!("Comment text: '{}'", comment_text);
 
-            editor.update(cx, |editor, cx| {
-                // Get the prompt editor from the overlay
-                let prompt_editor = editor.diff_review_prompt_editor()?.clone();
-                let comment_text = prompt_editor.read(cx).text(cx).trim().to_string();
-                log::info!("Comment text: '{}'", comment_text);
+                    // Don't submit if comment is empty
+                    if comment_text.is_empty() {
+                        log::info!("Comment is empty, not submitting");
+                        return None;
+                    }
 
-                // Don't submit if comment is empty
-                if comment_text.is_empty() {
-                    log::info!("Comment is empty, not submitting");
-                    return None;
-                }
+                    // Get the display row from the overlay to find the code line
+                    let display_row = editor.diff_review_display_row()?;
 
-                // Get the display row from the overlay to find the code line
-                let display_row = editor.diff_review_display_row()?;
+                    // Convert display row to buffer position
+                    let snapshot = editor.snapshot(window, cx);
+                    let display_point = editor::DisplayPoint::new(display_row, 0);
+                    let buffer_point = snapshot
+                        .display_snapshot
+                        .display_point_to_point(display_point, text::Bias::Left);
 
-                // Convert display row to buffer position
-                let snapshot = editor.snapshot(window, cx);
-                let display_point = editor::DisplayPoint::new(display_row, 0);
-                let buffer_point = snapshot
-                    .display_snapshot
-                    .display_point_to_point(display_point, text::Bias::Left);
+                    // Get the line range
+                    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let line_start = Point::new(buffer_point.row, 0);
+                    let line_end = Point::new(
+                        buffer_point.row,
+                        buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)),
+                    );
 
-                // Get the line range
-                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let line_start = Point::new(buffer_point.row, 0);
-                let line_end = Point::new(
-                    buffer_point.row,
-                    buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)),
-                );
+                    let buffer = editor.buffer().clone();
 
-                let buffer = editor.buffer().clone();
+                    // Dismiss the overlay
+                    editor.dismiss_diff_review_overlay(cx);
 
-                // Dismiss the overlay
-                editor.dismiss_diff_review_overlay(cx);
+                    log::info!(
+                        "Extracted review data: comment='{}', range={:?}",
+                        comment_text,
+                        line_start..line_end
+                    );
+                    Some((comment_text, line_start..line_end, buffer))
+                });
+            }
 
-                log::info!(
-                    "Extracted review data: comment='{}', range={:?}",
-                    comment_text,
-                    line_start..line_end
-                );
-                Some((comment_text, line_start..line_end, buffer))
-            })
+            log::warn!("No editor found with pending data or overlay");
+            None
         }) else {
             log::warn!("Failed to extract diff review data");
             return;
@@ -1635,7 +1653,7 @@ impl TextThreadEditor {
                             // Quote the code as a crease
                             log::info!("Calling quote_ranges with range {:?}", point_range);
                             text_thread_editor.quote_ranges(
-                                vec![point_range],
+                                vec![point_range.clone()],
                                 snapshot,
                                 window,
                                 cx,
