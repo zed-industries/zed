@@ -1059,7 +1059,7 @@ impl BlockMap {
 
     fn spacer_blocks(
         &self,
-        new_buffer_range: Range<MultiBufferPoint>,
+        mut new_buffer_range: Range<MultiBufferPoint>,
         _new_wrap_row_range: Range<WrapRow>,
         wrap_snapshot: &WrapSnapshot,
         companion_snapshot: &WrapSnapshot,
@@ -1068,6 +1068,11 @@ impl BlockMap {
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
+
+        if new_buffer_range.end.column > 0 {
+            new_buffer_range.end.row += 1;
+            new_buffer_range.end.column = 0;
+        }
 
         let row_range =
             MultiBufferRow(new_buffer_range.start.row)..MultiBufferRow(new_buffer_range.end.row);
@@ -1107,10 +1112,10 @@ impl BlockMap {
                 let mut current_boundary = *boundary;
                 let mut current_range = range.clone();
 
-                while iter
-                    .peek()
-                    .is_some_and(|(_, next_range)| next_range.end <= current_range.end)
-                {
+                while iter.peek().is_some_and(|(next_boundary, next_range)| {
+                    next_range.end <= current_range.end
+                        && (*next_boundary != excerpt_end || is_last_excerpt)
+                }) {
                     let (b, r) = iter.next().unwrap();
                     current_boundary = *b;
                     current_range = r.clone();
@@ -1122,10 +1127,11 @@ impl BlockMap {
                 let companion_wrap = companion_snapshot
                     .make_wrap_point(Point::new(current_range.end.0, 0), Bias::Left)
                     .row();
+                dbg!(our_wrap, companion_wrap, current_boundary, excerpt_end);
 
                 let expected_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
-                if expected_delta > delta {
+                if dbg!(expected_delta) > dbg!(delta) {
                     let spacer_height = (expected_delta - delta) as u32;
                     let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
 
@@ -1200,7 +1206,7 @@ impl BlockMap {
                         .cmp(&block_b.priority)
                         .then_with(|| block_a.id.cmp(&block_b.id)),
                     _ => {
-                        unreachable!()
+                        unreachable!("comparing blocks: {block_a:?} vs {block_b:?}")
                     }
                 })
         });

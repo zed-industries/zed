@@ -379,10 +379,7 @@ impl BufferDiffSnapshot {
                 let prev_hunk_base_text_end = cursor.end().diff_base_byte_range.end;
                 let prev_hunk_buffer_end = hunk.buffer_range.end;
                 // FIXME ge?
-                if target.cmp(&prev_hunk_buffer_end, buffer).is_gt()
-                    || (!prev_hunk_buffer_end.is_valid(buffer)
-                        && target_point > prev_hunk_buffer_end.to_point(buffer))
-                {
+                if target.cmp(&prev_hunk_buffer_end, buffer).is_gt() {
                     // Target boundary lies between hunks (i.e. in an unmodified region).
                     cursor.next();
                     let inter_hunk_range = prev_hunk_buffer_end

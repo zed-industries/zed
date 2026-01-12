@@ -187,15 +187,18 @@ pub(crate) fn convert_lhs_rows_to_rhs(
         .collect();
 
     let first_excerpt_end = boundaries.first().map(|b| b.row).unwrap_or(lhs_rows.end);
+    let first_boundary_excerpt_id = boundaries.first().map(|b| b.next.id);
 
-    if let Some(translation) = translate_excerpt_rows_lhs_to_rhs(
-        lhs_excerpt_to_rhs_excerpt,
-        rhs_snapshot,
-        lhs_snapshot,
-        first_excerpt_id,
-        lhs_rows.start..first_excerpt_end,
-    ) {
-        result.push(translation);
+    if first_boundary_excerpt_id != Some(first_excerpt_id) {
+        if let Some(translation) = translate_excerpt_rows_lhs_to_rhs(
+            lhs_excerpt_to_rhs_excerpt,
+            rhs_snapshot,
+            lhs_snapshot,
+            first_excerpt_id,
+            lhs_rows.start..first_excerpt_end,
+        ) {
+            result.push(translation);
+        }
     }
 
     for (i, boundary) in boundaries.iter().enumerate() {
@@ -291,15 +294,18 @@ pub(crate) fn convert_rhs_rows_to_lhs(
         .collect();
 
     let first_excerpt_end = boundaries.first().map(|b| b.row).unwrap_or(rhs_rows.end);
+    let first_boundary_excerpt_id = boundaries.first().map(|b| b.next.id);
 
-    if let Some(translation) = translate_excerpt_rows_rhs_to_lhs(
-        rhs_excerpt_to_lhs_excerpt,
-        lhs_snapshot,
-        rhs_snapshot,
-        first_excerpt_id,
-        rhs_rows.start..first_excerpt_end,
-    ) {
-        result.push(translation);
+    if first_boundary_excerpt_id != Some(first_excerpt_id) {
+        if let Some(translation) = translate_excerpt_rows_rhs_to_lhs(
+            rhs_excerpt_to_lhs_excerpt,
+            lhs_snapshot,
+            rhs_snapshot,
+            first_excerpt_id,
+            rhs_rows.start..first_excerpt_end,
+        ) {
+            result.push(translation);
+        }
     }
 
     for (i, boundary) in boundaries.iter().enumerate() {
