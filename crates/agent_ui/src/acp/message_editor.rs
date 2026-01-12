@@ -276,6 +276,9 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread_store.is_none() {
+            return;
+        }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
