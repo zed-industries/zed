@@ -2165,6 +2165,15 @@ impl Terminal {
         }
     }
 
+    pub fn set_title_override(&mut self, title_override: Option<String>, cx: &mut Context<Self>) {
+        self.title_override = title_override;
+        cx.emit(Event::TitleChanged);
+    }
+
+    pub fn title_override(&self) -> Option<&str> {
+        self.title_override.as_deref()
+    }
+
     pub fn kill_active_task(&mut self) {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
@@ -2286,7 +2295,7 @@ impl Terminal {
         &self,
         cx: &App,
         cwd: Option<PathBuf>,
-        entity_id: u64,
+        entity_id: Option<u64>,
     ) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
@@ -2304,7 +2313,7 @@ impl Terminal {
             None,
             cx,
             self.activation_script.clone(),
-            Some(entity_id),
+            entity_id,
             self.path_style,
         )
     }

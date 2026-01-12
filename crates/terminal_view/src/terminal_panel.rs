@@ -918,7 +918,7 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))?
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -1326,7 +1326,7 @@ impl TerminalPanel {
 
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))?
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))
                 .await?;
 
             let (weak_terminal, new_pane) =

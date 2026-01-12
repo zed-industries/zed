@@ -490,9 +490,7 @@ async fn handle_terminal_command(
     responses: IpcSender<CliResponse>,
     cx: &mut AsyncApp,
 ) {
-    let cli_enabled = cx
-        .update(|cx| TerminalSettings::get_global(cx).cli_enabled)
-        .unwrap_or(false);
+    let cli_enabled = cx.update(|cx| TerminalSettings::get_global(cx).cli_enabled);
 
     if !cli_enabled {
         responses
@@ -536,7 +534,7 @@ async fn execute_terminal_command(
     use extension::ExtensionTerminalProxy;
 
     // Get the extension host proxy
-    let proxy = cx.update(|cx| ExtensionHostProxy::global(cx))?;
+    let proxy: Arc<ExtensionHostProxy> = cx.update(|cx| ExtensionHostProxy::global(cx));
 
     match cmd {
         TerminalCommand::Create {
@@ -597,7 +595,8 @@ async fn execute_terminal_command(
         }
 
         TerminalCommand::List => {
-            let workspaces = proxy.list_terminals().await?;
+            let workspaces: Vec<extension::WorkspaceTerminals> =
+                proxy.list_terminals().await?;
             let workspaces_json: Vec<serde_json::Value> = workspaces
                 .into_iter()
                 .map(|ws| {

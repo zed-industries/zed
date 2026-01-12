@@ -46,12 +46,12 @@ dependencies = [
  "uuid",
  "watch",
  "zlog",
- ]
- 
- [[package]]
- name = "acp_tools"
- version = "0.1.0"
- dependencies = [
+]
+
+[[package]]
+name = "acp_tools"
+version = "0.1.0"
+dependencies = [
  "agent-client-protocol",
  "collections",
  "gpui",

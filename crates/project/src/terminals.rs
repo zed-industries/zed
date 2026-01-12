@@ -483,7 +483,9 @@ impl Project {
 
         let reservation = cx.reserve_entity::<Terminal>();
         let entity_id = reservation.entity_id().as_non_zero_u64().get();
-        let builder_task = terminal.read(cx).clone_builder(cx, local_path, entity_id);
+        let builder_task = terminal
+            .read(cx)
+            .clone_builder(cx, local_path, Some(entity_id));
         cx.spawn(async |project, cx| {
             let terminal = builder_task.await?;
             project.update(cx, |project, cx| {
