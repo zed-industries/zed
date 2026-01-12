@@ -15358,12 +15358,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
-        let Some(select_next_state) = self.select_next_state.as_mut() else {
+        let Some(select_next_state) = self.select_next_state.as_mut().filter(|state| !state.done)
+        else {
             return Ok(());
         };
-        if select_next_state.done {
-            return Ok(());
-        }
 
         let mut new_selections = Vec::new();
 
@@ -15399,7 +15397,7 @@ impl Editor {
             return Ok(());
         }
 
-        self.unfold_ranges(&new_selections.clone(), false, false, cx);
+        self.unfold_ranges(&new_selections, false, false, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(new_selections)
         });
@@ -15421,8 +15419,7 @@ impl Editor {
             Some(Autoscroll::newest()),
             window,
             cx,
-        )?;
-        Ok(())
+        )
     }
 
     pub fn select_previous(
