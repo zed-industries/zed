@@ -4422,12 +4422,10 @@ impl Repository {
         let to_stage = self
             .cached_status()
             .filter_map(|entry| {
-                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
-                    if ops.staging() || ops.staged() {
-                        None
-                    } else {
-                        Some(entry.repo_path)
-                    }
+                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path)
+                    && (ops.staging() || ops.staged())
+                {
+                    None
                 } else if entry.status.staging().is_fully_staged() {
                     None
                 } else {
@@ -4442,12 +4440,10 @@ impl Repository {
         let to_unstage = self
             .cached_status()
             .filter_map(|entry| {
-                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
-                    if !ops.staging() && !ops.staged() {
-                        None
-                    } else {
-                        Some(entry.repo_path)
-                    }
+                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path)
+                    && (ops.staging() || ops.staged())
+                {
+                    Some(entry.repo_path)
                 } else if entry.status.staging().is_fully_unstaged() {
                     None
                 } else {
