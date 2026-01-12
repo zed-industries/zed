@@ -529,9 +529,9 @@ fn main() {
         debugger_tools::init(cx);
         client::init(&client, cx);
 
-        let system_id = cx.background_executor().block(system_id).ok();
-        let installation_id = cx.background_executor().block(installation_id).ok();
-        let session = cx.background_executor().block(session);
+        let system_id = cx.foreground_executor().block_on(system_id).ok();
+        let installation_id = cx.foreground_executor().block_on(installation_id).ok();
+        let session = cx.foreground_executor().block_on(session);
 
         let telemetry = client.telemetry();
         telemetry.start(
@@ -1551,7 +1551,7 @@ fn load_embedded_fonts(cx: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     let executor = cx.background_executor();
 
-    executor.block(executor.scoped(|scope| {
+    cx.foreground_executor().block_on(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;
