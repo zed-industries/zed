@@ -374,16 +374,13 @@ impl TerminalElement {
                     let col = cell.point.column.0 as i32;
 
                     // Try to extend the last region if it's on the same line with the same color
-                    if let Some(last_region) = background_regions.last_mut() {
-                        if last_region.color == color
-                            && last_region.start_line == alac_line
-                            && last_region.end_line == alac_line
-                            && last_region.end_col + 1 == col
-                        {
-                            last_region.end_col = col;
-                        } else {
-                            background_regions.push(BackgroundRegion::new(alac_line, col, color));
-                        }
+                    if let Some(last_region) = background_regions.last_mut()
+                        && last_region.color == color
+                        && last_region.start_line == alac_line
+                        && last_region.end_line == alac_line
+                        && last_region.end_col + 1 == col
+                    {
+                        last_region.end_col = col;
                     } else {
                         background_regions.push(BackgroundRegion::new(alac_line, col, color));
                     }
@@ -1109,21 +1106,18 @@ impl Element for TerminalElement {
                     let visible_row_count =
                         (intersection.size.height / line_height_px).ceil() as usize + 1;
 
-                    // Group cells by line and filter to only the visible screen rows.
-                    // skip() and take() work on enumerated line groups (screen position),
-                    // making this work regardless of the actual cell.point.line values.
-                    let visible_cells: Vec<_> = cells
-                        .iter()
-                        .chunk_by(|c| c.point.line)
-                        .into_iter()
-                        .skip(rows_above_viewport)
-                        .take(visible_row_count)
-                        .flat_map(|(_, line_cells)| line_cells)
-                        .cloned()
-                        .collect();
-
                     TerminalElement::layout_grid(
-                        visible_cells.into_iter(),
+                        // Group cells by line and filter to only the visible screen rows.
+                        // skip() and take() work on enumerated line groups (screen position),
+                        // making this work regardless of the actual cell.point.line values.
+                        cells
+                            .iter()
+                            .chunk_by(|c| c.point.line)
+                            .into_iter()
+                            .skip(rows_above_viewport)
+                            .take(visible_row_count)
+                            .flat_map(|(_, line_cells)| line_cells)
+                            .cloned(),
                         rows_above_viewport as i32,
                         &text_style,
                         last_hovered_word
