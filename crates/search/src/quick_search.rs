@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::{
     SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
-    ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use editor::EditorSettings;
 use editor::{Editor, EditorEvent, EditorMode, RowHighlightOptions};
@@ -425,6 +425,15 @@ impl Render for QuickSearch {
                         .delegate
                         .search_options
                         .toggle(SearchOptions::WHOLE_WORD);
+                    picker.refresh(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleIncludeIgnored, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .search_options
+                        .toggle(SearchOptions::INCLUDE_IGNORED);
                     picker.refresh(window, cx);
                 });
             }))
@@ -906,13 +915,14 @@ impl QuickSearchDelegate {
         let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let case_sensitive = self.search_options.contains(SearchOptions::CASE_SENSITIVE);
         let whole_word = self.search_options.contains(SearchOptions::WHOLE_WORD);
+        let include_ignored = self.search_options.contains(SearchOptions::INCLUDE_IGNORED);
 
         if self.search_options.contains(SearchOptions::REGEX) {
             SearchQuery::regex(
                 query,
                 whole_word,
                 case_sensitive,
-                false,
+                include_ignored,
                 false,
                 files_to_include,
                 files_to_exclude,
@@ -925,7 +935,7 @@ impl QuickSearchDelegate {
                 query,
                 whole_word,
                 case_sensitive,
-                false,
+                include_ignored,
                 files_to_include,
                 files_to_exclude,
                 match_full_paths,
