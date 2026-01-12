@@ -877,10 +877,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         })
                         .await?;
 
-                    let thread_metadata = agent::DbThreadMetadata {
-                        id: session_id,
-                        title: format!("🔗 {}", response.title).into(),
-                        updated_at: chrono::Utc::now(),
+                    let thread_metadata = acp_thread::AgentSessionInfo {
+                        session_id,
+                        cwd: None,
+                        title: Some(format!("🔗 {}", response.title).into()),
+                        updated_at: Some(chrono::Utc::now()),
+                        meta: None,
                     };
 
                     workspace.update(cx, |workspace, window, cx| {

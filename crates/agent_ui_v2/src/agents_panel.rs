@@ -1,4 +1,7 @@
-use agent::{DbThreadMetadata, ThreadStore};
+use acp_thread::AgentSessionInfo;
+use agent::{NativeAgentServer, ThreadStore};
+use agent_client_protocol as acp;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
@@ -121,7 +124,40 @@ impl AgentsPanel {
         let focus_handle = cx.focus_handle();
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx.new(|cx| AcpThreadHistory::new(thread_store.clone(), window, cx));
+        let history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
+
+        let history_handle = history.clone();
+        let connect_project = project.clone();
+        let connect_thread_store = thread_store.clone();
+        let connect_fs = fs.clone();
+        cx.spawn(async move |_, cx| {
+            let connect_task = cx.update(|cx| {
+                let delegate = AgentServerDelegate::new(
+                    connect_project.read(cx).agent_server_store().clone(),
+                    connect_project.clone(),
+                    None,
+                    None,
+                );
+                let server = NativeAgentServer::new(connect_fs, connect_thread_store);
+                server.connect(None, delegate, cx)
+            });
+            let connection = match connect_task.await {
+                Ok((connection, _)) => connection,
+                Err(error) => {
+                    log::error!("Failed to connect native agent for history: {error:#}");
+                    return;
+                }
+            };
+
+            cx.update(|cx| {
+                if let Some(session_list) = connection.session_list(cx) {
+                    history_handle.update(cx, |history, cx| {
+                        history.set_session_list(Some(session_list), cx);
+                    });
+                }
+            });
+        })
+        .detach();
 
         let this = cx.weak_entity();
         let subscriptions = vec![
@@ -159,23 +195,20 @@ impl AgentsPanel {
             return;
         };
 
+        let SerializedHistoryEntryId::AcpThread(id) = thread_id;
+        let session_id = acp::SessionId::new(id.clone());
         let entry = self
-            .thread_store
+            .history
             .read(cx)
-            .entries()
-            .find(|e| match thread_id {
-                SerializedHistoryEntryId::AcpThread(id) => e.id.to_string() == *id,
-            });
-
-        if let Some(entry) = entry {
-            self.open_thread(
-                entry,
-                serialized_pane.expanded,
-                serialized_pane.width,
-                window,
-                cx,
-            );
-        }
+            .session_for_id(&session_id)
+            .unwrap_or_else(|| AgentSessionInfo::new(session_id));
+        self.open_thread(
+            entry,
+            serialized_pane.expanded,
+            serialized_pane.width,
+            window,
+            cx,
+        );
     }
 
     fn handle_utility_pane_event(
@@ -219,13 +252,13 @@ impl AgentsPanel {
 
     fn open_thread(
         &mut self,
-        entry: DbThreadMetadata,
+        entry: AgentSessionInfo,
         expanded: bool,
         width: Option<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_id = entry.id.clone();
+        let entry_id = entry.session_id.clone();
 
         if let Some(existing_pane) = &self.agent_thread_pane {
             if existing_pane.read(cx).thread_id() == Some(entry_id) {
