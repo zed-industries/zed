@@ -38,6 +38,8 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
+use language_models::AllLanguageModelSettings; // used to detect OpenAI-compatible providers
+
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
@@ -58,6 +60,43 @@ use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
+/// Maximum tool description length for OpenAI-compatible providers.
+/// See https://github.com/zed-industries/zed/issues/46012
+pub const MAX_TOOL_DESCRIPTION_LENGTH: usize = 1024;
+
+pub(crate) fn truncate_tool_description(description: &str) -> String {
+    if description.len() <= MAX_TOOL_DESCRIPTION_LENGTH {
+        return description.to_string();
+    }
+
+    const ELLIPSIS: &str = "...";
+    let truncate_at = MAX_TOOL_DESCRIPTION_LENGTH - ELLIPSIS.len();
+
+    let mut result = String::with_capacity(MAX_TOOL_DESCRIPTION_LENGTH);
+    for (idx, char) in description.char_indices() {
+        if idx >= truncate_at {
+            break;
+        }
+        result.push(char);
+    }
+    result.push_str(ELLIPSIS);
+    result
+}
+
+/// Returns true if descriptions should be truncated for the given provider.
+/// Applies to OpenAI itself and any user-configured OpenAI-compatible providers.
+pub(crate) fn provider_requires_truncate(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
+    // Direct OpenAI provider
+    if *provider_id == language_model::OPEN_AI_PROVIDER_ID {
+        return true;
+    }
+
+    // Any provider configured under `openai_compatible` settings is considered compatible
+    let provider_str: &str = provider_id.0.as_ref();
+    language_models::AllLanguageModelSettings::get_global(cx)
+        .openai_compatible
+        .contains_key(provider_str)
+}
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -2014,20 +2053,25 @@ impl Thread {
     ) -> Result<LanguageModelRequest> {
         let model = self.model().context("No language model configured")?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
+            let requires_truncate = provider_requires_truncate(&model.provider_id(), cx);
             turn.tools
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
                     Some(LanguageModelRequestTool {
                         name: tool_name.to_string(),
-                        description: tool.description().to_string(),
+                        description: if requires_truncate {
+                            truncate_tool_description(&tool.description())
+                        } else {
+                            tool.description().to_string()
+                        },
                         input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
                     })
                 })
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
-        };
+        };  
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
