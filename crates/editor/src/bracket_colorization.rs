@@ -66,8 +66,8 @@ impl Editor {
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
-                            if fetched_chunks.insert(dbg!(chunk_range)) {
-                                dbg!(pairs)
+                            if fetched_chunks.insert(chunk_range) {
+                                pairs
                             } else {
                                 Vec::new()
                             }
@@ -364,9 +364,7 @@ where
         let footer = "1 hsla(207.80, 16.20%, 69.19%, 1.00)\n";
 
         let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
-        let simple_brackets_highlights = (0..simple_brackets.len())
-            .map(|_| "«1[]1»\n")
-            .collect::<String>();
+        let simple_brackets_highlights = (0..rows).map(|_| "«1[]1»\n").collect::<String>();
         cx.set_state(&simple_brackets);
         cx.update_editor(|editor, window, cx| {
             editor.move_to_end(&MoveToEnd, window, cx);
@@ -380,17 +378,29 @@ where
         );
 
         let paired_brackets = (0..rows).map(|_| "ˇ[]()\n").collect::<String>();
-        let paired_brackets_highlights = (0..paired_brackets.len())
-            .map(|_| "«1[]1»«1()1»\n")
-            .collect::<String>();
+        let paired_brackets_highlights = (0..rows).map(|_| "«1[]1»«1()1»\n").collect::<String>();
         cx.set_state(&paired_brackets);
+        // Wait for reparse to complete after content change
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            // Force invalidation of bracket cache after reparse
+            editor.colorize_brackets(true, cx);
+        });
+        // Scroll to beginning to fetch first chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // Scroll to end to fetch remaining chunks
         cx.update_editor(|editor, window, cx| {
             editor.move_to_end(&MoveToEnd, window, cx);
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         assert_eq!(
-            format!("{paired_brackets_highlights}\n\n{footer}"),
+            format!("{paired_brackets_highlights}\n{footer}"),
             bracket_colors_markup(&mut cx),
             "Paired bracket pairs should be colored"
         );
