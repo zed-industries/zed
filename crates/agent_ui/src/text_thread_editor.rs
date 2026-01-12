@@ -11,7 +11,7 @@ use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
     MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint,
-    actions::{MoveToEndOfLine, Newline, ShowCompletions},
+    actions::{MoveToEndOfLine, Newline, ShowCompletions, SubmitDiffReviewComment},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
@@ -220,7 +220,8 @@ impl TextThreadEditor {
                     .register_action(TextThreadEditor::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
                     .register_action(TextThreadEditor::copy_code)
-                    .register_action(TextThreadEditor::handle_insert_dragged_files);
+                    .register_action(TextThreadEditor::handle_insert_dragged_files)
+                    .register_action(TextThreadEditor::handle_submit_diff_review_comment);
             },
         )
         .detach();
@@ -1515,6 +1516,108 @@ impl TextThreadEditor {
         }
 
         agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
+    }
+
+    /// Handles the SubmitDiffReviewComment action dispatched from the diff review overlay.
+    /// Gets the comment from the prompt editor and code from the overlay's anchor position,
+    /// then sends both to the agent panel as a crease.
+    pub fn handle_submit_diff_review_comment(
+        workspace: &mut Workspace,
+        _: &SubmitDiffReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        // Get the active editor and extract the diff review data directly
+        let Some((comment_text, point_range, buffer)) = maybe!({
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))?;
+
+            editor.update(cx, |editor, cx| {
+                // Get the prompt editor from the overlay
+                let prompt_editor = editor.diff_review_prompt_editor()?.clone();
+                let comment_text = prompt_editor.read(cx).text(cx).trim().to_string();
+
+                // Don't submit if comment is empty
+                if comment_text.is_empty() {
+                    return None;
+                }
+
+                // Get the display row from the overlay to find the code line
+                let display_row = editor.diff_review_display_row()?;
+
+                // Convert display row to buffer position
+                let snapshot = editor.snapshot(window, cx);
+                let display_point = editor::DisplayPoint::new(display_row, 0);
+                let buffer_point = snapshot
+                    .display_snapshot
+                    .display_point_to_point(display_point, text::Bias::Left);
+
+                // Get the line range
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let line_start = Point::new(buffer_point.row, 0);
+                let line_end = Point::new(
+                    buffer_point.row,
+                    buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)),
+                );
+
+                let buffer = editor.buffer().clone();
+
+                // Dismiss the overlay
+                editor.dismiss_diff_review_overlay(cx);
+
+                Some((comment_text, line_start..line_end, buffer))
+            })
+        }) else {
+            return;
+        };
+
+        // Focus the agent panel
+        workspace.focus_panel::<crate::AgentPanel>(window, cx);
+
+        // Defer all the work to ensure the panel is focused and ready
+        cx.defer_in(window, move |workspace, window, cx| {
+            let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                return;
+            };
+
+            // Check if there's an active text thread editor, create new thread if not
+            let has_active_thread = panel.read(cx).active_text_thread_editor().is_some();
+
+            if !has_active_thread {
+                // Create a new thread by dispatching the NewThread action
+                window.dispatch_action(Box::new(crate::NewThread), cx);
+            }
+
+            // Defer again to ensure the new thread is created
+            cx.defer_in(window, move |workspace, window, cx| {
+                let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                    return;
+                };
+
+                panel.update(cx, |panel, cx| {
+                    if let Some(text_thread_editor) = panel.active_text_thread_editor() {
+                        let snapshot = buffer.read(cx).snapshot(cx);
+
+                        text_thread_editor.update(cx, |text_thread_editor, cx| {
+                            // Quote the code as a crease
+                            text_thread_editor.quote_ranges(
+                                vec![point_range],
+                                snapshot,
+                                window,
+                                cx,
+                            );
+
+                            // Insert the user's comment
+                            text_thread_editor.editor.update(cx, |editor, cx| {
+                                let comment_with_newlines = format!("{}\n", comment_text);
+                                editor.insert(&comment_with_newlines, window, cx);
+                            });
+                        });
+                    }
+                });
+            });
+        });
     }
 
     pub fn quote_ranges(

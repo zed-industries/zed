@@ -1042,6 +1042,8 @@ pub(crate) struct DiffReviewOverlay {
     pub block_id: CustomBlockId,
     /// The editor entity for the review input.
     pub prompt_editor: Entity<Editor>,
+    /// Subscription to keep the action handler alive.
+    _subscription: Subscription,
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -4289,6 +4291,10 @@ impl Editor {
         dismissed |= self.mouse_context_menu.take().is_some();
         dismissed |= is_user_requested && self.discard_edit_prediction(true, cx);
         dismissed |= self.snippet_stack.pop().is_some();
+        if self.diff_review_overlay.is_some() {
+            self.dismiss_diff_review_overlay(cx);
+            dismissed = true;
+        }
 
         if self.mode.is_full() && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_)) {
             self.dismiss_diagnostics(cx);
@@ -20820,6 +20826,21 @@ impl Editor {
             editor
         });
 
+        // Register the Newline action on the prompt editor to submit the review
+        let parent_editor = cx.entity().downgrade();
+        let subscription = prompt_editor.update(cx, |prompt_editor, _cx| {
+            prompt_editor.register_action({
+                let parent_editor = parent_editor.clone();
+                move |_: &crate::actions::Newline, window, cx| {
+                    if let Some(editor) = parent_editor.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            editor.submit_diff_review_comment(window, cx);
+                        });
+                    }
+                }
+            })
+        });
+
         // Create the overlay block
         let prompt_editor_for_render = prompt_editor.clone();
         let block = BlockProperties {
@@ -20840,6 +20861,7 @@ impl Editor {
             anchor,
             block_id,
             prompt_editor: prompt_editor.clone(),
+            _subscription: subscription,
         });
 
         // Focus the prompt editor
@@ -20856,6 +20878,28 @@ impl Editor {
             self.remove_blocks(block_ids, None, cx);
             cx.notify();
         }
+    }
+
+    /// Submits the diff review comment to the agent panel.
+    /// Dispatches the SubmitDiffReviewComment action which is handled by the workspace.
+    pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Just dispatch the action - the handler in text_thread_editor.rs does all the work
+        window.dispatch_action(Box::new(crate::actions::SubmitDiffReviewComment), cx);
+    }
+
+    /// Returns the prompt editor for the diff review overlay, if one is active.
+    /// This is primarily used for testing.
+    pub fn diff_review_prompt_editor(&self) -> Option<&Entity<Editor>> {
+        self.diff_review_overlay
+            .as_ref()
+            .map(|overlay| &overlay.prompt_editor)
+    }
+
+    /// Returns the display row for the diff review overlay, if one is active.
+    pub fn diff_review_display_row(&self) -> Option<DisplayRow> {
+        self.diff_review_overlay
+            .as_ref()
+            .map(|overlay| overlay.display_row)
     }
 
     fn render_diff_review_overlay(
@@ -20926,15 +20970,23 @@ impl Editor {
                                 IconButton::new("diff-review-close", IconName::Close)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Close")),
+                                    .tooltip(Tooltip::text("Close"))
+                                    .on_click(|_, window, cx| {
+                                        window
+                                            .dispatch_action(Box::new(crate::actions::Cancel), cx);
+                                    }),
                             )
                             .child(
                                 IconButton::new("diff-review-regenerate", IconName::Return)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text(
-                                        "Editing will restart the thread from this point.",
-                                    )),
+                                    .tooltip(Tooltip::text("Submit review comment"))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::actions::SubmitDiffReviewComment),
+                                            cx,
+                                        );
+                                    }),
                             ),
                     ),
             )

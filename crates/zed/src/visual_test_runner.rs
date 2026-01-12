@@ -1393,6 +1393,49 @@ import { AiPaneTabContext } from 'context';
         update_baseline,
     )?;
 
+    // Test 5: Type text into the diff review prompt and submit it
+    // First, get the prompt editor from the overlay and type some text
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Get the prompt editor from the overlay and insert text
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |prompt_editor: &mut editor::Editor, cx| {
+                            prompt_editor.insert(
+                                "This change needs better error handling",
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                });
+            }
+        })
+        .ok();
+
+    // Wait for text to be inserted
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 5: Diff review overlay with typed text
+    let test5_result = run_visual_test(
+        "diff_review_overlay_with_text",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
     // Clean up: remove worktrees to stop background scanning
     workspace_window
         .update(cx, |workspace, _window, cx| {
@@ -1426,14 +1469,27 @@ import { AiPaneTabContext } from 'context';
     }
 
     // Return combined result
-    match (&test1_result, &test2_result, &test3_result, &test4_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed, TestResult::Passed) => {
-            Ok(TestResult::Passed)
+    match (
+        &test1_result,
+        &test2_result,
+        &test3_result,
+        &test4_result,
+        &test5_result,
+    ) {
+        (
+            TestResult::Passed,
+            TestResult::Passed,
+            TestResult::Passed,
+            TestResult::Passed,
+            TestResult::Passed,
+        ) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _, _, _, _)
+        | (_, TestResult::BaselineUpdated(p), _, _, _)
+        | (_, _, TestResult::BaselineUpdated(p), _, _)
+        | (_, _, _, TestResult::BaselineUpdated(p), _)
+        | (_, _, _, _, TestResult::BaselineUpdated(p)) => {
+            Ok(TestResult::BaselineUpdated(p.clone()))
         }
-        (TestResult::BaselineUpdated(p), _, _, _)
-        | (_, TestResult::BaselineUpdated(p), _, _)
-        | (_, _, TestResult::BaselineUpdated(p), _)
-        | (_, _, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
     }
 }
 
