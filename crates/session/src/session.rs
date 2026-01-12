@@ -62,10 +62,10 @@ impl AppSession {
     pub fn new(session: Session, cx: &Context<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
+        #[cfg(not(any(test, feature = "test-support")))]
         let _serialization_task = cx.spawn(async move |_, cx| {
             // Disabled in tests: the infinite loop bypasses "parking forbidden" checks,
             // causing tests to hang instead of panicking.
-            #[cfg(not(any(test, feature = "test-support")))]
             {
                 let mut current_window_stack = Vec::new();
                 loop {
@@ -82,6 +82,9 @@ impl AppSession {
                 }
             }
         });
+
+        #[cfg(any(test, feature = "test-support"))]
+        let _serialization_task = Task::ready(());
 
         Self {
             session,
