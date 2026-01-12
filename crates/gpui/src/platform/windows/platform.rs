@@ -845,6 +845,11 @@ impl WindowsPlatformInner {
                     let peek_msg = |msg: &mut _, msg_kind| unsafe {
                         PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
                     };
+                    // We need to process a paint message here as otherwise we will re-enter `run_foreground_task` before painting if we have work remaining.
+                    // The reason for this is that windows prefers custom application message processing over system messages.
+                    if peek_msg(&mut msg, PM_QS_PAINT) {
+                        process_message(&msg);
+                    }
                     while peek_msg(&mut msg, PM_QS_INPUT) {
                         process_message(&msg);
                     }
