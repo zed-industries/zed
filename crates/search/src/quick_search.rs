@@ -845,9 +845,9 @@ impl QuickSearchDelegate {
             let multi_buffer_snapshot = multi_buffer.read(cx);
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
                 // Highlight the entire row (including gutter)
-                let row_anchor = editor::Anchor::in_buffer(excerpt_id, anchor_range.start.clone());
+                let row_anchor = editor::Anchor::in_buffer(excerpt_id, anchor_range.start);
                 editor.highlight_rows::<SearchMatchLineHighlight>(
-                    row_anchor.clone()..row_anchor,
+                    row_anchor..row_anchor,
                     cx.theme().colors().editor_active_line_background,
                     RowHighlightOptions::default(),
                     cx,
