@@ -1102,8 +1102,9 @@ impl Project {
                 .detach();
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::local(worktree_store.clone(), Some(weak_self.clone()), cx)
+            });
 
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
@@ -1310,8 +1311,15 @@ impl Project {
             }
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                    Some(weak_self.clone()),
+                    cx,
+                )
+            });
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1678,7 +1686,7 @@ impl Project {
 
             let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), Some(weak_self), cx));
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
