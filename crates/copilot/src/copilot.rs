@@ -58,26 +58,6 @@ actions!(
     ]
 );
 
-pub fn init(
-    new_server_id: LanguageServerId,
-    fs: Arc<dyn Fs>,
-    node_runtime: NodeRuntime,
-    cx: &mut App,
-) {
-    let copilot = cx.new(move |cx| Copilot::new(new_server_id, fs, node_runtime, cx));
-    Copilot::set_global(copilot.clone(), cx);
-    cx.observe(&copilot, |copilot, cx| {
-        copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
-    })
-    .detach();
-    cx.observe_global::<SettingsStore>(|cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
-        }
-    })
-    .detach();
-}
-
 enum CopilotServer {
     Disabled,
     Starting { task: Shared<Task<()>> },
@@ -323,6 +303,11 @@ impl Copilot {
                     .context("copilot setting change: did change configuration")
                     .log_err();
             }
+            this.update_action_visibilities(cx);
+        })
+        .detach();
+        cx.observe_self(|copilot, cx| {
+            copilot.update_action_visibilities(cx);
         })
         .detach();
         this

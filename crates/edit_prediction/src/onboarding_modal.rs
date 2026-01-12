@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::ZedPredictUpsell;
+use crate::{EditPredictionStore, ZedPredictUpsell};
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
 use db::kvp::Dismissable;
@@ -50,15 +50,17 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let project = workspace.project().downgrade();
         workspace.toggle_modal(window, cx, |_window, cx| {
             let weak_entity = cx.weak_entity();
+            let copilot = EditPredictionStore::try_global(cx)
+                .and_then(|store| store.read(cx).copilot.get(&project).cloned());
             Self {
                 onboarding: cx.new(|cx| {
                     EditPredictionOnboarding::new(
                         user_store.clone(),
                         client.clone(),
-                        copilot::Copilot::global(cx)
-                            .is_some_and(|copilot| copilot.read(cx).status().is_configured()),
+                        copilot.is_some_and(|copilot| copilot.read(cx).status().is_configured()),
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {

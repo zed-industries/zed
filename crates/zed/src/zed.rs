@@ -406,6 +406,7 @@ pub fn initialize_workspace(
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
                 app_state.client.clone(),
+                workspace.project().clone(),
                 cx,
             )
         });

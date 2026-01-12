@@ -1,5 +1,5 @@
 use collections::VecDeque;
-use copilot::Copilot;
+use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
     App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
@@ -115,50 +115,57 @@ actions!(
 pub fn init(on_headless_host: bool, cx: &mut App) {
     let log_store = log_store::init(on_headless_host, cx);
 
-    log_store.update(cx, |_, cx| {
-        Copilot::global(cx).map(|copilot| {
-            let copilot = &copilot;
-            cx.subscribe(copilot, |log_store, copilot, edit_prediction_event, cx| {
-                if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event
-                    && let Some(server) = copilot.read(cx).language_server()
-                {
-                    let server_id = server.server_id();
-                    let weak_lsp_store = cx.weak_entity();
-                    log_store.copilot_log_subscription =
-                        Some(server.on_notification::<lsp::notification::LogMessage, _>(
-                            move |params, cx| {
-                                weak_lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.add_language_server_log(
-                                            server_id,
-                                            MessageType::LOG,
-                                            &params.message,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            },
-                        ));
-
-                    let name = LanguageServerName::new_static("copilot");
-                    log_store.add_language_server(
-                        LanguageServerKind::Global,
-                        server.server_id(),
-                        Some(name),
-                        None,
-                        Some(server.clone()),
-                        cx,
-                    );
-                }
-            })
-            .detach();
-        })
-    });
-
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         log_store.update(cx, |store, cx| {
             store.add_project(workspace.project(), cx);
         });
+        let project = workspace.project().clone();
+        let copilot = EditPredictionStore::try_global(cx)
+            .and_then(|store| store.read(cx).copilot.get(&project.downgrade()))
+            .cloned();
+        if let Some(copilot) = copilot {
+            log_store.update(cx, |_, cx| {
+                cx.subscribe(
+                    &copilot,
+                    move |log_store, copilot, edit_prediction_event, cx| {
+                        if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event
+                            && let Some(server) = copilot.read(cx).language_server()
+                        {
+                            let server_id = server.server_id();
+                            let weak_lsp_store = cx.weak_entity();
+                            log_store.copilot_log_subscription =
+                                Some(server.on_notification::<lsp::notification::LogMessage, _>(
+                                    move |params, cx| {
+                                        weak_lsp_store
+                                            .update(cx, |lsp_store, cx| {
+                                                lsp_store.add_language_server_log(
+                                                    server_id,
+                                                    MessageType::LOG,
+                                                    &params.message,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    },
+                                ));
+
+                            let name = LanguageServerName::new_static("copilot");
+                            log_store.add_language_server(
+                                LanguageServerKind::Local {
+                                    project: project.downgrade(),
+                                },
+                                server.server_id(),
+                                Some(name),
+                                None,
+                                Some(server.clone()),
+                                cx,
+                            );
+                        }
+                    },
+                )
+                .detach();
+            });
+        }
 
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
