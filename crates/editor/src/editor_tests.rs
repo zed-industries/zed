@@ -7625,12 +7625,10 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.update_editor(|editor, window, cx| editor.copy_and_trim(&CopyAndTrim, window, cx));
 
-    let clipboard_contents = cx
-        .read_from_clipboard()
-        .and_then(|item| item.text())
-        .and_then(|text| Some(text.to_string()));
-
-    assert_eq!(clipboard_contents, Some("a\nb\n".to_string()));
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("a\nb\n".to_string())
+    );
 }
 
 #[gpui::test]
