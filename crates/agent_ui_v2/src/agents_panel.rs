@@ -240,7 +240,7 @@ impl AgentsPanel {
 
     fn handle_history_updated(
         &mut self,
-        _history: &Entity<AcpThreadHistory>,
+        _history: Entity<AcpThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
