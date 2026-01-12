@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
     WeakEntity,
@@ -25,11 +28,24 @@ impl ProjectDropdown {
     pub fn new(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        active_worktree_id: Option<WorktreeId>,
+        titlebar: WeakEntity<TitleBar>,
+        initial_active_worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let menu = Self::build_menu(project, workspace, active_worktree_id, window, cx);
+        let menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>> = Rc::new(RefCell::new(None));
+
+        let menu = Self::build_menu(
+            project,
+            workspace,
+            titlebar,
+            initial_active_worktree_id,
+            menu_shell.clone(),
+            window,
+            cx,
+        );
+
+        *menu_shell.borrow_mut() = Some(menu.clone());
 
         let _subscription = cx.subscribe(&menu, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
@@ -44,13 +60,29 @@ impl ProjectDropdown {
     fn build_menu(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        active_worktree_id: Option<WorktreeId>,
+        titlebar: WeakEntity<TitleBar>,
+        initial_active_worktree_id: Option<WorktreeId>,
+        menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let entries = Self::get_project_entries(&project, active_worktree_id, cx);
+        ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
+            let active_worktree_id = if menu_shell.borrow().is_some() {
+                titlebar
+                    .upgrade()
+                    .and_then(|tb| {
+                        let titlebar = tb.read(cx);
+                        titlebar
+                            .effective_active_worktree(cx)
+                            .map(|wt| wt.read(cx).id())
+                    })
+                    .or(initial_active_worktree_id)
+            } else {
+                initial_active_worktree_id
+            };
 
-        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+            let entries = Self::get_project_entries(&project, active_worktree_id, cx);
+
             let mut menu = menu.header("Open Folders");
 
             for entry in entries {
@@ -61,12 +93,14 @@ impl ProjectDropdown {
 
                 let workspace_for_select = workspace.clone();
                 let workspace_for_remove = workspace.clone();
+                let menu_shell_for_remove = menu_shell.clone();
 
                 menu = menu.custom_entry(
                     move |_window, _cx| {
                         let name = name.clone();
                         let branch = branch.clone();
                         let workspace_for_remove = workspace_for_remove.clone();
+                        let menu_shell = menu_shell_for_remove.clone();
 
                         h_flex()
                             .group(name.clone())
@@ -97,10 +131,15 @@ impl ProjectDropdown {
                                         Self::handle_remove(
                                             workspace.clone(),
                                             worktree_id,
-                                            active_worktree_id,
                                             window,
                                             cx,
                                         );
+
+                                        if let Some(menu_entity) = menu_shell.borrow().clone() {
+                                            menu_entity.update(cx, |menu, cx| {
+                                                menu.rebuild(window, cx);
+                                            });
+                                        }
                                     }
                                 }),
                             )
@@ -203,15 +242,23 @@ impl ProjectDropdown {
     fn handle_remove(
         workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
-        active_worktree_id: Option<WorktreeId>,
         _window: &mut Window,
         cx: &mut App,
     ) {
-        let is_removing_active = active_worktree_id == Some(worktree_id);
-
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 let project = workspace.project();
+
+                let current_active_id = workspace
+                    .titlebar_item()
+                    .and_then(|item| item.downcast::<TitleBar>().ok())
+                    .and_then(|tb| {
+                        tb.read(cx)
+                            .effective_active_worktree(cx)
+                            .map(|wt| wt.read(cx).id())
+                    });
+
+                let is_removing_active = current_active_id == Some(worktree_id);
 
                 if is_removing_active {
                     let worktrees: Vec<_> = project.read(cx).visible_worktrees(cx).collect();

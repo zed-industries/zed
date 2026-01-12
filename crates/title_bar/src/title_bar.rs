@@ -31,13 +31,11 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
-};
+use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
 use project_dropdown::ProjectDropdown;
 use remote::RemoteConnectionOptions;
+use settings::Settings;
 use settings::WorktreeId;
-use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -45,7 +43,7 @@ use ui::{
     Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
-use util::{ResultExt, rel_path::RelPath};
+use util::ResultExt;
 use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
 
@@ -375,7 +373,7 @@ impl TitleBar {
     /// - If there's an override set, use that (if still valid)
     /// - Otherwise, derive from the active repository
     /// - Fall back to the first visible worktree
-    fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
+    pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
         let project = self.project.read(cx);
 
         if let Some(override_id) = self.active_worktree_override {
@@ -701,7 +699,8 @@ impl TitleBar {
     ) -> impl IntoElement {
         let project = self.project.clone();
         let workspace = self.workspace.clone();
-        let active_worktree_id = self
+        let titlebar = cx.entity().downgrade();
+        let initial_active_worktree_id = self
             .effective_active_worktree(cx)
             .map(|wt| wt.read(cx).id());
 
@@ -715,12 +714,14 @@ impl TitleBar {
             .menu(move |window, cx| {
                 let project = project.clone();
                 let workspace = workspace.clone();
+                let titlebar = titlebar.clone();
 
                 Some(cx.new(|cx| {
                     ProjectDropdown::new(
                         project.clone(),
                         workspace.clone(),
-                        active_worktree_id,
+                        titlebar,
+                        initial_active_worktree_id,
                         window,
                         cx,
                     )
