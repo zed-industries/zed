@@ -614,39 +614,57 @@ impl Vim {
                 let selections = editor.selections.all_display(&display_map);
 
                 // Store selection info for positioning after edit
-                let selection_info: Vec<_> = selections
-                    .iter()
-                    .map(|selection| {
-                        let range = selection.range();
-                        let start_offset = range.start.to_offset(&display_map, Bias::Left);
-                        let end_offset = range.end.to_offset(&display_map, Bias::Left);
-                        let was_empty = range.is_empty();
-                        let was_reversed = selection.reversed;
-                        (
-                            display_map.buffer_snapshot().anchor_before(start_offset),
-                            end_offset - start_offset,
-                            was_empty,
-                            was_reversed,
-                        )
-                    })
-                    .collect();
+                let buffer_snapshot = display_map.buffer_snapshot();
+                struct SelectionInfo {
+                    start_anchor: editor::Anchor,
+                    original_char_count: usize,
+                    was_reversed: bool,
+                }
 
+                let mut selection_info: Vec<SelectionInfo> = Vec::new();
                 let mut edits = Vec::new();
                 for selection in &selections {
-                    let mut range = selection.range();
+                    let range = selection.range();
+                    let start_offset = range.start.to_offset(&display_map, Bias::Left);
+                    let end_offset = range.end.to_offset(&display_map, Bias::Left);
+                    let was_empty = range.is_empty();
+                    let was_reversed = selection.reversed;
+                    let original_char_count = if was_empty {
+                        0
+                    } else {
+                        buffer_snapshot
+                            .text_for_range(start_offset..end_offset)
+                            .map(|chunk| chunk.chars().count())
+                            .sum()
+                    };
 
+                    let mut replace_range = range;
                     // For empty selections, extend to replace one character
-                    if range.is_empty() {
-                        range.end = movement::saturating_right(&display_map, range.start);
+                    if replace_range.is_empty() {
+                        replace_range.end =
+                            movement::saturating_right(&display_map, replace_range.start);
+                    }
+                    let replace_byte_range = replace_range.start.to_offset(&display_map, Bias::Left)
+                        ..replace_range.end.to_offset(&display_map, Bias::Left);
+                    let replace_char_count = if was_empty {
+                        buffer_snapshot
+                            .text_for_range(replace_byte_range.clone())
+                            .map(|chunk| chunk.chars().count())
+                            .sum()
+                    } else {
+                        original_char_count
+                    };
+
+                    if !replace_byte_range.is_empty() {
+                        let replacement_text = text.repeat(replace_char_count);
+                        edits.push((replace_byte_range.clone(), replacement_text));
                     }
 
-                    let byte_range = range.start.to_offset(&display_map, Bias::Left)
-                        ..range.end.to_offset(&display_map, Bias::Left);
-
-                    if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(byte_range.end - byte_range.start);
-                        edits.push((byte_range, replacement_text));
-                    }
+                    selection_info.push(SelectionInfo {
+                        start_anchor: buffer_snapshot.anchor_before(start_offset),
+                        original_char_count,
+                        was_reversed,
+                    });
                 }
 
                 editor.edit(edits, cx);
@@ -655,17 +673,18 @@ impl Vim {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let ranges: Vec<_> = selection_info
                     .into_iter()
-                    .map(|(start_anchor, original_len, was_empty, was_reversed)| {
-                        let start_point = start_anchor.to_point(&snapshot);
-                        if was_empty {
+                    .map(|info| {
+                        let start_point = info.start_anchor.to_point(&snapshot);
+                        if info.original_char_count == 0 {
                             // For cursor-only, collapse to start
                             start_point..start_point
                         } else {
                             // For selections, span the replaced text
-                            let replacement_len = text.len() * original_len;
-                            let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
+                            let replacement_len = text.len() * info.original_char_count;
+                            let end_offset =
+                                info.start_anchor.to_offset(&snapshot) + replacement_len;
                             let end_point = snapshot.offset_to_point(end_offset);
-                            if was_reversed {
+                            if info.was_reversed {
                                 end_point..start_point
                             } else {
                                 start_point..end_point
@@ -1172,6 +1191,13 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+
+        // Multibyte characters.
+        cx.set_state("«“feature”ˇ»", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«xxxxxxxxxˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]
