@@ -695,7 +695,7 @@ impl LanguageModel for CloudLanguageModel {
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
-                    into_google(request, model_id.clone(), GoogleModelMode::Default);
+                    into_google(request, model_id.clone(), GoogleModelMode::Default, false);
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -963,8 +963,12 @@ impl LanguageModel for CloudLanguageModel {
             }
             cloud_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
-                let request =
-                    into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
+                let request = into_google(
+                    request,
+                    self.model.id.to_string(),
+                    GoogleModelMode::Default,
+                    false,
+                );
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {

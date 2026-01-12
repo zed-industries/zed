@@ -210,6 +210,10 @@ pub enum Part {
 #[serde(rename_all = "camelCase")]
 pub struct TextPart {
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -397,12 +401,16 @@ pub struct CountTokensResponse {
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionResponse {
     pub name: String,
     pub response: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -629,6 +637,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value"}),
+                id: None,
             },
             thought_signature: Some("test_signature".to_string()),
         };
@@ -646,6 +655,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value"}),
+                id: None,
             },
             thought_signature: None,
         };
@@ -695,6 +705,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value", "nested": {"key": "val"}}),
+                id: None,
             },
             thought_signature: Some("round_trip_signature".to_string()),
         };
@@ -713,6 +724,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value"}),
+                id: None,
             },
             thought_signature: Some("".to_string()),
         };

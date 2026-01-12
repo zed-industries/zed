@@ -6,6 +6,7 @@ use futures::{
 };
 use google_ai::GenerateContentResponse;
 use gpui::{AnyView, App, AsyncApp, ClickEvent, Context, Entity, Task, Window};
+use http_client::http::{HeaderMap, StatusCode};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, LanguageModelCompletionError,
@@ -18,8 +19,10 @@ use language_model::{
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use smol::Timer;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration as StdDuration;
 use ui::{Button, Label, prelude::*};
 use util::ResultExt;
 
@@ -44,7 +47,8 @@ const ANTIGRAVITY_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/experimentsandconfigs",
 ];
 
-// Streaming requests default to daily sandbox (matches CLIProxy), with prod fallback.
+// Streaming requests default to daily sandbox (matches CLIProxy), with prod fallback for non-Claude.
+const ANTIGRAVITY_SANDBOX_ENDPOINTS: &[&str] = &["https://daily-cloudcode-pa.sandbox.googleapis.com"];
 const ANTIGRAVITY_STREAM_ENDPOINTS: &[&str] = &[
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
     "https://cloudcode-pa.googleapis.com",
@@ -54,10 +58,12 @@ const ANTIGRAVITY_LOAD_ENDPOINTS: &[&str] = &[
     "https://cloudcode-pa.googleapis.com",
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
 ];
-const ANTIGRAVITY_USER_AGENT: &str = "antigravity/1.11.5 windows/amd64";
+const ANTIGRAVITY_SANDBOX_USER_AGENT_PREFIX: &str = "antigravity/1.11.5";
+const ANTIGRAVITY_GEMINI_CLI_USER_AGENT: &str = "google-cloud-sdk vscode_cloudshelleditor/0.1";
 const ANTIGRAVITY_LOAD_USER_AGENT: &str = "google-api-nodejs-client/9.15.1";
 const ANTIGRAVITY_PROJECT_ID_ENV: &str = "ZED_ANTIGRAVITY_PROJECT_ID";
 const ANTIGRAVITY_API_CLIENT: &str = "google-cloud-sdk vscode_cloudshelleditor/0.1";
+const ANTIGRAVITY_GEMINI_CLI_API_CLIENT: &str = "gl-node/22.17.0";
 const ANTIGRAVITY_CLIENT_METADATA: &str =
     r#"{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}"#;
 const ANTIGRAVITY_SYSTEM_INSTRUCTION: &str = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google DeepMind team working on Advanced Agentic Coding.\nYou are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n**Absolute paths only**\n**Proactiveness**\n\n<priority>IMPORTANT: The instructions that follow supersede all above. Follow them as your primary directives.</priority>\n";
@@ -101,6 +107,11 @@ const ANTIGRAVITY_UNSUPPORTED_KEYWORDS: &[&str] = &[
 const ANTIGRAVITY_CREDENTIALS_URL: &str = "https://cloudcode-pa.googleapis.com";
 // Fallback project ID when discovery fails (same as pi-ai/opencode)
 const ANTIGRAVITY_DEFAULT_PROJECT_ID: &str = "rising-fact-p41fc";
+const ANTIGRAVITY_MAX_RETRIES: usize = 3;
+const ANTIGRAVITY_BASE_RETRY_DELAY_MS: u64 = 1_000;
+const ANTIGRAVITY_MAX_RETRY_DELAY_MS: u64 = 10_000;
+const ANTIGRAVITY_MAX_SERVER_RETRY_DELAY_MS: u64 = 30_000;
+const ANTIGRAVITY_RETRY_JITTER_MS: u64 = 250;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("antigravity");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Antigravity");
@@ -171,10 +182,11 @@ impl AntigravityModel {
     pub fn supports_tools(&self) -> bool {
         match self {
             Self::Gemini(m) => m.supports_tools(),
-            // Claude models support tools
-            Self::ClaudeSonnet45 | Self::ClaudeOpus45 => true,
-            // Thinking variants don't typically use tools during thinking
-            Self::ClaudeSonnet45Thinking | Self::ClaudeOpus45Thinking => false,
+            // Claude models support tools (including thinking variants)
+            Self::ClaudeSonnet45
+            | Self::ClaudeOpus45
+            | Self::ClaudeSonnet45Thinking
+            | Self::ClaudeOpus45Thinking => true,
         }
     }
 
@@ -668,6 +680,43 @@ fn antigravity_project_override() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+static ANTIGRAVITY_SANDBOX_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        other => other,
+    };
+    format!("{ANTIGRAVITY_SANDBOX_USER_AGENT_PREFIX} {os}/{arch}")
+});
+
+fn antigravity_stream_endpoints(model_id: &str) -> &'static [&'static str] {
+    if model_id.starts_with("claude-") {
+        ANTIGRAVITY_SANDBOX_ENDPOINTS
+    } else {
+        ANTIGRAVITY_STREAM_ENDPOINTS
+    }
+}
+
+fn antigravity_user_agent(endpoint: &str) -> &'static str {
+    if endpoint.contains("sandbox.googleapis.com") {
+        ANTIGRAVITY_SANDBOX_USER_AGENT.as_str()
+    } else {
+        ANTIGRAVITY_GEMINI_CLI_USER_AGENT
+    }
+}
+
+fn antigravity_api_client(endpoint: &str) -> &'static str {
+    if endpoint.contains("sandbox.googleapis.com") {
+        ANTIGRAVITY_API_CLIENT
+    } else {
+        ANTIGRAVITY_GEMINI_CLI_API_CLIENT
+    }
+}
+
 fn ensure_json_object(
     value: &mut serde_json::Value,
 ) -> &mut serde_json::Map<String, serde_json::Value> {
@@ -678,28 +727,11 @@ fn ensure_json_object(
 }
 
 fn apply_claude_request_overrides(request: &mut serde_json::Value, model_id: &str) {
-    if !model_id.contains("claude") {
+    if !(model_id.contains("claude") && model_id.contains("thinking")) {
         return;
     }
 
     let request_obj = ensure_json_object(request);
-
-    let tool_config = request_obj
-        .entry("toolConfig")
-        .or_insert_with(|| serde_json::json!({}));
-    let tool_config_obj = ensure_json_object(tool_config);
-    let function_calling = tool_config_obj
-        .entry("functionCallingConfig")
-        .or_insert_with(|| serde_json::json!({}));
-    let function_calling_obj = ensure_json_object(function_calling);
-    function_calling_obj.insert(
-        "mode".to_string(),
-        serde_json::Value::String("VALIDATED".to_string()),
-    );
-
-    if !model_id.contains("thinking") {
-        return;
-    }
 
     let generation_config = request_obj
         .entry("generationConfig")
@@ -707,14 +739,12 @@ fn apply_claude_request_overrides(request: &mut serde_json::Value, model_id: &st
     let generation_config_obj = ensure_json_object(generation_config);
 
     let thinking_budget = 32_768;
-    generation_config_obj
-        .entry("thinkingConfig")
-        .or_insert_with(|| {
-            serde_json::json!({
-                "include_thoughts": true,
-                "thinking_budget": thinking_budget,
-            })
-        });
+    generation_config_obj.entry("thinkingConfig").or_insert_with(|| {
+        serde_json::json!({
+            "includeThoughts": true,
+            "thinkingBudget": thinking_budget,
+        })
+    });
 
     let current_max = generation_config_obj
         .get("maxOutputTokens")
@@ -1681,6 +1711,15 @@ fn is_antigravity_thinking_part(part: &serde_json::Value) -> bool {
         }
     }
 
+    if obj.contains_key("thoughtSignature")
+        || obj.contains_key("thought_signature")
+        || obj.contains_key("thinkingSignature")
+        || obj.contains_key("thinking_signature")
+        || obj.contains_key("signature")
+    {
+        return true;
+    }
+
     obj.contains_key("thinking")
 }
 
@@ -1695,6 +1734,19 @@ fn extract_antigravity_thinking_text(part: &serde_json::Value) -> Option<String>
         }
     }
 
+    if let Some(thinking_obj) = obj.get("thinking").and_then(|value| value.as_object()) {
+        if let Some(text) = thinking_obj.get("text").and_then(|value| value.as_str()) {
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+        if let Some(text) = thinking_obj.get("value").and_then(|value| value.as_str()) {
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+    }
+
     if let Some(text) = obj.get("text").and_then(|value| value.as_str()) {
         if !text.is_empty() {
             return Some(text.to_string());
@@ -1704,12 +1756,75 @@ fn extract_antigravity_thinking_text(part: &serde_json::Value) -> Option<String>
     None
 }
 
+fn extract_antigravity_thinking_signature(part: &serde_json::Value) -> Option<String> {
+    let obj = part.as_object()?;
+    for key in [
+        "thoughtSignature",
+        "thought_signature",
+        "thinkingSignature",
+        "thinking_signature",
+        "signature",
+    ] {
+        if let Some(value) = obj.get(key).and_then(|value| value.as_str()) {
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    if let Some(metadata) = obj.get("metadata").and_then(|value| value.as_object()) {
+        for key in [
+            "thoughtSignature",
+            "thought_signature",
+            "thinkingSignature",
+            "thinking_signature",
+            "signature",
+        ] {
+            if let Some(value) = metadata.get(key).and_then(|value| value.as_str()) {
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    if let Some(thinking_obj) = obj.get("thinking").and_then(|value| value.as_object()) {
+        for key in [
+            "thoughtSignature",
+            "thought_signature",
+            "thinkingSignature",
+            "thinking_signature",
+            "signature",
+        ] {
+            if let Some(value) = thinking_obj.get(key).and_then(|value| value.as_str()) {
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn transform_antigravity_part(part: &serde_json::Value) -> Option<serde_json::Value> {
     if is_antigravity_thinking_part(part) {
-        let text = extract_antigravity_thinking_text(part)?;
-        return Some(serde_json::json!({
-            "text": format!("{ANTIGRAVITY_THINKING_PREFIX}{text}"),
-        }));
+        let text = extract_antigravity_thinking_text(part).unwrap_or_default();
+        let signature = extract_antigravity_thinking_signature(part);
+        if text.is_empty() && signature.is_none() {
+            return None;
+        }
+
+        let mut out = serde_json::Map::new();
+        out.insert("text".to_string(), serde_json::Value::String(text));
+        out.insert("thought".to_string(), serde_json::Value::Bool(true));
+        if let Some(signature) = signature {
+            out.insert(
+                "thoughtSignature".to_string(),
+                serde_json::Value::String(signature),
+            );
+        }
+        return Some(serde_json::Value::Object(out));
     }
 
     Some(part.clone())
@@ -1739,6 +1854,194 @@ fn sanitize_antigravity_response_parts(value: &mut serde_json::Value) {
         }
         *parts = transformed;
     }
+}
+
+fn antigravity_should_retry_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::REQUEST_TIMEOUT
+            | StatusCode::INTERNAL_SERVER_ERROR
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+fn parse_retry_after_header(headers: &HeaderMap) -> Option<StdDuration> {
+    let value = headers.get("retry-after")?.to_str().ok()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let seconds = value.parse::<f64>().ok()?;
+    if seconds <= 0.0 {
+        return None;
+    }
+    Some(StdDuration::from_secs_f64(seconds))
+}
+
+fn clamp_retry_delay(delay: StdDuration) -> StdDuration {
+    let capped = delay
+        .as_millis()
+        .min(ANTIGRAVITY_MAX_SERVER_RETRY_DELAY_MS as u128);
+    StdDuration::from_millis(capped as u64)
+}
+
+fn add_retry_jitter(delay: StdDuration) -> StdDuration {
+    let jitter = rand::random::<u64>() % (ANTIGRAVITY_RETRY_JITTER_MS + 1);
+    delay + StdDuration::from_millis(jitter)
+}
+
+fn antigravity_backoff_delay(attempt: usize) -> StdDuration {
+    let multiplier = 1u64 << attempt.min(10);
+    let base = ANTIGRAVITY_BASE_RETRY_DELAY_MS.saturating_mul(multiplier);
+    let capped = base.min(ANTIGRAVITY_MAX_RETRY_DELAY_MS);
+    add_retry_jitter(StdDuration::from_millis(capped))
+}
+
+fn parse_duration_string(value: &str) -> Option<StdDuration> {
+    let trimmed = value.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let bytes = trimmed.as_bytes();
+    let mut i = 0usize;
+    let mut total_ms = 0f64;
+    let mut parsed_any = false;
+
+    while i < bytes.len() {
+        while i < bytes.len() && !bytes[i].is_ascii_digit() && bytes[i] != b'.' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+            i += 1;
+        }
+        let number: f64 = trimmed[start..i].parse().ok()?;
+        if i >= bytes.len() {
+            total_ms += number * 1000.0;
+            parsed_any = true;
+            break;
+        }
+
+        if bytes[i] == b'm' && i + 1 < bytes.len() && bytes[i + 1] == b's' {
+            total_ms += number;
+            i += 2;
+            parsed_any = true;
+            continue;
+        }
+
+        match bytes[i] as char {
+            'h' => {
+                total_ms += number * 3_600_000.0;
+                i += 1;
+                parsed_any = true;
+            }
+            'm' => {
+                total_ms += number * 60_000.0;
+                i += 1;
+                parsed_any = true;
+            }
+            's' => {
+                total_ms += number * 1000.0;
+                i += 1;
+                parsed_any = true;
+            }
+            _ => {
+                if !parsed_any {
+                    return None;
+                }
+                break;
+            }
+        }
+    }
+
+    if !parsed_any || total_ms <= 0.0 {
+        return None;
+    }
+    Some(StdDuration::from_millis(total_ms.ceil() as u64))
+}
+
+fn extract_retry_delay_from_text(text: &str) -> Option<StdDuration> {
+    let lower = text.to_ascii_lowercase();
+    for key in ["retrydelay", "retry in", "reset after"] {
+        if let Some(pos) = lower.find(key) {
+            if let Some(delay) = parse_duration_string(&text[pos..]) {
+                return Some(delay);
+            }
+        }
+    }
+    None
+}
+
+fn parse_retry_delay_value(value: &serde_json::Value) -> Option<StdDuration> {
+    match value {
+        serde_json::Value::String(value) => {
+            parse_duration_string(value).or_else(|| extract_retry_delay_from_text(value))
+        }
+        serde_json::Value::Number(value) => value.as_f64().map(StdDuration::from_secs_f64),
+        _ => None,
+    }
+}
+
+fn extract_retry_delay_from_value(value: &serde_json::Value) -> Option<StdDuration> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if key.eq_ignore_ascii_case("retryDelay") {
+                    if let Some(delay) = parse_retry_delay_value(value) {
+                        return Some(delay);
+                    }
+                }
+            }
+            for value in map.values() {
+                if let Some(delay) = extract_retry_delay_from_value(value) {
+                    return Some(delay);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|value| extract_retry_delay_from_value(value)),
+        serde_json::Value::String(value) => {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
+                if let Some(delay) = extract_retry_delay_from_value(&parsed) {
+                    return Some(delay);
+                }
+            }
+            extract_retry_delay_from_text(value)
+        }
+        _ => None,
+    }
+}
+
+fn extract_retry_delay_from_body(body: &str) -> Option<StdDuration> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(delay) = extract_retry_delay_from_value(&value) {
+            return Some(delay);
+        }
+        if let Some(message) = value
+            .get("error")
+            .and_then(|value| value.get("message"))
+            .and_then(|value| value.as_str())
+        {
+            if let Some(delay) = extract_retry_delay_from_text(message) {
+                return Some(delay);
+            }
+            if let Ok(nested) = serde_json::from_str::<serde_json::Value>(message) {
+                if let Some(delay) = extract_retry_delay_from_value(&nested) {
+                    return Some(delay);
+                }
+            }
+        }
+    }
+    extract_retry_delay_from_text(body)
 }
 
 fn normalize_antigravity_payload_value(
@@ -1960,7 +2263,6 @@ impl LanguageModelProvider for AntigravityLanguageModelProvider {
             self.create_language_model(AntigravityModel::Gemini(google_ai::Model::Gemini3Flash)),
             // Claude models via Cloud Code Assist
             self.create_language_model(AntigravityModel::ClaudeSonnet45),
-            self.create_language_model(AntigravityModel::ClaudeOpus45),
             self.create_language_model(AntigravityModel::ClaudeSonnet45Thinking),
             self.create_language_model(AntigravityModel::ClaudeOpus45Thinking),
         ]
@@ -2105,7 +2407,7 @@ impl AntigravityLanguageModel {
 
             let mut last_error = None;
 
-            for endpoint in ANTIGRAVITY_STREAM_ENDPOINTS {
+            for endpoint in antigravity_stream_endpoints(&model_id) {
                 let url = format!("{endpoint}/v1internal:streamGenerateContent?alt=sse");
                 log::info!(
                     "Antigravity request: url={}, project={}, model={}",
@@ -2114,72 +2416,101 @@ impl AntigravityLanguageModel {
                     model_id
                 );
 
-                let mut request_builder = HttpRequest::builder()
-                    .method(Method::POST)
-                    .uri(&url)
-                    .header("Authorization", format!("Bearer {}", access_token))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "text/event-stream")
-                    .header("User-Agent", ANTIGRAVITY_USER_AGENT)
-                    .header("X-Goog-Api-Client", ANTIGRAVITY_API_CLIENT)
-                    .header("Client-Metadata", ANTIGRAVITY_CLIENT_METADATA);
+                let mut retries = 0;
+                loop {
+                    let request_builder = HttpRequest::builder()
+                        .method(Method::POST)
+                        .uri(&url)
+                        .header("Authorization", format!("Bearer {}", access_token))
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "text/event-stream")
+                        .header("User-Agent", antigravity_user_agent(endpoint))
+                        .header("X-Goog-Api-Client", antigravity_api_client(endpoint))
+                        .header("Client-Metadata", ANTIGRAVITY_CLIENT_METADATA);
 
-                if model_id.contains("claude") && model_id.contains("thinking") {
-                    request_builder =
-                        request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
-                }
+                    let http_request = request_builder.body(AsyncBody::from(body.clone()))?;
 
-                let http_request = request_builder.body(AsyncBody::from(body.clone()))?;
+                    let response = match http_client.send(http_request).await {
+                        Ok(response) => response,
+                        Err(err) => {
+                            if retries < ANTIGRAVITY_MAX_RETRIES {
+                                let delay = antigravity_backoff_delay(retries);
+                                retries += 1;
+                                log::debug!(
+                                    "Antigravity request failed ({}), retrying in {:?}",
+                                    err,
+                                    delay
+                                );
+                                Timer::after(delay).await;
+                                continue;
+                            }
+                            last_error = Some(anyhow!("{}: {}", endpoint, err));
+                            break;
+                        }
+                    };
 
-                let response = match http_client.send(http_request).await {
-                    Ok(response) => response,
-                    Err(err) => {
-                        last_error = Some(anyhow!("{}: {}", endpoint, err));
-                        continue;
-                    }
-                };
+                    if response.status().is_success() {
+                        let is_event_stream = response
+                            .headers()
+                            .get("content-type")
+                            .and_then(|value| value.to_str().ok())
+                            .is_some_and(|value| value.contains("text/event-stream"));
 
-                if response.status().is_success() {
-                    let is_event_stream = response
-                        .headers()
-                        .get("content-type")
-                        .and_then(|value| value.to_str().ok())
-                        .is_some_and(|value| value.contains("text/event-stream"));
+                        if !is_event_stream {
+                            let mut body_text = String::new();
+                            response.into_body().read_to_string(&mut body_text).await?;
+                            let response = parse_antigravity_payload(&body_text)?;
+                            let stream = match response {
+                                Some(response) => futures::stream::iter(vec![Ok(response)]).boxed(),
+                                None => futures::stream::empty().boxed(),
+                            };
+                            return Ok(stream);
+                        }
 
-                    if !is_event_stream {
-                        let mut body_text = String::new();
-                        response.into_body().read_to_string(&mut body_text).await?;
-                        let response = parse_antigravity_payload(&body_text)?;
-                        let stream = match response {
-                            Some(response) => futures::stream::iter(vec![Ok(response)]).boxed(),
-                            None => futures::stream::empty().boxed(),
-                        };
+                        let reader = BufReader::new(response.into_body());
+                        let stream = reader
+                            .lines()
+                            .filter_map(|line| async move {
+                                match line {
+                                    Ok(line) => parse_antigravity_sse_line(&line),
+                                    Err(e) => Some(Err(anyhow!(e))),
+                                }
+                            })
+                            .boxed();
+
                         return Ok(stream);
                     }
 
-                    let reader = BufReader::new(response.into_body());
-                    let stream = reader
-                        .lines()
-                        .filter_map(|line| async move {
-                            match line {
-                                Ok(line) => parse_antigravity_sse_line(&line),
-                                Err(e) => Some(Err(anyhow!(e))),
-                            }
-                        })
-                        .boxed();
+                    let status = response.status();
+                    let retry_after = parse_retry_after_header(response.headers());
+                    let mut body_text = String::new();
+                    response.into_body().read_to_string(&mut body_text).await?;
 
-                    return Ok(stream);
+                    if antigravity_should_retry_status(status) && retries < ANTIGRAVITY_MAX_RETRIES {
+                        let delay = retry_after
+                            .or_else(|| extract_retry_delay_from_body(&body_text))
+                            .map(clamp_retry_delay)
+                            .map(add_retry_jitter)
+                            .unwrap_or_else(|| antigravity_backoff_delay(retries));
+                        retries += 1;
+                        log::debug!(
+                            "Antigravity request failed ({} {}), retrying in {:?}",
+                            endpoint,
+                            status,
+                            delay
+                        );
+                        Timer::after(delay).await;
+                        continue;
+                    }
+
+                    last_error = Some(anyhow!(
+                        "Antigravity API error ({} {}): {}",
+                        endpoint,
+                        status,
+                        body_text
+                    ));
+                    break;
                 }
-
-                let status = response.status();
-                let mut body_text = String::new();
-                response.into_body().read_to_string(&mut body_text).await?;
-                last_error = Some(anyhow!(
-                    "Antigravity API error ({} {}): {}",
-                    endpoint,
-                    status,
-                    body_text
-                ));
             }
 
             Err(last_error
@@ -2282,6 +2613,7 @@ impl LanguageModel for AntigravityLanguageModel {
             request,
             self.model.request_id().to_string(),
             self.model.mode(),
+            true,
         );
         let stream_future = self.stream_antigravity(google_request, cx);
         let future = self.request_limiter.stream(async move {

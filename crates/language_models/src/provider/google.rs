@@ -330,7 +330,7 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         let model_id = self.model.request_id().to_string();
-        let request = into_google(request, model_id, self.model.mode());
+        let request = into_google(request, model_id, self.model.mode(), false);
         let http_client = self.http_client.clone();
         let api_url = GoogleLanguageModelProvider::api_url(cx);
         let api_key = self.state.read(cx).api_key_state.key(&api_url);
@@ -374,6 +374,7 @@ impl LanguageModel for GoogleLanguageModel {
             request,
             self.model.request_id().to_string(),
             self.model.mode(),
+            false,
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
@@ -388,26 +389,32 @@ pub fn into_google(
     mut request: LanguageModelRequest,
     model_id: String,
     mode: GoogleModelMode,
+    include_tool_call_ids: bool,
 ) -> google_ai::GenerateContentRequest {
-    fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
+    fn map_content(content: Vec<MessageContent>, include_tool_call_ids: bool) -> Vec<Part> {
         content
             .into_iter()
             .flat_map(|content| match content {
                 language_model::MessageContent::Text(text) => {
                     if !text.is_empty() {
-                        vec![Part::TextPart(google_ai::TextPart { text })]
+                        vec![Part::TextPart(google_ai::TextPart {
+                            text,
+                            thought: None,
+                            thought_signature: None,
+                        })]
                     } else {
                         vec![]
                     }
                 }
                 language_model::MessageContent::Thinking {
-                    text: _,
+                    text,
                     signature: Some(signature),
                 } => {
                     if !signature.is_empty() {
-                        vec![Part::ThoughtPart(google_ai::ThoughtPart {
-                            thought: true,
-                            thought_signature: signature,
+                        vec![Part::TextPart(google_ai::TextPart {
+                            text,
+                            thought: Some(true),
+                            thought_signature: Some(signature),
                         })]
                     } else {
                         vec![]
@@ -433,6 +440,7 @@ pub fn into_google(
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
+                            id: include_tool_call_ids.then(|| tool_use.id.to_string()),
                         },
                         thought_signature,
                     })]
@@ -448,6 +456,8 @@ pub fn into_google(
                                         response: serde_json::json!({
                                             "output": text
                                         }),
+                                        id: include_tool_call_ids
+                                            .then(|| tool_result.tool_use_id.to_string()),
                                     },
                                 },
                             )]
@@ -461,6 +471,8 @@ pub fn into_google(
                                         response: serde_json::json!({
                                             "output": "Tool responded with an image"
                                         }),
+                                        id: include_tool_call_ids
+                                            .then(|| tool_result.tool_use_id.to_string()),
                                     },
                                 }),
                                 Part::InlineDataPart(google_ai::InlineDataPart {
@@ -484,7 +496,7 @@ pub fn into_google(
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
-            parts: map_content(message.content),
+            parts: map_content(message.content, include_tool_call_ids),
         })
     } else {
         None
@@ -497,7 +509,7 @@ pub fn into_google(
             .messages
             .into_iter()
             .filter_map(|message| {
-                let parts = map_content(message.content);
+                let parts = map_content(message.content, include_tool_call_ids);
                 if parts.is_empty() {
                     None
                 } else {
@@ -635,16 +647,41 @@ impl GoogleEventMapper {
                     .into_iter()
                     .for_each(|part| match part {
                         Part::TextPart(text_part) => {
-                            events.push(Ok(LanguageModelCompletionEvent::Text(text_part.text)))
+                            let thought_signature =
+                                text_part.thought_signature.filter(|s| !s.is_empty());
+                            let is_thinking =
+                                text_part.thought.unwrap_or(false) || thought_signature.is_some();
+
+                            if is_thinking {
+                                let text = if text_part.text.is_empty() {
+                                    "(Encrypted thought)".to_string()
+                                } else {
+                                    text_part.text
+                                };
+                                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                    text,
+                                    signature: thought_signature,
+                                }))
+                            } else {
+                                events.push(Ok(LanguageModelCompletionEvent::Text(text_part.text)))
+                            }
                         }
                         Part::InlineDataPart(_) => {}
                         Part::FunctionCallPart(function_call_part) => {
                             wants_to_use_tool = true;
                             let name: Arc<str> = function_call_part.function_call.name.into();
-                            let next_tool_id =
-                                TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
-                            let id: LanguageModelToolUseId =
-                                format!("{}-{}", name, next_tool_id).into();
+                            let id = if let Some(id) = function_call_part
+                                .function_call
+                                .id
+                                .as_ref()
+                                .filter(|id| !id.is_empty())
+                            {
+                                LanguageModelToolUseId::from(id.as_str())
+                            } else {
+                                let next_tool_id =
+                                    TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
+                                format!("{}-{}", name, next_tool_id).into()
+                            };
 
                             // Normalize empty string signatures to None
                             let thought_signature = function_call_part
@@ -908,6 +945,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: Some("test_signature_123".to_string()),
                     })],
@@ -949,6 +987,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: None,
                     })],
@@ -984,6 +1023,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: Some("".to_string()),
                     })],
@@ -1020,6 +1060,7 @@ mod tests {
                             function_call: FunctionCall {
                                 name: "function_1".to_string(),
                                 args: json!({"arg": "value1"}),
+                                id: None,
                             },
                             thought_signature: Some("signature_1".to_string()),
                         }),
@@ -1027,6 +1068,7 @@ mod tests {
                             function_call: FunctionCall {
                                 name: "function_2".to_string(),
                                 args: json!({"arg": "value2"}),
+                                id: None,
                             },
                             thought_signature: None,
                         }),
@@ -1084,6 +1126,7 @@ mod tests {
             },
             "gemini-2.5-flash".to_string(),
             GoogleModelMode::Default,
+            false,
         );
 
         assert_eq!(request.contents[0].parts.len(), 1);
@@ -1121,6 +1164,7 @@ mod tests {
             },
             "gemini-2.5-flash".to_string(),
             GoogleModelMode::Default,
+            false,
         );
 
         assert_eq!(request.contents[0].parts.len(), 1);
@@ -1154,6 +1198,7 @@ mod tests {
             },
             "gemini-2.5-flash".to_string(),
             GoogleModelMode::Default,
+            false,
         );
 
         if let Part::FunctionCallPart(fc_part) = &request.contents[0].parts[0] {
@@ -1176,6 +1221,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: Some("round_trip_sig".to_string()),
                     })],
@@ -1211,6 +1257,7 @@ mod tests {
             },
             "gemini-2.5-flash".to_string(),
             GoogleModelMode::Default,
+            false,
         );
 
         // Verify signature is preserved
@@ -1232,11 +1279,14 @@ mod tests {
                     parts: vec![
                         Part::TextPart(TextPart {
                             text: "I'll help with that.".to_string(),
+                            thought: None,
+                            thought_signature: None,
                         }),
                         Part::FunctionCallPart(FunctionCallPart {
                             function_call: FunctionCall {
                                 name: "helper_function".to_string(),
                                 args: json!({"query": "help"}),
+                                id: None,
                             },
                             thought_signature: Some("mixed_sig".to_string()),
                         }),
@@ -1284,6 +1334,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: Some(signature_with_special_chars.clone()),
                     })],
