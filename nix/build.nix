@@ -211,7 +211,7 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        LK_CUSTOM_WEBRTC = livekit-webrtc;
+        LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
 
         CARGO_PROFILE = profile;
