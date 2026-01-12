@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::paths::RUN_DIR;
+
 use log::{Level, Log, Metadata, Record};
 
 pub struct Progress {
@@ -141,7 +143,17 @@ impl Progress {
             inner.last_line_is_logging = true;
         }
 
-        eprintln!("{}", message);
+        let max_width = inner.terminal_width.saturating_sub(MARGIN);
+        for line in message.lines() {
+            let truncated = truncate_to_visible_width(line, max_width);
+            if truncated.len() < line.len() {
+                eprintln!("{}…", truncated);
+            } else {
+                eprintln!("{}", truncated);
+            }
+        }
+
+        Self::print_status_lines(&mut inner);
     }
 
     pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> StepProgress {
@@ -403,9 +415,13 @@ impl Progress {
             } else {
                 0.0
             };
+            let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
             eprintln!(
-                "\n{} of {} examples failed ({:.1}%)",
-                inner.failed_examples, total_examples, percentage
+                "\n{} of {} examples failed ({:.1}%)\nFailed examples: {}",
+                inner.failed_examples,
+                total_examples,
+                percentage,
+                failed_jsonl_path.display()
             );
         }
     }
@@ -533,12 +549,34 @@ fn strip_ansi_len(s: &str) -> usize {
     len
 }
 
-fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
+fn truncate_with_ellipsis(s: &str, max_len: usize) -> Cow<'_, str> {
     if s.len() <= max_len {
-        s.to_string()
+        Cow::Borrowed(s)
     } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
+        Cow::Owned(format!("{}…", &s[..max_len.saturating_sub(1)]))
     }
+}
+
+fn truncate_to_visible_width(s: &str, max_visible_len: usize) -> &str {
+    let mut visible_len = 0;
+    let mut in_escape = false;
+    let mut last_byte_index = 0;
+    for (byte_index, c) in s.char_indices() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            if visible_len >= max_visible_len {
+                return &s[..last_byte_index];
+            }
+            visible_len += 1;
+        }
+        last_byte_index = byte_index + c.len_utf8();
+    }
+    s
 }
 
 fn format_duration(duration: Duration) -> String {

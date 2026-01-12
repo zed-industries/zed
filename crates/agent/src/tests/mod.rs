@@ -93,6 +93,25 @@ impl FakeTerminalHandle {
         }
     }
 
+    fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
+        let killed = Arc::new(AtomicBool::new(false));
+        let stopped_by_user = Arc::new(AtomicBool::new(false));
+        let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
+
+        let wait_for_exit = cx
+            .spawn(async move |_cx| acp::TerminalExitStatus::new().exit_code(exit_code))
+            .shared();
+
+        Self {
+            killed,
+            stopped_by_user,
+            exit_sender: std::cell::RefCell::new(Some(exit_sender)),
+            wait_for_exit,
+            output: acp::TerminalOutputResponse::new("command output".to_string(), false),
+            id: acp::TerminalId::new("fake_terminal".to_string()),
+        }
+    }
+
     fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
@@ -1770,6 +1789,101 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     verify_thread_recovery(&thread, &fake_model, cx).await;
 }
 
+#[gpui::test]
+async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppContext) {
+    // This test verifies that tools which properly handle cancellation via
+    // `event_stream.cancelled_by_user()` (like edit_file_tool) respond promptly
+    // to cancellation and report that they were cancelled.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    let fake_model = model.as_fake();
+
+    let (tool, was_cancelled) = CancellationAwareTool::new();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(tool);
+            thread.send(
+                UserMessageId::new(),
+                ["call the cancellation aware tool"],
+                cx,
+            )
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Simulate the model calling the cancellation-aware tool
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "cancellation_aware_1".into(),
+            name: "cancellation_aware".into(),
+            raw_input: r#"{}"#.into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Wait for the tool call to be reported
+    let mut tool_started = false;
+    let deadline = cx.executor().num_cpus() * 100;
+    for _ in 0..deadline {
+        cx.run_until_parked();
+
+        while let Some(Some(event)) = events.next().now_or_never() {
+            if let Ok(ThreadEvent::ToolCall(tool_call)) = &event {
+                if tool_call.title == "Cancellation Aware Tool" {
+                    tool_started = true;
+                    break;
+                }
+            }
+        }
+
+        if tool_started {
+            break;
+        }
+
+        cx.background_executor
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    assert!(tool_started, "expected cancellation aware tool to start");
+
+    // Cancel the thread and wait for it to complete
+    let cancel_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+
+    // The cancel task should complete promptly because the tool handles cancellation
+    let timeout = cx.background_executor.timer(Duration::from_secs(5));
+    futures::select! {
+        _ = cancel_task.fuse() => {}
+        _ = timeout.fuse() => {
+            panic!("cancel task timed out - tool did not respond to cancellation");
+        }
+    }
+
+    // Verify the tool detected cancellation via its flag
+    assert!(
+        was_cancelled.load(std::sync::atomic::Ordering::SeqCst),
+        "tool should have detected cancellation via event_stream.cancelled_by_user()"
+    );
+
+    // Collect remaining events
+    let remaining_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify we got a cancellation stop event
+    assert_eq!(
+        stop_events(remaining_events),
+        vec![acp::StopReason::Cancelled],
+    );
+
+    // Verify we can send a new message after cancellation
+    verify_thread_recovery(&thread, &fake_model, cx).await;
+}
+
 /// Helper to verify thread can recover after cancellation by sending a simple message.
 async fn verify_thread_recovery(
     thread: &Entity<Thread>,
@@ -2395,6 +2509,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 32_000 + 16_000,
                 max_tokens: 1_000_000,
+                output_tokens: 16_000,
             })
         );
     });
@@ -2454,6 +2569,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                output_tokens: 20_000,
             })
         );
     });
@@ -2502,6 +2618,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
                 Some(acp_thread::TokenUsage {
                     used_tokens: 32_000 + 16_000,
                     max_tokens: 1_000_000,
+                    output_tokens: 16_000,
                 })
             );
         });
@@ -2556,6 +2673,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                output_tokens: 20_000,
             })
         );
     });
@@ -2718,14 +2836,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
-    let text_thread_store =
-        cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-    let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(
         project.clone(),
-        history_store,
+        thread_store,
         templates.clone(),
         None,
         fake_fs.clone(),
@@ -3215,6 +3331,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             WordListTool::name(): true,
                             ToolRequiringPermission::name(): true,
                             InfiniteTool::name(): true,
+                            CancellationAwareTool::name(): true,
                             ThinkingTool::name(): true,
                             "terminal": true,
                         }
@@ -3591,4 +3708,220 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
             "First message still has no tokens before it"
         );
     });
+}
+
+#[gpui::test]
+async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({})).await;
+    let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+    // Test 1: Deny rule blocks command
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Confirm,
+                    always_allow: vec![],
+                    always_deny: vec![
+                        agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap(),
+                    ],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "rm -rf /".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by deny rule"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("blocked"),
+            "error should mention the command was blocked"
+        );
+    }
+
+    // Test 2: Allow rule skips confirmation (and overrides default_mode: Deny)
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = false;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Deny,
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "echo hello".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content (allow rule should skip confirmation and override default deny)"
+        );
+
+        let result = task.await;
+        assert!(
+            result.is_ok(),
+            "expected command to succeed without confirmation"
+        );
+    }
+
+    // Test 3: Confirm rule forces confirmation even with always_allow_tool_actions=true
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Allow,
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![
+                        agent_settings::CompiledRegex::new(r"sudo", false).unwrap(),
+                    ],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let _task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "sudo rm file".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = rx.expect_authorization().await;
+        assert!(
+            auth.tool_call.fields.title.is_some(),
+            "expected authorization request for sudo command despite always_allow_tool_actions=true"
+        );
+    }
+
+    // Test 4: default_mode: Deny blocks commands when no pattern matches
+    {
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let environment = Rc::new(FakeThreadEnvironment {
+            handle: handle.clone(),
+        });
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.tools.insert(
+                "terminal".into(),
+                agent_settings::ToolRules {
+                    default_mode: settings::ToolPermissionMode::Deny,
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::TerminalToolInput {
+                    command: "echo hello".to_string(),
+                    cd: ".".to_string(),
+                    timeout_ms: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by default_mode: Deny"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("disabled"),
+            "error should mention the tool is disabled"
+        );
+    }
 }

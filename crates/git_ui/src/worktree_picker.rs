@@ -18,7 +18,7 @@ use project::{
 use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use std::{path::PathBuf, sync::Arc};
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 
@@ -60,9 +60,9 @@ impl WorktreeList {
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
 
-        let default_branch_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+        let default_branch_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, _| repository.default_branch(false))
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let all_worktrees = all_worktrees_request
@@ -632,68 +632,32 @@ impl PickerDelegate for WorktreeListDelegate {
             .take(7)
             .collect::<String>();
 
-        let focus_handle = self.focus_handle.clone();
-        let icon = if let Some(default_branch) = self.default_branch.clone()
-            && entry.is_new
-        {
-            Some(
-                IconButton::new("worktree-from-default", IconName::GitBranchAlt)
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(WorktreeFromDefault.boxed_clone(), cx)
-                    })
-                    .on_right_click(|_, window, cx| {
-                        window.dispatch_action(WorktreeFromDefaultOnWindow.boxed_clone(), cx)
-                    })
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action_in(
-                            format!("From default branch {default_branch}"),
-                            &WorktreeFromDefault,
-                            &focus_handle,
-                            cx,
-                        )
-                    }),
+        let (branch_name, sublabel) = if entry.is_new {
+            (
+                Label::new(format!("Create Worktree: \"{}\"…", entry.worktree.branch()))
+                    .truncate()
+                    .into_any_element(),
+                format!(
+                    "based off {}",
+                    self.base_branch(cx).unwrap_or("the current branch")
+                ),
             )
         } else {
-            None
-        };
+            let branch = entry.worktree.branch();
+            let branch_first_line = branch.lines().next().unwrap_or(branch);
+            let positions: Vec<_> = entry
+                .positions
+                .iter()
+                .copied()
+                .filter(|&pos| pos < branch_first_line.len())
+                .collect();
 
-        let branch_name = if entry.is_new {
-            h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new(format!("Create worktree \"{}\"…", entry.worktree.branch()))
-                        .single_line()
-                        .truncate(),
-                )
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::GitBranch)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(HighlightedLabel::new(
-                    entry.worktree.branch().to_owned(),
-                    entry.positions.clone(),
-                ))
-                .truncate()
-                .into_any_element()
-        };
-
-        let sublabel = if entry.is_new {
-            format!(
-                "based off {}",
-                self.base_branch(cx).unwrap_or("the current branch")
+            (
+                HighlightedLabel::new(branch_first_line.to_owned(), positions)
+                    .truncate()
+                    .into_any_element(),
+                path,
             )
-        } else {
-            format!("at {}", path)
         };
 
         Some(
@@ -704,33 +668,30 @@ impl PickerDelegate for WorktreeListDelegate {
                 .child(
                     v_flex()
                         .w_full()
-                        .overflow_hidden()
                         .child(
                             h_flex()
-                                .gap_6()
+                                .gap_2()
                                 .justify_between()
                                 .overflow_x_hidden()
                                 .child(branch_name)
-                                .when(!entry.is_new, |el| {
-                                    el.child(
+                                .when(!entry.is_new, |this| {
+                                    this.child(
                                         Label::new(sha)
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
+                                            .buffer_font(cx)
                                             .into_element(),
                                     )
                                 }),
                         )
                         .child(
-                            div().max_w_96().child(
-                                Label::new(sublabel)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate()
-                                    .into_any_element(),
-                            ),
+                            Label::new(sublabel)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate()
+                                .into_any_element(),
                         ),
-                )
-                .end_slot::<IconButton>(icon),
+                ),
         )
     }
 
@@ -740,17 +701,42 @@ impl PickerDelegate for WorktreeListDelegate {
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
+        let selected_entry = self.matches.get(self.selected_index);
+        let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
 
-        Some(
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .gap_0p5()
-                .justify_end()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("open-in-new-window", "Open in new window")
+        let footer_container = h_flex()
+            .w_full()
+            .p_1p5()
+            .gap_0p5()
+            .justify_end()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant);
+
+        if is_creating {
+            let from_default_button = self.default_branch.as_ref().map(|default_branch| {
+                Button::new(
+                    "worktree-from-default",
+                    format!("Create from: {default_branch}"),
+                )
+                .key_binding(
+                    KeyBinding::for_action_in(&WorktreeFromDefault, &focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(WorktreeFromDefault.boxed_clone(), cx)
+                })
+            });
+
+            let current_branch = self.base_branch(cx).unwrap_or("current branch");
+
+            Some(
+                footer_container
+                    .when_some(from_default_button, |this, button| this.child(button))
+                    .child(
+                        Button::new(
+                            "worktree-from-current",
+                            format!("Create from: {current_branch}"),
+                        )
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -758,18 +744,38 @@ impl PickerDelegate for WorktreeListDelegate {
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)
                         }),
-                )
-                .child(
-                    Button::new("open-in-window", "Open")
-                        .key_binding(
-                            KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
+                    )
+                    .into_any(),
+            )
+        } else {
+            Some(
+                footer_container
+                    .child(
+                        Button::new("open-in-new-window", "Open in New Window")
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .child(
+                        Button::new("open-in-window", "Open")
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
+                                )
                                 .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                        }),
-                )
-                .into_any(),
-        )
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .into_any(),
+            )
+        }
     }
 }

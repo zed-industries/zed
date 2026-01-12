@@ -41,7 +41,6 @@ use worktree_settings_file::LocalSettingsKind;
 pub use tests::TestDb;
 
 pub use ids::*;
-pub use queries::contributors::ContributorSelector;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;
@@ -251,8 +250,6 @@ impl Database {
     {
         #[cfg(test)]
         {
-            use rand::prelude::*;
-
             let test_options = self.test_options.as_ref().unwrap();
             test_options.executor.simulate_random_delay().await;
             let fail_probability = *test_options.query_failure_probability.lock();
