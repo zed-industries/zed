@@ -1,6 +1,5 @@
 #[cfg(feature = "cli-support")]
 use crate::EvalCacheEntryKind;
-use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
@@ -8,6 +7,7 @@ use crate::{
     EditPredictionStore,
 };
 use anyhow::{Result, anyhow};
+use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
 use gpui::{App, Task, prelude::*};
 use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
@@ -75,20 +75,12 @@ pub fn request_prediction_with_zeta2(
                     .ok();
             }
 
-            let request = open_ai::Request {
+            let request = RawCompletionRequest {
                 model: EDIT_PREDICTIONS_MODEL_ID.clone(),
-                messages: vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt),
-                }],
-                stream: false,
-                max_completion_tokens: None,
-                stop: Default::default(),
-                temperature: Default::default(),
-                tool_choice: None,
-                parallel_tool_calls: None,
-                tools: vec![],
-                prompt_cache_key: None,
-                reasoning_effort: None,
+                prompt,
+                temperature: None,
+                stop: vec![],
+                max_tokens: None,
             };
 
             log::trace!("Sending edit prediction request");
@@ -108,9 +100,9 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Got edit prediction response");
 
-            let (res, usage) = response?;
+            let (mut res, usage) = response?;
             let request_id = EditPredictionId(res.id.clone().into());
-            let Some(mut output_text) = text_from_response(res) else {
+            let Some(mut output_text) = res.choices.pop().map(|choice| choice.text) else {
                 return Ok((Some((request_id, None)), usage));
             };
 
