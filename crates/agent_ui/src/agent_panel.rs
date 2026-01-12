@@ -800,7 +800,7 @@ impl AgentPanel {
         self.external_thread(
             Some(ExternalAgent::NativeAgent),
             None,
-            Some(thread.clone()),
+            Some(thread),
             window,
             cx,
         );

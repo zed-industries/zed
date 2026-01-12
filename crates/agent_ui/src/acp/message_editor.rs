@@ -285,7 +285,7 @@ impl MessageEditor {
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| SharedString::new_static("New Thread"));
         let uri = MentionUri::Thread {
-            id: thread.session_id.clone(),
+            id: thread.session_id,
             name: thread_title.to_string(),
         };
         let content = format!("{}\n", uri.as_link());
