@@ -12,12 +12,12 @@ use crate::{
 };
 use editor::EditorSettings;
 use editor::{Editor, EditorEvent, EditorMode};
-use language::language_settings::SoftWrap;
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
     Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
+use language::language_settings::SoftWrap;
 use language::{Buffer, HighlightId};
 use menu;
 use multi_buffer::{ExcerptRange, MultiBuffer};
@@ -156,10 +156,8 @@ impl QuickSearch {
     ) -> Self {
         let capability = project.read(cx).capability();
         let preview_editor = cx.new(|cx| {
-            let multi_buffer = cx.new(|_| MultiBuffer::new(capability));
-            let mut editor =
-                Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
-            editor.set_show_breadcrumbs(false, cx);
+            let multi_buffer = cx.new(|_| MultiBuffer::without_headers(capability));
+            let editor = Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
             editor
         });
 
@@ -451,8 +449,7 @@ impl Render for QuickSearch {
                 this.picker.update(cx, |picker, cx| {
                     let match_count = picker.delegate.matches.len();
                     if match_count > 0 {
-                        let new_index =
-                            (picker.delegate.selected_index + 1) % match_count;
+                        let new_index = (picker.delegate.selected_index + 1) % match_count;
                         picker.set_selected_index(new_index, None, true, window, cx);
                     }
                 });
@@ -1013,7 +1010,13 @@ impl PickerDelegate for QuickSearchDelegate {
                     .px_2p5()
                     .gap_1()
                     .items_start()
-                    .child(div().flex_1().overflow_hidden().py_1p5().child(editor.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .py_1p5()
+                            .child(editor.clone()),
+                    )
                     .child({
                         let focus_handle = focus_handle.clone();
                         h_flex()
@@ -1493,7 +1496,9 @@ impl PickerDelegate for QuickSearchDelegate {
                     let chunk_end = offset + chunk_len;
                     if chunk_end > trim_offset && offset < trim_offset + line_text_string.len() {
                         let start = offset.saturating_sub(trim_offset);
-                        let end = chunk_end.saturating_sub(trim_offset).min(line_text_string.len());
+                        let end = chunk_end
+                            .saturating_sub(trim_offset)
+                            .min(line_text_string.len());
                         // Ensure we're on valid char boundaries
                         if start < end
                             && line_text_string.is_char_boundary(start)
