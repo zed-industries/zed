@@ -196,7 +196,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    thread_store: Option<Entity<ThreadStore>>, // BENTODO: CAN WE JUST USE SESSION LIST HERE?
+    thread_store: Option<Entity<ThreadStore>>,
     session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,

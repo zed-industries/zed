@@ -1571,7 +1571,7 @@ impl AgentPanel {
                     history.set_session_list(Some(session_list), cx);
                 });
             }
-        })); // BENTODO: Is this updated enough?
+        }));
 
         self.set_active_view(
             ActiveView::ExternalAgentThread { thread_view },

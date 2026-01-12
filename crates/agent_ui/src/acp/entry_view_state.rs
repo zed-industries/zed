@@ -23,7 +23,7 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
-    thread_store: Option<Entity<ThreadStore>>, // BENTODO: CAN WE JUST USE SESSION LIST HERE?
+    thread_store: Option<Entity<ThreadStore>>,
     session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,

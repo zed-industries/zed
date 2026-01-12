@@ -482,7 +482,7 @@ impl MentionSet {
             return Task::ready(Err(anyhow!(
                 "Thread mentions are only supported for the native agent"
             )));
-        }; // BENTODO: just hold agentserver
+        };
         let Some(project) = self.project.upgrade() else {
             return Task::ready(Err(anyhow!("project not found")));
         };

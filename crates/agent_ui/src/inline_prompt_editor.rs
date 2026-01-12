@@ -333,7 +333,7 @@ impl<T: 'static> PromptEditor<T> {
                 cx.weak_entity(),
                 self.mention_set.clone(),
                 Some(self.thread_store.clone()),
-                Rc::new(RefCell::new(None)), // BENTODO: Can we pass in native agent list here?
+                Rc::new(RefCell::new(None)),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
