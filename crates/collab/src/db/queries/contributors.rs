@@ -1,27 +1,8 @@
 use super::*;
 
 impl Database {
-    /// Retrieves the GitHub logins of all users who have signed the CLA.
-    pub async fn get_contributors(&self) -> Result<Vec<String>> {
-        self.transaction(|tx| async move {
-            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryGithubLogin {
-                GithubLogin,
-            }
-
-            Ok(contributor::Entity::find()
-                .inner_join(user::Entity)
-                .order_by_asc(contributor::Column::SignedAt)
-                .select_only()
-                .column(user::Column::GithubLogin)
-                .into_values::<_, QueryGithubLogin>()
-                .all(&*tx)
-                .await?)
-        })
-        .await
-    }
-
     /// Records that a given user has signed the CLA.
+    #[cfg(test)]
     pub async fn add_contributor(
         &self,
         github_login: &str,

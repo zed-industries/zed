@@ -35,6 +35,9 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// The terminal emulator is an interactive pty, so commands may block waiting for user input.
+/// Some commands can be configured not to do this, such as `git --no-pager diff` and similar.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute.
@@ -109,7 +112,7 @@ impl AgentTool for TerminalTool {
         };
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings("terminal", &input.command, settings);
+        let decision = decide_permission_from_settings(Self::name(), &input.command, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,

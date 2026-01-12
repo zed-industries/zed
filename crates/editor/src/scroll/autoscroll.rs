@@ -207,21 +207,17 @@ impl Editor {
 
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy, _) => strategy,
-            Autoscroll::Next => {
-                let last_autoscroll = &self.scroll_manager.last_autoscroll;
-                if let Some(last_autoscroll) = last_autoscroll {
-                    if self.scroll_manager.anchor.offset == last_autoscroll.0
-                        && target_top == last_autoscroll.1
-                        && target_bottom == last_autoscroll.2
-                    {
-                        last_autoscroll.3.next()
-                    } else {
-                        AutoscrollStrategy::default()
-                    }
-                } else {
-                    AutoscrollStrategy::default()
-                }
-            }
+            Autoscroll::Next => self
+                .scroll_manager
+                .last_autoscroll
+                .as_ref()
+                .filter(|(offset, last_target_top, last_target_bottom, _)| {
+                    self.scroll_manager.anchor.offset == *offset
+                        && target_top == *last_target_top
+                        && target_bottom == *last_target_bottom
+                })
+                .map(|(_, _, _, strategy)| strategy.next())
+                .unwrap_or_default(),
         };
         if let Autoscroll::Strategy(_, Some(anchor)) = autoscroll {
             target_top = anchor.to_display_point(&display_map).row().as_f64();
