@@ -169,8 +169,13 @@ impl EditFileTool {
         if path.components().any(|component| {
             component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
         }) {
-            return event_stream.authorize(
+            let context = crate::ToolPermissionContext {
+                tool_name: "edit_file".to_string(),
+                input_value: path_str.to_string(),
+            };
+            return event_stream.authorize_with_context(
                 format!("{} (local settings)", input.display_description),
+                context,
                 cx,
             );
         }
@@ -181,8 +186,13 @@ impl EditFileTool {
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
             && canonical_path.starts_with(paths::config_dir())
         {
-            return event_stream.authorize(
+            let context = crate::ToolPermissionContext {
+                tool_name: "edit_file".to_string(),
+                input_value: path_str.to_string(),
+            };
+            return event_stream.authorize_with_context(
                 format!("{} (global settings)", input.display_description),
+                context,
                 cx,
             );
         }
@@ -200,7 +210,11 @@ impl EditFileTool {
         if project_path.is_some() {
             Task::ready(Ok(()))
         } else {
-            event_stream.authorize(&input.display_description, cx)
+            let context = crate::ToolPermissionContext {
+                tool_name: "edit_file".to_string(),
+                input_value: path_str.to_string(),
+            };
+            event_stream.authorize_with_context(&input.display_description, context, cx)
         }
     }
 }
