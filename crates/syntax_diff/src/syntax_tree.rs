@@ -371,7 +371,7 @@ pub fn build_tree<'a>(
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
     let brackets: HashSet<_> = language_scope
         .brackets()
-        .filter(|(pair, _)| pair.surround)
+        .filter(|(pair, enabled)| pair.surround && *enabled)
         .flat_map(|(pair, _)| [pair.start.as_str(), pair.end.as_str()])
         .collect();
 
