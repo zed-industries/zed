@@ -14338,6 +14338,18 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             });
 
             cx.set_state(&run.initial_state);
+
+            // Set up resolve handler before showing completions, since resolve may be
+            // triggered when menu becomes visible (for documentation), not just on confirm.
+            cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+                move |_, _, _| async move {
+                    Ok(lsp::CompletionItem {
+                        additional_text_edits: None,
+                        ..Default::default()
+                    })
+                },
+            );
+
             cx.update_editor(|editor, window, cx| {
                 editor.show_completions(&ShowCompletions, window, cx);
             });
@@ -14360,7 +14372,6 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
                     .unwrap()
             });
             cx.assert_editor_state(&expected_text);
-            handle_resolve_completion_request(&mut cx, None).await;
             apply_additional_edits.await.unwrap();
         }
     }
