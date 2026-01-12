@@ -77,6 +77,7 @@ pub fn run(
     move_down: bool,
     window: &mut Window,
     cx: &mut App,
+    cell_mode: bool,
 ) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
@@ -101,7 +102,7 @@ pub fn run(
     };
 
     let (runnable_ranges, next_cell_point) =
-        runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx);
+        runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx, cell_mode);
 
     for runnable_range in runnable_ranges {
         let Some(language) = multibuffer.read(cx).language_at(runnable_range.start, cx) else {
@@ -420,6 +421,7 @@ fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
     cx: &mut App,
+    cell_mode: bool,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language()
         && language.name() == "Markdown".into()
@@ -428,12 +430,20 @@ fn runnable_ranges(
     }
 
     let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
-    if !jupytext_snippets.is_empty() {
+    if !jupytext_snippets.is_empty() && cell_mode{
         return (jupytext_snippets, next_cursor);
     }
 
-    let snippet_range = cell_range(buffer, range.start.row, range.end.row);
-
+    // run Line or selections
+    let snippet_range;
+    if cell_mode { 
+        //TODO should return all runable code as single cell. to be figured out how?
+        // equals to RunAll and ignore selection, doesn't this make sense?
+        // run cell but without cell mark, RunAll
+        snippet_range = cell_range(buffer, 0, buffer.max_point().row);
+    } else {        
+        snippet_range = cell_range(buffer, range.start.row, range.end.row);
+    }
     // Check if the snippet range is entirely blank, if so, skip forward to find code
     let is_blank =
         (snippet_range.start.row..=snippet_range.end.row).all(|row| buffer.is_line_blank(row));
@@ -556,7 +566,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Single-point selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -564,7 +574,7 @@ mod tests {
         assert_eq!(snippets, vec!["print(1 + 1)"]);
 
         // Multi-line selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -577,7 +587,7 @@ mod tests {
         );
 
         // Trimming multiple trailing blank lines
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0), cx, false);
 
         let snippets = snippets
             .into_iter()
@@ -630,7 +640,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Jupytext snippet surrounding an empty selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5), cx, true);
 
         let snippets = snippets
             .into_iter()
@@ -646,7 +656,7 @@ mod tests {
         );
 
         // Jupytext snippets intersecting a non-empty selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2), cx, true);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -751,7 +761,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -796,7 +806,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -835,7 +845,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -877,7 +887,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Selection on blank line should skip to next non-blank cell
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -900,7 +910,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx, false);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -920,7 +930,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx, false);
         assert!(snippets.is_empty());
     }
 }

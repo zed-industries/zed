@@ -140,7 +140,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |window, cx| {
-                                repl::run(editor.clone(), true, window, cx).log_err();
+                                repl::run(editor.clone(), true, window, cx, false).log_err();
                             }
                         },
                     )
