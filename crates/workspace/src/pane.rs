@@ -2765,7 +2765,7 @@ impl Pane {
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
-                    this.handle_tab_drop(dragged_tab, ix, window, cx)
+                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
                 }),
             )
             .on_drop(
@@ -3489,16 +3489,22 @@ impl Pane {
                     .w_full()
                     .children(pinned_tabs),
             );
-        let pinned_tab_bar =
-            Self::configure_tab_bar_end(pinned_tab_bar, open_aside_right, render_aside_toggle_right);
+        let pinned_tab_bar = Self::configure_tab_bar_end(
+            pinned_tab_bar,
+            open_aside_right,
+            render_aside_toggle_right,
+        );
 
         v_flex()
             .w_full()
             .flex_none()
             .child(pinned_tab_bar)
             .child(
-                TabBar::new("unpinned_tab_bar")
-                    .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx)),
+                TabBar::new("unpinned_tab_bar").child(self.render_unpinned_tabs_container(
+                    unpinned_tabs,
+                    tab_count,
+                    cx,
+                )),
             )
             .into_any_element()
     }
@@ -3521,7 +3527,11 @@ impl Pane {
             .child(self.render_tab_bar_drop_target(tab_count, cx))
     }
 
-    fn render_tab_bar_drop_target(&self, tab_count: usize, cx: &mut Context<Pane>) -> impl IntoElement {
+    fn render_tab_bar_drop_target(
+        &self,
+        tab_count: usize,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement {
         div()
             .id("tab_bar_drop_target")
             .min_w_6()
@@ -3537,14 +3547,14 @@ impl Pane {
             .drag_over::<DraggedSelection>(|bar, _, _, cx| {
                 bar.bg(cx.theme().colors().drop_target_background)
             })
-            .on_drop(cx.listener(
-                move |this, dragged_tab: &DraggedTab, window, cx| {
+            .on_drop(
+                cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
                     this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
-                },
-            ))
-            .on_drop(cx.listener(
-                move |this, selection: &DraggedSelection, window, cx| {
+                }),
+            )
+            .on_drop(
+                cx.listener(move |this, selection: &DraggedSelection, window, cx| {
                     this.drag_split_direction = None;
                     this.handle_project_entry_drop(
                         &selection.active_selection.entry_id,
@@ -3552,18 +3562,15 @@ impl Pane {
                         window,
                         cx,
                     )
-                },
-            ))
+                }),
+            )
             .on_drop(cx.listener(move |this, paths, window, cx| {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if event.click_count() == 2 {
-                    window.dispatch_action(
-                        this.double_click_dispatch_action.boxed_clone(),
-                        cx,
-                    );
+                    window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
                 }
             }))
     }
@@ -5163,9 +5170,13 @@ mod tests {
         assert_item_labels(&pane, ["A!", "B", "C*"], cx);
 
         // Verify setting is disabled by default
-        let is_separate_row_enabled =
-            pane.read_with(cx, |_, cx| TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row);
-        assert!(!is_separate_row_enabled, "Separate pinned row should be disabled by default");
+        let is_separate_row_enabled = pane.read_with(cx, |_, cx| {
+            TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row
+        });
+        assert!(
+            !is_separate_row_enabled,
+            "Separate pinned row should be disabled by default"
+        );
 
         // Verify pinned_tabs_row element does NOT exist (single row layout)
         let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
@@ -5288,19 +5299,28 @@ mod tests {
 
         // Initially disabled - single row
         let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
-        assert!(pinned_row_bounds.is_none(), "Should be single row when disabled");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "Should be single row when disabled"
+        );
 
         // Enable - two rows
         set_pinned_tabs_separate_row(cx, true);
         cx.run_until_parked();
         let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
-        assert!(pinned_row_bounds.is_some(), "Should be two rows when enabled");
+        assert!(
+            pinned_row_bounds.is_some(),
+            "Should be two rows when enabled"
+        );
 
         // Disable again - back to single row
         set_pinned_tabs_separate_row(cx, false);
         cx.run_until_parked();
         let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
-        assert!(pinned_row_bounds.is_none(), "Should be single row when disabled again");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "Should be single row when disabled again"
+        );
     }
 
     #[gpui::test]
