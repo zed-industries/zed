@@ -1053,6 +1053,32 @@ pub struct PendingDiffReview {
     pub comment: String,
     /// The code range being reviewed as anchors.
     pub anchor_range: Range<Anchor>,
+    /// The buffer containing the code being reviewed.
+    pub buffer: Entity<MultiBuffer>,
+}
+
+/// Global storage for pending diff review data.
+/// This is needed because the editor with the overlay might be nested inside
+/// other views (like ProjectDiff -> SplittableEditor -> Editor) and not directly
+/// accessible via workspace.items_of_type::<Editor>().
+struct GlobalPendingDiffReview(Option<PendingDiffReview>);
+
+impl gpui::Global for GlobalPendingDiffReview {}
+
+impl PendingDiffReview {
+    /// Stores a pending diff review in the global state.
+    pub fn set_global(review: PendingDiffReview, cx: &mut App) {
+        cx.set_global(GlobalPendingDiffReview(Some(review)));
+    }
+
+    /// Takes the pending diff review from the global state, if any.
+    pub fn take_global(cx: &mut App) -> Option<PendingDiffReview> {
+        if cx.has_global::<GlobalPendingDiffReview>() {
+            cx.global_mut::<GlobalPendingDiffReview>().0.take()
+        } else {
+            None
+        }
+    }
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -20938,11 +20964,17 @@ impl Editor {
             line_start..line_end
         );
 
-        // Store the pending review data for the action handler to retrieve
-        self.pending_diff_review = Some(PendingDiffReview {
-            comment: comment_text,
-            anchor_range: anchor_start..anchor_end,
-        });
+        // Store the pending review data in a global for the action handler to retrieve
+        // We use a global because the editor might be nested inside other views
+        // (like ProjectDiff -> SplittableEditor -> Editor) and not directly accessible
+        PendingDiffReview::set_global(
+            PendingDiffReview {
+                comment: comment_text,
+                anchor_range: anchor_start..anchor_end,
+                buffer: self.buffer.clone(),
+            },
+            cx,
+        );
 
         // Dismiss the overlay AFTER extracting data
         self.dismiss_diff_review_overlay(cx);
