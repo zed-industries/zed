@@ -2776,6 +2776,8 @@ impl Workspace {
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         let fs = self.app_state.fs.clone();
 
+        let caller_ordered_abs_paths = abs_paths.clone();
+
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
         cx.spawn_in(window, async move |this, cx| {
@@ -2819,32 +2821,10 @@ impl Workspace {
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
-                    let (worktree, project_path) = project_path?;
+                    let (_worktree, project_path) = project_path?;
                     if fs.is_dir(&abs_path).await {
-                        this.update(cx, |workspace, cx| {
-                            let worktree = worktree.read(cx);
-                            let worktree_abs_path = worktree.abs_path();
-                            let entry_id = if abs_path.as_ref() == worktree_abs_path.as_ref() {
-                                worktree.root_entry()
-                            } else {
-                                abs_path
-                                    .strip_prefix(worktree_abs_path.as_ref())
-                                    .ok()
-                                    .and_then(|relative_path| {
-                                        let relative_path =
-                                            RelPath::new(relative_path, PathStyle::local())
-                                                .log_err()?;
-                                        worktree.entry_for_path(&relative_path)
-                                    })
-                            }
-                            .map(|entry| entry.id);
-                            if let Some(entry_id) = entry_id {
-                                workspace.project.update(cx, |_, cx| {
-                                    cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
-                                })
-                            }
-                        })
-                        .ok()?;
+                        // Opening a directory should not race to update the active entry.
+                        // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
                     } else {
                         Some(
@@ -2865,7 +2845,90 @@ impl Workspace {
                 tasks.push(task);
             }
 
-            futures::future::join_all(tasks).await
+            let results = futures::future::join_all(tasks).await;
+
+            // Determine the winner using the fake/abstract FS metadata, not `Path::is_dir`.
+            let mut winner: Option<(PathBuf, bool)> = None;
+            for abs_path in caller_ordered_abs_paths.into_iter().rev() {
+                if let Some(Some(metadata)) = fs.metadata(&abs_path).await.log_err() {
+                    if !metadata.is_dir {
+                        winner = Some((abs_path, false));
+                        break;
+                    }
+                    if winner.is_none() {
+                        winner = Some((abs_path, true));
+                    }
+                } else if winner.is_none() {
+                    winner = Some((abs_path, false));
+                }
+            }
+
+            // Compute the winner entry id on the foreground thread and emit once, after all
+            // paths finish opening. This avoids races between concurrently-opening paths
+            // (directories in particular) and makes the resulting project panel selection
+            // deterministic.
+            if let Some((winner_abs_path, winner_is_dir)) = winner {
+                'emit_winner: {
+                    let winner_abs_path: Arc<Path> =
+                        SanitizedPath::new(&winner_abs_path).as_path().into();
+
+                    let visible = match options.visible.as_ref().unwrap_or(&OpenVisible::None) {
+                        OpenVisible::All => true,
+                        OpenVisible::None => false,
+                        OpenVisible::OnlyFiles => !winner_is_dir,
+                        OpenVisible::OnlyDirectories => winner_is_dir,
+                    };
+
+                    let Some(worktree_task) = this
+                        .update(cx, |workspace, cx| {
+                            workspace.project.update(cx, |project, cx| {
+                                project.find_or_create_worktree(
+                                    winner_abs_path.as_ref(),
+                                    visible,
+                                    cx,
+                                )
+                            })
+                        })
+                        .ok()
+                    else {
+                        break 'emit_winner;
+                    };
+
+                    let Ok((worktree, _)) = worktree_task.await else {
+                        break 'emit_winner;
+                    };
+
+                    let Ok(Some(entry_id)) = this.update(cx, |_, cx| {
+                        let worktree = worktree.read(cx);
+                        let worktree_abs_path = worktree.abs_path();
+                        let entry = if winner_abs_path.as_ref() == worktree_abs_path.as_ref() {
+                            worktree.root_entry()
+                        } else {
+                            winner_abs_path
+                                .strip_prefix(worktree_abs_path.as_ref())
+                                .ok()
+                                .and_then(|relative_path| {
+                                    let relative_path =
+                                        RelPath::new(relative_path, PathStyle::local())
+                                            .log_err()?;
+                                    worktree.entry_for_path(&relative_path)
+                                })
+                        }?;
+                        Some(entry.id)
+                    }) else {
+                        break 'emit_winner;
+                    };
+
+                    this.update(cx, |workspace, cx| {
+                        workspace.project.update(cx, |_, cx| {
+                            cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
+                        });
+                    })
+                    .ok();
+                }
+            }
+
+            results
         })
     }
 
