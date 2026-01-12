@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
@@ -79,7 +77,7 @@ impl AppSession {
                     }
 
                     cx.background_executor()
-                        .timer(Duration::from_millis(500))
+                        .timer(std::time::Duration::from_millis(500))
                         .await;
                 }
             }
