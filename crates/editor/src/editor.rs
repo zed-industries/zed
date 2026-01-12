@@ -25563,19 +25563,6 @@ impl EditorSnapshot {
         let current_selection_head = current_selection_head.as_display_point().to_point(self);
         let first_visible_row = first_visible_row.as_display_point().to_point(self);
 
-        let folds = if current_selection_head < first_visible_row {
-            self.folds_in_range(current_selection_head..first_visible_row)
-        } else {
-            self.folds_in_range(first_visible_row..current_selection_head)
-        };
-
-        let folded_lines = folds
-            .map(|fold| {
-                let range = fold.range.0.to_point(self);
-                range.end.row.saturating_sub(range.start.row)
-            })
-            .sum::<u32>() as i64;
-
         if consider_wrapped_lines {
             let wrap_snapshot = self.wrap_snapshot();
             let base_wrap_row = wrap_snapshot
@@ -25584,8 +25571,21 @@ impl EditorSnapshot {
             let wrap_row = wrap_snapshot
                 .make_wrap_point(first_visible_row, Bias::Left)
                 .row();
-            wrap_row.0 as i64 - base_wrap_row.0 as i64 + folded_lines
+            wrap_row.0 as i64 - base_wrap_row.0 as i64
         } else {
+            let folds = if current_selection_head < first_visible_row {
+                self.folds_in_range(current_selection_head..first_visible_row)
+            } else {
+                self.folds_in_range(first_visible_row..current_selection_head)
+            };
+
+            let folded_lines = folds
+                .map(|fold| {
+                    let range = fold.range.0.to_point(self);
+                    range.end.row.saturating_sub(range.start.row)
+                })
+                .sum::<u32>() as i64;
+
             first_visible_row.row as i64 - current_selection_head.row as i64 + folded_lines
         }
     }
@@ -25601,6 +25601,7 @@ impl EditorSnapshot {
     ) -> HashMap<DisplayRow, u32> {
         let initial_offset =
             self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
+        let current_selection_point = current_selection_head.as_display_point().to_point(self);
 
         self.row_infos(rows.start)
             .take(rows.len())
@@ -25611,13 +25612,23 @@ impl EditorSnapshot {
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .flat_map(|(i, (row, row_info))| {
-                (row != current_selection_head
+            .filter(|(_, (row, row_info))| {
+                // We want to check here that
+                // - the row is not the current selection head to ensure the current
+                // line has absolute numbering
+                // - similarly, should the selection head live in a soft-wrapped line
+                // and we are not counting those, that the parent line keeps its
+                // absolute number
+                // - lastly, if we are in a deleted line, it is fine to number this
+                // relative with 0, as otherwise it would have no line number at all
+                (*row != current_selection_head
+                    && (count_wrapped_lines
+                        || row_info.buffer_row != Some(current_selection_point.row)))
                     || row_info
                         .diff_status
-                        .is_some_and(|status| status.is_deleted()))
-                .then_some((row, (initial_offset + i as i64).unsigned_abs() as u32))
+                        .is_some_and(|status| status.is_deleted())
             })
+            .map(|(i, (row, _))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
             .collect()
     }
 }
