@@ -796,13 +796,6 @@ impl MessageEditor {
         .detach();
     }
 
-    /// Inserts the given text into the editor at the current cursor position.
-    pub fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.insert(text, window, cx);
-        });
-    }
-
     /// Inserts code snippets as creases into the editor.
     /// Each tuple contains (code_text, crease_title).
     pub fn insert_code_creases(

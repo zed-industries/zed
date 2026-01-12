@@ -1591,26 +1591,26 @@ impl TextThreadEditor {
 
                                 // Create creases for the code snippet using the stored buffer and range
                                 let snapshot = buffer.read(cx).snapshot(cx);
-                                let creases =
+                                let mut creases =
                                     selections_creases(vec![point_range.clone()], snapshot, cx);
+
+                                // Prepend the user's comment to the code text inside the crease
+                                for (code_text, crease_title) in &mut creases {
+                                    let comment_prefix = format!("{}\n\n", comment_text);
+                                    *code_text = format!("{}{}", comment_prefix, code_text);
+                                    // Update crease title to indicate it's a review comment
+                                    *crease_title = format!("Review: {}", crease_title);
+                                }
 
                                 thread_view.update(
                                     cx,
                                     |thread_view: &mut crate::acp::AcpThreadView, cx| {
-                                        // Insert the code snippet as a crease
+                                        // Insert the code snippet with comment as a crease
                                         log::info!(
                                             "Inserting code crease with range {:?}",
                                             point_range
                                         );
                                         thread_view.insert_code_crease(creases, window, cx);
-
-                                        // Then insert the user's comment into the message editor
-                                        let comment_with_newlines = format!("\n{}\n", comment_text);
-                                        log::info!(
-                                            "Inserting comment: '{}'",
-                                            comment_with_newlines
-                                        );
-                                        thread_view.insert_text(&comment_with_newlines, window, cx);
                                     },
                                 );
                             } else {
