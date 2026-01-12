@@ -1610,21 +1610,7 @@ impl CollabPanel {
                     }
                 }
                 ListEntry::Channel { channel, .. } => {
-                    let is_active = maybe!({
-                        let call_channel = ActiveCall::global(cx)
-                            .read(cx)
-                            .room()?
-                            .read(cx)
-                            .channel_id()?;
-
-                        Some(call_channel == channel.id)
-                    })
-                    .unwrap_or(false);
-                    if is_active {
-                        self.open_channel_notes(channel.id, window, cx)
-                    } else {
-                        self.join_channel(channel.id, window, cx)
-                    }
+                    self.open_channel_notes(channel.id, window, cx)
                 }
                 ListEntry::ContactPlaceholder => self.toggle_contact_finder(window, cx),
                 ListEntry::CallParticipant { user, peer_id, .. } => {
@@ -2883,11 +2869,7 @@ impl CollabPanel {
                         this.toggle_channel_collapsed(channel_id, window, cx)
                     }))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if is_active {
-                            this.open_channel_notes(channel_id, window, cx)
-                        } else {
-                            this.join_channel(channel_id, window, cx)
-                        }
+                        this.open_channel_notes(channel_id, window, cx)
                     }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {
@@ -2939,32 +2921,48 @@ impl CollabPanel {
                 h_flex().absolute().right(rems(0.)).h_full().child(
                     h_flex()
                         .h_full()
-                        .bg(cx.theme().colors().background)
-                        .rounded_l_sm()
+                        .when(!is_active, |this| {
+                            this.bg(cx.theme().colors().background).rounded_l_sm()
+                        })
                         .gap_1()
                         .px_1()
                         .child(
-                            IconButton::new("channel_notes", IconName::Reader)
-                                .style(ButtonStyle::Filled)
-                                .shape(ui::IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
-                                .icon_color(if has_notes_notification {
-                                    Color::Default
+                            IconButton::new(
+                                "voice_call",
+                                if is_active {
+                                    IconName::Exit
                                 } else {
-                                    Color::Muted
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_channel_notes(channel_id, window, cx)
-                                }))
-                                .tooltip(Tooltip::text("Open channel notes")),
+                                    IconName::AudioOn
+                                },
+                            )
+                            .style(ButtonStyle::Filled)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(if is_active {
+                                Color::Error
+                            } else {
+                                Color::Muted
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if is_active {
+                                    Self::leave_call(window, cx)
+                                } else {
+                                    this.join_channel(channel_id, window, cx)
+                                }
+                            }))
+                            .tooltip(Tooltip::text(if is_active {
+                                "Leave voice"
+                            } else {
+                                "Join voice"
+                            })),
                         )
-                        .visible_on_hover(""),
+                        .when(!is_active, |this| this.visible_on_hover("")),
                 ),
             )
             .tooltip({
                 let channel_store = self.channel_store.clone();
                 move |_window, cx| {
-                    cx.new(|_| JoinChannelTooltip {
+                    cx.new(|_| ChannelNotesTooltip {
                         channel_store: channel_store.clone(),
                         channel_id,
                         has_notes_notification,
@@ -3282,14 +3280,14 @@ impl Render for DraggedChannelView {
     }
 }
 
-struct JoinChannelTooltip {
+struct ChannelNotesTooltip {
     channel_store: Entity<ChannelStore>,
     channel_id: ChannelId,
     #[allow(unused)]
     has_notes_notification: bool,
 }
 
-impl Render for JoinChannelTooltip {
+impl Render for ChannelNotesTooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         tooltip_container(cx, |container, cx| {
             let participants = self
@@ -3298,7 +3296,7 @@ impl Render for JoinChannelTooltip {
                 .channel_participants(self.channel_id);
 
             container
-                .child(Label::new("Join channel"))
+                .child(Label::new("Open channel notes"))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()
