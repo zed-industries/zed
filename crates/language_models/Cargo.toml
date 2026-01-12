@@ -63,6 +63,12 @@ ui_input.workspace = true
 util.workspace = true
 vercel = { workspace = true, features = ["schemars"] }
 x_ai = { workspace = true, features = ["schemars"] }
+base64.workspace = true
+sha2.workspace = true
+rand.workspace = true
+url.workspace = true
+urlencoding.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
