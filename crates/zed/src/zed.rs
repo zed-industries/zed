@@ -4757,6 +4757,7 @@ mod tests {
                 "pane",
                 "panel",
                 "picker",
+                "project_dropdown",
                 "project_panel",
                 "project_search",
                 "project_symbols",
