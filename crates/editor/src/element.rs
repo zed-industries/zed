@@ -3116,38 +3116,15 @@ impl EditorElement {
         Some(display_row)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn layout_diff_review_button(
-        &self,
-        display_row: DisplayRow,
-        line_height: Pixels,
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyElement {
-        let button = IconButton::new("diff_review_button", ui::IconName::Plus)
+    fn diff_review_button() -> AnyElement {
+        IconButton::new("diff_review_button", ui::IconName::Plus)
             .icon_size(ui::IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(ui::Color::Default)
             .style(ui::ButtonStyle::Filled)
             .layer(ui::ElevationIndex::Surface)
             .tooltip(Tooltip::text("Add Review"))
-            .into_any_element();
-
-        prepaint_gutter_button(
-            button,
-            display_row,
-            line_height,
-            gutter_dimensions,
-            scroll_position,
-            gutter_hitbox,
-            display_hunks,
-            window,
-            cx,
-        )
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -10454,11 +10431,12 @@ impl Element for EditorElement {
                     let diff_review_button = self
                         .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
                         .map(|display_row| {
-                            self.layout_diff_review_button(
+                            prepaint_gutter_button(
+                                Self::diff_review_button(),
                                 display_row,
                                 line_height,
-                                scroll_position,
                                 &gutter_dimensions,
+                                scroll_position,
                                 &gutter_hitbox,
                                 &display_hunks,
                                 window,
