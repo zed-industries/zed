@@ -67,7 +67,7 @@ async fn test_host_disconnect(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
@@ -76,7 +76,7 @@ async fn test_host_disconnect(
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_id = active_call_a
@@ -153,7 +153,7 @@ async fn test_host_disconnect(
 
     // Allow client A to reconnect to the server.
     server.allow_connections();
-    cx_a.background_executor.advance_clock(RECEIVE_TIMEOUT);
+    cx_a.background_executor.advance_clock(RECONNECT_TIMEOUT);
 
     // Client B calls client A again after they reconnected.
     let active_call_b = cx_b.read(ActiveCall::global);
@@ -429,6 +429,51 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         assert!(!buffer.completion_triggers().is_empty())
     });
 
+    // Set up the completion request handlers BEFORE typing the trigger character.
+    // This is critical - the handlers must be in place when the request arrives,
+    // otherwise the requests will time out waiting for a response.
+    let mut first_completion_request = fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 14),
+            );
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "second_method(…)".into(),
+                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "second_method()".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+            ])))
+        });
+    let mut second_completion_request = second_fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) });
     // Type a completion trigger character as the guest.
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -441,6 +486,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Allow the completion request to propagate from guest to host to LSP.
     cx_b.background_executor.run_until_parked();
     cx_a.background_executor.run_until_parked();
+
+    // Wait for the completion requests to be received by the fake language servers.
+    first_completion_request.next().await.unwrap();
+    second_completion_request.next().await.unwrap();
 
     // Open the buffer on the host.
     let buffer_a = project_a
@@ -1373,6 +1422,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
     fake_language_server.start_progress("the-token").await;
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
@@ -1842,7 +1892,6 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Receive an OnTypeFormatting request as the host's language server.
     // Return some formatting from the host's language server.
-    executor.start_waiting();
     fake_language_server
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
@@ -1862,7 +1911,6 @@ async fn test_on_input_format_from_guest_to_host(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
@@ -2238,8 +2286,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    cx_a.background_executor.start_waiting();
-
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
@@ -2303,7 +2349,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
@@ -2915,7 +2960,6 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    executor.start_waiting();
 
     // The host opens a rust file.
     let _buffer_a = project_a

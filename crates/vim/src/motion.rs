@@ -95,7 +95,9 @@ pub enum Motion {
     EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
-    Matching,
+    Matching {
+        match_quotes: bool,
+    },
     GoToPercentage,
     UnmatchedForward {
         char: char,
@@ -275,6 +277,18 @@ struct FirstNonWhitespace {
     display_lines: bool,
 }
 
+/// Moves to the matching bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct Matching {
+    #[serde(default)]
+    /// Whether to include quote characters (`'`, `"`, `` ` ``) when searching
+    /// for matching pairs. When `false`, only brackets and parentheses are
+    /// matched, which aligns with Neovim's default `%` behavior.
+    match_quotes: bool,
+}
+
 /// Moves to the end of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
@@ -347,8 +361,6 @@ actions!(
         StartOfDocument,
         /// Moves to the end of the document.
         EndOfDocument,
-        /// Moves to the matching bracket or delimiter.
-        Matching,
         /// Goes to a percentage position in the file.
         GoToPercentage,
         /// Moves to the start of the next line.
@@ -499,9 +511,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &EndOfDocument, window, cx| {
         vim.motion(Motion::EndOfDocument, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Matching, window, cx| {
-        vim.motion(Motion::Matching, window, cx)
-    });
+    Vim::action(
+        editor,
+        cx,
+        |vim, &Matching { match_quotes }: &Matching, window, cx| {
+            vim.motion(Motion::Matching { match_quotes }, window, cx)
+        },
+    );
+
     Vim::action(editor, cx, |vim, _: &GoToPercentage, window, cx| {
         vim.motion(Motion::GoToPercentage, window, cx)
     });
@@ -773,7 +790,7 @@ impl Motion {
             | Jump { line: true, .. } => MotionKind::Linewise,
             EndOfLine { .. }
             | EndOfLineDownward
-            | Matching
+            | Matching { .. }
             | FindForward { .. }
             | NextWordEnd { .. }
             | PreviousWordEnd { .. }
@@ -847,7 +864,7 @@ impl Motion {
             | EndOfParagraph
             | GoToPercentage
             | Jump { .. }
-            | Matching
+            | Matching { .. }
             | NextComment
             | NextGreaterIndent
             | NextLesserIndent
@@ -887,7 +904,7 @@ impl Motion {
             | Up { .. }
             | EndOfLine { .. }
             | MiddleOfLine { .. }
-            | Matching
+            | Matching { .. }
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | FindForward { .. }
@@ -1039,7 +1056,7 @@ impl Motion {
                 end_of_document(map, point, maybe_times),
                 SelectionGoal::None,
             ),
-            Matching => (matching(map, point), SelectionGoal::None),
+            Matching { match_quotes } => (matching(map, point, *match_quotes), SelectionGoal::None),
             GoToPercentage => (go_to_percentage(map, point, times), SelectionGoal::None),
             UnmatchedForward { char } => (
                 unmatched_forward(map, point, *char, times),
@@ -2407,7 +2424,11 @@ fn find_matching_bracket_text_based(
     None
 }
 
-fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+fn matching(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    match_quotes: bool,
+) -> DisplayPoint {
     if !map.is_singleton() {
         return display_point;
     }
@@ -2423,18 +2444,38 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
-    // Attempt to find the smallest enclosing bracket range that also contains
-    // the offset, which only happens if the cursor is currently in a bracket.
-    let range_filter = |_buffer: &language::BufferSnapshot,
-                        opening_range: Range<BufferOffset>,
-                        closing_range: Range<BufferOffset>| {
-        opening_range.contains(&BufferOffset(offset.0))
-            || closing_range.contains(&BufferOffset(offset.0))
+    let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
+
+    let make_range_filter = |require_on_bracket: bool| {
+        move |buffer: &language::BufferSnapshot,
+              opening_range: Range<BufferOffset>,
+              closing_range: Range<BufferOffset>| {
+            if !match_quotes
+                && buffer
+                    .chars_at(opening_range.start)
+                    .next()
+                    .is_some_and(is_quote_char)
+            {
+                return false;
+            }
+
+            if require_on_bracket {
+                // Attempt to find the smallest enclosing bracket range that also contains
+                // the offset, which only happens if the cursor is currently in a bracket.
+                opening_range.contains(&BufferOffset(offset.0))
+                    || closing_range.contains(&BufferOffset(offset.0))
+            } else {
+                true
+            }
+        }
     };
 
     let bracket_ranges = snapshot
-        .innermost_enclosing_bracket_ranges(offset..offset, Some(&range_filter))
-        .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
+        .innermost_enclosing_bracket_ranges(offset..offset, Some(&make_range_filter(true)))
+        .or_else(|| {
+            snapshot
+                .innermost_enclosing_bracket_ranges(offset..offset, Some(&make_range_filter(false)))
+        });
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
         let mut chars = map.buffer_snapshot().chars_at(offset);
@@ -2461,6 +2502,16 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
+            if !match_quotes
+                && map
+                    .buffer_snapshot()
+                    .chars_at(open_range.start)
+                    .next()
+                    .is_some_and(is_quote_char)
+            {
+                continue;
+            }
+
             if map.buffer_snapshot().chars_at(open_range.start).next() == Some('<') {
                 if offset > open_range.start && offset < close_range.start {
                     let mut chars = map.buffer_snapshot().chars_at(close_range.start);
@@ -3143,10 +3194,12 @@ fn indent_motion(
 mod test {
 
     use crate::{
+        motion::Matching,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Inlay;
+    use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
@@ -3267,6 +3320,94 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
+    }
+
+    #[gpui::test]
+    async fn test_matching_quotes_disabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Bind % to Matching with match_quotes: false to match Neovim's behavior
+        // (Neovim's % doesn't match quotes by default)
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "%",
+                Matching {
+                    match_quotes: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_shared_state("one {two 'thˇree' four}").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("one ˇ{two 'three' four}");
+
+        cx.set_shared_state("'hello wˇorld'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("'hello wˇorld'");
+
+        cx.set_shared_state(r#"func ("teˇst") {}"#).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(r#"func ˇ("test") {}"#);
+
+        cx.set_shared_state("ˇ'hello'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("ˇ'hello'");
+
+        cx.set_shared_state("'helloˇ'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("'helloˇ'");
+
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do('somethiˇng'))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) {
+                doˇ('something'))
+            }"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_quotes_enabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_markdown_with_rust(cx).await;
+
+        // Test default behavior (match_quotes: true as configured in keymap/vim.json)
+        cx.set_state("one {two 'thˇree' four}", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("one {two ˇ'three' four}", Mode::Normal);
+
+        cx.set_state("'hello wˇorld'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("ˇ'hello world'", Mode::Normal);
+
+        cx.set_state(r#"func ('teˇst') {}"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"func (ˇ'test') {}"#, Mode::Normal);
+
+        cx.set_state("ˇ'hello'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("'helloˇ'", Mode::Normal);
+
+        cx.set_state("'helloˇ'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("ˇ'hello'", Mode::Normal);
+
+        cx.set_state(
+            indoc! {r"func (a string) {
+                do('somethiˇng'))
+            }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("%");
+        cx.assert_state(
+            indoc! {r"func (a string) {
+                do(ˇ'something'))
+            }"},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
@@ -3523,6 +3664,46 @@ mod test {
         </html>"#});
     }
 
+    #[gpui::test]
+    async fn test_matching_tag_with_quotes(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "%",
+                Matching {
+                    match_quotes: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.neovim.exec("set filetype=html").await;
+        cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("%", Matching { match_quotes: true }, None)]);
+        });
+
+        cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+    }
     #[gpui::test]
     async fn test_matching_braces_in_tag(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_typescript(cx).await;

@@ -58,7 +58,7 @@ use {
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore},
+    settings::{NotifyWhenAgentWaiting, Settings as _},
     std::{
         any::Any,
         path::{Path, PathBuf},
@@ -146,17 +146,15 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Use real Assets so that SVG icons render properly
     let mut cx = VisualTestAppContext::with_asset_source(Arc::new(Assets));
 
-    // Initialize settings store first (required by theme and other subsystems)
-    // and disable telemetry to prevent HTTP errors from FakeHttpClient
+    // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
-        let mut settings_store = SettingsStore::test(cx);
-        settings_store.update_user_settings(cx, |settings| {
-            settings.telemetry = Some(settings::TelemetrySettingsContent {
-                diagnostics: Some(false),
-                metrics: Some(false),
-            });
-        });
-        cx.set_global(settings_store);
+        Assets.load_fonts(cx).unwrap();
+    });
+
+    // Initialize settings store with real default settings (not test settings)
+    // Test settings use Courier font, but we want the real Zed fonts for visual tests
+    cx.update(|cx| {
+        settings::init(cx);
     });
 
     // Create AppState using the test initialization
@@ -262,7 +260,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // worktree creation spawns foreground tasks via cx.spawn
     // Allow parking since filesystem operations happen outside the test dispatcher
     cx.background_executor.allow_parking();
-    let worktree_result = cx.background_executor.block_test(add_worktree_task);
+    let worktree_result = cx.foreground_executor.block_test(add_worktree_task);
     cx.background_executor.forbid_parking();
     worktree_result.context("Failed to add worktree")?;
 
@@ -277,7 +275,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     cx.background_executor.allow_parking();
     let panel = cx
-        .background_executor
+        .foreground_executor
         .block_test(ProjectPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load project panel")?;
     cx.background_executor.forbid_parking();
@@ -318,7 +316,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let block_result = cx.background_executor.block_test(task);
+        let block_result = cx.foreground_executor.block_test(task);
         cx.background_executor.forbid_parking();
         if let Ok(item) = block_result {
             workspace_window
@@ -914,7 +912,7 @@ fn run_breakpoint_hover_visual_tests(
         .context("Failed to start adding worktree")?;
 
     cx.background_executor.allow_parking();
-    let worktree_result = cx.background_executor.block_test(add_worktree_task);
+    let worktree_result = cx.foreground_executor.block_test(add_worktree_task);
     cx.background_executor.forbid_parking();
     worktree_result.context("Failed to add worktree")?;
 
@@ -939,7 +937,7 @@ fn run_breakpoint_hover_visual_tests(
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let _ = cx.background_executor.block_test(task);
+        let _ = cx.foreground_executor.block_test(task);
         cx.background_executor.forbid_parking();
     }
 
@@ -1200,7 +1198,7 @@ import { AiPaneTabContext } from 'context';
     });
 
     cx.background_executor.allow_parking();
-    let _ = cx.background_executor.block_test(add_worktree_task);
+    let _ = cx.foreground_executor.block_test(add_worktree_task);
     cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
@@ -1335,7 +1333,7 @@ import { AiPaneTabContext } from 'context';
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let _ = cx.background_executor.block_test(task);
+        let _ = cx.foreground_executor.block_test(task);
         cx.background_executor.forbid_parking();
     }
 
@@ -1480,7 +1478,7 @@ fn run_agent_thread_view_test(
 
     cx.background_executor.allow_parking();
     let (worktree, _) = cx
-        .background_executor
+        .foreground_executor
         .block_test(add_worktree_task)
         .context("Failed to add worktree")?;
     cx.background_executor.forbid_parking();
@@ -1530,7 +1528,7 @@ fn run_agent_thread_view_test(
     let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
     cx.background_executor.allow_parking();
-    let run_result = cx.background_executor.block_test(run_task);
+    let run_result = cx.foreground_executor.block_test(run_task);
     cx.background_executor.forbid_parking();
     run_result.context("ReadFileTool failed")?;
 
@@ -1611,7 +1609,7 @@ fn run_agent_thread_view_test(
         cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
-        .background_executor
+        .foreground_executor
         .block_test(AgentPanel::load(
             weak_workspace,
             prompt_builder,
@@ -1655,7 +1653,7 @@ fn run_agent_thread_view_test(
     });
 
     cx.background_executor.allow_parking();
-    let send_result = cx.background_executor.block_test(send_future);
+    let send_result = cx.foreground_executor.block_test(send_future);
     cx.background_executor.forbid_parking();
     send_result.context("Failed to send message")?;
 
