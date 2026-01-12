@@ -30,9 +30,13 @@
   libgbm,
   libgit2,
   libglvnd,
+  libva,
+  libxcomposite,
   libxdamage,
+  libxext,
   libxfixes,
   libxkbcommon,
+  libxrandr,
   nodejs_22,
   openssl,
   perl,
@@ -157,10 +161,18 @@ let
         fontconfig
         freetype
         glib
+        libdrm
+        libgbm
+        libva
         # TODO: need staticlib of this for linking the musl remote server.
         # should make it a separate derivation/flake output
         # see https://crane.dev/examples/cross-musl.html
         libgit2
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
         openssl
         sqlite
         zlib
@@ -169,10 +181,6 @@ let
       ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
         libxkbcommon
-        libdrm
-        libgbm
-        libxdamage
-        libxfixes
         wayland
         gpu-lib
         xorg.libX11
