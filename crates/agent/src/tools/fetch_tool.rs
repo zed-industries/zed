@@ -148,7 +148,7 @@ impl AgentTool for FetchTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings("fetch", &input.url, settings);
+        let decision = decide_permission_from_settings(Self::name(), &input.url, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,

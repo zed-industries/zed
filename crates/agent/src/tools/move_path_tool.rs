@@ -100,13 +100,13 @@ impl AgentTool for MovePathTool {
         let settings = AgentSettings::get_global(cx);
 
         let source_decision =
-            decide_permission_from_settings("move_path", &input.source_path, settings);
+            decide_permission_from_settings(Self::name(), &input.source_path, settings);
         if let ToolPermissionDecision::Deny(reason) = source_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         let dest_decision =
-            decide_permission_from_settings("move_path", &input.destination_path, settings);
+            decide_permission_from_settings(Self::name(), &input.destination_path, settings);
         if let ToolPermissionDecision::Deny(reason) = dest_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }

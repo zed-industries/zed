@@ -152,7 +152,7 @@ impl EditFileTool {
     ) -> Task<Result<()>> {
         let path_str = input.path.to_string_lossy();
         let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings("edit_file", &path_str, settings);
+        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
 
         match decision {
             ToolPermissionDecision::Allow => return Task::ready(Ok(())),
