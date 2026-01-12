@@ -3,13 +3,15 @@ use std::rc::Rc;
 
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    WeakEntity,
+    WeakEntity, actions,
 };
 use menu;
 use project::{Project, Worktree, git_store::Repository};
 use settings::WorktreeId;
-use ui::{ContextMenu, prelude::*};
+use ui::{ContextMenu, Tooltip, prelude::*};
 use workspace::Workspace;
+
+actions!(project_dropdown, [RemoveSelectedFolder]);
 
 struct ProjectEntry {
     worktree_id: WorktreeId,
@@ -20,6 +22,9 @@ struct ProjectEntry {
 
 pub struct ProjectDropdown {
     menu: Entity<ContextMenu>,
+    workspace: WeakEntity<Workspace>,
+    worktree_ids: Rc<RefCell<Vec<WorktreeId>>>,
+    menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
     _subscription: Subscription,
 }
 
@@ -32,12 +37,14 @@ impl ProjectDropdown {
         cx: &mut Context<Self>,
     ) -> Self {
         let menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>> = Rc::new(RefCell::new(None));
+        let worktree_ids: Rc<RefCell<Vec<WorktreeId>>> = Rc::new(RefCell::new(Vec::new()));
 
         let menu = Self::build_menu(
-            project,
-            workspace,
+            project.clone(),
+            workspace.clone(),
             initial_active_worktree_id,
             menu_shell.clone(),
+            worktree_ids.clone(),
             window,
             cx,
         );
@@ -50,6 +57,9 @@ impl ProjectDropdown {
 
         Self {
             menu,
+            workspace,
+            worktree_ids,
+            menu_shell,
             _subscription,
         }
     }
@@ -59,6 +69,7 @@ impl ProjectDropdown {
         workspace: WeakEntity<Workspace>,
         initial_active_worktree_id: Option<WorktreeId>,
         menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
+        worktree_ids: Rc<RefCell<Vec<WorktreeId>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
@@ -74,6 +85,15 @@ impl ProjectDropdown {
 
             let entries = Self::get_project_entries(&project, active_worktree_id, cx);
 
+            // Update the worktree_ids list so we can map selected_index -> worktree_id.
+            {
+                let mut ids = worktree_ids.borrow_mut();
+                ids.clear();
+                for entry in &entries {
+                    ids.push(entry.worktree_id);
+                }
+            }
+
             let mut menu = menu.header("Open Folders");
 
             for entry in entries {
@@ -86,12 +106,15 @@ impl ProjectDropdown {
                 let workspace_for_remove = workspace.clone();
                 let menu_shell_for_remove = menu_shell.clone();
 
+                let menu_focus_handle = menu.focus_handle(cx);
+
                 menu = menu.custom_entry(
                     move |_window, _cx| {
                         let name = name.clone();
                         let branch = branch.clone();
                         let workspace_for_remove = workspace_for_remove.clone();
                         let menu_shell = menu_shell_for_remove.clone();
+                        let menu_focus_handle = menu_focus_handle.clone();
 
                         h_flex()
                             .group(name.clone())
@@ -116,6 +139,14 @@ impl ProjectDropdown {
                                 .visible_on_hover(name.clone())
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
+                                .tooltip(move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove Project",
+                                        &RemoveSelectedFolder,
+                                        &menu_focus_handle,
+                                        cx,
+                                    )
+                                })
                                 .on_click({
                                     let workspace = workspace_for_remove.clone();
                                     move |_, window, cx| {
@@ -269,11 +300,47 @@ impl ProjectDropdown {
             });
         }
     }
+
+    fn remove_selected_folder(
+        &mut self,
+        _: &RemoveSelectedFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_index = self.menu.read(cx).selected_index();
+
+        if let Some(menu_index) = selected_index {
+            // Early return because the "Open Folders" header is index 0.
+            if menu_index == 0 {
+                return;
+            }
+
+            let entry_index = menu_index - 1;
+            let worktree_ids = self.worktree_ids.borrow();
+
+            if entry_index < worktree_ids.len() {
+                let worktree_id = worktree_ids[entry_index];
+                drop(worktree_ids);
+
+                Self::handle_remove(self.workspace.clone(), worktree_id, window, cx);
+
+                if let Some(menu_entity) = self.menu_shell.borrow().clone() {
+                    menu_entity.update(cx, |menu, cx| {
+                        menu.rebuild(window, cx);
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl Render for ProjectDropdown {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.menu.clone()
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .key_context("MultiProjectDropdown")
+            .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::remove_selected_folder))
+            .child(self.menu.clone())
     }
 }
 

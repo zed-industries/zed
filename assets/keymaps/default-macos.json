@@ -1451,4 +1451,10 @@
       "cmd-3": "git_picker::ActivateStashTab",
     },
   },
+  {
+    "context": "MultiProjectDropdown",
+    "bindings": {
+      "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+    },
+  },
 ]
