@@ -4736,6 +4736,7 @@ mod tests {
                 "git",
                 "git_onboarding",
                 "git_panel",
+                "git_picker",
                 "go_to_line",
                 "icon_theme_selector",
                 "inline_assistant",
