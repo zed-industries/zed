@@ -65,18 +65,23 @@ impl AppSession {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
         let _serialization_task = cx.spawn(async move |_, cx| {
-            let mut current_window_stack = Vec::new();
-            loop {
-                if let Some(windows) = cx.update(|cx| window_stack(cx))
-                    && windows != current_window_stack
-                {
-                    store_window_stack(&windows).await;
-                    current_window_stack = windows;
-                }
+            // Disabled in tests: the infinite loop bypasses "parking forbidden" checks,
+            // causing tests to hang instead of panicking.
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                let mut current_window_stack = Vec::new();
+                loop {
+                    if let Some(windows) = cx.update(|cx| window_stack(cx))
+                        && windows != current_window_stack
+                    {
+                        store_window_stack(&windows).await;
+                        current_window_stack = windows;
+                    }
 
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(500))
+                        .await;
+                }
             }
         });
 
