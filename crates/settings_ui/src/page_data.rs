@@ -1431,7 +1431,7 @@ fn keymap_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Cursor Shape - Insert Mode",
-                description: "Cursor shape for insert mode.",
+                description: "Cursor shape for insert mode. Inherit uses the editor's cursor shape.",
                 field: Box::new(SettingField {
                     json_path: Some("vim.cursor_shape.insert"),
                     pick: |settings_content| {
