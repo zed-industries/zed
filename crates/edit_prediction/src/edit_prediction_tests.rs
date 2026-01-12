@@ -1330,12 +1330,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawCompletionResponse {
     let prompt = &request.prompt;
 
-    let open = "<editable_region>\n";
-    let close = "</editable_region>";
+    let current_marker = "<|fim_middle|>current\n";
+    let updated_marker = "<|fim_middle|>updated\n";
     let cursor = "<|user_cursor|>";
 
-    let start_ix = open.len() + prompt.find(open).unwrap();
-    let end_ix = start_ix + &prompt[start_ix..].find(close).unwrap();
+    let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
+    let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
     let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
