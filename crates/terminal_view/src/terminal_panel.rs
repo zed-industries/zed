@@ -2021,7 +2021,6 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        // Test that create_local_terminal successfully creates a terminal
         let terminal = project
             .update(cx, |project, cx| project.create_local_terminal(cx))
             .await;
@@ -2029,6 +2028,32 @@ mod tests {
         assert!(
             terminal.is_ok(),
             "create_local_terminal should successfully create a terminal"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_local_terminal_in_local_project_with_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/test-project",
+            serde_json::json!({
+                "file.txt": "content"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [std::path::Path::new("/test-project")], cx).await;
+
+        // Verify create_local_terminal works in local projects with worktrees
+        let terminal = project
+            .update(cx, |project, cx| project.create_local_terminal(cx))
+            .await;
+
+        assert!(
+            terminal.is_ok(),
+            "create_local_terminal should work in local projects with worktrees"
         );
     }
 

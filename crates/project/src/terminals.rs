@@ -286,14 +286,20 @@ impl Project {
     }
 
     /// Creates a local terminal even if the project is remote.
-    /// Used for "breaking out" of remote to access local shell.
-    /// The terminal will open in the Zed process's current directory,
-    /// which is where Zed was launched from (if via CLI) or home directory (if via app icon).
+    /// In remote projects: opens in Zed's launch directory (bypasses SSH).
+    /// In local projects: opens in the project directory (same as regular terminals).
     pub fn create_local_terminal(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(None, true, cx)
+        let working_directory = if self.remote_client.is_some() {
+            // Remote project: don't use remote paths, let shell use Zed's cwd
+            None
+        } else {
+            // Local project: use project directory like normal terminals
+            self.active_project_directory(cx).map(|p| p.to_path_buf())
+        };
+        self.create_terminal_shell_internal(working_directory, true, cx)
     }
 
     /// Internal method for creating terminal shells.
