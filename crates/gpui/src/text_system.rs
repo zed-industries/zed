@@ -29,8 +29,16 @@ use std::{
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut, Range},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+
+/// Global counters for raster_bounds cache hit/miss debugging.
+/// Access via `TextSystem::raster_bounds_stats()`.
+static RASTER_BOUNDS_HITS: AtomicU64 = AtomicU64::new(0);
+static RASTER_BOUNDS_MISSES: AtomicU64 = AtomicU64::new(0);
 
 /// An opaque identifier for a specific font.
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -41,9 +49,14 @@ pub struct FontId(pub usize);
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
-pub(crate) const SUBPIXEL_VARIANTS_X: u8 = 4;
+/// Number of subpixel variants for horizontal glyph positioning.
+/// Used for subpixel antialiasing cache keys.
+pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 
-pub(crate) const SUBPIXEL_VARIANTS_Y: u8 =
+/// Number of subpixel variants for vertical glyph positioning.
+/// On Windows/Linux this is 1 (no vertical subpixel rendering),
+/// on macOS it matches the horizontal variant count.
+pub const SUBPIXEL_VARIANTS_Y: u8 =
     if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
         1
     } else {
@@ -310,13 +323,79 @@ impl TextSystem {
     pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let raster_bounds = self.raster_bounds.upgradable_read();
         if let Some(bounds) = raster_bounds.get(params) {
+            RASTER_BOUNDS_HITS.fetch_add(1, Ordering::Relaxed);
             Ok(*bounds)
         } else {
+            RASTER_BOUNDS_MISSES.fetch_add(1, Ordering::Relaxed);
             let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
             let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
             raster_bounds.insert(params.clone(), bounds);
             Ok(bounds)
         }
+    }
+
+    /// Returns (hits, misses) for raster_bounds cache. For debugging.
+    pub fn raster_bounds_stats() -> (u64, u64) {
+        (
+            RASTER_BOUNDS_HITS.load(Ordering::Relaxed),
+            RASTER_BOUNDS_MISSES.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Resets raster_bounds cache stats to zero. For debugging.
+    pub fn reset_raster_bounds_stats() {
+        RASTER_BOUNDS_HITS.store(0, Ordering::Relaxed);
+        RASTER_BOUNDS_MISSES.store(0, Ordering::Relaxed);
+    }
+
+    /// Get the rasterized size and location of multiple glyphs in a single batch.
+    ///
+    /// This is more efficient than calling `raster_bounds` repeatedly because it
+    /// acquires the cache lock only once for the entire batch.
+    pub(crate) fn raster_bounds_batch(
+        &self,
+        params_list: &[RenderGlyphParams],
+    ) -> Result<Vec<Bounds<DevicePixels>>> {
+        if params_list.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let raster_bounds = self.raster_bounds.upgradable_read();
+
+        // First pass: check what's already cached and collect missing indices
+        let mut results: Vec<Option<Bounds<DevicePixels>>> = Vec::with_capacity(params_list.len());
+        let mut missing: Vec<usize> = Vec::new();
+
+        for (i, params) in params_list.iter().enumerate() {
+            if let Some(bounds) = raster_bounds.get(params) {
+                results.push(Some(*bounds));
+            } else {
+                results.push(None);
+                missing.push(i);
+            }
+        }
+
+        // If everything was cached, we're done
+        if missing.is_empty() {
+            return Ok(results.into_iter().map(|b| b.unwrap()).collect());
+        }
+
+        // Upgrade to write lock and fill in missing entries
+        let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
+
+        for i in missing {
+            let params = &params_list[i];
+            // Double-check in case another thread inserted it
+            if let Some(bounds) = raster_bounds.get(params) {
+                results[i] = Some(*bounds);
+            } else {
+                let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
+                raster_bounds.insert(params.clone(), bounds);
+                results[i] = Some(bounds);
+            }
+        }
+
+        Ok(results.into_iter().map(|b| b.unwrap()).collect())
     }
 
     pub(crate) fn rasterize_glyph(
@@ -401,6 +480,170 @@ impl WindowTextSystem {
         ShapedLine {
             layout,
             text,
+            decoration_runs,
+        }
+    }
+
+    /// Shape the given line using a caller-provided content hash as the cache key.
+    ///
+    /// This enables cache hits without materializing a contiguous `SharedString` for the text.
+    /// If the cache misses, `materialize_text` is invoked to produce the `SharedString` for shaping.
+    ///
+    /// Contract (caller enforced):
+    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
+    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    ///
+    /// Like [`Self::shape_line`], this must be used only for single-line text (no `\n`).
+    pub fn shape_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+        materialize_text: impl FnOnce() -> SharedString,
+    ) -> ShapedLine {
+        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+        for run in runs {
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
+            }
+            decoration_runs.push(DecorationRun {
+                len: run.len as u32,
+                color: run.color,
+                background_color: run.background_color,
+                underline: run.underline,
+                strikethrough: run.strikethrough,
+            });
+        }
+
+        let mut used_force_width = force_width;
+        let layout = self.layout_line_by_hash(
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            used_force_width,
+            || {
+                let text = materialize_text();
+                debug_assert!(
+                    text.find('\n').is_none(),
+                    "text argument should not contain newlines"
+                );
+                text
+            },
+        );
+
+        // We only materialize actual text on cache miss; on hit we avoid allocations.
+        // Since `ShapedLine` carries a `SharedString`, use an empty placeholder for hits.
+        // NOTE: Callers must not rely on `ShapedLine.text` for content when using this API.
+        let text: SharedString = SharedString::new_static("");
+
+        ShapedLine {
+            layout,
+            text,
+            decoration_runs,
+        }
+    }
+
+    /// Shape a line using the content-addressable cache with the new trait-based API.
+    ///
+    /// This is the recommended API for content-addressable caching. It:
+    /// - Avoids allocations on cache hit (when using `LineContentKey`)
+    /// - Returns correct `ShapedLine.text` (stored in cache on miss)
+    /// - Uses the `LineCacheKey` trait for flexibility
+    ///
+    /// # Example
+    /// ```ignore
+    /// use rustc_hash::FxHasher;
+    /// use std::hash::Hasher;
+    ///
+    /// // Hash rope chunks without allocating a contiguous string
+    /// let mut hasher = FxHasher::default();
+    /// for chunk in rope.chunks() {
+    ///     hasher.write(chunk.as_bytes());
+    /// }
+    /// let key = LineContentKey::new(hasher.finish(), rope.len(), || rope.to_string().into());
+    /// let shaped = text_system.shape_line_cached(&key, font_size, &runs, None);
+    /// ```
+    pub fn shape_line_cached(
+        &self,
+        key: &impl LineCacheKey,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+    ) -> ShapedLine {
+        // Build decoration runs (same logic as shape_line)
+        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+        for run in runs {
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
+            }
+            decoration_runs.push(DecorationRun {
+                len: run.len as u32,
+                color: run.color,
+                background_color: run.background_color,
+                underline: run.underline,
+                strikethrough: run.strikethrough,
+            });
+        }
+
+        // Build font runs for layout cache
+        let mut last_run = None::<&TextRun>;
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        font_runs.clear();
+
+        for run in runs.iter() {
+            let decoration_changed = if let Some(last_run) = last_run
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+            {
+                false
+            } else {
+                last_run = Some(run);
+                true
+            };
+
+            let font_id = self.resolve_font(&run.font);
+            if let Some(font_run) = font_runs.last_mut()
+                && font_id == font_run.font_id
+                && !decoration_changed
+            {
+                font_run.len += run.len;
+            } else {
+                font_runs.push(FontRun {
+                    len: run.len,
+                    font_id,
+                });
+            }
+        }
+
+        // Use the new cached layout API
+        let cached = self.line_layout_cache.layout_line_cached(
+            key,
+            font_size,
+            &font_runs,
+            force_width,
+        );
+
+        self.font_runs_pool.lock().push(font_runs);
+
+        ShapedLine {
+            layout: cached.layout,
+            text: cached.text,
             decoration_runs,
         }
     }
@@ -594,6 +837,130 @@ impl WindowTextSystem {
 
         layout
     }
+
+    /// Probe the line layout cache using a caller-provided content hash, without allocating.
+    ///
+    /// Returns `Some(layout)` if the layout is already cached in either the current frame
+    /// or the previous frame. Returns `None` if it is not cached.
+    ///
+    /// Contract (caller enforced):
+    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
+    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    pub fn try_layout_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+    ) -> Option<Arc<LineLayout>> {
+        let mut last_run = None::<&TextRun>;
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        font_runs.clear();
+
+        for run in runs.iter() {
+            let decoration_changed = if let Some(last_run) = last_run
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+            // we do not consider differing background color relevant, as it does not affect glyphs
+            // && last_run.background_color == run.background_color
+            {
+                false
+            } else {
+                last_run = Some(run);
+                true
+            };
+
+            let font_id = self.resolve_font(&run.font);
+            if let Some(font_run) = font_runs.last_mut()
+                && font_id == font_run.font_id
+                && !decoration_changed
+            {
+                font_run.len += run.len;
+            } else {
+                font_runs.push(FontRun {
+                    len: run.len,
+                    font_id,
+                });
+            }
+        }
+
+        let layout = self.line_layout_cache.try_layout_line_by_hash(
+            text_hash,
+            text_len,
+            font_size,
+            &font_runs,
+            force_width,
+        );
+
+        self.font_runs_pool.lock().push(font_runs);
+
+        layout
+    }
+
+    /// Layout the given line of text using a caller-provided content hash as the cache key.
+    ///
+    /// This enables cache hits without materializing a contiguous `SharedString` for the text.
+    /// If the cache misses, `materialize_text` is invoked to produce the `SharedString` for shaping.
+    ///
+    /// Contract (caller enforced):
+    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
+    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    pub fn layout_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+        materialize_text: impl FnOnce() -> SharedString,
+    ) -> Arc<LineLayout> {
+        let mut last_run = None::<&TextRun>;
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        font_runs.clear();
+
+        for run in runs.iter() {
+            let decoration_changed = if let Some(last_run) = last_run
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+            // we do not consider differing background color relevant, as it does not affect glyphs
+            // && last_run.background_color == run.background_color
+            {
+                false
+            } else {
+                last_run = Some(run);
+                true
+            };
+
+            let font_id = self.resolve_font(&run.font);
+            if let Some(font_run) = font_runs.last_mut()
+                && font_id == font_run.font_id
+                && !decoration_changed
+            {
+                font_run.len += run.len;
+            } else {
+                font_runs.push(FontRun {
+                    len: run.len,
+                    font_id,
+                });
+            }
+        }
+
+        let layout = self.line_layout_cache.layout_line_by_hash(
+            text_hash,
+            text_len,
+            font_size,
+            &font_runs,
+            force_width,
+            materialize_text,
+        );
+
+        self.font_runs_pool.lock().push(font_runs);
+
+        layout
+    }
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -769,14 +1136,25 @@ impl TextRun {
 #[repr(C)]
 pub struct GlyphId(pub(crate) u32);
 
+/// Parameters for rendering a glyph, used as cache keys for raster bounds.
+///
+/// This struct identifies a specific glyph rendering configuration including
+/// font, size, subpixel positioning, and scale factor. It's used to look up
+/// cached raster bounds and sprite atlas entries.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct RenderGlyphParams {
-    pub(crate) font_id: FontId,
-    pub(crate) glyph_id: GlyphId,
-    pub(crate) font_size: Pixels,
-    pub(crate) subpixel_variant: Point<u8>,
-    pub(crate) scale_factor: f32,
-    pub(crate) is_emoji: bool,
+pub struct RenderGlyphParams {
+    /// The font to render the glyph with.
+    pub font_id: FontId,
+    /// The specific glyph within the font.
+    pub glyph_id: GlyphId,
+    /// The font size in pixels.
+    pub font_size: Pixels,
+    /// Subpixel positioning variant for antialiasing.
+    pub subpixel_variant: Point<u8>,
+    /// Display scale factor.
+    pub scale_factor: f32,
+    /// Whether this glyph is an emoji (affects rendering path).
+    pub is_emoji: bool,
 }
 
 impl Eq for RenderGlyphParams {}

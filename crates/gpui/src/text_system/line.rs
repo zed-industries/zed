@@ -1,11 +1,24 @@
 use crate::{
-    App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
-    TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px,
-    size,
+    App, Bounds, DevicePixels, FontId, GlyphId, Half, Hsla, LineLayout, Pixels, Point,
+    RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, SharedString,
+    StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black,
+    fill, point, px, size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
 use std::sync::Arc;
+
+/// Pre-computed glyph data for efficient painting without per-glyph cache lookups.
+///
+/// This is produced by `ShapedLine::compute_glyph_raster_data` during prepaint
+/// and consumed by `ShapedLine::paint_with_raster_data` during paint.
+#[derive(Clone, Debug)]
+pub struct GlyphRasterData {
+    /// The raster bounds for each glyph, in paint order.
+    pub bounds: Vec<Bounds<DevicePixels>>,
+    /// The render params for each glyph (needed for sprite atlas lookup).
+    pub params: Vec<RenderGlyphParams>,
+}
 
 /// Set the text decoration for a run of text.
 #[derive(Debug, Clone)]
@@ -88,6 +101,91 @@ impl ShapedLine {
         )?;
 
         Ok(())
+    }
+
+    /// Compute glyph raster data for efficient painting.
+    ///
+    /// Call this during prepaint to batch-lookup all glyph raster bounds under a single
+    /// lock acquisition. Then pass the result to `paint_with_raster_data` during paint.
+    ///
+    /// This avoids per-glyph lock overhead in the text system's raster bounds cache.
+    pub fn compute_glyph_raster_data(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        window: &Window,
+    ) -> Result<GlyphRasterData> {
+        let layout = &self.layout;
+        let scale_factor = window.scale_factor();
+
+        // Compute baseline offset (same as paint_line)
+        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
+        let baseline_offset = point(px(0.), padding_top + layout.ascent);
+
+        // Collect all glyph params
+        let mut params_list = Vec::new();
+        let mut glyph_origin = point(origin.x, origin.y);
+        let mut prev_glyph_position = Point::default();
+
+        for run in layout.runs.iter() {
+            for glyph in run.glyphs.iter() {
+                glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                prev_glyph_position = glyph.position;
+
+                let vertical_offset = point(px(0.0), glyph.position.y);
+                let final_origin = glyph_origin + baseline_offset + vertical_offset;
+                let scaled_origin = final_origin.scale(scale_factor);
+
+                let subpixel_variant = if glyph.is_emoji {
+                    Point::default()
+                } else {
+                    Point {
+                        x: (scaled_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
+                        y: (scaled_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
+                    }
+                };
+
+                params_list.push(RenderGlyphParams {
+                    font_id: run.font_id,
+                    glyph_id: glyph.id,
+                    font_size: layout.font_size,
+                    subpixel_variant,
+                    scale_factor,
+                    is_emoji: glyph.is_emoji,
+                });
+            }
+        }
+
+        // Batch lookup all raster bounds
+        let bounds = window.text_system().raster_bounds_batch(&params_list)?;
+
+        Ok(GlyphRasterData {
+            bounds,
+            params: params_list,
+        })
+    }
+
+    /// Paint the line using pre-computed raster data.
+    ///
+    /// This is faster than `paint` because it skips per-glyph cache lookups.
+    /// Use `compute_glyph_raster_data` during prepaint to get the raster data.
+    pub fn paint_with_raster_data(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        raster_data: &GlyphRasterData,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        paint_line_with_raster_data(
+            origin,
+            &self.layout,
+            line_height,
+            &self.decoration_runs,
+            raster_data,
+            window,
+            cx,
+        )
     }
 
     /// Paint the background of the line to the window.
@@ -597,4 +695,201 @@ fn aligned_origin_x(
         TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
         TextAlign::Right => origin.x + align_width - line_width,
     }
+}
+
+/// Paint a line using pre-computed glyph raster data.
+///
+/// This is a faster variant of `paint_line` that skips per-glyph cache lookups
+/// by using raster bounds that were batch-computed during prepaint.
+fn paint_line_with_raster_data(
+    origin: Point<Pixels>,
+    layout: &LineLayout,
+    line_height: Pixels,
+    decoration_runs: &[DecorationRun],
+    raster_data: &GlyphRasterData,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let line_bounds = Bounds::new(origin, size(layout.width, line_height));
+
+    window.paint_layer(line_bounds, |window| {
+        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
+        let baseline_offset = point(px(0.), padding_top + layout.ascent);
+        let mut decoration_runs = decoration_runs.iter();
+        let text_system = cx.text_system().clone();
+        let mut run_end = 0;
+        let mut color = black();
+        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+        let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
+        let mut glyph_origin = point(origin.x, origin.y);
+        let mut prev_glyph_position = Point::default();
+        let mut max_glyph_size = size(px(0.), px(0.));
+        let mut first_glyph_x = origin.x;
+        let mut glyph_index = 0;
+
+        for (run_ix, run) in layout.runs.iter().enumerate() {
+            max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+
+            for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
+                glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                if glyph_ix == 0 && run_ix == 0 {
+                    first_glyph_x = glyph_origin.x;
+                }
+                prev_glyph_position = glyph.position;
+
+                // Handle decoration runs (underline, strikethrough, color)
+                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+                let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
+                if glyph.index >= run_end {
+                    let mut style_run = decoration_runs.next();
+
+                    while let Some(run) = style_run {
+                        if glyph.index < run_end + (run.len as usize) {
+                            break;
+                        }
+                        run_end += run.len as usize;
+                        style_run = decoration_runs.next();
+                    }
+
+                    if let Some(style_run) = style_run {
+                        if let Some((_, underline_style)) = &mut current_underline
+                            && style_run.underline.as_ref() != Some(underline_style)
+                        {
+                            finished_underline = current_underline.take();
+                        }
+                        if let Some(run_underline) = style_run.underline.as_ref() {
+                            current_underline.get_or_insert((
+                                point(
+                                    glyph_origin.x,
+                                    glyph_origin.y + baseline_offset.y + (layout.descent * 0.618),
+                                ),
+                                UnderlineStyle {
+                                    color: Some(run_underline.color.unwrap_or(style_run.color)),
+                                    thickness: run_underline.thickness,
+                                    wavy: run_underline.wavy,
+                                },
+                            ));
+                        }
+                        if let Some((_, strikethrough_style)) = &mut current_strikethrough
+                            && style_run.strikethrough.as_ref() != Some(strikethrough_style)
+                        {
+                            finished_strikethrough = current_strikethrough.take();
+                        }
+                        if let Some(run_strikethrough) = style_run.strikethrough.as_ref() {
+                            current_strikethrough.get_or_insert((
+                                point(
+                                    glyph_origin.x,
+                                    glyph_origin.y
+                                        + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
+                                ),
+                                StrikethroughStyle {
+                                    color: Some(run_strikethrough.color.unwrap_or(style_run.color)),
+                                    thickness: run_strikethrough.thickness,
+                                },
+                            ));
+                        }
+
+                        run_end += style_run.len as usize;
+                        color = style_run.color;
+                    } else {
+                        run_end = layout.len;
+                        finished_underline = current_underline.take();
+                        finished_strikethrough = current_strikethrough.take();
+                    }
+                }
+
+                if let Some((mut underline_origin, underline_style)) = finished_underline {
+                    if underline_origin.x == glyph_origin.x {
+                        underline_origin.x -= max_glyph_size.width.half();
+                    };
+                    window.paint_underline(
+                        underline_origin,
+                        glyph_origin.x - underline_origin.x,
+                        &underline_style,
+                    );
+                }
+
+                if let Some((mut strikethrough_origin, strikethrough_style)) =
+                    finished_strikethrough
+                {
+                    if strikethrough_origin.x == glyph_origin.x {
+                        strikethrough_origin.x -= max_glyph_size.width.half();
+                    };
+                    window.paint_strikethrough(
+                        strikethrough_origin,
+                        glyph_origin.x - strikethrough_origin.x,
+                        &strikethrough_style,
+                    );
+                }
+
+                // Paint glyph with pre-computed raster bounds
+                let max_glyph_bounds = Bounds {
+                    origin: glyph_origin,
+                    size: max_glyph_size,
+                };
+
+                let content_mask = window.content_mask();
+                if max_glyph_bounds.intersects(&content_mask.bounds) {
+                    let vertical_offset = point(px(0.0), glyph.position.y);
+                    let final_origin = glyph_origin + baseline_offset + vertical_offset;
+
+                    // Use pre-computed bounds from raster_data
+                    if glyph_index < raster_data.bounds.len() {
+                        let raster_bounds = raster_data.bounds[glyph_index];
+                        let params = &raster_data.params[glyph_index];
+
+                        if glyph.is_emoji {
+                            window.paint_emoji_with_raster_bounds(
+                                final_origin,
+                                run.font_id,
+                                glyph.id,
+                                layout.font_size,
+                                raster_bounds,
+                                params,
+                            )?;
+                        } else {
+                            window.paint_glyph_with_raster_bounds(
+                                final_origin,
+                                run.font_id,
+                                glyph.id,
+                                layout.font_size,
+                                color,
+                                raster_bounds,
+                                params,
+                            )?;
+                        }
+                    }
+                }
+
+                glyph_index += 1;
+            }
+        }
+
+        // Paint trailing underline/strikethrough
+        let last_line_end_x = first_glyph_x + layout.width;
+
+        if let Some((mut underline_start, underline_style)) = current_underline.take() {
+            if last_line_end_x == underline_start.x {
+                underline_start.x -= max_glyph_size.width.half()
+            };
+            window.paint_underline(
+                underline_start,
+                last_line_end_x - underline_start.x,
+                &underline_style,
+            );
+        }
+
+        if let Some((mut strikethrough_start, strikethrough_style)) = current_strikethrough.take() {
+            if last_line_end_x == strikethrough_start.x {
+                strikethrough_start.x -= max_glyph_size.width.half()
+            };
+            window.paint_strikethrough(
+                strikethrough_start,
+                last_line_end_x - strikethrough_start.x,
+                &strikethrough_style,
+            );
+        }
+
+        Ok(())
+    })
 }

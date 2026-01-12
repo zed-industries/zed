@@ -3222,6 +3222,100 @@ impl Window {
         Ok(())
     }
 
+    /// Paints a monochrome glyph with pre-computed raster bounds.
+    ///
+    /// This is faster than `paint_glyph` because it skips the per-glyph cache lookup.
+    /// Use `ShapedLine::compute_glyph_raster_data` to batch-compute raster bounds during prepaint.
+    pub fn paint_glyph_with_raster_bounds(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+        raster_bounds: Bounds<DevicePixels>,
+        params: &RenderGlyphParams,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let element_opacity = self.element_opacity();
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+
+        if !raster_bounds.is_zero() {
+            let tile = self
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+            self.next_frame.scene.insert_primitive(MonochromeSprite {
+                order: 0,
+                pad: 0,
+                bounds,
+                content_mask,
+                color: color.opacity(element_opacity),
+                tile,
+                transformation: TransformationMatrix::unit(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Paints an emoji glyph with pre-computed raster bounds.
+    ///
+    /// This is faster than `paint_emoji` because it skips the per-glyph cache lookup.
+    /// Use `ShapedLine::compute_glyph_raster_data` to batch-compute raster bounds during prepaint.
+    pub fn paint_emoji_with_raster_bounds(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        raster_bounds: Bounds<DevicePixels>,
+        params: &RenderGlyphParams,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+
+        if !raster_bounds.is_zero() {
+            let tile = self
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+            let opacity = self.element_opacity();
+
+            self.next_frame.scene.insert_primitive(PolychromeSprite {
+                order: 0,
+                pad: 0,
+                grayscale: false,
+                bounds,
+                corner_radii: Default::default(),
+                content_mask,
+                tile,
+                opacity,
+            });
+        }
+        Ok(())
+    }
+
     /// Paints an emoji glyph into the scene for the next frame at the current z-index.
     ///
     /// The y component of the origin is the baseline of the glyph.
@@ -3279,6 +3373,53 @@ impl Window {
                 opacity,
             });
         }
+        Ok(())
+    }
+
+    /// Pre-warm the raster bounds cache for a batch of glyphs.
+    ///
+    /// This is an optimization for rendering many glyphs: instead of acquiring
+    /// the cache lock once per glyph during paint, call this once with all glyphs
+    /// to batch the cache lookups under a single lock acquisition.
+    ///
+    /// Each tuple is (origin, font_id, glyph_id, font_size, is_emoji).
+    pub fn warm_glyph_cache(
+        &self,
+        glyphs: &[(Point<Pixels>, FontId, GlyphId, Pixels, bool)],
+    ) -> Result<()> {
+        if glyphs.is_empty() {
+            return Ok(());
+        }
+
+        let scale_factor = self.scale_factor();
+
+        // Build RenderGlyphParams for each glyph
+        let params_list: Vec<RenderGlyphParams> = glyphs
+            .iter()
+            .map(|(origin, font_id, glyph_id, font_size, is_emoji)| {
+                let glyph_origin = origin.scale(scale_factor);
+                let subpixel_variant = if *is_emoji {
+                    Point::default()
+                } else {
+                    Point {
+                        x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
+                        y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
+                    }
+                };
+                RenderGlyphParams {
+                    font_id: *font_id,
+                    glyph_id: *glyph_id,
+                    font_size: *font_size,
+                    subpixel_variant,
+                    scale_factor,
+                    is_emoji: *is_emoji,
+                }
+            })
+            .collect();
+
+        // Batch lookup - this acquires the lock once for all glyphs
+        let _ = self.text_system().raster_bounds_batch(&params_list)?;
+
         Ok(())
     }
 

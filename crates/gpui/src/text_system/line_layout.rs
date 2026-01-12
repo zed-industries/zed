@@ -401,12 +401,25 @@ struct FrameCache {
     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
     used_lines: Vec<Arc<CacheKey>>,
     used_wrapped_lines: Vec<Arc<CacheKey>>,
+
+    // Content-addressable caches keyed by caller-provided text hash + layout params.
+    // These allow cache hits without materializing a contiguous `SharedString`.
+    //
+    // IMPORTANT: To support allocation-free lookups, we store these maps using a key type
+    // (`HashedCacheKeyRef`) that can be computed without building a contiguous `&str`/`SharedString`.
+    // On miss, we allocate once and store under an owned `HashedCacheKey`.
+    lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<LineLayout>>,
+    wrapped_lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<WrappedLineLayout>>,
+    used_lines_by_hash: Vec<Arc<HashedCacheKey>>,
+    used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
     lines_index: usize,
     wrapped_lines_index: usize,
+    lines_by_hash_index: usize,
+    wrapped_lines_by_hash_index: usize,
 }
 
 impl LineLayoutCache {
@@ -423,6 +436,8 @@ impl LineLayoutCache {
         LineLayoutIndex {
             lines_index: frame.used_lines.len(),
             wrapped_lines_index: frame.used_wrapped_lines.len(),
+            lines_by_hash_index: frame.used_lines_by_hash.len(),
+            wrapped_lines_by_hash_index: frame.used_wrapped_lines_by_hash.len(),
         }
     }
 
@@ -445,6 +460,24 @@ impl LineLayoutCache {
             }
             current_frame.used_wrapped_lines.push(key.clone());
         }
+
+        for key in &previous_frame.used_lines_by_hash
+            [range.start.lines_by_hash_index..range.end.lines_by_hash_index]
+        {
+            if let Some((key, line)) = previous_frame.lines_by_hash.remove_entry(key) {
+                current_frame.lines_by_hash.insert(key, line);
+            }
+            current_frame.used_lines_by_hash.push(key.clone());
+        }
+
+        for key in &previous_frame.used_wrapped_lines_by_hash
+            [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index]
+        {
+            if let Some((key, line)) = previous_frame.wrapped_lines_by_hash.remove_entry(key) {
+                current_frame.wrapped_lines_by_hash.insert(key, line);
+            }
+            current_frame.used_wrapped_lines_by_hash.push(key.clone());
+        }
     }
 
     pub fn truncate_layouts(&self, index: LineLayoutIndex) {
@@ -453,6 +486,12 @@ impl LineLayoutCache {
         current_frame
             .used_wrapped_lines
             .truncate(index.wrapped_lines_index);
+        current_frame
+            .used_lines_by_hash
+            .truncate(index.lines_by_hash_index);
+        current_frame
+            .used_wrapped_lines_by_hash
+            .truncate(index.wrapped_lines_by_hash_index);
     }
 
     pub fn finish_frame(&self) {
@@ -463,6 +502,11 @@ impl LineLayoutCache {
         curr_frame.wrapped_lines.clear();
         curr_frame.used_lines.clear();
         curr_frame.used_wrapped_lines.clear();
+
+        curr_frame.lines_by_hash.clear();
+        curr_frame.wrapped_lines_by_hash.clear();
+        curr_frame.used_lines_by_hash.clear();
+        curr_frame.used_wrapped_lines_by_hash.clear();
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -590,6 +634,164 @@ impl LineLayoutCache {
             layout
         }
     }
+
+    /// Try to retrieve a previously-shaped line layout using a caller-provided content hash.
+    ///
+    /// This is a *non-allocating* cache probe: it does not materialize any text. If the layout
+    /// is not already cached in either the current frame or previous frame, returns `None`.
+    ///
+    /// Contract (caller enforced):
+    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
+    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    pub fn try_layout_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> Option<Arc<LineLayout>> {
+        let key_ref = HashedCacheKeyRef {
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            wrap_width: None,
+            force_width,
+        };
+
+        let current_frame = self.current_frame.read();
+        if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
+            HashedCacheKeyRef {
+                text_hash: key.text_hash,
+                text_len: key.text_len,
+                font_size: key.font_size,
+                runs: key.runs.as_slice(),
+                wrap_width: key.wrap_width,
+                force_width: key.force_width,
+            } == key_ref
+        }) {
+            return Some(layout.clone());
+        }
+
+        let previous_frame = self.previous_frame.lock();
+        if let Some((_, layout)) = previous_frame.lines_by_hash.iter().find(|(key, _)| {
+            HashedCacheKeyRef {
+                text_hash: key.text_hash,
+                text_len: key.text_len,
+                font_size: key.font_size,
+                runs: key.runs.as_slice(),
+                wrap_width: key.wrap_width,
+                force_width: key.force_width,
+            } == key_ref
+        }) {
+            return Some(layout.clone());
+        }
+
+        None
+    }
+
+    /// Layout a line of text using a caller-provided content hash as the cache key.
+    ///
+    /// This enables cache hits without materializing a contiguous `SharedString` for `text`.
+    /// If the cache misses, `materialize_text` is invoked to produce the `SharedString` for shaping.
+    ///
+    /// Contract (caller enforced):
+    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
+    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    pub fn layout_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+        materialize_text: impl FnOnce() -> SharedString,
+    ) -> Arc<LineLayout> {
+        let key_ref = HashedCacheKeyRef {
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            wrap_width: None,
+            force_width,
+        };
+
+        // Fast path: already cached (no allocation).
+        let current_frame = self.current_frame.upgradable_read();
+        if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
+            HashedCacheKeyRef {
+                text_hash: key.text_hash,
+                text_len: key.text_len,
+                font_size: key.font_size,
+                runs: key.runs.as_slice(),
+                wrap_width: key.wrap_width,
+                force_width: key.force_width,
+            } == key_ref
+        }) {
+            return layout.clone();
+        }
+
+        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+
+        // Try to reuse from previous frame without allocating; do a linear scan to find a matching key.
+        // (We avoid `drain()` here because it would eagerly move all entries.)
+        let mut previous_frame = self.previous_frame.lock();
+        if let Some(existing_key) = previous_frame
+            .used_lines_by_hash
+            .iter()
+            .find(|key| {
+                HashedCacheKeyRef {
+                    text_hash: key.text_hash,
+                    text_len: key.text_len,
+                    font_size: key.font_size,
+                    runs: key.runs.as_slice(),
+                    wrap_width: key.wrap_width,
+                    force_width: key.force_width,
+                } == key_ref
+            })
+            .cloned()
+        {
+            if let Some((key, layout)) = previous_frame.lines_by_hash.remove_entry(&existing_key) {
+                current_frame
+                    .lines_by_hash
+                    .insert(key.clone(), layout.clone());
+                current_frame.used_lines_by_hash.push(key);
+                return layout;
+            }
+        }
+
+        let text = materialize_text();
+        let mut layout = self.platform_text_system.layout_line(&text, font_size, runs);
+
+        if let Some(force_width) = force_width {
+            let mut glyph_pos = 0;
+            for run in layout.runs.iter_mut() {
+                for glyph in run.glyphs.iter_mut() {
+                    if (glyph.position.x - glyph_pos * force_width).abs() > px(1.) {
+                        glyph.position.x = glyph_pos * force_width;
+                    }
+                    glyph_pos += 1;
+                }
+            }
+        }
+
+        let key = Arc::new(HashedCacheKey {
+            text_hash,
+            text_len,
+            font_size,
+            runs: SmallVec::from(runs),
+            wrap_width: None,
+            force_width,
+            text: None, // Old API doesn't store text
+        });
+        let layout = Arc::new(layout);
+        current_frame
+            .lines_by_hash
+            .insert(key.clone(), layout.clone());
+        current_frame.used_lines_by_hash.push(key);
+        layout
+    }
 }
 
 /// A run of text with a single font.
@@ -623,9 +825,80 @@ struct CacheKeyRef<'a> {
     force_width: Option<Pixels>,
 }
 
+#[derive(Clone, Debug)]
+struct HashedCacheKey {
+    text_hash: u64,
+    text_len: usize,
+    font_size: Pixels,
+    runs: SmallVec<[FontRun; 1]>,
+    wrap_width: Option<Pixels>,
+    force_width: Option<Pixels>,
+    /// Cached text content for the new API (avoids placeholder text footgun).
+    /// None for entries created via the old `layout_line_by_hash` API.
+    text: Option<SharedString>,
+}
+
+#[derive(Copy, Clone)]
+struct HashedCacheKeyRef<'a> {
+    text_hash: u64,
+    text_len: usize,
+    font_size: Pixels,
+    runs: &'a [FontRun],
+    wrap_width: Option<Pixels>,
+    force_width: Option<Pixels>,
+}
+
 impl PartialEq for dyn AsCacheKeyRef + '_ {
     fn eq(&self, other: &dyn AsCacheKeyRef) -> bool {
         self.as_cache_key_ref() == other.as_cache_key_ref()
+    }
+}
+
+impl PartialEq for HashedCacheKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.text_hash == other.text_hash
+            && self.text_len == other.text_len
+            && self.font_size == other.font_size
+            && self.runs.as_slice() == other.runs.as_slice()
+            && self.wrap_width == other.wrap_width
+            && self.force_width == other.force_width
+    }
+}
+
+impl Eq for HashedCacheKey {}
+
+impl Hash for HashedCacheKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.text_hash.hash(state);
+        self.text_len.hash(state);
+        self.font_size.hash(state);
+        self.runs.as_slice().hash(state);
+        self.wrap_width.hash(state);
+        self.force_width.hash(state);
+    }
+}
+
+impl PartialEq for HashedCacheKeyRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.text_hash == other.text_hash
+            && self.text_len == other.text_len
+            && self.font_size == other.font_size
+            && self.runs == other.runs
+            && self.wrap_width == other.wrap_width
+            && self.force_width == other.force_width
+    }
+}
+
+impl Eq for HashedCacheKeyRef<'_> {}
+
+impl Hash for HashedCacheKeyRef<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.text_hash.hash(state);
+        self.text_len.hash(state);
+        self.font_size.hash(state);
+        self.runs.hash(state);
+        self.wrap_width.hash(state);
+        self.force_width.hash(state);
     }
 }
 
@@ -649,6 +922,8 @@ impl AsCacheKeyRef for CacheKey {
     }
 }
 
+
+
 impl PartialEq for CacheKey {
     fn eq(&self, other: &Self) -> bool {
         self.as_cache_key_ref().eq(&other.as_cache_key_ref())
@@ -670,5 +945,392 @@ impl<'a> Borrow<dyn AsCacheKeyRef + 'a> for Arc<CacheKey> {
 impl AsCacheKeyRef for CacheKeyRef<'_> {
     fn as_cache_key_ref(&self) -> CacheKeyRef<'_> {
         *self
+    }
+}
+
+// ============================================================================
+// Content-Addressable Shaping API
+// ============================================================================
+//
+// This provides a cleaner, trait-based API for the hash-keyed line layout cache.
+// The key insight is that callers often have text in a form that can be hashed
+// without materializing a contiguous `SharedString` (e.g., rope chunks).
+//
+// The API allows callers to:
+// 1. Pre-compute a hash from their text source (avoiding allocations on cache hit)
+// 2. Use the same cache key abstraction for both `&str` and pre-hashed content
+
+/// A key for content-addressable line layout caching.
+///
+/// This trait enables cache lookups using either:
+/// - Direct text (`&str`, `SharedString`) where hashing is done on lookup
+/// - Pre-computed hashes (`LineContentKey`) for zero-allocation cache probes
+///
+/// # Contract
+/// Implementations must ensure that equal content produces equal hash/len pairs.
+/// The cache relies on (hash, len) to identify unique content; collisions are
+/// accepted but should be rare given a good hash function.
+pub trait LineCacheKey {
+    /// Returns the content hash for cache lookup.
+    fn content_hash(&self) -> u64;
+
+    /// Returns the byte length of the content.
+    fn content_len(&self) -> usize;
+
+    /// Materializes the content as a `SharedString`.
+    ///
+    /// This is only called on cache miss. Implementations should return
+    /// the same content that was used to compute `content_hash()`.
+    fn materialize(&self) -> SharedString;
+}
+
+/// A pre-computed content key for zero-allocation cache lookups.
+///
+/// Use this when you've already computed the hash from your text source
+/// (e.g., by hashing rope chunks) and want to avoid re-hashing on lookup.
+///
+/// # Example
+/// ```ignore
+/// use rustc_hash::FxHasher;
+/// use std::hash::Hasher;
+///
+/// // Hash rope chunks without allocating a contiguous string
+/// let mut hasher = FxHasher::default();
+/// for chunk in rope.chunks() {
+///     hasher.write(chunk.as_bytes());
+/// }
+/// let hash = hasher.finish();
+/// let len = rope.len();
+///
+/// // Create key with deferred materialization
+/// let key = LineContentKey::new(hash, len, || rope.to_string().into());
+/// let layout = cache.layout_line_cached(&key, font_size, runs, force_width);
+/// ```
+pub struct LineContentKey<F: FnOnce() -> SharedString> {
+    hash: u64,
+    len: usize,
+    materialize: std::cell::UnsafeCell<Option<F>>,
+}
+
+impl<F: FnOnce() -> SharedString> LineContentKey<F> {
+    /// Creates a new content key with pre-computed hash and deferred materialization.
+    ///
+    /// The `materialize` closure is only called on cache miss. It should return
+    /// the same content that was used to compute `hash`.
+    pub fn new(hash: u64, len: usize, materialize: F) -> Self {
+        Self {
+            hash,
+            len,
+            materialize: std::cell::UnsafeCell::new(Some(materialize)),
+        }
+    }
+}
+
+impl<F: FnOnce() -> SharedString> LineCacheKey for LineContentKey<F> {
+    fn content_hash(&self) -> u64 {
+        self.hash
+    }
+
+    fn content_len(&self) -> usize {
+        self.len
+    }
+
+    fn materialize(&self) -> SharedString {
+        // SAFETY: This is only called once per cache miss, and the cache
+        // guarantees single-threaded access during layout operations.
+        unsafe {
+            (*self.materialize.get())
+                .take()
+                .expect("LineContentKey::materialize called more than once")()
+        }
+    }
+}
+
+/// A simple content key for when you already have a `&str` or `SharedString`.
+///
+/// This computes the hash on construction, so it's suitable when you have
+/// direct access to the text content.
+pub struct TextContentKey {
+    hash: u64,
+    text: SharedString,
+}
+
+impl TextContentKey {
+    /// Creates a content key by hashing the given text.
+    pub fn new(text: impl Into<SharedString>) -> Self {
+        use std::hash::Hasher as _;
+        let text = text.into();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(text.as_bytes());
+        Self {
+            hash: hasher.finish(),
+            text,
+        }
+    }
+
+    /// Creates a content key with a pre-computed hash.
+    ///
+    /// Use this when you've already computed the hash (e.g., using FxHasher).
+    pub fn with_hash(hash: u64, text: impl Into<SharedString>) -> Self {
+        Self {
+            hash,
+            text: text.into(),
+        }
+    }
+}
+
+impl LineCacheKey for TextContentKey {
+    fn content_hash(&self) -> u64 {
+        self.hash
+    }
+
+    fn content_len(&self) -> usize {
+        self.text.len()
+    }
+
+    fn materialize(&self) -> SharedString {
+        self.text.clone()
+    }
+}
+
+/// Implement `LineCacheKey` for string references.
+///
+/// This computes the hash at lookup time, so it's slightly less efficient
+/// than `LineContentKey` for cases where you'd hash anyway.
+impl LineCacheKey for &str {
+    fn content_hash(&self) -> u64 {
+        use std::hash::Hasher as _;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(self.as_bytes());
+        hasher.finish()
+    }
+
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+
+    fn materialize(&self) -> SharedString {
+        SharedString::from((*self).to_string())
+    }
+}
+
+impl LineCacheKey for SharedString {
+    fn content_hash(&self) -> u64 {
+        use std::hash::Hasher as _;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(self.as_bytes());
+        hasher.finish()
+    }
+
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+
+    fn materialize(&self) -> SharedString {
+        self.clone()
+    }
+}
+
+impl LineCacheKey for String {
+    fn content_hash(&self) -> u64 {
+        use std::hash::Hasher as _;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(self.as_bytes());
+        hasher.finish()
+    }
+
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+
+    fn materialize(&self) -> SharedString {
+        SharedString::from(self.clone())
+    }
+}
+
+// ============================================================================
+// Cached entry with stored SharedString
+// ============================================================================
+//
+// To avoid the "placeholder text" footgun where ShapedLine.text is empty on
+// cache hits, we store the materialized SharedString alongside the layout.
+
+#[derive(Clone)]
+pub(crate) struct CachedLineLayout {
+    pub layout: Arc<LineLayout>,
+    pub text: SharedString,
+}
+
+impl LineLayoutCache {
+    /// Layout a line using the content-addressable cache with the new trait-based API.
+    ///
+    /// This is the recommended API for content-addressable caching. It:
+    /// - Avoids allocations on cache hit
+    /// - Stores the materialized text so `ShapedLine.text` is correct
+    /// - Uses the `LineCacheKey` trait for flexibility
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Pre-computed hash from rope chunks
+    /// let key = LineContentKey::new(hash, len, || file.string_slice(range).into());
+    /// let (layout, text) = cache.layout_line_cached(&key, font_size, runs, force_width);
+    /// ```
+    pub fn layout_line_cached(
+        &self,
+        key: &impl LineCacheKey,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> CachedLineLayout {
+        let text_hash = key.content_hash();
+        let text_len = key.content_len();
+
+        let key_ref = HashedCacheKeyRef {
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            wrap_width: None,
+            force_width,
+        };
+
+        // Fast path: check current frame cache
+        let current_frame = self.current_frame.upgradable_read();
+        if let Some((stored_key, layout)) = current_frame.lines_by_hash.iter().find(|(k, _)| {
+            HashedCacheKeyRef {
+                text_hash: k.text_hash,
+                text_len: k.text_len,
+                font_size: k.font_size,
+                runs: k.runs.as_slice(),
+                wrap_width: k.wrap_width,
+                force_width: k.force_width,
+            } == key_ref
+        }) {
+            // Return cached layout with stored text
+            return CachedLineLayout {
+                layout: layout.clone(),
+                text: stored_key.text.clone().unwrap_or_default(),
+            };
+        }
+
+        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+
+        // Check previous frame
+        let mut previous_frame = self.previous_frame.lock();
+        if let Some(existing_key) = previous_frame
+            .used_lines_by_hash
+            .iter()
+            .find(|k| {
+                HashedCacheKeyRef {
+                    text_hash: k.text_hash,
+                    text_len: k.text_len,
+                    font_size: k.font_size,
+                    runs: k.runs.as_slice(),
+                    wrap_width: k.wrap_width,
+                    force_width: k.force_width,
+                } == key_ref
+            })
+            .cloned()
+        {
+            if let Some((key, layout)) = previous_frame.lines_by_hash.remove_entry(&existing_key) {
+                let text = key.text.clone().unwrap_or_default();
+                current_frame
+                    .lines_by_hash
+                    .insert(key.clone(), layout.clone());
+                current_frame.used_lines_by_hash.push(key);
+                return CachedLineLayout { layout, text };
+            }
+        }
+
+        // Cache miss: materialize text and shape
+        let text = key.materialize();
+        let mut layout = self.platform_text_system.layout_line(&text, font_size, runs);
+
+        if let Some(force_width) = force_width {
+            let mut glyph_pos = 0;
+            for run in layout.runs.iter_mut() {
+                for glyph in run.glyphs.iter_mut() {
+                    if (glyph.position.x - glyph_pos * force_width).abs() > crate::px(1.) {
+                        glyph.position.x = glyph_pos * force_width;
+                    }
+                    glyph_pos += 1;
+                }
+            }
+        }
+
+        let stored_key = Arc::new(HashedCacheKey {
+            text_hash,
+            text_len,
+            font_size,
+            runs: SmallVec::from(runs),
+            wrap_width: None,
+            force_width,
+            text: Some(text.clone()),
+        });
+        let layout = Arc::new(layout);
+        current_frame
+            .lines_by_hash
+            .insert(stored_key.clone(), layout.clone());
+        current_frame.used_lines_by_hash.push(stored_key);
+
+        CachedLineLayout { layout, text }
+    }
+
+    /// Probe the cache without materializing text. Returns `None` on cache miss.
+    ///
+    /// This is useful when you want to check if layout is cached before deciding
+    /// whether to proceed with shaping.
+    pub fn try_layout_line_cached(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> Option<CachedLineLayout> {
+        let key_ref = HashedCacheKeyRef {
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            wrap_width: None,
+            force_width,
+        };
+
+        let current_frame = self.current_frame.read();
+        if let Some((stored_key, layout)) = current_frame.lines_by_hash.iter().find(|(k, _)| {
+            HashedCacheKeyRef {
+                text_hash: k.text_hash,
+                text_len: k.text_len,
+                font_size: k.font_size,
+                runs: k.runs.as_slice(),
+                wrap_width: k.wrap_width,
+                force_width: k.force_width,
+            } == key_ref
+        }) {
+            return Some(CachedLineLayout {
+                layout: layout.clone(),
+                text: stored_key.text.clone().unwrap_or_default(),
+            });
+        }
+
+        let previous_frame = self.previous_frame.lock();
+        if let Some((stored_key, layout)) = previous_frame.lines_by_hash.iter().find(|(k, _)| {
+            HashedCacheKeyRef {
+                text_hash: k.text_hash,
+                text_len: k.text_len,
+                font_size: k.font_size,
+                runs: k.runs.as_slice(),
+                wrap_width: k.wrap_width,
+                force_width: k.force_width,
+            } == key_ref
+        }) {
+            return Some(CachedLineLayout {
+                layout: layout.clone(),
+                text: stored_key.text.clone().unwrap_or_default(),
+            });
+        }
+
+        None
     }
 }
