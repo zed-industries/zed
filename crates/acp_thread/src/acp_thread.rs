@@ -4,6 +4,26 @@ mod mention;
 mod terminal;
 
 use agent_settings::AgentSettings;
+
+/// Key used in ACP ToolCall meta to store the tool's programmatic name.
+/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+pub const TOOL_NAME_META_KEY: &str = "tool_name";
+
+/// The tool name for subagent spawning
+pub const SUBAGENT_TOOL_NAME: &str = "subagent";
+
+/// Helper to extract tool name from ACP meta
+pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(TOOL_NAME_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to create meta with tool name
+pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
+}
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -230,12 +250,7 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
-        let tool_name = tool_call
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.get("tool_name"))
-            .and_then(|v| v.as_str())
-            .map(|s| SharedString::from(s.to_owned()));
+        let tool_name = tool_name_from_meta(&tool_call.meta);
 
         let result = Self {
             id: tool_call.tool_call_id,
@@ -372,7 +387,7 @@ impl ToolCall {
             && self
                 .tool_name
                 .as_ref()
-                .map(|n| n.as_ref() == "subagent")
+                .map(|n| n.as_ref() == SUBAGENT_TOOL_NAME)
                 .unwrap_or(false)
     }
 

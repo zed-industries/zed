@@ -2898,10 +2898,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         acp::ToolCall::new("1", "Thinking")
             .kind(acp::ToolKind::Think)
             .raw_input(json!({}))
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                "thinking".into()
-            )]))
+            .meta(acp_thread::meta_with_tool_name("thinking"))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
