@@ -178,12 +178,12 @@ impl ContextServer {
         Ok(())
     }
 
-    pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
+    pub async fn start_auth(&self) -> Result<AuthorizeUrl> {
         let ContextServerTransport::Http(http) = &self.configuration else {
             anyhow::bail!("authorization is only supported for HTTP context servers");
         };
 
-        http.start_auth(www_auth_header).await
+        http.start_auth().await
     }
 
     pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {

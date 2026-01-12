@@ -40,6 +40,7 @@ pub struct HttpTransport {
     headers: HashMap<String, String>,
     on_auth_updated: OnAuthUpdated,
     oauth_client: Arc<Mutex<Option<OAuthClient>>>,
+    www_auth_header: Arc<SyncMutex<Option<String>>>,
 }
 
 impl HttpTransport {
@@ -65,6 +66,7 @@ impl HttpTransport {
             headers,
             on_auth_updated,
             oauth_client: Arc::new(Mutex::new(None)),
+            www_auth_header: Arc::new(SyncMutex::new(None)),
         }
     }
 
@@ -94,18 +96,16 @@ impl HttpTransport {
                     Ok(access_token) => {
                         let token = access_token.token.map(|t| t.to_owned());
                         if access_token.refreshed {
-                            (self.on_auth_updated)(ContextServerAuth {
-                                credentials: Some(oauth_client.to_credentials()),
-                                www_auth_header: None,
-                            });
+                            (self.on_auth_updated)(ContextServerAuth::from_credentials(Some(
+                                oauth_client.to_credentials(),
+                            )));
                         }
                         token
                     }
                     Err(error) => {
-                        (self.on_auth_updated)(ContextServerAuth {
-                            credentials: Some(oauth_client.to_credentials()),
-                            www_auth_header: None,
-                        });
+                        (self.on_auth_updated)(ContextServerAuth::from_credentials(Some(
+                            oauth_client.to_credentials(),
+                        )));
                         return Err(error);
                     }
                 }
@@ -191,6 +191,8 @@ impl HttpTransport {
                     .and_then(|www_auth| www_auth.error)
                     .is_some_and(|error| error.indicates_invalid_client());
 
+                *self.www_auth_header.lock() = www_auth_header;
+
                 let credentials = if invalid_client {
                     self.oauth_client
                         .lock()
@@ -205,10 +207,7 @@ impl HttpTransport {
                         .map(|client| client.to_credentials())
                 };
 
-                (self.on_auth_updated)(ContextServerAuth {
-                    credentials,
-                    www_auth_header,
-                });
+                (self.on_auth_updated)(ContextServerAuth::required(credentials));
 
                 anyhow::bail!("Unauthorized");
             }
@@ -303,10 +302,11 @@ impl HttpTransport {
         client_guard.replace(client);
     }
 
-    pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
+    pub async fn start_auth(&self) -> Result<AuthorizeUrl> {
         let mut client_guard = self.oauth_client.lock().await;
 
-        let www_authenticate = www_auth_header.and_then(WwwAuthenticate::parse);
+        let www_auth_header = self.www_auth_header.lock().take();
+        let www_authenticate = www_auth_header.as_deref().and_then(WwwAuthenticate::parse);
 
         let client = match client_guard.as_mut() {
             Some(client) => client,
@@ -321,10 +321,9 @@ impl HttpTransport {
 
         let url = client.authorize_url()?;
 
-        (self.on_auth_updated)(ContextServerAuth {
-            credentials: Some(client.to_credentials()),
-            www_auth_header: None,
-        });
+        (self.on_auth_updated)(ContextServerAuth::from_credentials(Some(
+            client.to_credentials(),
+        )));
 
         Ok(url)
     }
@@ -338,10 +337,9 @@ impl HttpTransport {
 
         client.exchange_token(&callback.code).await?;
 
-        (self.on_auth_updated)(ContextServerAuth {
-            credentials: Some(client.to_credentials()),
-            www_auth_header: None,
-        });
+        (self.on_auth_updated)(ContextServerAuth::from_credentials(Some(
+            client.to_credentials(),
+        )));
 
         Ok(())
     }
@@ -350,10 +348,9 @@ impl HttpTransport {
         let mut client_guard = self.oauth_client.lock().await;
         if let Some(client) = client_guard.as_mut() {
             client.logout();
-            (self.on_auth_updated)(ContextServerAuth {
-                credentials: Some(client.to_credentials()),
-                www_auth_header: None,
-            });
+            (self.on_auth_updated)(ContextServerAuth::from_credentials(Some(
+                client.to_credentials(),
+            )));
         }
     }
 }

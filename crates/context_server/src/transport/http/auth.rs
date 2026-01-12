@@ -895,7 +895,7 @@ pub enum ContextServerAuthStatus {
     None,
     Authenticated,
     AwaitingAuthorization,
-    Required { www_auth_header: Option<String> },
+    Required,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -906,26 +906,32 @@ pub struct ContextServerCredentials {
     state: State,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ContextServerAuth {
+    pub status: ContextServerAuthStatus,
     pub credentials: Option<ContextServerCredentials>,
-    pub(crate) www_auth_header: Option<String>,
 }
 
 impl ContextServerAuth {
-    pub fn status(&self) -> ContextServerAuthStatus {
-        if self.www_auth_header.is_some() {
-            return ContextServerAuthStatus::Required {
-                www_auth_header: self.www_auth_header.clone(),
-            };
-        }
-        match &self.credentials {
+    pub fn from_credentials(credentials: Option<ContextServerCredentials>) -> Self {
+        let status = match &credentials {
             None => ContextServerAuthStatus::None,
-            Some(persisted) => match &persisted.state {
+            Some(creds) => match &creds.state {
                 State::Unauthenticated => ContextServerAuthStatus::None,
                 State::WaitingForCode { .. } => ContextServerAuthStatus::AwaitingAuthorization,
                 State::Authenticated { .. } => ContextServerAuthStatus::Authenticated,
             },
+        };
+        Self {
+            status,
+            credentials,
+        }
+    }
+
+    pub fn required(credentials: Option<ContextServerCredentials>) -> Self {
+        Self {
+            status: ContextServerAuthStatus::Required,
+            credentials,
         }
     }
 }

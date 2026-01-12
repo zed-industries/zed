@@ -747,7 +747,7 @@ impl ContextServerStore {
                     ContextServerState::Running {
                         server: server.clone(),
                         configuration: configuration.clone(),
-                        auth_status: event.auth.status(),
+                        auth_status: event.auth.status.clone(),
                     },
                     cx,
                 );
@@ -799,7 +799,7 @@ impl ContextServerStore {
             return None;
         }
 
-        Some(serde_json::from_slice(&data).log_err()?)
+        serde_json::from_slice(&data).log_err()
     }
 
     pub fn start_auth(&self, server_id: ContextServerId, cx: &mut Context<ContextServerStore>) {
@@ -809,7 +809,7 @@ impl ContextServerStore {
 
         let ContextServerState::Running {
             server,
-            auth_status: ContextServerAuthStatus::Required { www_auth_header },
+            auth_status: ContextServerAuthStatus::Required,
             ..
         } = state
         else {
@@ -817,26 +817,23 @@ impl ContextServerStore {
         };
 
         let server = server.clone();
-        let www_auth_header = www_auth_header.clone();
 
-        cx.spawn(
-            async move |_, cx| match server.start_auth(www_auth_header.as_deref()).await {
-                Ok(auth_url) => {
-                    let url = auth_url.url(server_id);
-                    cx.update(|cx| {
-                        cx.open_url(url.as_str());
-                    })
-                    .ok();
-                }
-                Err(err) => {
-                    log::error!(
-                        "{} context server failed to authenticate: {}",
-                        server_id,
-                        err
-                    );
-                }
-            },
-        )
+        cx.spawn(async move |_, cx| match server.start_auth().await {
+            Ok(auth_url) => {
+                let url = auth_url.url(server_id);
+                cx.update(|cx| {
+                    cx.open_url(url.as_str());
+                })
+                .ok();
+            }
+            Err(err) => {
+                log::error!(
+                    "{} context server failed to authenticate: {}",
+                    server_id,
+                    err
+                );
+            }
+        })
         .detach();
     }
 
