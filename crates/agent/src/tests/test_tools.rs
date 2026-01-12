@@ -172,12 +172,15 @@ impl AgentTool for InfiniteTool {
 /// A tool that loops forever but properly handles cancellation via `select!`,
 /// similar to how edit_file_tool handles cancellation.
 #[derive(JsonSchema, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct CancellationAwareToolInput {}
 
+#[allow(dead_code)]
 pub struct CancellationAwareTool {
     pub was_cancelled: Arc<AtomicBool>,
 }
 
+#[allow(dead_code)]
 impl CancellationAwareTool {
     pub fn new() -> (Self, Arc<AtomicBool>) {
         let was_cancelled = Arc::new(AtomicBool::new(false));
