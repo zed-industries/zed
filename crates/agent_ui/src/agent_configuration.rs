@@ -854,7 +854,8 @@ impl AgentConfiguration {
                                                     }
                                                 },
                                             )
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -1348,7 +1349,7 @@ fn show_unable_to_uninstall_extension_with_context_server(
                                                     .context_servers
                                                     .remove(&context_server_id.0);
                                             });
-                                        })?;
+                                        });
                                         anyhow::Ok(())
                                     }
                                 })
@@ -1415,6 +1416,8 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 default_mode: None,
                                 default_model: None,
                                 favorite_models: vec![],
+                                default_config_options: Default::default(),
+                                favorite_config_option_values: Default::default(),
                             },
                         );
                 }

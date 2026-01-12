@@ -244,6 +244,26 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Update extensions
+
+- Description: Define extensions to be autoupdated or manually updated.
+- Setting: `auto_update_extensions`
+- Default: `null`
+
+**Options**
+
+Define extensions which will be autoupdated (`true`) vs. those that will be manually updated (`false`).
+
+```json [settings]
+{
+  "auto_update_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
@@ -1615,7 +1635,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 "status_bar": {
   "active_language_button": true,
   "cursor_position_button": true,
-  "line_endings_button": false
+  "line_endings_button": false,
+  "active_encoding_button": "non_utf8"
 },
 ```
 
@@ -1902,6 +1923,8 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.svn",
   "**/.hg",
   "**/.jj",
+  "**/.sl",
+  "**/.repo",
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
@@ -3512,6 +3535,7 @@ Positive integer values
 2. `selection`
 3. `none`
 4. `boundary`
+5. `trailing`
 
 ## Whitespace Map
 

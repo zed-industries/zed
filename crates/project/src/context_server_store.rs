@@ -2,6 +2,7 @@ pub mod extension;
 pub mod registry;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -25,6 +26,10 @@ use crate::{
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
+
+/// Maximum timeout for context server requests
+/// Prevents extremely large timeout values from tying up resources indefinitely.
+const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
 pub fn init(cx: &mut App) {
     extension::init(cx);
@@ -113,6 +118,7 @@ pub enum ContextServerConfiguration {
     Http {
         url: url::Url,
         headers: HashMap<String, String>,
+        timeout: Option<u64>,
     },
 }
 
@@ -141,10 +147,8 @@ impl ContextServerConfiguration {
                 enabled: _,
                 settings,
             } => {
-                let descriptor = cx
-                    .update(|cx| registry.read(cx).context_server_descriptor(&id.0))
-                    .ok()
-                    .flatten()?;
+                let descriptor =
+                    cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
 
                 match descriptor.command(worktree_store, cx).await {
                     Ok(command) => {
@@ -162,9 +166,14 @@ impl ContextServerConfiguration {
                 enabled: _,
                 url,
                 headers: auth,
+                timeout,
             } => {
                 let url = url::Url::parse(&url).log_err()?;
-                Some(ContextServerConfiguration::Http { url, headers: auth })
+                Some(ContextServerConfiguration::Http {
+                    url,
+                    headers: auth,
+                    timeout,
+                })
             }
         }
     }
@@ -271,7 +280,8 @@ impl ContextServerStore {
                     this.available_context_servers_changed(cx);
                 }),
                 cx.observe_global::<SettingsStore>(|this, cx| {
-                    let settings = Self::resolve_context_server_settings(&this.worktree_store, cx);
+                    let settings =
+                        &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
                     if &this.context_server_settings == settings {
                         return;
                     }
@@ -292,7 +302,8 @@ impl ContextServerStore {
 
         let mut this = Self {
             _subscriptions: subscriptions,
-            context_server_settings: Self::resolve_context_server_settings(&worktree_store, cx)
+            context_server_settings: Self::resolve_project_settings(&worktree_store, cx)
+                .context_servers
                 .clone(),
             worktree_store,
             project: weak_project,
@@ -367,17 +378,15 @@ impl ContextServerStore {
                 .update(cx, |this, _| {
                     this.context_server_settings.get(&server.id().0).cloned()
                 })
-                .ok()
-                .flatten()
                 .context("Failed to get context server settings")?;
 
             if !settings.enabled() {
-                return Ok(());
+                return anyhow::Ok(());
             }
 
             let (registry, worktree_store) = this.update(cx, |this, _| {
                 (this.registry.clone(), this.worktree_store.clone())
-            })?;
+            });
             let configuration = ContextServerConfiguration::from_settings(
                 settings,
                 server.id(),
@@ -390,7 +399,8 @@ impl ContextServerStore {
 
             this.update(cx, |this, cx| {
                 this.run_server(server, Arc::new(configuration), cx)
-            })
+            });
+            Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -525,12 +535,19 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
     ) -> Result<Arc<ContextServer>> {
+        let global_timeout =
+            Self::resolve_project_settings(&self.worktree_store, cx).context_server_timeout;
+
         if let Some(factory) = self.context_server_factory.as_ref() {
             return Ok(factory(id, configuration));
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Http { url, headers } => {
+            ContextServerConfiguration::Http {
+                url,
+                headers,
+                timeout,
+            } => {
                 let on_auth_updated = {
                     let auth_updated_tx = self.auth_updated_tx.clone();
                     let id = id.clone();
@@ -551,6 +568,9 @@ impl ContextServerStore {
                     cx.http_client(),
                     cx.background_executor().clone(),
                     on_auth_updated,
+                    Some(Duration::from_secs(
+                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                    )),
                 )?))
             }
             _ => {
@@ -570,19 +590,27 @@ impl ContextServerStore {
                             })
                         })
                     });
-                Ok(Arc::new(ContextServer::stdio(
-                    id,
-                    configuration.command().unwrap().clone(),
-                    root_path,
-                )))
+
+                let mut command = configuration
+                    .command()
+                    .context("Missing command configuration for stdio context server")?
+                    .clone();
+                command.timeout = Some(
+                    command
+                        .timeout
+                        .unwrap_or(global_timeout)
+                        .min(MAX_TIMEOUT_SECS),
+                );
+
+                Ok(Arc::new(ContextServer::stdio(id, command, root_path)))
             }
         }
     }
 
-    fn resolve_context_server_settings<'a>(
+    fn resolve_project_settings<'a>(
         worktree_store: &'a Entity<WorktreeStore>,
         cx: &'a App,
-    ) -> &'a HashMap<Arc<str>, ContextServerSettings> {
+    ) -> &'a ProjectSettings {
         let location = worktree_store
             .read(cx)
             .visible_worktrees(cx)
@@ -591,7 +619,7 @@ impl ContextServerStore {
                 worktree_id: worktree.read(cx).id(),
                 path: RelPath::empty(),
             });
-        &ProjectSettings::get(location, cx).context_servers
+        ProjectSettings::get(location, cx)
     }
 
     fn update_server_state(
@@ -639,9 +667,7 @@ impl ContextServerStore {
             )
         })?;
 
-        for (id, _) in
-            registry.read_with(cx, |registry, _| registry.context_server_descriptors())?
-        {
+        for (id, _) in registry.read_with(cx, |registry, _| registry.context_server_descriptors()) {
             configured_servers
                 .entry(id)
                 .or_insert(ContextServerSettings::default_extension());
@@ -823,8 +849,7 @@ impl ContextServerStore {
                 let url = auth_url.url(server_id);
                 cx.update(|cx| {
                     cx.open_url(url.as_str());
-                })
-                .ok();
+                });
             }
             Err(err) => {
                 log::error!(
@@ -1506,6 +1531,7 @@ mod tests {
                     enabled: true,
                     url: server_url.to_string(),
                     headers: Default::default(),
+                    timeout: None,
                 },
             )],
         )
@@ -1577,6 +1603,160 @@ mod tests {
                 self.expected_event_count, actual_event_count
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"context_server_timeout": 90}"#, cx)
+                    .expect("Failed to set test user settings");
+            });
+        });
+
+        let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        let result = store.update(cx, |store, cx| {
+            store.create_context_server(
+                ContextServerId("test-server".into()),
+                Arc::new(ContextServerConfiguration::Http {
+                    url: url::Url::parse("http://localhost:8080")
+                        .expect("Failed to parse test URL"),
+                    headers: Default::default(),
+                    timeout: None,
+                }),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Server should be created successfully with global timeout"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext) {
+        const SERVER_ID: &str = "test-server";
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"context_server_timeout": 60}"#, cx)
+                    .expect("Failed to set test user settings");
+            });
+        });
+
+        let (_fs, project) = setup_context_server_test(
+            cx,
+            json!({"code.rs": ""}),
+            vec![(
+                SERVER_ID.into(),
+                ContextServerSettings::Http {
+                    enabled: true,
+                    url: "http://localhost:8080".to_string(),
+                    headers: Default::default(),
+                    timeout: Some(120),
+                },
+            )],
+        )
+        .await;
+
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        let result = store.update(cx, |store, cx| {
+            store.create_context_server(
+                ContextServerId("test-server".into()),
+                Arc::new(ContextServerConfiguration::Http {
+                    url: url::Url::parse("http://localhost:8080")
+                        .expect("Failed to parse test URL"),
+                    headers: Default::default(),
+                    timeout: Some(120),
+                }),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Server should be created successfully with per-server timeout override"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
+        const SERVER_ID: &str = "stdio-server";
+
+        let (_fs, project) = setup_context_server_test(
+            cx,
+            json!({"code.rs": ""}),
+            vec![(
+                SERVER_ID.into(),
+                ContextServerSettings::Stdio {
+                    enabled: true,
+                    command: ContextServerCommand {
+                        path: "/usr/bin/node".into(),
+                        args: vec!["server.js".into()],
+                        env: None,
+                        timeout: Some(180000),
+                    },
+                },
+            )],
+        )
+        .await;
+
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        let result = store.update(cx, |store, cx| {
+            store.create_context_server(
+                ContextServerId("stdio-server".into()),
+                Arc::new(ContextServerConfiguration::Custom {
+                    command: ContextServerCommand {
+                        path: "/usr/bin/node".into(),
+                        args: vec!["server.js".into()],
+                        env: None,
+                        timeout: Some(180000),
+                    },
+                }),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Stdio server should be created successfully with timeout"
+        );
     }
 
     fn dummy_server_settings() -> ContextServerSettings {

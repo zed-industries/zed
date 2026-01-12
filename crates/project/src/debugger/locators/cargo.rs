@@ -116,7 +116,7 @@ impl DapLocator for CargoLocator {
             .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
         let mut child = builder
-            .build_command(
+            .build_smol_command(
                 Some("cargo".into()),
                 &build_config
                     .args

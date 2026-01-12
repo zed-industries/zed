@@ -569,10 +569,10 @@ impl LspLogView {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
-                            })
+                            });
                         }
                     })
-                    .detach_and_log_err(cx);
+                    .detach();
                 });
 
             self.editor = editor;

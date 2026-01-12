@@ -168,7 +168,7 @@ impl Chunk {
         if self.is_char_boundary(offset) {
             return true;
         }
-        if PANIC {
+        if PANIC || cfg!(debug_assertions) {
             panic_char_boundary(&self.text, offset);
         } else {
             log_err_char_boundary(&self.text, offset);

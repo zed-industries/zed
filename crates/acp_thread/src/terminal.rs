@@ -5,7 +5,15 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
-use std::{path::PathBuf, process::ExitStatus, sync::Arc, time::Instant};
+use std::{
+    path::PathBuf,
+    process::ExitStatus,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 use task::Shell;
 use util::get_default_system_shell_preferring_bash;
 
@@ -18,6 +26,10 @@ pub struct Terminal {
     output: Option<TerminalOutput>,
     output_byte_limit: Option<usize>,
     _output_task: Shared<Task<acp::TerminalExitStatus>>,
+    /// Flag indicating whether this terminal was stopped by explicit user action
+    /// (e.g., clicking the Stop button). This is set before kill() is called
+    /// so that code awaiting wait_for_exit() can check it deterministically.
+    user_stopped: Arc<AtomicBool>,
 }
 
 pub struct TerminalOutput {
@@ -54,6 +66,7 @@ impl Terminal {
             started_at: Instant::now(),
             output: None,
             output_byte_limit,
+            user_stopped: Arc::new(AtomicBool::new(false)),
             _output_task: cx
                 .spawn(async move |this, cx| {
                     let exit_status = command_task.await;
@@ -95,6 +108,18 @@ impl Terminal {
         self.terminal.update(cx, |terminal, _cx| {
             terminal.kill_active_task();
         });
+    }
+
+    /// Marks this terminal as stopped by user action and then kills it.
+    /// This should be called when the user explicitly clicks a Stop button.
+    pub fn stop_by_user(&mut self, cx: &mut App) {
+        self.user_stopped.store(true, Ordering::SeqCst);
+        self.kill(cx);
+    }
+
+    /// Returns whether this terminal was stopped by explicit user action.
+    pub fn was_stopped_by_user(&self) -> bool {
+        self.user_stopped.load(Ordering::SeqCst)
     }
 
     pub fn current_output(&self, cx: &App) -> acp::TerminalOutputResponse {
@@ -180,7 +205,7 @@ pub async fn create_terminal_entity(
                 project.environment().update(cx, |env, cx| {
                     env.directory_environment(dir.clone().into(), cx)
                 })
-            })?
+            })
             .await
             .unwrap_or_default()
     } else {
@@ -200,11 +225,9 @@ pub async fn create_terminal_entity(
                 .remote_client()
                 .and_then(|r| r.read(cx).default_system_shell())
                 .map(Shell::Program)
-        })?
+        })
         .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
-    let is_windows = project
-        .read_with(cx, |project, cx| project.path_style(cx).is_windows())
-        .unwrap_or(cfg!(windows));
+    let is_windows = project.read_with(cx, |project, cx| project.path_style(cx).is_windows());
     let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
         .redirect_stdin_to_dev_null()
         .build(Some(command.clone()), &args);
@@ -221,6 +244,6 @@ pub async fn create_terminal_entity(
                 },
                 cx,
             )
-        })?
+        })
         .await
 }

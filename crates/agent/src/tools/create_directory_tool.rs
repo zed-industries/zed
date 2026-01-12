@@ -1,5 +1,6 @@
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -64,7 +65,7 @@ impl AgentTool for CreateDirectoryTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let project_path = match self.project.read(cx).find_project_path(&input.path, cx) {
@@ -80,9 +81,14 @@ impl AgentTool for CreateDirectoryTool {
         });
 
         cx.spawn(async move |_cx| {
-            create_entry
-                .await
-                .with_context(|| format!("Creating directory {destination_path}"))?;
+            futures::select! {
+                result = create_entry.fuse() => {
+                    result.with_context(|| format!("Creating directory {destination_path}"))?;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Create directory cancelled by user");
+                }
+            }
 
             Ok(format!("Created directory {destination_path}"))
         })

@@ -1,6 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -89,7 +90,7 @@ impl AgentTool for MovePathTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let rename_task = self.project.update(cx, |project, cx| {
@@ -112,7 +113,13 @@ impl AgentTool for MovePathTool {
         });
 
         cx.background_spawn(async move {
-            let _ = rename_task.await.with_context(|| {
+            let result = futures::select! {
+                result = rename_task.fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Move cancelled by user");
+                }
+            };
+            let _ = result.with_context(|| {
                 format!("Moving {} to {}", input.source_path, input.destination_path)
             })?;
             Ok(format!(
