@@ -29,10 +29,6 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(open);
-}
-
 pub fn open(
     workspace: &mut Workspace,
     _: &zed_actions::git::ViewStash,
@@ -44,6 +40,16 @@ pub fn open(
     workspace.toggle_modal(window, cx, |window, cx| {
         StashList::new(repository, weak_workspace, rems(34.), window, cx)
     })
+}
+
+pub fn create_embedded(
+    repository: Option<Entity<Repository>>,
+    workspace: WeakEntity<Workspace>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<StashList>,
+) -> StashList {
+    StashList::new_embedded(repository, workspace, width, window, cx)
 }
 
 pub struct StashList {
@@ -58,6 +64,22 @@ impl StashList {
         repository: Option<Entity<Repository>>,
         workspace: WeakEntity<Workspace>,
         width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(repository, workspace, width, false, window, cx);
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
+        this
+    }
+
+    fn new_inner(
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        width: Rems,
+        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -103,15 +125,11 @@ impl StashList {
         .detach_and_log_err(cx);
 
         let delegate = StashListDelegate::new(repository, workspace, window, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(!embedded));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
         });
-
-        _subscriptions.push(cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        }));
 
         Self {
             picker,
@@ -121,7 +139,22 @@ impl StashList {
         }
     }
 
-    fn handle_drop_stash(
+    fn new_embedded(
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(repository, workspace, width, true, window, cx);
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
+        this
+    }
+
+    pub fn handle_drop_stash(
         &mut self,
         _: &DropStashItem,
         window: &mut Window,
@@ -135,7 +168,7 @@ impl StashList {
         cx.notify();
     }
 
-    fn handle_show_stash(
+    pub fn handle_show_stash(
         &mut self,
         _: &ShowStashItem,
         window: &mut Window,
@@ -149,7 +182,7 @@ impl StashList {
         cx.notify();
     }
 
-    fn handle_modifiers_changed(
+    pub fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
         _: &mut Window,
