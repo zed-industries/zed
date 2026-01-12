@@ -149,7 +149,6 @@ pub struct TitleBar {
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     project_dropdown_handle: PopoverMenuHandle<ProjectDropdown>,
-    active_worktree_override: Option<WorktreeId>,
 }
 
 impl Render for TitleBar {
@@ -355,7 +354,6 @@ impl TitleBar {
             banner,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             project_dropdown_handle: PopoverMenuHandle::default(),
-            active_worktree_override: None,
         }
     }
 
@@ -370,15 +368,17 @@ impl TitleBar {
     }
 
     /// Returns the worktree to display in the title bar.
-    /// - If there's an override set, use that (if still valid)
+    /// - If there's an override set on the workspace, use that (if still valid)
     /// - Otherwise, derive from the active repository
     /// - Fall back to the first visible worktree
     pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
         let project = self.project.read(cx);
 
-        if let Some(override_id) = self.active_worktree_override {
-            if let Some(worktree) = project.worktree_for_id(override_id, cx) {
-                return Some(worktree);
+        if let Some(workspace) = self.workspace.upgrade() {
+            if let Some(override_id) = workspace.read(cx).active_worktree_override() {
+                if let Some(worktree) = project.worktree_for_id(override_id, cx) {
+                    return Some(worktree);
+                }
             }
         }
 
@@ -402,15 +402,21 @@ impl TitleBar {
         worktree_id: WorktreeId,
         cx: &mut Context<Self>,
     ) {
-        self.active_worktree_override = Some(worktree_id);
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_active_worktree_override(Some(worktree_id), cx);
+            });
+        }
         cx.notify();
     }
 
     fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
-        if self.active_worktree_override.is_some() {
-            self.active_worktree_override = None;
-            cx.notify();
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.clear_active_worktree_override(cx);
+            });
         }
+        cx.notify();
     }
 
     fn get_repository_for_worktree(
@@ -699,7 +705,6 @@ impl TitleBar {
     ) -> impl IntoElement {
         let project = self.project.clone();
         let workspace = self.workspace.clone();
-        let titlebar = cx.entity().downgrade();
         let initial_active_worktree_id = self
             .effective_active_worktree(cx)
             .map(|wt| wt.read(cx).id());
@@ -714,13 +719,11 @@ impl TitleBar {
             .menu(move |window, cx| {
                 let project = project.clone();
                 let workspace = workspace.clone();
-                let titlebar = titlebar.clone();
 
                 Some(cx.new(|cx| {
                     ProjectDropdown::new(
                         project.clone(),
                         workspace.clone(),
-                        titlebar,
                         initial_active_worktree_id,
                         window,
                         cx,

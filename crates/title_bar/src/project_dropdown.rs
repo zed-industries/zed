@@ -11,8 +11,6 @@ use settings::WorktreeId;
 use ui::{ContextMenu, prelude::*};
 use workspace::Workspace;
 
-use crate::TitleBar;
-
 struct ProjectEntry {
     worktree_id: WorktreeId,
     name: SharedString,
@@ -29,7 +27,6 @@ impl ProjectDropdown {
     pub fn new(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        titlebar: WeakEntity<TitleBar>,
         initial_active_worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -39,7 +36,6 @@ impl ProjectDropdown {
         let menu = Self::build_menu(
             project,
             workspace,
-            titlebar,
             initial_active_worktree_id,
             menu_shell.clone(),
             window,
@@ -61,7 +57,6 @@ impl ProjectDropdown {
     fn build_menu(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        titlebar: WeakEntity<TitleBar>,
         initial_active_worktree_id: Option<WorktreeId>,
         menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
         window: &mut Window,
@@ -69,14 +64,9 @@ impl ProjectDropdown {
     ) -> Entity<ContextMenu> {
         ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
             let active_worktree_id = if menu_shell.borrow().is_some() {
-                titlebar
+                workspace
                     .upgrade()
-                    .and_then(|tb| {
-                        let titlebar = tb.read(cx);
-                        titlebar
-                            .effective_active_worktree(cx)
-                            .map(|wt| wt.read(cx).id())
-                    })
+                    .and_then(|ws| ws.read(cx).active_worktree_override())
                     .or(initial_active_worktree_id)
             } else {
                 initial_active_worktree_id
@@ -229,15 +219,9 @@ impl ProjectDropdown {
         cx: &mut App,
     ) {
         if let Some(workspace) = workspace.upgrade() {
-            if let Some(titlebar) = workspace
-                .read(cx)
-                .titlebar_item()
-                .and_then(|item| item.downcast::<TitleBar>().ok())
-            {
-                titlebar.update(cx, |titlebar, cx| {
-                    titlebar.set_active_worktree_override(worktree_id, cx);
-                });
-            }
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_active_worktree_override(Some(worktree_id), cx);
+            });
         }
     }
 
@@ -249,17 +233,9 @@ impl ProjectDropdown {
     ) {
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                let project = workspace.project();
+                let project = workspace.project().clone();
 
-                let current_active_id = workspace
-                    .titlebar_item()
-                    .and_then(|item| item.downcast::<TitleBar>().ok())
-                    .and_then(|tb| {
-                        tb.read(cx)
-                            .effective_active_worktree(cx)
-                            .map(|wt| wt.read(cx).id())
-                    });
-
+                let current_active_id = workspace.active_worktree_override();
                 let is_removing_active = current_active_id == Some(worktree_id);
 
                 if is_removing_active {
@@ -283,16 +259,7 @@ impl ProjectDropdown {
                             None
                         };
 
-                        if let Some(new_id) = new_active_id {
-                            if let Some(titlebar) = workspace
-                                .titlebar_item()
-                                .and_then(|item| item.downcast::<TitleBar>().ok())
-                            {
-                                titlebar.update(cx, |titlebar, cx| {
-                                    titlebar.set_active_worktree_override(new_id, cx);
-                                });
-                            }
-                        }
+                        workspace.set_active_worktree_override(new_active_id, cx);
                     }
                 }
 
