@@ -7351,6 +7351,7 @@ dependencies = [
  "env_logger 0.11.8",
  "etagere",
  "filedescriptor",
+ "flume",
  "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui_macros",
