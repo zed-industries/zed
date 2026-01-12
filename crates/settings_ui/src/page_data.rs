@@ -2424,8 +2424,7 @@ fn editor_page() -> SettingsPage {
                     json_path: Some("vim.default_mode"),
                     pick: |settings_content| settings_content.vim.as_ref()?.default_mode.as_ref(),
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        vim_settings.default_mode = value;
+                        settings_content.vim.get_or_insert_default().default_mode = value;
                     },
                 }),
                 metadata: None,
@@ -2444,8 +2443,10 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        vim_settings.toggle_relative_line_numbers = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .toggle_relative_line_numbers = value;
                     },
                 }),
                 metadata: None,
@@ -2453,15 +2454,17 @@ fn editor_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Use System Clipboard",
-                description: "Controls when to use system clipboard.",
+                description: "Controls when to use system clipboard in Vim mode.",
                 field: Box::new(SettingField {
                     json_path: Some("vim.use_system_clipboard"),
                     pick: |settings_content| {
                         settings_content.vim.as_ref()?.use_system_clipboard.as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        vim_settings.use_system_clipboard = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .use_system_clipboard = value;
                     },
                 }),
                 metadata: None,
@@ -2476,8 +2479,10 @@ fn editor_page() -> SettingsPage {
                         settings_content.vim.as_ref()?.use_smartcase_find.as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        vim_settings.use_smartcase_find = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .use_smartcase_find = value;
                     },
                 }),
                 metadata: None,
@@ -2485,7 +2490,7 @@ fn editor_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Highlight on Yank Duration",
-                description: "Duration in milliseconds to highlight yanked text.",
+                description: "Duration in milliseconds to highlight yanked text in Vim mode.",
                 field: Box::new(SettingField {
                     json_path: Some("vim.highlight_on_yank_duration"),
                     pick: |settings_content| {
@@ -2496,8 +2501,10 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        vim_settings.highlight_on_yank_duration = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .highlight_on_yank_duration = value;
                     },
                 }),
                 metadata: None,
@@ -2518,9 +2525,12 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        let cursor_shape = vim_settings.cursor_shape.get_or_insert_default();
-                        cursor_shape.normal = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .cursor_shape
+                            .get_or_insert_default()
+                            .normal = value;
                     },
                 }),
                 metadata: None,
@@ -2541,9 +2551,12 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        let cursor_shape = vim_settings.cursor_shape.get_or_insert_default();
-                        cursor_shape.insert = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .cursor_shape
+                            .get_or_insert_default()
+                            .insert = value;
                     },
                 }),
                 metadata: None,
@@ -2564,9 +2577,12 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        let cursor_shape = vim_settings.cursor_shape.get_or_insert_default();
-                        cursor_shape.replace = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .cursor_shape
+                            .get_or_insert_default()
+                            .replace = value;
                     },
                 }),
                 metadata: None,
@@ -2587,9 +2603,12 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                     },
                     write: |settings_content, value| {
-                        let vim_settings = settings_content.vim.get_or_insert_default();
-                        let cursor_shape = vim_settings.cursor_shape.get_or_insert_default();
-                        cursor_shape.visual = value;
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .cursor_shape
+                            .get_or_insert_default()
+                            .visual = value;
                     },
                 }),
                 metadata: None,
@@ -2605,8 +2624,7 @@ fn editor_page() -> SettingsPage {
                             settings_content.vim.as_ref()?.custom_digraphs.as_ref()
                         },
                         write: |settings_content, value| {
-                            let vim_settings = settings_content.vim.get_or_insert_default();
-                            vim_settings.custom_digraphs = value;
+                            settings_content.vim.get_or_insert_default().custom_digraphs = value;
                         },
                     }
                     .unimplemented(),
