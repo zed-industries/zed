@@ -2717,10 +2717,7 @@ impl ThreadEventStream {
         acp::ToolCall::new(id.to_string(), title)
             .kind(kind)
             .raw_input(input)
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                tool_name.into(),
-            )]))
+            .meta(acp_thread::meta_with_tool_name(tool_name))
     }
 
     fn update_tool_call_fields(

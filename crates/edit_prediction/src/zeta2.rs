@@ -1,6 +1,5 @@
 #[cfg(feature = "cli-support")]
 use crate::EvalCacheEntryKind;
-use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
@@ -8,6 +7,7 @@ use crate::{
     EditPredictionStore,
 };
 use anyhow::{Result, anyhow};
+use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
 use gpui::{App, Task, prelude::*};
 use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
@@ -18,8 +18,8 @@ use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
 
-pub const MAX_CONTEXT_TOKENS: usize = 150;
-pub const MAX_REWRITE_TOKENS: usize = 350;
+pub const MAX_CONTEXT_TOKENS: usize = 350;
+pub const MAX_EDITABLE_TOKENS: usize = 150;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -75,20 +75,12 @@ pub fn request_prediction_with_zeta2(
                     .ok();
             }
 
-            let request = open_ai::Request {
+            let request = RawCompletionRequest {
                 model: EDIT_PREDICTIONS_MODEL_ID.clone(),
-                messages: vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt),
-                }],
-                stream: false,
-                max_completion_tokens: None,
-                stop: Default::default(),
-                temperature: Default::default(),
-                tool_choice: None,
-                parallel_tool_calls: None,
-                tools: vec![],
-                prompt_cache_key: None,
-                reasoning_effort: None,
+                prompt,
+                temperature: None,
+                stop: vec![],
+                max_tokens: None,
             };
 
             log::trace!("Sending edit prediction request");
@@ -108,9 +100,9 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Got edit prediction response");
 
-            let (res, usage) = response?;
+            let (mut res, usage) = response?;
             let request_id = EditPredictionId(res.id.clone().into());
-            let Some(mut output_text) = text_from_response(res) else {
+            let Some(mut output_text) = res.choices.pop().map(|choice| choice.text) else {
                 return Ok((Some((request_id, None)), usage));
             };
 
@@ -206,8 +198,8 @@ pub fn zeta2_prompt_input(
         crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
             cursor_point,
             snapshot,
+            MAX_EDITABLE_TOKENS,
             MAX_CONTEXT_TOKENS,
-            MAX_REWRITE_TOKENS,
         );
 
     let context_start_offset = context_range.start.to_offset(snapshot);
@@ -276,11 +268,4 @@ pub(crate) fn edit_prediction_accepted(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
-}
-
-#[cfg(feature = "cli-support")]
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
-    let old_editable_region = &input.cursor_excerpt[input.editable_range_in_excerpt.clone()];
-    let new_editable_region = crate::udiff::apply_diff_to_string(patch, old_editable_region)?;
-    Ok(new_editable_region)
 }

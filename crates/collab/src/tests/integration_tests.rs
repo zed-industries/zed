@@ -4358,6 +4358,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
 
     // Simulate a language server reporting errors for a file.
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
     fake_language_server
         .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
@@ -4570,6 +4571,7 @@ async fn test_formatting_buffer(
         project.register_buffer_with_language_servers(&buffer_b, cx)
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
     fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         Ok(Some(vec![
             lsp::TextEdit {
@@ -5630,6 +5632,7 @@ async fn test_project_symbols(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
     fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
         |_, _| async move {
             Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![

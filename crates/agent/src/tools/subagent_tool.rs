@@ -135,7 +135,7 @@ impl AgentTool for SubagentTool {
     type Output = String;
 
     fn name() -> &'static str {
-        "subagent"
+        acp_thread::SUBAGENT_TOOL_NAME
     }
 
     fn kind() -> acp::ToolKind {

@@ -43,9 +43,7 @@ The checkpoint button appears even if you interrupt the thread midway through an
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recent threads.
-
-The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
+To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recently updated threads.
 
 To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
 

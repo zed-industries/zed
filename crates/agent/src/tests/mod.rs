@@ -2744,14 +2744,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
-    let text_thread_store =
-        cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
-    let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(
         project.clone(),
-        history_store,
+        thread_store,
         templates.clone(),
         None,
         fake_fs.clone(),
@@ -4989,5 +4987,583 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         summary.contains("Summary") || summary.contains("TODO") || summary.contains("5"),
         "summary should contain subagent's response: {}",
         summary
+    );
+}
+
+#[gpui::test]
+async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({"sensitive_config.txt": "secret data"}))
+        .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "edit_file".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"sensitive", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let context_server_registry =
+        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let templates = crate::Templates::new();
+    let thread = cx.new(|cx| {
+        crate::Thread::new(
+            project.clone(),
+            cx.new(|_cx| prompt_store::ProjectContext::default()),
+            context_server_registry,
+            templates.clone(),
+            None,
+            cx,
+        )
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::EditFileTool::new(
+        project.clone(),
+        thread.downgrade(),
+        language_registry,
+        templates,
+    ));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::EditFileToolInput {
+                display_description: "Edit sensitive file".to_string(),
+                path: "root/sensitive_config.txt".into(),
+                mode: crate::EditFileMode::Edit,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected edit to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the edit was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({"important_data.txt": "critical info"}))
+        .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "delete_path".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"important", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let action_log = cx.new(|_cx| action_log::ActionLog::new(project.clone()));
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::DeletePathTool::new(project, action_log));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::DeletePathToolInput {
+                path: "root/important_data.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected deletion to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the deletion was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "safe.txt": "content",
+            "protected": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "move_path".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"protected", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::MovePathTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::MovePathToolInput {
+                source_path: "root/safe.txt".to_string(),
+                destination_path: "root/protected/safe.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(
+        result.is_err(),
+        "expected move to be blocked due to destination path"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the move was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "secret.txt": "secret content",
+            "public": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "move_path".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"secret", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::MovePathTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::MovePathToolInput {
+                source_path: "root/secret.txt".to_string(),
+                destination_path: "root/public/not_secret.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(
+        result.is_err(),
+        "expected move to be blocked due to source path"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the move was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "confidential.txt": "confidential data",
+            "dest": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "copy_path".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![
+                    agent_settings::CompiledRegex::new(r"confidential", false).unwrap(),
+                ],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::CopyPathTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::CopyPathToolInput {
+                source_path: "root/confidential.txt".to_string(),
+                destination_path: "root/dest/copy.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected copy to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the copy was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "normal.txt": "normal content",
+            "readonly": {
+                "config.txt": "readonly content"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "save_file".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"readonly", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::SaveFileTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::SaveFileToolInput {
+                paths: vec![
+                    std::path::PathBuf::from("root/normal.txt"),
+                    std::path::PathBuf::from("root/readonly/config.txt"),
+                ],
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(
+        result.is_err(),
+        "expected save to be blocked due to denied path"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the save was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({"config.secret": "secret config"}))
+        .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.always_allow_tool_actions = false;
+        settings.tool_permissions.tools.insert(
+            "save_file".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![agent_settings::CompiledRegex::new(r"\.secret$", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::SaveFileTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::SaveFileToolInput {
+                paths: vec![std::path::PathBuf::from("root/config.secret")],
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected save to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the save was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "web_search".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![
+                    agent_settings::CompiledRegex::new(r"internal\.company", false).unwrap(),
+                ],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::WebSearchTool);
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::WebSearchToolInput =
+        serde_json::from_value(json!({"query": "internal.company.com secrets"})).unwrap();
+
+    let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+    let result = task.await;
+    assert!(result.is_err(), "expected search to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the search was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({"README.md": "# Hello"}))
+        .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.always_allow_tool_actions = false;
+        settings.tool_permissions.tools.insert(
+            "edit_file".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Confirm,
+                always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let context_server_registry =
+        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let templates = crate::Templates::new();
+    let thread = cx.new(|cx| {
+        crate::Thread::new(
+            project.clone(),
+            cx.new(|_cx| prompt_store::ProjectContext::default()),
+            context_server_registry,
+            templates.clone(),
+            None,
+            cx,
+        )
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::EditFileTool::new(
+        project,
+        thread.downgrade(),
+        language_registry,
+        templates,
+    ));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let _task = cx.update(|cx| {
+        tool.run(
+            crate::EditFileToolInput {
+                display_description: "Edit README".to_string(),
+                path: "root/README.md".into(),
+                mode: crate::EditFileMode::Edit,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let event = rx.try_next();
+    assert!(
+        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        "expected no authorization request for allowed .md file"
+    );
+}
+
+#[gpui::test]
+async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            "fetch".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![
+                    agent_settings::CompiledRegex::new(r"internal\.company\.com", false).unwrap(),
+                ],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::FetchToolInput =
+        serde_json::from_value(json!({"url": "https://internal.company.com/api"})).unwrap();
+
+    let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+    let result = task.await;
+    assert!(result.is_err(), "expected fetch to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the fetch was blocked"
+    );
+}
+
+#[gpui::test]
+async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.always_allow_tool_actions = false;
+        settings.tool_permissions.tools.insert(
+            "fetch".into(),
+            agent_settings::ToolRules {
+                default_mode: settings::ToolPermissionMode::Confirm,
+                always_allow: vec![agent_settings::CompiledRegex::new(r"docs\.rs", false).unwrap()],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::FetchToolInput =
+        serde_json::from_value(json!({"url": "https://docs.rs/some-crate"})).unwrap();
+
+    let _task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+    cx.run_until_parked();
+
+    let event = rx.try_next();
+    assert!(
+        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        "expected no authorization request for allowed docs.rs URL"
     );
 }

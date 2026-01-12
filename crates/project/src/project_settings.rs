@@ -1182,7 +1182,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
@@ -1233,7 +1233,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {

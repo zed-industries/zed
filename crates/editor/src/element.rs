@@ -7,9 +7,9 @@ use crate::{
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
+    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -36,6 +36,7 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
@@ -60,7 +61,7 @@ use multi_buffer::{
 
 use edit_prediction_types::EditPredictionGranularity;
 use project::{
-    Entry, ProjectPath,
+    DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
@@ -1266,7 +1267,60 @@ impl EditorElement {
             }
         }
 
-        let breakpoint_indicator = if gutter_hovered {
+        // Handle diff review indicator when gutter is hovered in diff mode with AI enabled
+        let show_diff_review = editor.show_diff_review_button()
+            && cx.has_flag::<DiffReviewFeatureFlag>()
+            && !DisableAiSettings::get_global(cx).disable_ai;
+
+        let diff_review_indicator = if gutter_hovered && show_diff_review {
+            let is_visible = editor
+                .gutter_diff_review_indicator
+                .0
+                .is_some_and(|indicator| indicator.is_active);
+
+            if !is_visible {
+                editor
+                    .gutter_diff_review_indicator
+                    .1
+                    .get_or_insert_with(|| {
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+
+                            this.update(cx, |this, cx| {
+                                if let Some(indicator) =
+                                    this.gutter_diff_review_indicator.0.as_mut()
+                                {
+                                    indicator.is_active = true;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                        })
+                    });
+            }
+
+            Some(PhantomDiffReviewIndicator {
+                display_row: valid_point.row(),
+                is_active: is_visible,
+            })
+        } else {
+            editor.gutter_diff_review_indicator.1 = None;
+            None
+        };
+
+        if diff_review_indicator != editor.gutter_diff_review_indicator.0 {
+            editor.gutter_diff_review_indicator.0 = diff_review_indicator;
+            cx.notify();
+        }
+
+        // Don't show breakpoint indicator when diff review indicator is active on this row
+        let is_on_diff_review_button_row = diff_review_indicator.is_some_and(|indicator| {
+            indicator.is_active && indicator.display_row == valid_point.row()
+        });
+
+        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -3013,7 +3067,7 @@ impl EditorElement {
                     let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -3027,6 +3081,50 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    fn should_render_diff_review_button(
+        &self,
+        range: Range<DisplayRow>,
+        row_infos: &[RowInfo],
+        cx: &App,
+    ) -> Option<DisplayRow> {
+        if !cx.has_flag::<DiffReviewFeatureFlag>() {
+            return None;
+        }
+
+        let show_diff_review_button = self.editor.read(cx).show_diff_review_button();
+        if !show_diff_review_button {
+            return None;
+        }
+
+        let indicator = self.editor.read(cx).gutter_diff_review_indicator.0?;
+        if !indicator.is_active {
+            return None;
+        }
+
+        let display_row = indicator.display_row;
+
+        // Don't show on rows with expand excerpt buttons
+        if row_infos
+            .get((display_row.0.saturating_sub(range.start.0)) as usize)
+            .is_some_and(|row_info| row_info.expand_info.is_some())
+        {
+            return None;
+        }
+
+        Some(display_row)
+    }
+
+    fn diff_review_button() -> AnyElement {
+        IconButton::new("diff_review_button", ui::IconName::Plus)
+            .icon_size(ui::IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(ui::Color::Default)
+            .style(ui::ButtonStyle::Filled)
+            .layer(ui::ElevationIndex::Surface)
+            .tooltip(Tooltip::text("Add Review"))
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3115,16 +3213,17 @@ impl EditorElement {
                         return None;
                     }
 
+                    let removed_breakpoint = breakpoints.remove(&display_row);
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
-                        breakpoints.remove(&display_row),
+                        removed_breakpoint,
                         cx,
                     );
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -6470,6 +6569,10 @@ impl EditorElement {
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
             }
+
+            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
+                diff_review_button.paint(window, cx);
+            }
         });
     }
 
@@ -8012,6 +8115,8 @@ pub fn render_breadcrumb_text(
         .downcast::<Editor>()
         .map(|editor| editor.downgrade());
 
+    let has_project_path = active_item.project_path(cx).is_some();
+
     match editor {
         Some(editor) => element
             .id("breadcrumb_container")
@@ -8025,14 +8130,33 @@ pub fn render_breadcrumb_text(
                     .when(!multibuffer_header, |this| {
                         let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
 
-                        this.tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
-                                &focus_handle,
-                                cx,
-                            )
-                        })
+                        this.tooltip(Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .justify_between()
+                                        .child(Label::new("Show Symbol Outline"))
+                                        .child(ui::KeyBinding::for_action_in(
+                                            &zed_actions::outline::ToggleOutline,
+                                            &focus_handle,
+                                            cx,
+                                        )),
+                                )
+                                .when(has_project_path, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_between()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(Label::new("Right-Click to Copy Path")),
+                                    )
+                                })
+                                .into_any_element()
+                        }))
                         .on_click({
                             let editor = editor.clone();
                             move |_, window, cx| {
@@ -8044,12 +8168,29 @@ pub fn render_breadcrumb_text(
                                 }
                             }
                         })
+                        .when(has_project_path, |this| {
+                            this.on_right_click({
+                                let editor = editor.clone();
+                                move |_, _, cx| {
+                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.target_file_abs_path(cx)
+                                        })
+                                    }) {
+                                        if let Some(path_str) = abs_path.to_str() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                path_str.to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            })
+                        })
                     }),
             )
             .into_any_element(),
         None => element
-            // Match the height and padding of the `ButtonLike` in the other arm.
-            .h(rems_from_px(22.))
+            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),
@@ -8200,7 +8341,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    button: IconButton,
+    mut button: AnyElement,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
@@ -8210,8 +8351,6 @@ fn prepaint_gutter_button(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let mut button = button.into_any_element();
-
     let available_space = size(
         AvailableSpace::MinContent,
         AvailableSpace::Definite(line_height),
@@ -8238,11 +8377,7 @@ fn prepaint_gutter_button(
         .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
     let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
-    let mut x = left_offset;
-    let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
-        - indicator_size.width
-        - left_offset;
-    x += available_width / 2.;
+    let x = left_offset;
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
@@ -10293,6 +10428,22 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let diff_review_button = self
+                        .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
+                        .map(|display_row| {
+                            prepaint_gutter_button(
+                                Self::diff_review_button(),
+                                display_row,
+                                line_height,
+                                &gutter_dimensions,
+                                scroll_position,
+                                &gutter_hitbox,
+                                &display_hunks,
+                                window,
+                                cx,
+                            )
+                        });
+
                     self.layout_signature_help(
                         &hitbox,
                         content_origin,
@@ -10490,6 +10641,7 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
+                        diff_review_button,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -10668,6 +10820,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
+    diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,

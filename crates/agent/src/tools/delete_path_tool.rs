@@ -1,13 +1,18 @@
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
+use util::markdown::MarkdownInlineCode;
 
 /// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -67,10 +72,24 @@ impl AgentTool for DeletePathTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let path = input.path;
+
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &path, settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                Some(event_stream.authorize(format!("Delete {}", MarkdownInlineCode(&path)), cx))
+            }
+        };
+
         let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path} because that path isn't in this project."
@@ -113,7 +132,20 @@ impl AgentTool for DeletePathTool {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
-            while let Some(path) = paths_rx.next().await {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
+            loop {
+                let path_result = futures::select! {
+                    path = paths_rx.next().fuse() => path,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Delete cancelled by user");
+                    }
+                };
+                let Some(path) = path_result else {
+                    break;
+                };
                 if let Ok(buffer) = project
                     .update(cx, |project, cx| project.open_buffer(path, cx))
                     .await
@@ -131,9 +163,15 @@ impl AgentTool for DeletePathTool {
                 .with_context(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;
-            deletion_task
-                .await
-                .with_context(|| format!("Deleting {path}"))?;
+
+            futures::select! {
+                result = deletion_task.fuse() => {
+                    result.with_context(|| format!("Deleting {path}"))?;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Delete cancelled by user");
+                }
+            }
             Ok(format!("Deleted {path}"))
         })
     }

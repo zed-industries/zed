@@ -2229,7 +2229,7 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.default_branch()
+                repository_handle.default_branch(false)
             })
             .await??
             .map(Into::into);
@@ -5189,12 +5189,15 @@ impl Repository {
         )
     }
 
-    pub fn default_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {
+    pub fn default_branch(
+        &mut self,
+        include_remote_name: bool,
+    ) -> oneshot::Receiver<Result<Option<SharedString>>> {
         let id = self.id;
         self.send_job(None, move |repo, _| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.default_branch().await
+                    backend.default_branch(include_remote_name).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let response = client
