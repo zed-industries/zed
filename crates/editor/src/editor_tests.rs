@@ -30362,3 +30362,279 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
         );
     });
 }
+
+#[gpui::test]
+fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::empty()),
+            hunk_start_row: DisplayRow(0),
+        };
+
+        let id = editor.add_review_comment(
+            key.clone(),
+            "Test comment".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        assert_eq!(editor.total_review_comment_count(), 1);
+        assert_eq!(editor.hunk_comment_count(&key), 1);
+
+        let comments = editor.comments_for_hunk(&key);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].comment, "Test comment");
+        assert_eq!(comments[0].id, id);
+    });
+}
+
+#[gpui::test]
+fn test_review_comments_are_per_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key1 = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::unix("file1.rs").unwrap()),
+            hunk_start_row: DisplayRow(0),
+        };
+        let key2 = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::unix("file2.rs").unwrap()),
+            hunk_start_row: DisplayRow(10),
+        };
+
+        editor.add_review_comment(
+            key1.clone(),
+            "Comment for file1".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+        editor.add_review_comment(
+            key2.clone(),
+            "Comment for file2".to_string(),
+            DisplayRow(10),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        assert_eq!(editor.total_review_comment_count(), 2);
+        assert_eq!(editor.hunk_comment_count(&key1), 1);
+        assert_eq!(editor.hunk_comment_count(&key2), 1);
+
+        assert_eq!(
+            editor.comments_for_hunk(&key1)[0].comment,
+            "Comment for file1"
+        );
+        assert_eq!(
+            editor.comments_for_hunk(&key2)[0].comment,
+            "Comment for file2"
+        );
+    });
+}
+
+#[gpui::test]
+fn test_review_comment_remove(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::empty()),
+            hunk_start_row: DisplayRow(0),
+        };
+
+        let id = editor.add_review_comment(
+            key.clone(),
+            "To be removed".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        assert_eq!(editor.total_review_comment_count(), 1);
+
+        let removed = editor.remove_review_comment(id, cx);
+        assert!(removed);
+        assert_eq!(editor.total_review_comment_count(), 0);
+
+        // Try to remove again
+        let removed_again = editor.remove_review_comment(id, cx);
+        assert!(!removed_again);
+    });
+}
+
+#[gpui::test]
+fn test_review_comment_update(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::empty()),
+            hunk_start_row: DisplayRow(0),
+        };
+
+        let id = editor.add_review_comment(
+            key.clone(),
+            "Original text".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        let updated = editor.update_review_comment(id, "Updated text".to_string(), cx);
+        assert!(updated);
+
+        let comments = editor.comments_for_hunk(&key);
+        assert_eq!(comments[0].comment, "Updated text");
+        assert!(!comments[0].is_editing); // Should clear editing flag
+    });
+}
+
+#[gpui::test]
+fn test_review_comment_take_all(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key1 = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::unix("file1.rs").unwrap()),
+            hunk_start_row: DisplayRow(0),
+        };
+        let key2 = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::unix("file2.rs").unwrap()),
+            hunk_start_row: DisplayRow(10),
+        };
+
+        editor.add_review_comment(
+            key1.clone(),
+            "Comment 1".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+        editor.add_review_comment(
+            key1.clone(),
+            "Comment 2".to_string(),
+            DisplayRow(1),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+        editor.add_review_comment(
+            key2.clone(),
+            "Comment 3".to_string(),
+            DisplayRow(10),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        assert_eq!(editor.total_review_comment_count(), 3);
+
+        let taken = editor.take_all_review_comments(cx);
+
+        // Should have 2 entries (one per hunk)
+        assert_eq!(taken.len(), 2);
+
+        // Total comments should be 3
+        let total: usize = taken
+            .iter()
+            .map(|(_, comments): &(DiffHunkKey, Vec<StoredReviewComment>)| comments.len())
+            .sum();
+        assert_eq!(total, 3);
+
+        // Storage should be empty
+        assert_eq!(editor.total_review_comment_count(), 0);
+    });
+}
+
+#[gpui::test]
+fn test_review_comment_chronological_ordering(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::empty()),
+            hunk_start_row: DisplayRow(0),
+        };
+
+        editor.add_review_comment(
+            key.clone(),
+            "First".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+        editor.add_review_comment(
+            key.clone(),
+            "Second".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+        editor.add_review_comment(
+            key.clone(),
+            "Third".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        let comments = editor.comments_for_hunk(&key);
+
+        // Comments should be in insertion order (chronological)
+        assert_eq!(comments[0].comment, "First");
+        assert_eq!(comments[1].comment, "Second");
+        assert_eq!(comments[2].comment, "Third");
+
+        // created_at should be monotonically increasing
+        assert!(comments[0].created_at <= comments[1].created_at);
+        assert!(comments[1].created_at <= comments[2].created_at);
+    });
+}
+
+#[gpui::test]
+fn test_review_comment_ids_are_unique_across_hunks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key1 = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::unix("file1.rs").unwrap()),
+            hunk_start_row: DisplayRow(0),
+        };
+        let key2 = DiffHunkKey {
+            file_path: Arc::from(util::rel_path::RelPath::unix("file2.rs").unwrap()),
+            hunk_start_row: DisplayRow(10),
+        };
+
+        let id1 = editor.add_review_comment(
+            key1,
+            "Comment 1".to_string(),
+            DisplayRow(0),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+        let id2 = editor.add_review_comment(
+            key2,
+            "Comment 2".to_string(),
+            DisplayRow(10),
+            Anchor::min()..Anchor::max(),
+            cx,
+        );
+
+        assert_ne!(id1, id2);
+    });
+}
