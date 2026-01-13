@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
+use std::cell::RefCell;
 use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
@@ -331,7 +332,8 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.thread_store.clone(),
+                Some(self.thread_store.clone()),
+                Rc::new(RefCell::new(None)),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -1249,8 +1251,8 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
 
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
+        let mention_set = cx
+            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
@@ -1402,8 +1404,8 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
 
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
+        let mention_set = cx
+            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 

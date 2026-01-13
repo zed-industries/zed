@@ -489,6 +489,7 @@ impl GitBlame {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
@@ -511,6 +512,8 @@ impl GitBlame {
             let mut all_errors = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
+                let span = ztracing::debug_span!("for each chunk of buffers");
+                let _enter = span.enter();
                 let blame = cx.update(|cx| {
                     buffers
                         .iter()
