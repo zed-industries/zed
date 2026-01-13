@@ -8371,6 +8371,7 @@ fn prepaint_gutter_button(
             .git_blame_entries_width
             .unwrap_or_default();
 
+    let x = git_gutter_width + px(2.);
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
