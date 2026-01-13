@@ -53,7 +53,7 @@ pub async fn run_prediction(
             example,
             &FormatPromptArgs {
                 provider,
-                version: args.version.clone(),
+                version: args.version,
             },
             app_state.clone(),
             cx,
