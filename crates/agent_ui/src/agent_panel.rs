@@ -1,7 +1,7 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
-use acp_thread::AcpThread;
-use agent::{ContextServerRegistry, DbThreadMetadata, ThreadStore};
+use acp_thread::{AcpThread, AgentSessionInfo};
+use agent::{ContextServerRegistry, ThreadStore};
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -315,7 +315,7 @@ impl ActiveView {
                 None,
                 workspace,
                 project,
-                thread_store,
+                Some(thread_store),
                 prompt_store,
                 false,
                 window,
@@ -429,6 +429,7 @@ pub struct AgentPanel {
     context_server_registry: Entity<ContextServerRegistry>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
+    history_subscription: Option<Subscription>,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -543,7 +544,7 @@ impl AgentPanel {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let acp_history = cx.new(|cx| AcpThreadHistory::new(thread_store.clone(), window, cx));
+        let acp_history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
@@ -683,6 +684,7 @@ impl AgentPanel {
             prompt_store,
             configuration: None,
             configuration_subscription: None,
+            history_subscription: None,
             context_server_registry,
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
@@ -732,7 +734,7 @@ impl AgentPanel {
 
     pub fn open_thread(
         &mut self,
-        thread: DbThreadMetadata,
+        thread: AgentSessionInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -788,9 +790,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self
-            .thread_store
+            .acp_history
             .read(cx)
-            .thread_from_session_id(&action.from_session_id)
+            .session_for_id(&action.from_session_id)
         else {
             return;
         };
@@ -798,7 +800,7 @@ impl AgentPanel {
         self.external_thread(
             Some(ExternalAgent::NativeAgent),
             None,
-            Some(thread.clone()),
+            Some(thread),
             window,
             cx,
         );
@@ -850,8 +852,8 @@ impl AgentPanel {
     fn external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
-        resume_thread: Option<DbThreadMetadata>,
-        summarize_thread: Option<DbThreadMetadata>,
+        resume_thread: Option<AgentSessionInfo>,
+        summarize_thread: Option<AgentSessionInfo>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1349,10 +1351,12 @@ impl AgentPanel {
             HistoryKind::AgentThreads => {
                 let entries = panel
                     .read(cx)
-                    .thread_store
+                    .acp_history
                     .read(cx)
-                    .entries()
+                    .sessions()
+                    .iter()
                     .take(RECENTLY_UPDATED_MENU_LIMIT)
+                    .cloned()
                     .collect::<Vec<_>>();
 
                 if entries.is_empty() {
@@ -1362,11 +1366,12 @@ impl AgentPanel {
                 menu = menu.header("Recently Updated");
 
                 for entry in entries {
-                    let title = if entry.title.is_empty() {
-                        SharedString::new_static(DEFAULT_THREAD_TITLE)
-                    } else {
-                        entry.title.clone()
-                    };
+                    let title = entry
+                        .title
+                        .as_ref()
+                        .filter(|title| !title.is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
 
                     menu = menu.entry(title, None, {
                         let panel = panel.downgrade();
@@ -1508,7 +1513,7 @@ impl AgentPanel {
 
     pub fn load_agent_thread(
         &mut self,
-        thread: DbThreadMetadata,
+        thread: AgentSessionInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1524,8 +1529,8 @@ impl AgentPanel {
     fn _external_thread(
         &mut self,
         server: Rc<dyn AgentServer>,
-        resume_thread: Option<DbThreadMetadata>,
-        summarize_thread: Option<DbThreadMetadata>,
+        resume_thread: Option<AgentSessionInfo>,
+        summarize_thread: Option<AgentSessionInfo>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         loading: bool,
@@ -1538,6 +1543,11 @@ impl AgentPanel {
             self.selected_agent = selected_agent;
             self.serialize(cx);
         }
+        let thread_store = server
+            .clone()
+            .downcast::<agent::NativeAgentServer>()
+            .is_some()
+            .then(|| self.thread_store.clone());
 
         let thread_view = cx.new(|cx| {
             crate::acp::AcpThreadView::new(
@@ -1546,13 +1556,22 @@ impl AgentPanel {
                 summarize_thread,
                 workspace.clone(),
                 project,
-                self.thread_store.clone(),
+                thread_store,
                 self.prompt_store.clone(),
                 !loading,
                 window,
                 cx,
             )
         });
+
+        let acp_history = self.acp_history.clone();
+        self.history_subscription = Some(cx.observe(&thread_view, move |_, thread_view, cx| {
+            if let Some(session_list) = thread_view.read(cx).session_list() {
+                acp_history.update(cx, |history, cx| {
+                    history.set_session_list(Some(session_list), cx);
+                });
+            }
+        }));
 
         self.set_active_view(
             ActiveView::ExternalAgentThread { thread_view },
@@ -2495,7 +2514,7 @@ impl AgentPanel {
                 false
             }
             _ => {
-                let history_is_empty = self.thread_store.read(cx).is_empty();
+                let history_is_empty = self.acp_history.read(cx).is_empty();
 
                 let has_configured_non_zed_providers = LanguageModelRegistry::read_global(cx)
                     .visible_providers()

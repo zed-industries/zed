@@ -250,6 +250,8 @@ impl Database {
     {
         #[cfg(test)]
         {
+            use rand::prelude::*;
+
             let test_options = self.test_options.as_ref().unwrap();
             test_options.executor.simulate_random_delay().await;
             let fail_probability = *test_options.query_failure_probability.lock();
