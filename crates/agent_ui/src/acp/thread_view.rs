@@ -341,6 +341,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
+    discarded_partial_edits: HashSet<acp::ToolCallId>,
     prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
@@ -517,6 +518,7 @@ impl AcpThreadView {
             edits_expanded: false,
             plan_expanded: false,
             queue_expanded: true,
+            discarded_partial_edits: HashSet::default(),
             prompt_capabilities,
             available_commands,
             editor_expanded: false,
@@ -3198,28 +3200,38 @@ impl AcpThreadView {
                                             }
                                         })
                                         .when_some(diff_for_discard, |this, diff| {
-                                            this.child(
-                                                IconButton::new(
-                                                    ("discard-partial-edit", entry_ix),
-                                                    IconName::Trash,
+                                            let tool_call_id = tool_call.id.clone();
+                                            let is_discarded = self.discarded_partial_edits.contains(&tool_call_id);
+                                            this.when(!is_discarded, |this| {
+                                                this.child(
+                                                    IconButton::new(
+                                                        ("discard-partial-edit", entry_ix),
+                                                        IconName::Trash,
+                                                    )
+                                                    .icon_size(IconSize::Small)
+                                                    .tooltip(move |_, cx| Tooltip::with_meta(
+                                                        "Discard Interrupted Edit",
+                                                        None,
+                                                        "You can discard this interrupted partial edit and restore the original file content.",
+                                                        cx
+                                                    ))
+                                                    .on_click(cx.listener({
+                                                        let tool_call_id = tool_call_id.clone();
+                                                        move |this, _, _window, cx| {
+                                                            let diff_data = diff.read(cx);
+                                                            let base_text = diff_data.base_text().clone();
+                                                            let buffer = diff_data.buffer().clone();
+                                                            buffer.update(cx, |buffer, cx| {
+                                                                buffer.set_text(base_text.as_ref(), cx);
+                                                            });
+                                                            this.discarded_partial_edits.insert(tool_call_id.clone());
+                                                            cx.notify();
+                                                        }
+                                                    })),
                                                 )
-                                                .icon_size(IconSize::Small)
-                                                .tooltip(move |_, cx| Tooltip::with_meta(
-                                                    "Discard Interrupted Edit",
-                                                    None,
-                                                    "You can discard this interrupted partial edit and restore the original file content.",
-                                                    cx
-                                                ))
-                                                .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                    let diff_data = diff.read(cx);
-                                                    let base_text = diff_data.base_text().clone();
-                                                    let buffer = diff_data.buffer().clone();
-                                                    buffer.update(cx, |buffer, cx| {
-                                                        buffer.set_text(base_text.as_ref(), cx);
-                                                    });
-                                                })),
-                                            )
-                                        }),
+                                            })
+                                        })
+
                                 )
                             }),
                     )
