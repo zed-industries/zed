@@ -38,6 +38,7 @@ use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
+use zeta_prompt::ZetaVersion;
 
 use std::ops::Range;
 use std::path::Path;
@@ -183,7 +184,9 @@ pub struct EditPredictionStore {
 pub enum EditPredictionModel {
     #[default]
     Zeta1,
-    Zeta2,
+    Zeta2 {
+        version: ZetaVersion,
+    },
     Sweep,
     Mercury,
 }
@@ -654,7 +657,9 @@ impl EditPredictionStore {
             update_required: false,
             #[cfg(feature = "cli-support")]
             eval_cache: None,
-            edit_prediction_model: EditPredictionModel::Zeta2,
+            edit_prediction_model: EditPredictionModel::Zeta2 {
+                version: Default::default(),
+            },
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
             data_collection_choice,
@@ -794,7 +799,10 @@ impl EditPredictionStore {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if self.edit_prediction_model == EditPredictionModel::Zeta2 {
+        if matches!(
+            self.edit_prediction_model,
+            EditPredictionModel::Zeta2 { .. }
+        ) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1204,7 +1212,7 @@ impl EditPredictionStore {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
             EditPredictionModel::Mercury => {}
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
         }
@@ -1338,7 +1346,7 @@ impl EditPredictionStore {
         was_shown: bool,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 if self.custom_predict_edits_url.is_some() {
                     return;
                 }
@@ -1773,7 +1781,9 @@ impl EditPredictionStore {
         }
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
-            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
+            EditPredictionModel::Zeta2 { version } => {
+                zeta2::request_prediction_with_zeta2(self, inputs, version, cx)
+            }
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
         };
