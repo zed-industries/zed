@@ -1,4 +1,6 @@
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use collections::{HashMap, HashSet};
 use editor::{MultiBufferOffset, MultiBufferSnapshot};
@@ -10,6 +12,10 @@ const BASE_LABEL_CHARS: &[char] = &[
     'f', 'j', 'd', 'k', 's', 'l', 'a', 'g', 'h', 'r', 'u', 'e', 'i', 'o', 'w', 'm', 'n', 'c', 'v',
     'x', 'z', 'p', 'q', 'y', 't', 'b',
 ];
+
+pub(crate) const BEAM_JUMP_PENDING_COMMIT_TIMEOUT: Duration = Duration::from_millis(700);
+
+static NEXT_BEAM_JUMP_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BeamJumpDirection {
@@ -34,6 +40,11 @@ pub(crate) struct BeamJumpLabels {
     pub(crate) label_pool: Option<Vec<String>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BeamJumpPendingCommit {
+    pub(crate) id: u64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct BeamJumpState {
     pub(crate) smartcase: bool,
@@ -41,12 +52,16 @@ pub(crate) struct BeamJumpState {
     pub(crate) view_start: MultiBufferOffset,
     pub(crate) view_end: MultiBufferOffset,
     pub(crate) previous_last_find: Option<Motion>,
+    pub(crate) session_id: u64,
 
     pub(crate) pattern: String,
     pub(crate) pattern_len: usize,
 
     pub(crate) matches: Vec<BeamJumpMatch>,
     pub(crate) labels: Option<BeamJumpLabels>,
+
+    pub(crate) pending_commit: Option<BeamJumpPendingCommit>,
+    pending_commit_next_id: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +77,6 @@ pub(crate) struct BeamJumpJump {
 pub(crate) enum BeamJumpAction {
     Continue,
     Cancel,
-    PassThrough,
     Jump(BeamJumpJump),
 }
 
@@ -80,10 +94,13 @@ impl BeamJumpState {
             view_start,
             view_end,
             previous_last_find,
+            session_id: NEXT_BEAM_JUMP_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             pattern: String::new(),
             pattern_len: 0,
             matches: Vec::new(),
             labels: None,
+            pending_commit: None,
+            pending_commit_next_id: 0,
         }
     }
 
@@ -135,25 +152,27 @@ impl BeamJumpState {
             }
 
             self.clear_pattern();
-            return BeamJumpAction::PassThrough;
+            return BeamJumpAction::Cancel;
         }
 
         match self.matches.len() {
-            0 => BeamJumpAction::Continue,
+            0 => {
+                self.pending_commit = None;
+                self.labels = None;
+                BeamJumpAction::Continue
+            }
             1 => {
-                let m = self.matches[0].clone();
-                let Some((direction, _)) = self.direction_and_count_for_start(m.start) else {
-                    return BeamJumpAction::Cancel;
-                };
-                BeamJumpAction::Jump(BeamJumpJump {
-                    direction,
-                    pattern: self.pattern.clone(),
-                    smartcase: self.smartcase,
-                    count: 1,
-                    search_range: Some(self.view_start..self.view_end),
-                })
+                self.labels = None;
+
+                let id = self.pending_commit_next_id;
+                self.pending_commit_next_id = self.pending_commit_next_id.wrapping_add(1);
+                self.pending_commit = Some(BeamJumpPendingCommit { id });
+
+                BeamJumpAction::Continue
             }
             _ => {
+                self.pending_commit = None;
+
                 if self.labels.is_none() {
                     self.labels = Some(self.assign_labels(buffer));
                 }
@@ -184,6 +203,7 @@ impl BeamJumpState {
         self.pattern_len = 0;
         self.matches.clear();
         self.labels = None;
+        self.pending_commit = None;
     }
 
     fn auto_global_jump(&self, buffer: &MultiBufferSnapshot) -> Option<BeamJumpJump> {
