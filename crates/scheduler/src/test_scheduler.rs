@@ -95,7 +95,7 @@ impl TestScheduler {
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
                 is_main_thread: true,
-                parking_timeout: Duration::from_secs(5),
+                parking_timeout: Duration::from_secs(15),
                 parking_timeout_message: None,
             })),
             clock: Arc::new(TestClock::new()),
