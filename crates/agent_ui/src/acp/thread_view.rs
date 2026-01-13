@@ -3532,8 +3532,8 @@ impl AcpThreadView {
             .iter()
             .find(|o| matches!(o.kind, acp::PermissionOptionKind::RejectOnce));
 
-        // The dropdown label - just shows what clicking Allow will do
-        let dropdown_label: SharedString = "Only this time".into();
+        // The dropdown label should match the first menu item
+        let dropdown_label: SharedString = "Allow once".into();
 
         // Get the option that will be used when Allow is clicked (always "Allow once")
         let selected_allow_option = allow_options
@@ -3551,7 +3551,18 @@ impl AcpThreadView {
             .justify_between()
             .gap_2()
             .child(
-                // Left side: Allow and Deny buttons
+                // Left side: Granularity dropdown
+                self.render_permission_granularity_dropdown(
+                    &allow_options,
+                    dropdown_label,
+                    entry_ix,
+                    tool_call_id.clone(),
+                    is_first,
+                    cx,
+                ),
+            )
+            .child(
+                // Right side: Allow and Deny buttons
                 h_flex()
                     .gap_1()
                     .child(
@@ -3616,7 +3627,6 @@ impl AcpThreadView {
                                 }
                             })
                             .on_click(cx.listener({
-                                let tool_call_id = tool_call_id.clone();
                                 let option_id = deny_option
                                     .map(|o| o.option_id.clone())
                                     .unwrap_or_else(|| acp::PermissionOptionId::new("deny"));
@@ -3632,16 +3642,6 @@ impl AcpThreadView {
                             })),
                     ),
             )
-            .child(
-                // Right side: Granularity dropdown
-                self.render_permission_granularity_dropdown(
-                    &allow_options,
-                    dropdown_label,
-                    entry_ix,
-                    tool_call_id,
-                    cx,
-                ),
-            )
     }
 
     fn render_permission_granularity_dropdown(
@@ -3650,7 +3650,8 @@ impl AcpThreadView {
         current_label: SharedString,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
-        _cx: &Context<Self>,
+        is_first: bool,
+        cx: &Context<Self>,
     ) -> impl IntoElement {
         // Collect option info for the menu builder closure
         // Each item is (option_id, option_kind, display_name)
@@ -3670,7 +3671,21 @@ impl AcpThreadView {
                     .icon_position(IconPosition::End)
                     .icon_size(IconSize::XSmall)
                     .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Subtle),
+                    .style(ButtonStyle::Subtle)
+                    .map(|btn| {
+                        if is_first {
+                            btn.key_binding(
+                                KeyBinding::for_action_in(
+                                    &AllowAlways as &dyn Action,
+                                    &self.focus_handle,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                        } else {
+                            btn
+                        }
+                    }),
             )
             .menu(move |window, cx| {
                 let tool_call_id = tool_call_id.clone();
