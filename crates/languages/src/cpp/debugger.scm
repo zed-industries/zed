@@ -74,8 +74,9 @@
   argument: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
 (subscript_expression
-  index: (identifier) @debug-variable
-  (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
+  (subscript_argument_list
+    (identifier) @debug-variable
+    (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$")))
 
 ; Function call arguments
 (call_expression
