@@ -1566,12 +1566,8 @@ impl ProjectPanel {
             };
             if expand {
                 self.expand_all_for_entry(worktree_id, entry_id, cx);
-                self.state.expanding_path = self.project.read(cx).path_for_entry(entry_id, cx);
-                self.state.collapsing_path = None;
             } else {
                 self.collapse_all_for_entry(worktree_id, entry_id, cx);
-                self.state.collapsing_path = self.project.read(cx).path_for_entry(entry_id, cx);
-                self.state.expanding_path = None;
             }
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
             window.focus(&self.focus_handle, cx);
@@ -1585,6 +1581,8 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
+        self.state.expanding_path = self.project.read(cx).path_for_entry(entry_id, cx);
+        self.state.collapsing_path = None;
         self.project.update(cx, |project, cx| {
             if let Some(task) = project.expand_all_for_entry(worktree_id, entry_id, cx) {
                 task.detach();
@@ -1598,6 +1596,8 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
+        self.state.collapsing_path = self.project.read(cx).path_for_entry(entry_id, cx);
+        self.state.expanding_path = None;
         self.project.update(cx, |project, cx| {
             if let Some((worktree, expanded_dir_ids)) = project
                 .worktree_for_id(worktree_id, cx)
@@ -1912,7 +1912,7 @@ impl ProjectPanel {
                             selection.worktree_id = worktree_id;
                             selection.entry_id = new_entry.id;
                             project_panel.marked_entries.clear();
-                            project_panel.display_selection(cx);
+                            project_panel.expand_selection(cx);
                         }
                         project_panel.update_visible_entries(None, false, false, window, cx);
                         if is_new_entry && !is_dir {
@@ -2098,7 +2098,7 @@ impl ProjectPanel {
         self.filename_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
         });
-        self.display_entry(worktree_id, new_entry_id, cx);
+        self.expand_unpinned_entry(worktree_id, directory_id, cx);
         self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), true, true, window, cx);
         cx.notify();
     }
@@ -3112,7 +3112,8 @@ impl ProjectPanel {
                 self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
             }
 
-            self.display_entry(worktree_id, entry.id, cx);
+            self.expand_unpinned_entry(worktree_id, entry.id, cx);
+
             Some(())
         });
     }
@@ -3410,7 +3411,7 @@ impl ProjectPanel {
         });
 
         if let Some(destination_worktree) = destination_worktree {
-            self.display_entry(destination_worktree, destination_entry, cx);
+            self.expand_unpinned_entry(destination_worktree, destination_entry, cx);
         }
         rename_task
     }
@@ -3546,9 +3547,9 @@ impl ProjectPanel {
         Some((worktree, entry))
     }
 
-    fn display_selection(&mut self, cx: &mut Context<Self>) -> Option<()> {
+    fn expand_selection(&mut self, cx: &mut Context<Self>) -> Option<()> {
         let (worktree, entry) = self.selected_entry(cx)?;
-        self.display_entry(worktree.id(), entry.id, cx);
+        self.expand_unpinned_entry(worktree.id(), entry.id, cx);
         Some(())
     }
 
@@ -4030,12 +4031,56 @@ impl ProjectPanel {
         };
     }
 
+    fn expand_unpinned_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        let partial_collapse = ProjectPanelSettings::get_global(cx).partial_collapse;
+        let is_pinned = self
+            .state
+            .pinned_dir_ids
+            .get(&worktree_id)
+            .is_some_and(|pinned_dir_ids| pinned_dir_ids.binary_search(&entry_id).is_ok());
+        if partial_collapse && is_pinned {
+            return;
+        }
+        self.state.expanding_path = self.project.read(cx).path_for_entry(entry_id, cx);
+        self.state.collapsing_path = None;
+        self.project.update(cx, |project, cx| {
+            project.expand_entry(worktree_id, entry_id, cx);
+        });
+    }
+
     fn display_entry(
         &mut self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
+        let partial_collapse = ProjectPanelSettings::get_global(cx).partial_collapse;
+        let Some(worktree) = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|worktree| worktree.read(cx))
+        else {
+            return;
+        };
+        let Some(parent_id) = worktree
+            .entry_for_id(entry_id)
+            .and_then(|entry| entry.path.parent())
+            .and_then(|path| worktree.entry_for_path(path))
+            .map(|parent| parent.id)
+        else {
+            return;
+        };
+        let parent_pinned = self
+            .state
+            .pinned_dir_ids
+            .get(&worktree_id)
+            .is_some_and(|pinned_dir_ids| pinned_dir_ids.binary_search(&parent_id).is_ok());
         let is_visible = self
             .state
             .visible_entries
@@ -4048,21 +4093,15 @@ impl ProjectPanel {
                     .find(|current| current.id == entry_id)
             })
             .is_some();
-        if is_visible {
+
+        if partial_collapse && parent_pinned && is_visible {
             return;
         }
+
+        self.state.expanding_path = self.project.read(cx).path_for_entry(parent_id, cx);
+        self.state.collapsing_path = None;
         self.project.update(cx, |project, cx| {
-            if let Some(worktree) = project.worktree_for_id(worktree_id, cx)
-                && let Some(entry) = worktree.read(cx).entry_for_id(entry_id)
-                && let Some(parent) = entry
-                    .path
-                    .parent()
-                    .and_then(|path| worktree.read(cx).entry_for_path(path))
-            {
-                self.state.expanding_path = project.path_for_entry(parent.id, cx);
-                self.state.collapsing_path = None;
-                project.expand_entry(worktree_id, parent.id, cx);
-            }
+            project.expand_entry(worktree_id, parent_id, cx);
         });
     }
 
