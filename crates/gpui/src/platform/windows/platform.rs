@@ -93,7 +93,7 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new() -> Result<Self> {
+    pub(crate) fn new(liveness: std::sync::Weak<()>) -> Result<Self> {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
@@ -148,7 +148,7 @@ impl WindowsPlatform {
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let foreground_executor = ForegroundExecutor::new(dispatcher, liveness);
 
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
@@ -845,6 +845,11 @@ impl WindowsPlatformInner {
                     let peek_msg = |msg: &mut _, msg_kind| unsafe {
                         PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
                     };
+                    // We need to process a paint message here as otherwise we will re-enter `run_foreground_task` before painting if we have work remaining.
+                    // The reason for this is that windows prefers custom application message processing over system messages.
+                    if peek_msg(&mut msg, PM_QS_PAINT) {
+                        process_message(&msg);
+                    }
                     while peek_msg(&mut msg, PM_QS_INPUT) {
                         process_message(&msg);
                     }

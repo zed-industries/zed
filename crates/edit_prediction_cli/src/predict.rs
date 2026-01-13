@@ -1,7 +1,7 @@
 use crate::{
     PredictionProvider, PromptFormat,
     anthropic_client::AnthropicClient,
-    example::{Example, ExamplePrediction},
+    example::{Example, ExamplePrediction, ExamplePrompt},
     format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
@@ -123,6 +123,13 @@ pub async fn run_prediction(
 
                         if let Some(prompt) = request.prompt {
                             fs::write(run_dir.join("prediction_prompt.md"), &prompt)?;
+                            if provider == PredictionProvider::Zeta2 {
+                                updated_example.prompt.get_or_insert(ExamplePrompt {
+                                    input: prompt,
+                                    expected_output: String::new(),
+                                    format: PromptFormat::Zeta2,
+                                });
+                            }
                         }
                     }
                     DebugEvent::EditPredictionFinished(request) => {
