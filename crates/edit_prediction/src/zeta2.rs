@@ -80,7 +80,7 @@ pub fn request_prediction_with_zeta2(
                 prompt,
                 temperature: None,
                 stop: vec![],
-                max_tokens: None,
+                max_tokens: 1024,
             };
 
             log::trace!("Sending edit prediction request");

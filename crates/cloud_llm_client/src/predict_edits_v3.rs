@@ -219,7 +219,7 @@ impl Sub for Line {
 pub struct RawCompletionRequest {
     pub model: String,
     pub prompt: String,
-    pub max_tokens: Option<u32>,
+    pub max_tokens: u32,
     pub temperature: Option<f32>,
     pub stop: Vec<Cow<'static, str>>,
 }

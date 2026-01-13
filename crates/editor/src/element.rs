@@ -10164,6 +10164,11 @@ impl Element for EditorElement {
                     } else {
                         None
                     };
+                    self.editor.update(cx, |editor, _| {
+                        editor.scroll_manager.set_sticky_header_line_count(
+                            sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
+                        );
+                    });
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
                         text_hitbox.origin,

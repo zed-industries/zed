@@ -4,7 +4,7 @@ use acp_thread::{
     RetryStatus, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
-use action_log::ActionLogTelemetry;
+use action_log::{ActionLog, ActionLogTelemetry};
 use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -20,7 +20,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt};
+use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -45,7 +45,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
-use text::ToPoint as _;
+use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DiffStat, Disclosure,
@@ -71,8 +71,8 @@ use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, Usag
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
     ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenHistory, QueueMessage, RejectAll, RejectOnce, SendNextQueuedMessage,
-    ToggleBurnMode, ToggleProfileSelector,
+    KeepAll, NewThread, OpenAgentDiff, OpenHistory, QueueMessage, RejectAll, RejectOnce,
+    SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
@@ -4419,6 +4419,7 @@ impl AcpThreadView {
     ) -> Option<AnyElement> {
         let thread = thread_entity.read(cx);
         let action_log = thread.action_log();
+        let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let plan = thread.plan();
 
@@ -4432,6 +4433,8 @@ impl AcpThreadView {
         // bug to be that sometimes it's enabled when it shouldn't be, which at least doesn't
         // block you from using the panel.
         let pending_edits = false;
+
+        let use_keep_reject_buttons = !cx.has_flag::<AgentV2FeatureFlag>();
 
         v_flex()
             .mt_1()
@@ -4461,10 +4464,18 @@ impl AcpThreadView {
                     &changed_buffers,
                     self.edits_expanded,
                     pending_edits,
+                    use_keep_reject_buttons,
                     cx,
                 ))
                 .when(self.edits_expanded, |parent| {
-                    parent.child(self.render_edited_files(&changed_buffers, cx))
+                    parent.child(self.render_edited_files(
+                        action_log,
+                        telemetry.clone(),
+                        &changed_buffers,
+                        pending_edits,
+                        use_keep_reject_buttons,
+                        cx,
+                    ))
                 })
             })
             .when(!self.message_queue.is_empty(), |this| {
@@ -4640,8 +4651,11 @@ impl AcpThreadView {
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
+        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> Div {
+        const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
+
         let focus_handle = self.focus_handle(cx);
 
         h_flex()
@@ -4719,22 +4733,91 @@ impl AcpThreadView {
                         cx.notify();
                     })),
             )
-            .child(
-                Button::new("review-changes", "Review Changes")
-                    .label_size(LabelSize::Small)
-                    .key_binding(
-                        KeyBinding::for_action_in(&git_ui::project_diff::Diff, &focus_handle, cx)
+            .when(use_keep_reject_buttons, |this| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("review-changes", IconName::ListTodo)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Review Changes",
+                                            &OpenAgentDiff,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
+                                })),
+                        )
+                        .child(Divider::vertical().color(DividerColor::Border))
+                        .child(
+                            Button::new("reject-all-changes", "Reject All")
+                                .label_size(LabelSize::Small)
+                                .disabled(pending_edits)
+                                .when(pending_edits, |this| {
+                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                                })
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &RejectAll,
+                                        &focus_handle.clone(),
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.reject_all(&RejectAll, window, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("keep-all-changes", "Keep All")
+                                .label_size(LabelSize::Small)
+                                .disabled(pending_edits)
+                                .when(pending_edits, |this| {
+                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                                })
+                                .key_binding(
+                                    KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.keep_all(&KeepAll, window, cx);
+                                })),
+                        ),
+                )
+            })
+            .when(!use_keep_reject_buttons, |this| {
+                this.child(
+                    Button::new("review-changes", "Review Changes")
+                        .label_size(LabelSize::Small)
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &git_ui::project_diff::Diff,
+                                &focus_handle,
+                                cx,
+                            )
                             .map(|kb| kb.size(rems_from_px(10.))),
-                    )
-                    .on_click(cx.listener(move |_, _, window, cx| {
-                        window.dispatch_action(git_ui::project_diff::Diff.boxed_clone(), cx);
-                    })),
-            )
+                        )
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            window.dispatch_action(git_ui::project_diff::Diff.boxed_clone(), cx);
+                        })),
+                )
+            })
     }
 
     fn render_edited_files(
         &self,
+        action_log: &Entity<ActionLog>,
+        telemetry: ActionLogTelemetry,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        pending_edits: bool,
+        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -4858,39 +4941,123 @@ impl AcpThreadView {
                                             .bg(overlay_gradient),
                                     ),
                             )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .visible_on_hover("edited-code")
-                                    .child(
-                                        Button::new("review", "Review")
-                                            .label_size(LabelSize::Small)
-                                            .on_click({
-                                                let buffer = buffer.clone();
-                                                let workspace = self.workspace.clone();
-                                                cx.listener(move |_, _, window, cx| {
-                                                    let Some(workspace) = workspace.upgrade() else {
-                                                        return;
-                                                    };
-                                                    let Some(file) = buffer.read(cx).file() else {
-                                                        return;
-                                                    };
-                                                    let project_path = project::ProjectPath {
-                                                        worktree_id: file.worktree_id(cx),
-                                                        path: file.path().clone(),
-                                                    };
-                                                    workspace.update(cx, |workspace, cx| {
-                                                        git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                                            workspace,
-                                                            project_path,
-                                                            window,
+                            .when(use_keep_reject_buttons, |parent| {
+                                parent.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .visible_on_hover("edited-code")
+                                        .child(
+                                            Button::new("review", "Review")
+                                                .label_size(LabelSize::Small)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    let workspace = self.workspace.clone();
+                                                    cx.listener(move |_, _, window, cx| {
+                                                        let Some(workspace) = workspace.upgrade() else {
+                                                            return;
+                                                        };
+                                                        let Some(file) = buffer.read(cx).file() else {
+                                                            return;
+                                                        };
+                                                        let project_path = project::ProjectPath {
+                                                            worktree_id: file.worktree_id(cx),
+                                                            path: file.path().clone(),
+                                                        };
+                                                        workspace.update(cx, |workspace, cx| {
+                                                            git_ui::project_diff::ProjectDiff::deploy_at_project_path(
+                                                                workspace,
+                                                                project_path,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    })
+                                                }),
+                                        )
+                                        .child(Divider::vertical().color(DividerColor::BorderVariant))
+                                        .child(
+                                            Button::new("reject-file", "Reject")
+                                                .label_size(LabelSize::Small)
+                                                .disabled(pending_edits)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    let action_log = action_log.clone();
+                                                    let telemetry = telemetry.clone();
+                                                    move |_, _, cx| {
+                                                        action_log.update(cx, |action_log, cx| {
+                                                            action_log
+                                                        .reject_edits_in_ranges(
+                                                            buffer.clone(),
+                                                            vec![Anchor::min_max_range_for_buffer(
+                                                                buffer.read(cx).remote_id(),
+                                                            )],
+                                                            Some(telemetry.clone()),
                                                             cx,
-                                                        );
-                                                    });
-                                                })
-                                            }),
-                                    ),
-                            );
+                                                        )
+                                                        .detach_and_log_err(cx);
+                                                        })
+                                                    }
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("keep-file", "Keep")
+                                                .label_size(LabelSize::Small)
+                                                .disabled(pending_edits)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    let action_log = action_log.clone();
+                                                    let telemetry = telemetry.clone();
+                                                    move |_, _, cx| {
+                                                        action_log.update(cx, |action_log, cx| {
+                                                            action_log.keep_edits_in_range(
+                                                                buffer.clone(),
+                                                                Anchor::min_max_range_for_buffer(
+                                                                    buffer.read(cx).remote_id(),
+                                                                ),
+                                                                Some(telemetry.clone()),
+                                                                cx,
+                                                            );
+                                                        })
+                                                    }
+                                                }),
+                                        ),
+                                )
+                            })
+                            .when(!use_keep_reject_buttons, |parent| {
+                                parent.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .visible_on_hover("edited-code")
+                                        .child(
+                                            Button::new("review", "Review")
+                                                .label_size(LabelSize::Small)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    let workspace = self.workspace.clone();
+                                                    cx.listener(move |_, _, window, cx| {
+                                                        let Some(workspace) = workspace.upgrade() else {
+                                                            return;
+                                                        };
+                                                        let Some(file) = buffer.read(cx).file() else {
+                                                            return;
+                                                        };
+                                                        let project_path = project::ProjectPath {
+                                                            worktree_id: file.worktree_id(cx),
+                                                            path: file.path().clone(),
+                                                        };
+                                                        workspace.update(cx, |workspace, cx| {
+                                                            git_ui::project_diff::ProjectDiff::deploy_at_project_path(
+                                                                workspace,
+                                                                project_path,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    })
+                                                }),
+                                        ),
+                                )
+                            });
 
                         Some(element)
                     }),
