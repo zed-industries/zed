@@ -1100,41 +1100,6 @@ pub(crate) struct DiffReviewOverlay {
     _subscription: Subscription,
 }
 
-/// Data for a pending diff review comment waiting to be sent to the agent panel.
-#[derive(Clone)]
-pub struct PendingDiffReview {
-    /// The comment text entered by the user.
-    pub comment: String,
-    /// The code range being reviewed as anchors.
-    pub anchor_range: Range<Anchor>,
-    /// The buffer containing the code being reviewed.
-    pub buffer: Entity<MultiBuffer>,
-}
-
-/// Global storage for pending diff review data.
-/// This is needed because the editor with the overlay might be nested inside
-/// other views (like ProjectDiff -> SplittableEditor -> Editor) and not directly
-/// accessible via workspace.items_of_type::<Editor>().
-struct GlobalPendingDiffReview(Option<PendingDiffReview>);
-
-impl gpui::Global for GlobalPendingDiffReview {}
-
-impl PendingDiffReview {
-    /// Stores a pending diff review in the global state.
-    pub fn set_global(review: PendingDiffReview, cx: &mut App) {
-        cx.set_global(GlobalPendingDiffReview(Some(review)));
-    }
-
-    /// Takes the pending diff review from the global state, if any.
-    pub fn take_global(cx: &mut App) -> Option<PendingDiffReview> {
-        if cx.has_global::<GlobalPendingDiffReview>() {
-            cx.global_mut::<GlobalPendingDiffReview>().0.take()
-        } else {
-            None
-        }
-    }
-}
-
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1306,8 +1271,6 @@ pub struct Editor {
     stored_review_comments: HashMap<DiffHunkKey, Vec<StoredReviewComment>>,
     /// Counter for generating unique comment IDs.
     next_review_comment_id: usize,
-    /// Pending diff review data waiting to be sent to the agent panel.
-    pending_diff_review: Option<PendingDiffReview>,
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
@@ -2476,7 +2439,6 @@ impl Editor {
             diff_review_overlay: None,
             stored_review_comments: HashMap::default(),
             next_review_comment_id: 0,
-            pending_diff_review: None,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
@@ -21010,6 +20972,16 @@ impl Editor {
         }
     }
 
+    /// Action handler for SubmitDiffReviewComment.
+    pub fn submit_diff_review_comment_action(
+        &mut self,
+        _: &SubmitDiffReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.submit_diff_review_comment(window, cx);
+    }
+
     /// Stores the diff review comment locally.
     /// Comments are stored per-hunk and can later be batch-submitted to the Agent panel.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -21335,16 +21307,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.remove_review_comment(action.id, cx);
-    }
-
-    /// Returns and clears the pending diff review data, if any.
-    pub fn take_pending_diff_review(&mut self) -> Option<PendingDiffReview> {
-        self.pending_diff_review.take()
-    }
-
-    /// Returns true if there is pending diff review data.
-    pub fn has_pending_diff_review(&self) -> bool {
-        self.pending_diff_review.is_some()
     }
 
     fn render_diff_review_overlay(

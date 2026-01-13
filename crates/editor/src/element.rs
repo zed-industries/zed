@@ -503,6 +503,7 @@ impl EditorElement {
         register_action(editor, window, Editor::expand_all_diff_hunks);
         register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::toggle_review_comments_expanded);
+        register_action(editor, window, Editor::submit_diff_review_comment_action);
         register_action(editor, window, Editor::edit_review_comment);
         register_action(editor, window, Editor::delete_review_comment);
         register_action(editor, window, Editor::confirm_edit_review_comment_action);

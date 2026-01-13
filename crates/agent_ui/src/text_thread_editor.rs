@@ -10,10 +10,8 @@ use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
-    MultiBufferSnapshot, PendingDiffReview, RowExt, ToOffset as _, ToPoint as _,
-    actions::{
-        MoveToEndOfLine, Newline, SendReviewToAgent, ShowCompletions, SubmitDiffReviewComment,
-    },
+    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint as _,
+    actions::{MoveToEndOfLine, Newline, SendReviewToAgent, ShowCompletions},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
@@ -223,7 +221,6 @@ impl TextThreadEditor {
                     .register_action(TextThreadEditor::insert_selection)
                     .register_action(TextThreadEditor::copy_code)
                     .register_action(TextThreadEditor::handle_insert_dragged_files)
-                    .register_action(TextThreadEditor::handle_submit_diff_review_comment)
                     .register_action(TextThreadEditor::handle_send_review_to_agent);
             },
         )
@@ -1519,88 +1516,6 @@ impl TextThreadEditor {
         }
 
         agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
-    }
-
-    /// Handles the SubmitDiffReviewComment action dispatched from the diff review overlay.
-    /// Gets the comment from the prompt editor and code from the overlay's anchor position,
-    /// then sends both to the agent panel as a crease.
-    pub fn handle_submit_diff_review_comment(
-        workspace: &mut Workspace,
-        _: &SubmitDiffReviewComment,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        // Get the pending diff review data from the global state
-        // This is set by submit_diff_review_comment before the overlay is dismissed
-        let Some(pending) = PendingDiffReview::take_global(cx) else {
-            log::warn!("No pending diff review data found in global state");
-            return;
-        };
-
-        let comment_text = pending.comment;
-        let buffer = pending.buffer.clone();
-        let snapshot = buffer.read(cx).snapshot(cx);
-        let point_range = pending.anchor_range.start.to_point(&snapshot)
-            ..pending.anchor_range.end.to_point(&snapshot);
-
-        // Focus the agent panel
-        workspace.focus_panel::<crate::AgentPanel>(window, cx);
-
-        // Defer all the work to ensure the panel is focused and ready
-        cx.defer_in(window, move |workspace, window, cx| {
-            let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                log::warn!("No agent panel found");
-                return;
-            };
-
-            // Check if there's an active agent thread view using panel.update()
-            let has_active_thread =
-                panel.update(cx, |panel, _cx| panel.active_thread_view().is_some());
-
-            if !has_active_thread {
-                // Create a new agent thread (native agent thread, not text thread)
-                window.dispatch_action(Box::new(crate::NewThread), cx);
-            }
-
-            // Defer multiple times to ensure the new thread is fully created
-            // The NewThread action is async and may take a few event loop cycles
-            cx.defer_in(window, move |_workspace, window, cx| {
-                cx.defer_in(window, move |_workspace, window, cx| {
-                    cx.defer_in(window, move |workspace, window, cx| {
-                        let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                            log::warn!("No agent panel found in deferred callback");
-                            return;
-                        };
-
-                        panel.update(cx, |panel, cx| {
-                            if let Some(thread_view) = panel.active_thread_view().cloned() {
-                                // Create creases for the code snippet using the stored buffer and range
-                                let snapshot = buffer.read(cx).snapshot(cx);
-                                let mut creases =
-                                    selections_creases(vec![point_range.clone()], snapshot, cx);
-
-                                // Prepend the user's comment to the code text inside the crease
-                                for (code_text, crease_title) in &mut creases {
-                                    let comment_prefix = format!("{}\n\n", comment_text);
-                                    *code_text = format!("{}{}", comment_prefix, code_text);
-                                    // Update crease title to indicate it's a review comment
-                                    *crease_title = format!("Review: {}", crease_title);
-                                }
-
-                                thread_view.update(
-                                    cx,
-                                    |thread_view: &mut crate::acp::AcpThreadView, cx| {
-                                        thread_view.insert_code_crease(creases, window, cx);
-                                    },
-                                );
-                            } else {
-                                log::warn!("No active agent thread view in deferred callback");
-                            }
-                        });
-                    });
-                });
-            });
-        });
     }
 
     /// Handles the SendReviewToAgent action from the ProjectDiff toolbar.
