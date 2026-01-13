@@ -21,7 +21,7 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
     DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    Hsla, InteractiveElement, KeyContext, KeyDownEvent, ListHorizontalSizingBehavior,
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
@@ -6536,6 +6536,7 @@ impl Render for ProjectPanel {
                         .child(
                             div()
                                 .id("project-panel-blank-area")
+                                .track_focus(&self.focus_handle(cx))
                                 .block_mouse_except_scroll()
                                 .flex_grow()
                                 .when(
@@ -6642,6 +6643,38 @@ impl Render for ProjectPanel {
                                         }
                                     }),
                                 )
+                                .on_key_down(cx.listener(
+                                    |this, event: &KeyDownEvent, window, cx| {
+                                        let is_menu_key = event.keystroke.key.as_str() == "menu";
+                                        let is_shift_f10 = event.keystroke.key.as_str() == "f10"
+                                            && event.keystroke.modifiers.shift
+                                            && !event.keystroke.modifiers.control
+                                            && !event.keystroke.modifiers.alt
+                                            && !event.keystroke.modifiers.platform;
+
+                                        if is_menu_key || is_shift_f10 {
+                                            cx.stop_propagation();
+
+                                            let entry_id =
+                                                if let Some(selection) = &this.state.selection {
+                                                    selection.entry_id
+                                                } else if let Some(entry_id) =
+                                                    this.state.last_worktree_root_id
+                                                {
+                                                    entry_id
+                                                } else {
+                                                    return; // No entry to show context menu for
+                                                };
+
+                                            let mouse_pos = window.mouse_position();
+                                            let position = point(mouse_pos.x, mouse_pos.y);
+
+                                            this.deploy_context_menu(
+                                                position, entry_id, window, cx,
+                                            );
+                                        }
+                                    },
+                                ))
                                 .when(!project.is_read_only(cx), |el| {
                                     el.on_click(cx.listener(
                                         |this, event: &gpui::ClickEvent, window, cx| {
