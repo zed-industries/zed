@@ -1179,6 +1179,10 @@
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true,
+    // Whether or not to show pinned tabs in a separate row.
+    // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    // When disabled, all tabs appear in a single row (default behavior).
+    "show_pinned_tabs_in_separate_row": false,
   },
   // Settings related to the editor's tabs
   "tabs": {
