@@ -2912,10 +2912,18 @@ impl AcpThreadView {
             ToolCallStatus::WaitingForConfirmation { .. }
         );
         let is_terminal_tool = matches!(tool_call.kind, acp::ToolKind::Execute);
+
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
-
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
+        let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
+            self.entry_view_state
+                .read(cx)
+                .entry(entry_ix)
+                .and_then(|entry| entry.editor_for_diff(diff))
+                .is_some()
+                && diff.read(cx).has_revealed_range(cx)
+        });
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
@@ -3153,13 +3161,14 @@ impl AcpThreadView {
                                 tool_call,
                                 is_edit,
                                 is_cancelled_edit,
+                                has_revealed_diff,
                                 use_card_layout,
                                 window,
                                 cx,
                             ))
                             .when(is_collapsible || failed_or_canceled, |this| {
                                 let diff_for_discard =
-                                    if is_cancelled_edit && cx.has_flag::<AgentV2FeatureFlag>() {
+                                    if has_revealed_diff && is_cancelled_edit && cx.has_flag::<AgentV2FeatureFlag>() {
                                         tool_call.diffs().next().cloned()
                                     } else {
                                         None
@@ -3189,8 +3198,17 @@ impl AcpThreadView {
                                         )
                                         })
                                         .when(failed_or_canceled, |this| {
-                                            if is_cancelled_edit {
-                                                this
+                                            if is_cancelled_edit && !has_revealed_diff {
+                                                this.child(
+                                                    div()
+                                                        .id(entry_ix)
+                                                        .tooltip(Tooltip::text("Interrupted Edit"))
+                                                        .child(
+                                                            Icon::new(IconName::XCircle)
+                                                                .color(Color::Muted)
+                                                                .size(IconSize::Small),
+                                                        ),
+                                                )
                                             } else {
                                                 this.child(
                                                     Icon::new(IconName::Close)
@@ -3246,6 +3264,7 @@ impl AcpThreadView {
         tool_call: &ToolCall,
         is_edit: bool,
         has_failed: bool,
+        has_revealed_diff: bool,
         use_card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
@@ -3261,7 +3280,7 @@ impl AcpThreadView {
             Icon::new(IconName::ToolPencil)
         };
 
-        let tool_icon = if is_file && has_failed {
+        let tool_icon = if is_file && has_failed && has_revealed_diff {
             div()
                 .id(entry_ix)
                 .tooltip(Tooltip::text("Interrupted Edit"))
