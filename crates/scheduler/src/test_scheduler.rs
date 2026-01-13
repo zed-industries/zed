@@ -99,6 +99,7 @@ impl TestScheduler {
                 parking_timeout_message: None,
                 non_determinism_error: None,
                 finished: false,
+                parking_allowed_once: false,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
@@ -126,7 +127,9 @@ impl TestScheduler {
     }
 
     pub fn allow_parking(&self) {
-        self.state.lock().allow_parking = true;
+        let mut state = self.state.lock();
+        state.allow_parking = true;
+        state.parking_allowed_once = true;
     }
 
     pub fn forbid_parking(&self) {
@@ -424,11 +427,16 @@ impl TestScheduler {
 
                 let remaining = effective_deadline.saturating_duration_since(now);
                 let park_duration = remaining.min(PARK_INTERVAL);
+                let before_park = Instant::now();
                 thread::park_timeout(park_duration);
+                let elapsed = before_park.elapsed();
+
+                // Advance the test clock by the real elapsed time while parking
+                self.clock.advance(elapsed);
 
                 // Check if we were woken up (not just timed out)
                 // If there's work to do, the caller will find it
-                if now.elapsed() < park_duration {
+                if elapsed < park_duration {
                     return true;
                 }
             }
@@ -451,7 +459,7 @@ impl TestScheduler {
 fn assert_correct_thread(expected: &Thread, state: &Arc<Mutex<SchedulerState>>) {
     let current_thread = thread::current();
     let mut state = state.lock();
-    if state.allow_parking {
+    if state.parking_allowed_once {
         return;
     }
     if current_thread.id() == expected.id() {
@@ -685,6 +693,7 @@ struct SchedulerState {
     parking_timeout: Duration,
     parking_timeout_message: Option<String>,
     non_determinism_error: Option<(String, Backtrace)>,
+    parking_allowed_once: bool,
     finished: bool,
 }
 

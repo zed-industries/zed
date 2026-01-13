@@ -60,7 +60,6 @@ pub fn send_event(event: Event) {
 }
 
 pub fn init(tx: mpsc::UnboundedSender<Event>) {
-    #[cfg(not(any(feature = "test-support")))]
     TELEMETRY_QUEUE.set(tx).ok();
 }
 
