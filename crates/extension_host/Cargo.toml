@@ -43,6 +43,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
+smol.workspace = true
 task.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true

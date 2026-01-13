@@ -358,7 +358,10 @@ impl ExtensionStore {
                 ) -> futures::future::Fuse<gpui::Task<()>> {
                     if use_real_time_debounce {
                         cx.background_executor()
-                            .timer(RELOAD_DEBOUNCE_DURATION)
+                            .spawn(async move {
+                                #[allow(clippy::disallowed_methods)]
+                                smol::Timer::after(RELOAD_DEBOUNCE_DURATION).await;
+                            })
                             .fuse()
                     } else {
                         cx.background_executor()

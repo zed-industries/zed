@@ -5988,6 +5988,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "smol",
  "task",
  "telemetry",
  "tempfile",
