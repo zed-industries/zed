@@ -720,19 +720,6 @@ impl AgentPanel {
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
         {
-            let panel = workspace.panel::<Self>(cx);
-            let is_open = panel
-                .as_ref()
-                .map(|panel| panel.focus_handle(cx).contains_focused(window, cx))
-                .unwrap_or(false);
-            let telemetry_action = if is_open { "unfocus" } else { "open" };
-            telemetry::event!(
-                "Panel Button Clicked",
-                name = "AgentPanel",
-                toggle_state = !is_open,
-                source = "keyboard",
-                action = telemetry_action
-            );
             workspace.toggle_panel_focus::<Self>(window, cx);
         }
     }

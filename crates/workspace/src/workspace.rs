@@ -3167,6 +3167,16 @@ impl Workspace {
 
         let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
         let was_visible = self.is_dock_at_position_open(dock_side, cx) && !other_is_zoomed;
+
+        if let Some(panel) = self.dock_at_position(dock_side).read(cx).active_panel() {
+            let action = if was_visible { "close" } else { "open" };
+            telemetry::event!(
+                "Panel Button Clicked",
+                name = panel.persistent_name(),
+                toggle_state = !was_visible,
+                action = action
+            );
+        }
         if was_visible {
             self.save_open_dock_positions(cx);
         }
@@ -3327,6 +3337,15 @@ impl Workspace {
             did_focus_panel = !panel.panel_focus_handle(cx).contains_focused(window, cx);
             did_focus_panel
         });
+
+        let action = if did_focus_panel { "open" } else { "close" };
+        telemetry::event!(
+            "Panel Button Clicked",
+            name = T::persistent_name(),
+            toggle_state = did_focus_panel,
+            action = action
+        );
+
         did_focus_panel
     }
 
@@ -6033,48 +6052,15 @@ impl Workspace {
                 workspace.move_pane_to_border(SplitDirection::Down, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
-                let dock = this.left_dock.read(cx);
-                if let Some(panel) = dock.active_panel() {
-                    let telemetry_action = if dock.is_open() { "close" } else { "open" };
-                    telemetry::event!(
-                        "Panel Button Clicked",
-                        name = panel.persistent_name(),
-                        toggle_state = !dock.is_open(),
-                        source = "keyboard",
-                        action = telemetry_action
-                    );
-                }
                 this.toggle_dock(DockPosition::Left, window, cx);
             }))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleRightDock, window, cx| {
-                    let dock = workspace.right_dock.read(cx);
-                    if let Some(panel) = dock.active_panel() {
-                        let telemetry_action = if dock.is_open() { "close" } else { "open" };
-                        telemetry::event!(
-                            "Panel Button Clicked",
-                            name = panel.persistent_name(),
-                            toggle_state = !dock.is_open(),
-                            source = "keyboard",
-                            action = telemetry_action
-                        );
-                    }
                     workspace.toggle_dock(DockPosition::Right, window, cx);
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleBottomDock, window, cx| {
-                    let dock = workspace.bottom_dock.read(cx);
-                    if let Some(panel) = dock.active_panel() {
-                        let telemetry_action = if dock.is_open() { "close" } else { "open" };
-                        telemetry::event!(
-                            "Panel Button Clicked",
-                            name = panel.persistent_name(),
-                            toggle_state = !dock.is_open(),
-                            source = "keyboard",
-                            action = telemetry_action
-                        );
-                    }
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
                 },
             ))

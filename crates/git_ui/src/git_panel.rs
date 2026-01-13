@@ -216,19 +216,6 @@ const TREE_INDENT: f32 = 16.0;
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
-        let panel = workspace.panel::<GitPanel>(cx);
-        let is_open = panel
-            .as_ref()
-            .map(|panel| panel.focus_handle(cx).contains_focused(window, cx))
-            .unwrap_or(false);
-        let telemetry_action = if is_open { "unfocus" } else { "open" };
-        telemetry::event!(
-            "Panel Button Clicked",
-            name = "GitPanel",
-            toggle_state = !is_open,
-            source = "keyboard",
-            action = telemetry_action
-        );
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
