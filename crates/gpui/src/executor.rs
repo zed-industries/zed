@@ -320,21 +320,6 @@ impl BackgroundExecutor {
         }
     }
 
-    /// In tests, controls how long the executor will wait when parked waiting
-    /// on external events.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn allow_parking_for(&self, duration: Duration, reason: String) {
-        self.dispatcher
-            .as_test()
-            .unwrap()
-            .scheduler()
-            .allow_parking_for(duration, Some(reason));
-
-        if std::env::var("GPUI_RUN_UNTIL_PARKED_LOG").ok().as_deref() == Some("1") {
-            log::warn!("[gpui::executor] allow_parking: enabled");
-        }
-    }
-
     /// Sets the range of ticks to run before timing out in block_on.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {

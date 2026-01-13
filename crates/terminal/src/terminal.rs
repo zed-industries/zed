@@ -3146,10 +3146,6 @@ mod tests {
         let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
 
         // Wait for the command to complete naturally
-        cx.executor().allow_parking_for(
-            Duration::from_secs(5),
-            "waiting for command to complete naturally".to_string(),
-        );
         let exit_status = completion_rx
             .recv()
             .await

@@ -95,8 +95,6 @@ impl TestScheduler {
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
                 is_main_thread: true,
-                parking_timeout: Duration::from_secs(15),
-                parking_timeout_message: None,
                 non_determinism_error: None,
                 finished: false,
                 parking_allowed_once: false,
@@ -138,14 +136,6 @@ impl TestScheduler {
 
     pub fn parking_allowed(&self) -> bool {
         self.state.lock().allow_parking
-    }
-
-    /// Set the parking timeout duration and optional custom panic message.
-    /// This is intended for test use only.
-    pub fn allow_parking_for(&self, timeout: Duration, message: Option<String>) {
-        let mut state = self.state.lock();
-        state.parking_timeout = timeout;
-        state.parking_timeout_message = message;
     }
 
     pub fn is_main_thread(&self) -> bool {
@@ -387,13 +377,9 @@ impl TestScheduler {
 
     fn park(&self, deadline: Option<Instant>) -> bool {
         if self.state.lock().allow_parking {
-            // Enforce a hard timeout to prevent tests from hanging indefinitely
-            let (hard_timeout, timeout_message) = {
-                let state = self.state.lock();
-                (state.parking_timeout, state.parking_timeout_message.clone())
-            };
             let start = Instant::now();
-            let hard_deadline = start + hard_timeout;
+            // Enforce a hard timeout to prevent tests from hanging indefinitely
+            let hard_deadline = start + Duration::from_secs(15);
 
             // Use the earlier of the provided deadline or the hard timeout deadline
             let effective_deadline = deadline
@@ -407,19 +393,10 @@ impl TestScheduler {
                 if now >= effective_deadline {
                     // Check if we hit the hard timeout
                     if now >= hard_deadline {
-                        if let Some(message) = timeout_message {
-                            panic!(
-                                "Test timed out after {} seconds while parking. {}",
-                                hard_timeout.as_secs(),
-                                message
-                            );
-                        } else {
-                            panic!(
-                                "Test timed out after {} seconds while parking. \
-                                 This may indicate a deadlock or missing waker.",
-                                hard_timeout.as_secs()
-                            );
-                        }
+                        panic!(
+                            "Test timed out after 15 seconds while parking. \
+                            This may indicate a deadlock or missing waker.",
+                        );
                     }
                     // Hit the provided deadline
                     return false;
@@ -706,8 +683,6 @@ struct SchedulerState {
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
     is_main_thread: bool,
-    parking_timeout: Duration,
-    parking_timeout_message: Option<String>,
     non_determinism_error: Option<(String, Backtrace)>,
     parking_allowed_once: bool,
     finished: bool,
