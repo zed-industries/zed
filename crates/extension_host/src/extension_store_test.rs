@@ -544,12 +544,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         seconds: u64,
         future: impl std::future::Future<Output = T>,
     ) -> T {
-        executor.allow_parking_for(
-            std::time::Duration::from_secs(seconds),
-            format!(
-                "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
-            ),
-        );
+        executor.allow_parking_for(std::time::Duration::from_secs(seconds), what.to_string());
         future.await
     }
 

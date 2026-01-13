@@ -401,7 +401,11 @@ impl TestScheduler {
                     // Check if we hit the hard timeout
                     if now >= hard_deadline {
                         if let Some(message) = timeout_message {
-                            panic!("{}", message);
+                            panic!(
+                                "Test timed out after {} seconds while parking. {}",
+                                hard_timeout.as_secs(),
+                                message
+                            );
                         } else {
                             panic!(
                                 "Test timed out after {} seconds while parking. \

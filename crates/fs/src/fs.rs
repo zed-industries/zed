@@ -1066,9 +1066,11 @@ impl Fs for RealFs {
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
+                let executor = executor.clone();
                 move |_| {
                     let _ = watcher.clone();
                     let pending_paths = pending_paths.clone();
+                    let executor = executor.clone();
                     async move {
                         executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());

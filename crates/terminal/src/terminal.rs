@@ -2490,6 +2490,7 @@ mod tests {
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
         Point, TestAppContext, bounds, point, size,
     };
+    use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::ThreadRng};
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
@@ -2743,11 +2744,14 @@ mod tests {
             .unwrap();
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
-        cx.update(|cx| {
-            cx.subscribe(&terminal, move |_, e, _| {
-                event_tx.send_blocking(e.clone()).unwrap();
-            })
+        let all_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        cx.update({
+            let all_events = all_events.clone();
+            |cx| {
+                cx.subscribe(&terminal, move |_, e, _| {
+                    all_events.lock().push(e.clone());
+                })
+            }
         })
         .detach();
         let completion_check_task = cx.background_spawn(async move {
@@ -2766,19 +2770,16 @@ mod tests {
             }
         });
 
-        let mut all_events = Vec::new();
-        while let Ok(new_event) = event_rx.recv().await {
-            all_events.push(new_event.clone());
-        }
+        completion_check_task.await;
+        cx.executor().timer(Duration::from_millis(500)).await;
 
         assert!(
             !all_events
+                .lock()
                 .iter()
                 .any(|event| event == &Event::CloseTerminal),
             "Wrong shell command should update the title but not should not close the terminal to show the error message, but got events: {all_events:?}",
         );
-
-        completion_check_task.await;
     }
 
     #[test]
@@ -3145,6 +3146,10 @@ mod tests {
         let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
 
         // Wait for the command to complete naturally
+        cx.executor().allow_parking_for(
+            Duration::from_secs(5),
+            "waiting for command to complete naturally".to_string(),
+        );
         let exit_status = completion_rx
             .recv()
             .await
