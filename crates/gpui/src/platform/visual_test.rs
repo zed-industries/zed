@@ -16,7 +16,7 @@ use crate::{
 use anyhow::Result;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
-
+use rand::SeedableRng;
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -39,17 +39,19 @@ pub struct VisualTestPlatform {
 }
 
 impl VisualTestPlatform {
-    /// Creates a new VisualTestPlatform with the given random seed.
+    /// Creates a new VisualTestPlatform with the given random seed and liveness tracker.
     ///
     /// The seed is used for deterministic random number generation in the TestDispatcher.
-    pub fn new(seed: u64) -> Self {
-        let dispatcher = TestDispatcher::new(seed);
+    /// The liveness weak reference is used to track when the app is being shut down.
+    pub fn new(seed: u64, liveness: std::sync::Weak<()>) -> Self {
+        let rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let dispatcher = TestDispatcher::new(rng);
         let arc_dispatcher = Arc::new(dispatcher.clone());
 
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher, liveness.clone());
 
-        let mac_platform = MacPlatform::new(false);
+        let mac_platform = MacPlatform::new(false, liveness);
 
         Self {
             dispatcher,

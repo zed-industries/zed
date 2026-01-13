@@ -35,6 +35,7 @@ pub fn request_prediction_with_zeta2(
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer_snapshotted_at = Instant::now();
+    let url = store.custom_predict_edits_url.clone();
 
     let Some(excerpt_path) = snapshot
         .file()
@@ -80,7 +81,7 @@ pub fn request_prediction_with_zeta2(
                 prompt,
                 temperature: None,
                 stop: vec![],
-                max_tokens: None,
+                max_tokens: Some(2048),
             };
 
             log::trace!("Sending edit prediction request");
@@ -88,6 +89,7 @@ pub fn request_prediction_with_zeta2(
             let response = EditPredictionStore::send_raw_llm_request(
                 request,
                 client,
+                url,
                 llm_token,
                 app_version,
                 #[cfg(feature = "cli-support")]
