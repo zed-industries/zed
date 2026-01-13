@@ -13352,13 +13352,14 @@ impl Editor {
                     trimmed_selections.push(start..end);
                 }
 
+                let is_multiline_trim = trimmed_selections.len() > 1;
                 for trimmed_range in trimmed_selections {
                     if is_first {
                         is_first = false;
-                    } else if !prev_selection_was_entire_line {
+                    } else if is_multiline_trim || !prev_selection_was_entire_line {
                         text += "\n";
                     }
-                    prev_selection_was_entire_line = is_entire_line;
+                    prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
                     let mut len = 0;
                     for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
                         text.push_str(chunk);
