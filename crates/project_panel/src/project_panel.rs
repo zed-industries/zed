@@ -62,7 +62,11 @@ use ui::{
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
     v_flex,
 };
-use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
+use util::{
+    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    paths::compare_paths,
+    rel_path::{RelPath, RelPathBuf},
+};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
@@ -3212,13 +3216,14 @@ impl ProjectPanel {
         destination: ProjectEntryId,
         destination_is_file: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Task<Result<CreatedEntry>>> {
         if self
             .project
             .read(cx)
             .entry_is_worktree_root(entry_to_move, cx)
         {
-            self.move_worktree_root(entry_to_move, destination, cx)
+            self.move_worktree_root(entry_to_move, destination, cx);
+            None
         } else {
             self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
         }
@@ -3253,38 +3258,53 @@ impl ProjectPanel {
         destination_entry: ProjectEntryId,
         destination_is_file: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Task<Result<CreatedEntry>>> {
         if entry_to_move == destination_entry {
-            return;
+            return None;
         }
 
-        let destination_worktree = self.project.update(cx, |project, cx| {
-            let source_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_path = project.path_for_entry(destination_entry, cx)?;
+        let (destination_worktree, rename_task) = self.project.update(cx, |project, cx| {
+            let Some(source_path) = project.path_for_entry(entry_to_move, cx) else {
+                return (None, None);
+            };
+            let Some(destination_path) = project.path_for_entry(destination_entry, cx) else {
+                return (None, None);
+            };
             let destination_worktree_id = destination_path.worktree_id;
 
-            let mut destination_path = destination_path.path.as_ref();
-            if destination_is_file {
-                destination_path = destination_path.parent()?;
-            }
+            let destination_dir = if destination_is_file {
+                destination_path.path.parent().unwrap_or(RelPath::empty())
+            } else {
+                destination_path.path.as_ref()
+            };
 
-            let mut new_path = destination_path.to_rel_path_buf();
-            new_path.push(RelPath::unix(source_path.path.file_name()?).unwrap());
-            if new_path.as_rel_path() != source_path.path.as_ref() {
-                let task = project.rename_entry(
+            let Some(source_name) = source_path.path.file_name() else {
+                return (None, None);
+            };
+            let Ok(source_name) = RelPath::unix(source_name) else {
+                return (None, None);
+            };
+
+            let mut new_path = destination_dir.to_rel_path_buf();
+            new_path.push(source_name);
+            let rename_task = (new_path.as_rel_path() != source_path.path.as_ref()).then(|| {
+                project.rename_entry(
                     entry_to_move,
                     (destination_worktree_id, new_path).into(),
                     cx,
-                );
-                cx.foreground_executor().spawn(task).detach_and_log_err(cx);
-            }
+                )
+            });
 
-            project.worktree_id_for_entry(destination_entry, cx)
+            (
+                project.worktree_id_for_entry(destination_entry, cx),
+                rename_task,
+            )
         });
 
         if let Some(destination_worktree) = destination_worktree {
             self.expand_entry(destination_worktree, destination_entry, cx);
         }
+        rename_task
     }
 
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
@@ -3995,8 +4015,122 @@ impl ProjectPanel {
                 Some(())
             });
         } else {
+            let update_marks = !self.marked_entries.is_empty();
+            let active_selection = selections.active_selection;
+
+            // For folded selections, track the leaf suffix relative to the resolved
+            // entry so we can refresh it after the move completes.
+            let (folded_selection_info, folded_selection_entries): (
+                Vec<(ProjectEntryId, RelPathBuf)>,
+                HashSet<SelectedEntry>,
+            ) = {
+                let project = self.project.read(cx);
+                let mut info = Vec::new();
+                let mut folded_entries = HashSet::default();
+
+                for selection in selections.items() {
+                    let resolved_id = self.resolve_entry(selection.entry_id);
+                    if resolved_id == selection.entry_id {
+                        continue;
+                    }
+                    folded_entries.insert(*selection);
+                    let Some(source_path) = project.path_for_entry(resolved_id, cx) else {
+                        continue;
+                    };
+                    let Some(leaf_path) = project.path_for_entry(selection.entry_id, cx) else {
+                        continue;
+                    };
+                    let Ok(suffix) = leaf_path.path.strip_prefix(source_path.path.as_ref()) else {
+                        continue;
+                    };
+                    if suffix.as_unix_str().is_empty() {
+                        continue;
+                    }
+
+                    info.push((resolved_id, suffix.to_rel_path_buf()));
+                }
+                (info, folded_entries)
+            };
+
+            // Collect move tasks paired with their source entry ID so we can correlate
+            // results with folded selections that need refreshing.
+            let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
             for entry in entries {
-                self.move_entry(entry.entry_id, target_entry_id, is_file, cx);
+                if let Some(task) = self.move_entry(entry.entry_id, target_entry_id, is_file, cx) {
+                    move_tasks.push((entry.entry_id, task));
+                }
+            }
+
+            if move_tasks.is_empty() {
+                return;
+            }
+
+            if folded_selection_info.is_empty() {
+                for (_, task) in move_tasks {
+                    task.detach_and_log_err(cx);
+                }
+            } else {
+                cx.spawn_in(window, async move |project_panel, cx| {
+                    // Await all move tasks and collect successful results
+                    let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
+                    for (entry_id, task) in move_tasks {
+                        if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                            move_results.push((entry_id, new_entry));
+                        }
+                    }
+
+                    if move_results.is_empty() {
+                        return;
+                    }
+
+                    // For folded selections, we need to refresh the leaf paths (with suffixes)
+                    // because they may not be indexed yet after the parent directory was moved.
+                    // First collect the paths to refresh, then refresh them.
+                    let paths_to_refresh: Vec<(Entity<Worktree>, Arc<RelPath>)> = project_panel
+                        .update(cx, |project_panel, cx| {
+                            let project = project_panel.project.read(cx);
+                            folded_selection_info
+                                .iter()
+                                .filter_map(|(resolved_id, suffix)| {
+                                    let (_, new_entry) =
+                                        move_results.iter().find(|(id, _)| id == resolved_id)?;
+                                    let worktree = project.worktree_for_entry(new_entry.id, cx)?;
+                                    let leaf_path = new_entry.path.join(suffix);
+                                    Some((worktree, leaf_path))
+                                })
+                                .collect()
+                        })
+                        .ok()
+                        .unwrap_or_default();
+
+                    let refresh_tasks: Vec<_> = paths_to_refresh
+                        .into_iter()
+                        .filter_map(|(worktree, leaf_path)| {
+                            worktree.update(cx, |worktree, cx| {
+                                worktree
+                                    .as_local_mut()
+                                    .map(|local| local.refresh_entry(leaf_path, None, cx))
+                            })
+                        })
+                        .collect();
+
+                    for task in refresh_tasks {
+                        task.await.log_err();
+                    }
+
+                    if update_marks && !folded_selection_entries.is_empty() {
+                        project_panel
+                            .update(cx, |project_panel, cx| {
+                                project_panel.marked_entries.retain(|entry| {
+                                    !folded_selection_entries.contains(entry)
+                                        || *entry == active_selection
+                                });
+                                cx.notify();
+                            })
+                            .ok();
+                    }
+                })
+                .detach();
             }
         }
     }

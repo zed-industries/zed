@@ -57,12 +57,9 @@ impl VisualTestAppContext {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
-        // Create liveness for task cancellation
-        let liveness = Arc::new(());
-
         // Create a visual test platform that combines real Mac rendering
         // with controllable TestDispatcher for deterministic task scheduling
-        let platform = Rc::new(VisualTestPlatform::new(seed, Arc::downgrade(&liveness)));
+        let platform = Rc::new(VisualTestPlatform::new(seed));
 
         // Get the dispatcher and executors from the platform
         let dispatcher = platform.dispatcher().clone();
@@ -73,7 +70,7 @@ impl VisualTestAppContext {
 
         let http_client = http_client::FakeHttpClient::with_404_response();
 
-        let mut app = App::new_app(platform.clone(), liveness, asset_source, http_client);
+        let mut app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
