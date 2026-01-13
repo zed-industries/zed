@@ -1351,4 +1351,12 @@
       "ctrl-shift-0": "image_viewer::FitToView",
     },
   },
+  {
+    "context": "GitPicker",
+    "bindings": {
+      "alt-1": "git_picker::ActivateBranchesTab",
+      "alt-2": "git_picker::ActivateWorktreesTab",
+      "alt-3": "git_picker::ActivateStashTab",
+    },
+  },
 ]

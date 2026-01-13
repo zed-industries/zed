@@ -7,9 +7,9 @@ use crate::{
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
+    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -36,6 +36,7 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
@@ -60,7 +61,7 @@ use multi_buffer::{
 
 use edit_prediction_types::EditPredictionGranularity;
 use project::{
-    Entry, ProjectPath,
+    DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
@@ -1266,7 +1267,60 @@ impl EditorElement {
             }
         }
 
-        let breakpoint_indicator = if gutter_hovered {
+        // Handle diff review indicator when gutter is hovered in diff mode with AI enabled
+        let show_diff_review = editor.show_diff_review_button()
+            && cx.has_flag::<DiffReviewFeatureFlag>()
+            && !DisableAiSettings::get_global(cx).disable_ai;
+
+        let diff_review_indicator = if gutter_hovered && show_diff_review {
+            let is_visible = editor
+                .gutter_diff_review_indicator
+                .0
+                .is_some_and(|indicator| indicator.is_active);
+
+            if !is_visible {
+                editor
+                    .gutter_diff_review_indicator
+                    .1
+                    .get_or_insert_with(|| {
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+
+                            this.update(cx, |this, cx| {
+                                if let Some(indicator) =
+                                    this.gutter_diff_review_indicator.0.as_mut()
+                                {
+                                    indicator.is_active = true;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                        })
+                    });
+            }
+
+            Some(PhantomDiffReviewIndicator {
+                display_row: valid_point.row(),
+                is_active: is_visible,
+            })
+        } else {
+            editor.gutter_diff_review_indicator.1 = None;
+            None
+        };
+
+        if diff_review_indicator != editor.gutter_diff_review_indicator.0 {
+            editor.gutter_diff_review_indicator.0 = diff_review_indicator;
+            cx.notify();
+        }
+
+        // Don't show breakpoint indicator when diff review indicator is active on this row
+        let is_on_diff_review_button_row = diff_review_indicator.is_some_and(|indicator| {
+            indicator.is_active && indicator.display_row == valid_point.row()
+        });
+
+        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -3013,7 +3067,7 @@ impl EditorElement {
                     let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -3027,6 +3081,50 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    fn should_render_diff_review_button(
+        &self,
+        range: Range<DisplayRow>,
+        row_infos: &[RowInfo],
+        cx: &App,
+    ) -> Option<DisplayRow> {
+        if !cx.has_flag::<DiffReviewFeatureFlag>() {
+            return None;
+        }
+
+        let show_diff_review_button = self.editor.read(cx).show_diff_review_button();
+        if !show_diff_review_button {
+            return None;
+        }
+
+        let indicator = self.editor.read(cx).gutter_diff_review_indicator.0?;
+        if !indicator.is_active {
+            return None;
+        }
+
+        let display_row = indicator.display_row;
+
+        // Don't show on rows with expand excerpt buttons
+        if row_infos
+            .get((display_row.0.saturating_sub(range.start.0)) as usize)
+            .is_some_and(|row_info| row_info.expand_info.is_some())
+        {
+            return None;
+        }
+
+        Some(display_row)
+    }
+
+    fn diff_review_button() -> AnyElement {
+        IconButton::new("diff_review_button", ui::IconName::Plus)
+            .icon_size(ui::IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(ui::Color::Default)
+            .style(ui::ButtonStyle::Filled)
+            .layer(ui::ElevationIndex::Surface)
+            .tooltip(Tooltip::text("Add Review"))
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3115,16 +3213,17 @@ impl EditorElement {
                         return None;
                     }
 
+                    let removed_breakpoint = breakpoints.remove(&display_row);
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
-                        breakpoints.remove(&display_row),
+                        removed_breakpoint,
                         cx,
                     );
 
                     let button = prepaint_gutter_button(
-                        button,
+                        button.into_any_element(),
                         display_row,
                         line_height,
                         gutter_dimensions,
@@ -3242,7 +3341,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
-        relative_line_base: Option<DisplayRow>,
+        current_selection_head: Option<DisplayRow>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -3257,9 +3356,14 @@ impl EditorElement {
         let relative = self.editor.read(cx).relative_line_numbers(cx);
 
         let relative_line_numbers_enabled = relative.enabled();
-        let relative_rows = if relative_line_numbers_enabled && let Some(base) = relative_line_base
+        let relative_rows = if relative_line_numbers_enabled
+            && let Some(current_selection_head) = current_selection_head
         {
-            snapshot.calculate_relative_line_numbers(&rows, base, relative.wrapped())
+            snapshot.calculate_relative_line_numbers(
+                &rows,
+                current_selection_head,
+                relative.wrapped(),
+            )
         } else {
             Default::default()
         };
@@ -4671,12 +4775,13 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
+                let start_display_row = start_point.to_display_point(snapshot).row();
                 let relative_number = relative_to
                     .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
                     .map(|base| {
-                        snapshot.relative_line_delta_to_point(
+                        snapshot.relative_line_delta(
                             base,
-                            start_point,
+                            start_display_row,
                             relative_line_numbers == RelativeLineNumbers::Wrapped,
                         )
                     });
@@ -6470,6 +6575,10 @@ impl EditorElement {
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
             }
+
+            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
+                diff_review_button.paint(window, cx);
+            }
         });
     }
 
@@ -8238,7 +8347,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    button: IconButton,
+    mut button: AnyElement,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
@@ -8248,8 +8357,6 @@ fn prepaint_gutter_button(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let mut button = button.into_any_element();
-
     let available_space = size(
         AvailableSpace::MinContent,
         AvailableSpace::Definite(line_height),
@@ -8276,11 +8383,7 @@ fn prepaint_gutter_button(
         .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
     let left_offset = blame_width.max(gutter_width).unwrap_or_default();
 
-    let mut x = left_offset;
-    let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
-        - indicator_size.width
-        - left_offset;
-    x += available_width / 2.;
+    let x = left_offset;
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
@@ -9681,7 +9784,7 @@ impl Element for EditorElement {
                         );
 
                     // relative rows are based on newest selection, even outside the visible area
-                    let relative_row_base = self.editor.update(cx, |editor, cx| {
+                    let current_selection_head = self.editor.update(cx, |editor, cx| {
                         (editor.selections.count() != 0).then(|| {
                             let newest = editor
                                 .selections
@@ -9719,7 +9822,7 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &row_infos,
                         &active_rows,
-                        relative_row_base,
+                        current_selection_head,
                         &snapshot,
                         window,
                         cx,
@@ -10054,13 +10157,18 @@ impl Element for EditorElement {
                             &text_hitbox,
                             &style,
                             relative,
-                            relative_row_base,
+                            current_selection_head,
                             window,
                             cx,
                         )
                     } else {
                         None
                     };
+                    self.editor.update(cx, |editor, _| {
+                        editor.scroll_manager.set_sticky_header_line_count(
+                            sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
+                        );
+                    });
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
                         text_hitbox.origin,
@@ -10331,6 +10439,22 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let diff_review_button = self
+                        .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
+                        .map(|display_row| {
+                            prepaint_gutter_button(
+                                Self::diff_review_button(),
+                                display_row,
+                                line_height,
+                                &gutter_dimensions,
+                                scroll_position,
+                                &gutter_hitbox,
+                                &display_hunks,
+                                window,
+                                cx,
+                            )
+                        });
+
                     self.layout_signature_help(
                         &hitbox,
                         content_origin,
@@ -10528,6 +10652,7 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
+                        diff_review_button,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -10706,6 +10831,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
+    diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,
@@ -11850,7 +11976,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
     };
     use gpui::{TestAppContext, VisualTestContext};
-    use language::language_settings;
+    use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
     use std::num::NonZeroU32;
     use util::test::sample_text;
@@ -12059,6 +12185,98 @@ mod tests {
             layouts.get(&MultiBufferRow(DELETED_LINE)).is_none(),
             "Deleted line should not have a line number"
         );
+    }
+
+    #[gpui::test]
+    async fn test_layout_line_numbers_with_folded_lines(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let python_lang = languages::language("python", tree_sitter_python::LANGUAGE.into());
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = cx.new(|cx| {
+                Buffer::local(
+                    indoc::indoc! {"
+                        fn test() -> int {
+                            return 2;
+                        }
+
+                        fn another_test() -> int {
+                            # This is a very peculiar method that is hard to grasp.
+                            return 4;
+                        }
+                    "},
+                    cx,
+                )
+                .with_language(python_lang, cx)
+            });
+
+            let buffer = MultiBuffer::build_from_buffer(buffer, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| {
+                editor.fold_at(MultiBufferRow(0), window, cx);
+                editor.snapshot(window, cx)
+            })
+            .unwrap();
+
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::default(),
+                    Some(DisplayRow(3)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 6);
+
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                snapshot.calculate_relative_line_numbers(
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    DisplayRow(3),
+                    false,
+                )
+            })
+            .unwrap();
+        assert_eq!(relative_rows[&DisplayRow(0)], 3);
+        assert_eq!(relative_rows[&DisplayRow(1)], 2);
+        assert_eq!(relative_rows[&DisplayRow(2)], 1);
+        // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
+        assert_eq!(relative_rows[&DisplayRow(4)], 1);
+        assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }
 
     #[gpui::test]
