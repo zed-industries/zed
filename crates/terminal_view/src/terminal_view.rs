@@ -1580,10 +1580,10 @@ impl SearchableItem for TerminalView {
     }
 }
 
-///Gets the working directory for the given workspace, respecting the user's settings.
-/// None implies "~" on whichever machine we end up on.
+/// Gets the working directory for the given workspace, respecting the user's settings.
+/// Falls back to home directory when no project directory is available.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    match &TerminalSettings::get_global(cx).working_directory {
+    let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => workspace
             .project()
             .read(cx)
@@ -1593,13 +1593,12 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
             .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => {
-            shellexpand::full(&directory) //TODO handle this better
-                .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                .filter(|dir| dir.is_dir())
-        }
-    }
+        WorkingDirectory::Always { directory } => shellexpand::full(directory)
+            .ok()
+            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .filter(|dir| dir.is_dir()),
+    };
+    directory.or_else(dirs::home_dir)
 }
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
@@ -1637,7 +1636,7 @@ mod tests {
             assert!(workspace.worktrees(cx).next().is_none());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, dirs::home_dir());
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
         });
