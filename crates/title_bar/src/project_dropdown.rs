@@ -141,7 +141,7 @@ impl ProjectDropdown {
                                 .icon_color(Color::Muted)
                                 .tooltip(move |_, cx| {
                                     Tooltip::for_action_in(
-                                        "Remove Project",
+                                        "Remove Folder",
                                         &RemoveSelectedFolder,
                                         &menu_focus_handle,
                                         cx,
