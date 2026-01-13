@@ -7,7 +7,7 @@ use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
-use futures::{AsyncReadExt, StreamExt, io::BufReader};
+use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
@@ -544,8 +544,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         seconds: u64,
         future: impl std::future::Future<Output = T>,
     ) -> T {
-        executor.allow_parking_for(std::time::Duration::from_secs(seconds), what.to_string());
-        future.await
+        let timeout = executor.timer(std::time::Duration::from_secs(seconds));
+
+        futures::select! {
+            output = future.fuse() => output,
+            _ = futures::FutureExt::fuse(timeout) => panic!(
+            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
+        )
+        }
     }
 
     let root_dir = Path::new(env!("CARGO_MANIFEST_DIR"))

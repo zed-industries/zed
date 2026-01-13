@@ -434,6 +434,18 @@ impl TestScheduler {
                 // Advance the test clock by the real elapsed time while parking
                 self.clock.advance(elapsed);
 
+                // Check if any timers have expired after advancing the clock.
+                // If so, return so the caller can process them.
+                if self
+                    .state
+                    .lock()
+                    .timers
+                    .first()
+                    .map_or(false, |t| t.expiration <= self.clock.now())
+                {
+                    return true;
+                }
+
                 // Check if we were woken up (not just timed out)
                 // If there's work to do, the caller will find it
                 if elapsed < park_duration {
@@ -539,8 +551,12 @@ impl Scheduler for TestScheduler {
 
             let stepped = stepped.unwrap_or(true);
             let awoken = awoken.swap(false, SeqCst);
-            if !stepped && !awoken && !self.advance_clock_to_next_timer() {
-                if !self.park(deadline) {
+            if !stepped && !awoken {
+                let parking_allowed = self.state.lock().allow_parking;
+                // In deterministic mode (parking forbidden), instantly jump to the next timer.
+                // In non-deterministic mode (parking allowed), let real time pass instead.
+                let advanced_to_timer = !parking_allowed && self.advance_clock_to_next_timer();
+                if !advanced_to_timer && !self.park(deadline) {
                     break;
                 }
             }

@@ -2811,8 +2811,7 @@ mod tests {
 
         // Wait for the printf command to execute and produce output
         // Use real time since parking is enabled
-        #[allow(clippy::disallowed_methods)]
-        smol::Timer::after(Duration::from_millis(500)).await;
+        cx.executor().timer(Duration::from_millis(500)).await;
 
         // Get the acp_thread Terminal and kill it
         let wait_for_exit = thread.update(cx, |thread, cx| {
