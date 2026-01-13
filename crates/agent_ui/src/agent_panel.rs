@@ -249,6 +249,7 @@ pub enum AgentType {
     Gemini,
     ClaudeCode,
     Codex,
+    Copilot,
     Custom {
         name: SharedString,
     },
@@ -261,6 +262,7 @@ impl AgentType {
             Self::Gemini => "Gemini CLI".into(),
             Self::ClaudeCode => "Claude Code".into(),
             Self::Codex => "Codex".into(),
+            Self::Copilot => "GitHub Copilot".into(),
             Self::Custom { name, .. } => name.into(),
         }
     }
@@ -271,6 +273,7 @@ impl AgentType {
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
             Self::Codex => Some(IconName::AiOpenAi),
+            Self::Copilot => Some(IconName::Copilot),
             Self::Custom { .. } => Some(IconName::Sparkle),
         }
     }
@@ -282,6 +285,7 @@ impl From<ExternalAgent> for AgentType {
             ExternalAgent::Gemini => Self::Gemini,
             ExternalAgent::ClaudeCode => Self::ClaudeCode,
             ExternalAgent::Codex => Self::Codex,
+            ExternalAgent::Copilot => Self::Copilot,
             ExternalAgent::Custom { name } => Self::Custom { name },
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
@@ -971,6 +975,7 @@ impl AgentPanel {
             AgentType::Gemini
             | AgentType::ClaudeCode
             | AgentType::Codex
+            | AgentType::Copilot
             | AgentType::Custom { .. } => None,
         }
     }
@@ -1500,6 +1505,11 @@ impl AgentPanel {
                 self.selected_agent = AgentType::Codex;
                 self.serialize(cx);
                 self.external_thread(Some(crate::ExternalAgent::Codex), None, None, window, cx)
+            }
+            AgentType::Copilot => {
+                self.selected_agent = AgentType::Copilot;
+                self.serialize(cx);
+                self.external_thread(Some(crate::ExternalAgent::Copilot), None, None, window, cx)
             }
             AgentType::Custom { name } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name }),
@@ -2222,6 +2232,35 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_agent_thread(
                                                                 AgentType::ClaudeCode,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("GitHub Copilot")
+                                    .when(is_agent_selected(AgentType::Copilot), |this| {
+                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    })
+                                    .icon(IconName::Copilot)
+                                    .disabled(is_via_collab)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_agent_thread(
+                                                                AgentType::Copilot,
                                                                 window,
                                                                 cx,
                                                             );

@@ -426,6 +426,11 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     path: Some("codex-acp".into()),
                     ..Default::default()
                 }),
+                copilot: Some(BuiltinAgentServerSettings {
+                    path: Some("copilot".into()),
+                    args: Some(vec!["--acp".into()]),
+                    ..Default::default()
+                }),
                 custom: collections::HashMap::default(),
             },
             cx,

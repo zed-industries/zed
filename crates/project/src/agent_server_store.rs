@@ -642,6 +642,18 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
+        self.external_agents.insert(
+            GITHUB_COPILOT_NAME.into(),
+            Box::new(LocalCopilot {
+                fs: fs.clone(),
+                node_runtime: node_runtime.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .copilot
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+            }),
+        );
         self.external_agents
             .extend(
                 new_settings
@@ -1530,6 +1542,75 @@ impl ExternalAgentServer for LocalClaudeCode {
     }
 }
 
+struct LocalCopilot {
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+    project_environment: Entity<ProjectEnvironment>,
+    custom_command: Option<AgentServerCommand>,
+}
+
+impl ExternalAgentServer for LocalCopilot {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        status_tx: Option<watch::Sender<SharedString>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let fs = self.fs.clone();
+        let node_runtime = self.node_runtime.clone();
+        let project_environment = self.project_environment.downgrade();
+        let custom_command = self.custom_command.clone();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
+                })?
+                .await
+                .unwrap_or_default();
+
+            let mut command = if let Some(mut custom_command) = custom_command {
+                env.extend(custom_command.env.unwrap_or_default());
+                custom_command.env = Some(env);
+                custom_command
+            } else {
+                let mut command = get_or_npm_install_builtin_agent(
+                    "copilot".into(),
+                    "@github/copilot".into(),
+                    "node_modules/@github/copilot/npm-loader.js".into(),
+                    Some("0.0.378".parse().unwrap()),
+                    status_tx,
+                    new_version_available_tx,
+                    fs,
+                    node_runtime,
+                    cx,
+                )
+                .await?;
+                command.env = Some(env);
+                command
+            };
+
+            command.env.get_or_insert_default().extend(extra_env);
+            command.args.push("--acp".into());
+            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 struct LocalCodex {
     fs: Arc<dyn Fs>,
     project_environment: Entity<ProjectEnvironment>,
@@ -2006,12 +2087,14 @@ impl ExternalAgentServer for LocalCustomAgent {
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 pub const CODEX_NAME: &'static str = "codex";
+pub const GITHUB_COPILOT_NAME: &'static str = "copilot";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
     pub codex: Option<BuiltinAgentServerSettings>,
+    pub copilot: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
@@ -2242,6 +2325,7 @@ impl settings::Settings for AllAgentServersSettings {
         Self {
             gemini: agent_settings.gemini.map(Into::into),
             claude: agent_settings.claude.map(Into::into),
+            copilot: agent_settings.copilot.map(Into::into),
             codex: agent_settings.codex.map(Into::into),
             custom: agent_settings
                 .custom

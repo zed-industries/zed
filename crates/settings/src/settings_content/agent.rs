@@ -333,6 +333,7 @@ pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
     pub codex: Option<BuiltinAgentServerSettings>,
+    pub copilot: Option<BuiltinAgentServerSettings>,
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]

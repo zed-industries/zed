@@ -1,6 +1,7 @@
 mod acp;
 mod claude;
 mod codex;
+mod copilot;
 mod custom;
 mod gemini;
 
@@ -11,6 +12,7 @@ pub use claude::*;
 use client::ProxySettings;
 pub use codex::*;
 use collections::{HashMap, HashSet};
+pub use copilot::*;
 pub use custom::*;
 use fs::Fs;
 pub use gemini::*;
