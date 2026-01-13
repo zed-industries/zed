@@ -1264,7 +1264,9 @@ pub struct Editor {
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
-    pub(crate) diff_review_overlay: Option<DiffReviewOverlay>,
+    /// Active diff review overlays. Multiple overlays can be open simultaneously
+    /// when hunks have comments stored.
+    pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
     /// Stored review comments grouped by hunk.
     /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
     /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
@@ -2436,7 +2438,7 @@ impl Editor {
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
-            diff_review_overlay: None,
+            diff_review_overlays: Vec::new(),
             stored_review_comments: Vec::new(),
             next_review_comment_id: 0,
             hovered_diff_hunk_row: None,
@@ -4353,8 +4355,8 @@ impl Editor {
         dismissed |= self.mouse_context_menu.take().is_some();
         dismissed |= is_user_requested && self.discard_edit_prediction(true, cx);
         dismissed |= self.snippet_stack.pop().is_some();
-        if self.diff_review_overlay.is_some() {
-            self.dismiss_diff_review_overlay(cx);
+        if !self.diff_review_overlays.is_empty() {
+            self.dismiss_all_diff_review_overlays(cx);
             dismissed = true;
         }
 
@@ -20896,8 +20898,37 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Dismiss any existing overlay first
-        self.dismiss_diff_review_overlay(cx);
+        // Check if there's already an overlay for the same hunk - if so, just focus it
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let editor_snapshot = self.snapshot(window, cx);
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_point = editor_snapshot
+            .display_snapshot
+            .display_point_to_point(display_point, Bias::Left);
+
+        // Compute the hunk key for this display row
+        let file_path = buffer_snapshot
+            .file_at(Point::new(buffer_point.row, 0))
+            .map(|file: &Arc<dyn language::File>| file.path().clone())
+            .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
+        let hunk_start_anchor = buffer_snapshot.anchor_before(Point::new(buffer_point.row, 0));
+        let new_hunk_key = DiffHunkKey {
+            file_path,
+            hunk_start_anchor,
+        };
+
+        // Check if we already have an overlay for this hunk
+        if let Some(existing_overlay) = self.diff_review_overlays.iter().find(|overlay| {
+            Self::hunk_keys_match(&overlay.hunk_key, &new_hunk_key, &buffer_snapshot)
+        }) {
+            // Just focus the existing overlay's prompt editor
+            let focus_handle = existing_overlay.prompt_editor.focus_handle(cx);
+            window.focus(&focus_handle, cx);
+            return;
+        }
+
+        // Dismiss overlays that have no comments for their hunks
+        self.dismiss_overlays_without_comments(cx);
 
         // Get the current user's avatar URI from the project's user_store
         let user_avatar_uri = self.project.as_ref().and_then(|project| {
@@ -20908,30 +20939,12 @@ impl Editor {
                 .map(|user| user.avatar_uri.clone())
         });
 
-        // Create anchor for the block
-        // Convert display row to buffer position using the display snapshot
-        let editor_snapshot = self.snapshot(window, cx);
-        let display_point = DisplayPoint::new(display_row, 0);
-        let buffer_point = editor_snapshot
-            .display_snapshot
-            .display_point_to_point(display_point, Bias::Left);
-
         // Create anchor at the end of the row so the block appears immediately below it
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
         let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
 
-        // Compute the hunk key for this overlay
-        let file_path = buffer_snapshot
-            .file_at(Point::new(buffer_point.row, 0))
-            .map(|file: &Arc<dyn language::File>| file.path().clone())
-            .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
-        // Create an anchor at the start of the hunk
-        let hunk_start_anchor = buffer_snapshot.anchor_before(Point::new(buffer_point.row, 0));
-        let hunk_key = DiffHunkKey {
-            file_path,
-            hunk_start_anchor,
-        };
+        // Use the hunk key we already computed
+        let hunk_key = new_hunk_key;
 
         // Create the prompt editor for the review input
         let prompt_editor = cx.new(|cx| {
@@ -20983,7 +20996,7 @@ impl Editor {
             return;
         };
 
-        self.diff_review_overlay = Some(DiffReviewOverlay {
+        self.diff_review_overlays.push(DiffReviewOverlay {
             display_row,
             block_id,
             prompt_editor: prompt_editor.clone(),
@@ -21002,11 +21015,46 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn dismiss_diff_review_overlay(&mut self, cx: &mut Context<Self>) {
-        if let Some(overlay) = self.diff_review_overlay.take() {
-            let mut block_ids = HashSet::default();
-            block_ids.insert(overlay.block_id);
-            self.remove_blocks(block_ids, None, cx);
+    /// Dismisses all diff review overlays.
+    pub fn dismiss_all_diff_review_overlays(&mut self, cx: &mut Context<Self>) {
+        if self.diff_review_overlays.is_empty() {
+            return;
+        }
+        let block_ids: HashSet<_> = self
+            .diff_review_overlays
+            .drain(..)
+            .map(|overlay| overlay.block_id)
+            .collect();
+        self.remove_blocks(block_ids, None, cx);
+        cx.notify();
+    }
+
+    /// Dismisses overlays that have no comments stored for their hunks.
+    /// Keeps overlays that have at least one comment.
+    fn dismiss_overlays_without_comments(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        // First, compute which overlays have comments (to avoid borrow issues with retain)
+        let overlays_with_comments: Vec<bool> = self
+            .diff_review_overlays
+            .iter()
+            .map(|overlay| self.hunk_comment_count(&overlay.hunk_key, &snapshot) > 0)
+            .collect();
+
+        // Now collect block IDs to remove and retain overlays
+        let mut block_ids_to_remove = HashSet::default();
+        let mut index = 0;
+        self.diff_review_overlays.retain(|overlay| {
+            let has_comments = overlays_with_comments[index];
+            index += 1;
+            if !has_comments {
+                block_ids_to_remove.insert(overlay.block_id);
+            }
+            has_comments
+        });
+
+        if !block_ids_to_remove.is_empty() {
+            self.remove_blocks(block_ids_to_remove, None, cx);
             cx.notify();
         }
     }
@@ -21020,16 +21068,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         // Extract all needed data from overlay first to avoid borrow conflicts
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let (comments_expanded, block_id, prompt_editor) = {
-            let Some(overlay) = self.diff_review_overlay.as_ref() else {
+            let Some(overlay) = self
+                .diff_review_overlays
+                .iter()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+            else {
                 return;
             };
-
-            // Only refresh if the hunk key matches
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            if !Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot) {
-                return;
-            }
 
             (
                 overlay.comments_expanded,
@@ -21078,9 +21125,15 @@ impl Editor {
     /// Stores the diff review comment locally.
     /// Comments are stored per-hunk and can later be batch-submitted to the Agent panel.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(overlay) = self.diff_review_overlay.as_ref() else {
+        // Find the overlay that currently has focus
+        let overlay_index = self
+            .diff_review_overlays
+            .iter()
+            .position(|overlay| overlay.prompt_editor.focus_handle(cx).is_focused(window));
+        let Some(overlay_index) = overlay_index else {
             return;
         };
+        let overlay = &self.diff_review_overlays[overlay_index];
 
         // Get the comment text from the prompt editor
         let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
@@ -21123,7 +21176,7 @@ impl Editor {
         );
 
         // Clear the prompt editor but keep the overlay open
-        if let Some(overlay) = self.diff_review_overlay.as_ref() {
+        if let Some(overlay) = self.diff_review_overlays.get(overlay_index) {
             overlay.prompt_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
             });
@@ -21138,25 +21191,25 @@ impl Editor {
     /// Returns the prompt editor for the diff review overlay, if one is active.
     /// This is primarily used for testing.
     pub fn diff_review_prompt_editor(&self) -> Option<&Entity<Editor>> {
-        self.diff_review_overlay
-            .as_ref()
+        self.diff_review_overlays
+            .first()
             .map(|overlay| &overlay.prompt_editor)
     }
 
-    /// Returns the display row for the diff review overlay, if one is active.
+    /// Returns the display row for the first diff review overlay, if one is active.
     pub fn diff_review_display_row(&self) -> Option<DisplayRow> {
-        self.diff_review_overlay
-            .as_ref()
+        self.diff_review_overlays
+            .first()
             .map(|overlay| overlay.display_row)
     }
 
     /// Sets whether the comments section is expanded in the diff review overlay.
     /// This is primarily used for testing.
     pub fn set_diff_review_comments_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
-        if let Some(overlay) = &mut self.diff_review_overlay {
+        for overlay in &mut self.diff_review_overlays {
             overlay.comments_expanded = expanded;
-            cx.notify();
         }
+        cx.notify();
     }
 
     /// Compares two DiffHunkKeys for equality by resolving their anchors.
@@ -21289,6 +21342,8 @@ impl Editor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
+        // Dismiss all overlays when taking comments (e.g., when sending to agent)
+        self.dismiss_all_diff_review_overlays(cx);
         let comments = std::mem::take(&mut self.stored_review_comments);
         cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
         cx.notify();
@@ -21336,10 +21391,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(overlay) = &mut self.diff_review_overlay {
-            overlay.comments_expanded = !overlay.comments_expanded;
-            let hunk_key = overlay.hunk_key.clone();
-            // Refresh the overlay height since expanded state affects height
+        // Find the overlay that currently has focus, or use the first one
+        let overlay_info = self.diff_review_overlays.iter_mut().find_map(|overlay| {
+            if overlay.prompt_editor.focus_handle(cx).is_focused(window) {
+                overlay.comments_expanded = !overlay.comments_expanded;
+                Some(overlay.hunk_key.clone())
+            } else {
+                None
+            }
+        });
+
+        // If no focused overlay found, toggle the first one
+        let hunk_key = overlay_info.or_else(|| {
+            self.diff_review_overlays.first_mut().map(|overlay| {
+                overlay.comments_expanded = !overlay.comments_expanded;
+                overlay.hunk_key.clone()
+            })
+        });
+
+        if let Some(hunk_key) = hunk_key {
             self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
             cx.notify();
         }
@@ -21357,54 +21427,73 @@ impl Editor {
         // Set the comment to editing mode
         self.set_comment_editing(comment_id, true, cx);
 
-        // Create an inline editor for this comment if needed
-        if let Some(overlay) = &mut self.diff_review_overlay {
-            if let std::collections::hash_map::Entry::Vacant(entry) =
-                overlay.inline_edit_editors.entry(comment_id)
+        // Find the overlay that contains this comment and create an inline editor if needed
+        // First, find which hunk this comment belongs to
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        if let Some(hunk_key) = hunk_key {
+            if let Some(overlay) = self
+                .diff_review_overlays
+                .iter_mut()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
             {
-                // Find the comment text
-                let comment_text = self
-                    .stored_review_comments
-                    .iter()
-                    .flat_map(|(_, comments)| comments)
-                    .find(|c| c.id == comment_id)
-                    .map(|c| c.comment.clone())
-                    .unwrap_or_default();
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    overlay.inline_edit_editors.entry(comment_id)
+                {
+                    // Find the comment text
+                    let comment_text = self
+                        .stored_review_comments
+                        .iter()
+                        .flat_map(|(_, comments)| comments)
+                        .find(|c| c.id == comment_id)
+                        .map(|c| c.comment.clone())
+                        .unwrap_or_default();
 
-                // Create inline editor
-                let parent_editor = cx.entity().downgrade();
-                let inline_editor = cx.new(|cx| {
-                    let mut editor = Editor::single_line(window, cx);
-                    editor.set_text(&*comment_text, window, cx);
-                    // Select all text for easy replacement
-                    editor.select_all(&crate::actions::SelectAll, window, cx);
-                    editor
-                });
+                    // Create inline editor
+                    let parent_editor = cx.entity().downgrade();
+                    let inline_editor = cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.set_text(&*comment_text, window, cx);
+                        // Select all text for easy replacement
+                        editor.select_all(&crate::actions::SelectAll, window, cx);
+                        editor
+                    });
 
-                // Register the Newline action to confirm the edit
-                let subscription = inline_editor.update(cx, |inline_editor, _cx| {
-                    inline_editor.register_action({
-                        let parent_editor = parent_editor.clone();
-                        move |_: &crate::actions::Newline, window, cx| {
-                            if let Some(editor) = parent_editor.upgrade() {
-                                editor.update(cx, |editor, cx| {
-                                    editor.confirm_edit_review_comment(comment_id, window, cx);
-                                });
+                    // Register the Newline action to confirm the edit
+                    let subscription = inline_editor.update(cx, |inline_editor, _cx| {
+                        inline_editor.register_action({
+                            let parent_editor = parent_editor.clone();
+                            move |_: &crate::actions::Newline, window, cx| {
+                                if let Some(editor) = parent_editor.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.confirm_edit_review_comment(comment_id, window, cx);
+                                    });
+                                }
                             }
-                        }
-                    })
-                });
+                        })
+                    });
 
-                // Store the subscription to keep the action handler alive
-                overlay
-                    .inline_edit_subscriptions
-                    .insert(comment_id, subscription);
+                    // Store the subscription to keep the action handler alive
+                    overlay
+                        .inline_edit_subscriptions
+                        .insert(comment_id, subscription);
 
-                // Focus the inline editor
-                let focus_handle = inline_editor.focus_handle(cx);
-                window.focus(&focus_handle, cx);
+                    // Focus the inline editor
+                    let focus_handle = inline_editor.focus_handle(cx);
+                    window.focus(&focus_handle, cx);
 
-                entry.insert(inline_editor);
+                    entry.insert(inline_editor);
+                }
             }
         }
 
@@ -21419,8 +21508,26 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         // Get the new text from the inline editor
-        let new_text = self
-            .diff_review_overlay
+        // Find the overlay containing this comment's inline editor
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        let new_text = hunk_key
+            .as_ref()
+            .and_then(|hunk_key| {
+                self.diff_review_overlays
+                    .iter()
+                    .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+            })
             .as_ref()
             .and_then(|overlay| overlay.inline_edit_editors.get(&comment_id))
             .map(|editor| editor.read(cx).text(cx).trim().to_string());
@@ -21432,9 +21539,15 @@ impl Editor {
         }
 
         // Remove the inline editor and its subscription
-        if let Some(overlay) = &mut self.diff_review_overlay {
-            overlay.inline_edit_editors.remove(&comment_id);
-            overlay.inline_edit_subscriptions.remove(&comment_id);
+        if let Some(hunk_key) = hunk_key {
+            if let Some(overlay) = self
+                .diff_review_overlays
+                .iter_mut()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+            {
+                overlay.inline_edit_editors.remove(&comment_id);
+                overlay.inline_edit_subscriptions.remove(&comment_id);
+            }
         }
 
         // Clear editing state
@@ -21448,10 +21561,29 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Find which hunk this comment belongs to
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
         // Remove the inline editor and its subscription
-        if let Some(overlay) = &mut self.diff_review_overlay {
-            overlay.inline_edit_editors.remove(&comment_id);
-            overlay.inline_edit_subscriptions.remove(&comment_id);
+        if let Some(hunk_key) = hunk_key {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            if let Some(overlay) = self
+                .diff_review_overlays
+                .iter_mut()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+            {
+                overlay.inline_edit_editors.remove(&comment_id);
+                overlay.inline_edit_subscriptions.remove(&comment_id);
+            }
         }
 
         // Clear editing state
@@ -21486,15 +21618,29 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         // Get the hunk key before removing the comment
+        // Find the hunk key from the comment itself
+        let comment_id = action.id;
         let hunk_key = self
-            .diff_review_overlay
-            .as_ref()
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        // Also get it from the overlay for refresh purposes
+        let overlay_hunk_key = self
+            .diff_review_overlays
+            .first()
             .map(|o| o.hunk_key.clone());
 
         self.remove_review_comment(action.id, cx);
 
         // Refresh the overlay height after removing a comment
-        if let Some(hunk_key) = hunk_key {
+        if let Some(hunk_key) = hunk_key.or(overlay_hunk_key) {
             self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
         }
     }
@@ -21515,8 +21661,11 @@ impl Editor {
                 let editor = editor.read(cx);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
                 let (expanded, editors, avatar_uri) = editor
-                    .diff_review_overlay
+                    .diff_review_overlays
+                    .iter()
+                    .find(|overlay| Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
                     .as_ref()
                     .map(|o| {
                         (

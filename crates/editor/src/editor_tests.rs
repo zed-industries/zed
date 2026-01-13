@@ -30593,7 +30593,7 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     // Verify overlay is shown
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_overlay.is_some());
+            assert!(!editor.diff_review_overlays.is_empty());
             assert_eq!(editor.diff_review_display_row(), Some(DisplayRow(0)));
             assert!(editor.diff_review_prompt_editor().is_some());
         })
@@ -30602,14 +30602,14 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     // Dismiss overlay
     editor
         .update(cx, |editor, _window, cx| {
-            editor.dismiss_diff_review_overlay(cx);
+            editor.dismiss_all_diff_review_overlays(cx);
         })
         .unwrap();
 
     // Verify overlay is dismissed
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_overlay.is_none());
+            assert!(editor.diff_review_overlays.is_empty());
             assert_eq!(editor.diff_review_display_row(), None);
             assert!(editor.diff_review_prompt_editor().is_none());
         })
@@ -30632,7 +30632,7 @@ fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
     // Verify overlay is shown
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_overlay.is_some());
+            assert!(!editor.diff_review_overlays.is_empty());
         })
         .unwrap();
 
@@ -30646,7 +30646,7 @@ fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
     // Verify overlay is dismissed
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_overlay.is_none());
+            assert!(editor.diff_review_overlays.is_empty());
         })
         .unwrap();
 }
