@@ -3778,10 +3778,11 @@ impl AcpThreadView {
                         })
                         .on_click({
                             let terminal = terminal.clone();
-                            cx.listener(move |_this, _event, _window, cx| {
+                            cx.listener(move |this, _event, _window, cx| {
                                 terminal.update(cx, |terminal, cx| {
                                     terminal.stop_by_user(cx);
                                 });
+                                this.cancel_generation(cx);
                             })
                         }),
                     )
