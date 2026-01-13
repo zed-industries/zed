@@ -38,6 +38,7 @@ pub struct Tab {
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
+    custom_bg: Option<gpui::Hsla>,
 }
 
 impl Tab {
@@ -53,7 +54,13 @@ impl Tab {
             start_slot: None,
             end_slot: None,
             children: SmallVec::new(),
+            custom_bg: None,
         }
+    }
+
+    pub fn bg(mut self, color: gpui::Hsla) -> Self {
+        self.custom_bg = Some(color);
+        self
     }
 
     pub fn position(mut self, position: TabPosition) -> Self {
@@ -112,13 +119,15 @@ impl RenderOnce for Tab {
         let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,
-                cx.theme().colors().tab_inactive_background,
+                self.custom_bg
+                    .unwrap_or_else(|| cx.theme().colors().tab_inactive_background),
                 cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
             true => (
                 cx.theme().colors().text,
-                cx.theme().colors().tab_active_background,
+                self.custom_bg
+                    .unwrap_or_else(|| cx.theme().colors().tab_active_background),
                 cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),

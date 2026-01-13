@@ -398,6 +398,30 @@ pub enum RestoreOnStartupBehavior {
     Launchpad,
 }
 
+/// Position of the tab bar relative to the pane content.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum TabBarPosition {
+    /// Tabs appear horizontally at the top of the pane.
+    #[default]
+    Top,
+    /// Tabs appear vertically on the right side of the pane.
+    Right,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
@@ -413,6 +437,14 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_tab_bar_buttons: Option<bool>,
+    /// Position of the tab bar.
+    ///
+    /// Default: top
+    pub position: Option<TabBarPosition>,
+    /// Default width of the side tab bar in pixels (only applies when position is "right").
+    ///
+    /// Default: 200
+    pub default_width: Option<f32>,
 }
 
 #[with_fallible_options]

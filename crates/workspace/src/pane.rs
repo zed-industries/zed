@@ -2700,7 +2700,9 @@ impl Pane {
         let has_file_icon = icon.is_some() | decorated_icon.is_some();
 
         let capability = item.capability(cx);
+        let custom_bg_color = item.tab_background_color(cx);
         let tab = Tab::new(ix)
+            .when_some(custom_bg_color, |tab, color| tab.bg(color))
             .position(if is_first_item {
                 TabPosition::First
             } else if is_last_item {

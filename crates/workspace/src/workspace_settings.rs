@@ -3,10 +3,11 @@ use std::num::NonZeroUsize;
 use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
+use gpui::{px, Pixels};
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
-    RestoreOnStartupBehavior, Settings,
+    RestoreOnStartupBehavior, Settings, TabBarPosition,
 };
 
 #[derive(RegisterSetting)]
@@ -60,6 +61,8 @@ pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
     pub show_tab_bar_buttons: bool,
+    pub position: TabBarPosition,
+    pub default_width: Pixels,
 }
 
 impl Settings for WorkspaceSettings {
@@ -121,6 +124,8 @@ impl Settings for TabBarSettings {
             show: tab_bar.show.unwrap(),
             show_nav_history_buttons: tab_bar.show_nav_history_buttons.unwrap(),
             show_tab_bar_buttons: tab_bar.show_tab_bar_buttons.unwrap(),
+            position: tab_bar.position.unwrap(),
+            default_width: px(tab_bar.default_width.unwrap()),
         }
     }
 }

@@ -6,12 +6,14 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    Focusable, Hsla, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels,
+    Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred,
+    div, rems,
 };
+use menu::{Cancel, Confirm};
 use persistence::TERMINAL_DB;
 use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
@@ -32,14 +34,14 @@ use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use ui::{
-    ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
+    ContextMenu, Divider, Headline, HeadlineSize, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
     scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
-    delete_unloaded_items,
+    CloseActiveItem, ModalView, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace,
+    WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -85,9 +87,178 @@ actions!(
     terminal,
     [
         /// Reruns the last executed task in the terminal.
-        RerunTask
+        RerunTask,
+        /// Opens a dialog to rename the terminal tab.
+        RenameTerminal,
+        /// Clears the custom tab background color.
+        ClearTerminalTabColor,
+        /// Clears the custom tab text color.
+        ClearTerminalTabTextColor,
     ]
 );
+
+/// Sets the terminal tab color to a specific HSLA value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetTerminalTabColor(pub Hsla);
+
+impl gpui::Action for SetTerminalTabColor {
+    fn name(&self) -> &'static str {
+        "terminal::SetTerminalTabColor"
+    }
+
+    fn name_for_type() -> &'static str
+    where
+        Self: Sized,
+    {
+        "terminal::SetTerminalTabColor"
+    }
+
+    fn partial_eq(&self, other: &dyn gpui::Action) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |other| self == other)
+    }
+
+    fn boxed_clone(&self) -> Box<dyn gpui::Action> {
+        Box::new(self.clone())
+    }
+
+    fn build(_value: serde_json::Value) -> Result<Box<dyn gpui::Action>, anyhow::Error>
+    where
+        Self: Sized,
+    {
+        Err(anyhow::anyhow!(
+            "SetTerminalTabColor cannot be built from JSON"
+        ))
+    }
+}
+
+/// Sets the terminal tab text color to a specific HSLA value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetTerminalTabTextColor(pub Hsla);
+
+impl gpui::Action for SetTerminalTabTextColor {
+    fn name(&self) -> &'static str {
+        "terminal::SetTerminalTabTextColor"
+    }
+
+    fn name_for_type() -> &'static str
+    where
+        Self: Sized,
+    {
+        "terminal::SetTerminalTabTextColor"
+    }
+
+    fn partial_eq(&self, other: &dyn gpui::Action) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |other| self == other)
+    }
+
+    fn boxed_clone(&self) -> Box<dyn gpui::Action> {
+        Box::new(self.clone())
+    }
+
+    fn build(_value: serde_json::Value) -> Result<Box<dyn gpui::Action>, anyhow::Error>
+    where
+        Self: Sized,
+    {
+        Err(anyhow::anyhow!(
+            "SetTerminalTabTextColor cannot be built from JSON"
+        ))
+    }
+}
+
+/// Preset colors for terminal tab backgrounds (darker, muted).
+pub const TERMINAL_TAB_COLORS: &[(&str, Hsla)] = &[
+    ("Red", Hsla { h: 0.0, s: 0.5, l: 0.3, a: 1.0 }),
+    ("Orange", Hsla { h: 0.083, s: 0.5, l: 0.3, a: 1.0 }),
+    ("Yellow", Hsla { h: 0.15, s: 0.5, l: 0.3, a: 1.0 }),
+    ("Green", Hsla { h: 0.333, s: 0.45, l: 0.28, a: 1.0 }),
+    ("Cyan", Hsla { h: 0.5, s: 0.45, l: 0.3, a: 1.0 }),
+    ("Blue", Hsla { h: 0.583, s: 0.5, l: 0.32, a: 1.0 }),
+    ("Purple", Hsla { h: 0.75, s: 0.45, l: 0.32, a: 1.0 }),
+    ("Pink", Hsla { h: 0.917, s: 0.4, l: 0.35, a: 1.0 }),
+    ("Gray", Hsla { h: 0.0, s: 0.0, l: 0.35, a: 1.0 }),
+    ("White", Hsla { h: 0.0, s: 0.0, l: 0.5, a: 1.0 }),
+];
+
+struct RenameTerminalModal {
+    current_title: SharedString,
+    editor: Entity<Editor>,
+    terminal: Entity<Terminal>,
+}
+
+impl RenameTerminalModal {
+    fn new(
+        current_title: String,
+        terminal: Entity<Terminal>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(current_title.clone(), window, cx);
+            editor
+        });
+        Self {
+            current_title: current_title.into(),
+            editor,
+            terminal,
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let new_name = self.editor.read(cx).text(cx);
+        if new_name.is_empty() {
+            self.terminal.update(cx, |term, _| {
+                term.set_title_override(None);
+            });
+        } else if new_name != self.current_title.as_ref() {
+            self.terminal.update(cx, |term, _| {
+                term.set_title_override(Some(new_name));
+            });
+        }
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RenameTerminalModal {}
+impl ModalView for RenameTerminalModal {}
+
+impl Focusable for RenameTerminalModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for RenameTerminalModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RenameTerminalModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::Terminal).size(IconSize::XSmall))
+                    .child(Headline::new("Rename Terminal").size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
@@ -395,6 +566,16 @@ impl TerminalView {
                 .action("Paste", Box::new(Paste))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
+                .separator()
+                .action("Rename Terminal", Box::new(RenameTerminal))
+                .submenu("Tab Color", |menu, _, _| {
+                    let mut menu = menu;
+                    for (name, color) in TERMINAL_TAB_COLORS {
+                        menu = menu.action(*name, Box::new(SetTerminalTabColor(*color)));
+                    }
+                    menu.separator()
+                        .action("Clear Color", Box::new(ClearTerminalTabColor))
+                })
                 .when(assistant_enabled, |menu| {
                     menu.separator()
                         .action("Inline Assist", Box::new(InlineAssist::default()))
@@ -504,6 +685,49 @@ impl TerminalView {
         self.scroll_top = px(0.);
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
+    }
+
+    fn rename_terminal(
+        &mut self,
+        _: &RenameTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_rename_modal(window, cx);
+    }
+
+    fn set_tab_color(
+        &mut self,
+        action: &SetTerminalTabColor,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal
+            .update(cx, |term, _| term.set_tab_color(Some(action.0)));
+        cx.notify();
+    }
+
+    fn clear_tab_color(
+        &mut self,
+        _: &ClearTerminalTabColor,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal.update(cx, |term, _| term.set_tab_color(None));
+        cx.notify();
+    }
+
+    fn show_rename_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current_title = self.terminal.read(cx).title(false);
+        let terminal = self.terminal.clone();
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    RenameTerminalModal::new(current_title, terminal, window, cx)
+                });
+            });
+        }
     }
 
     fn max_scroll_top(&self, cx: &App) -> Pixels {
@@ -1097,6 +1321,9 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
+            .on_action(cx.listener(TerminalView::rename_terminal))
+            .on_action(cx.listener(TerminalView::set_tab_color))
+            .on_action(cx.listener(TerminalView::clear_tab_color))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1178,9 +1405,14 @@ impl Item for TerminalView {
         }))))
     }
 
+    fn tab_background_color(&self, cx: &App) -> Option<gpui::Hsla> {
+        self.terminal().read(cx).tab_color()
+    }
+
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
+        let has_custom_bg = terminal.tab_color().is_some();
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
@@ -1229,7 +1461,13 @@ impl Item for TerminalView {
                         )
                     }),
             )
-            .child(Label::new(title).color(params.text_color()))
+            .child(Label::new(title).color(if has_custom_bg {
+                // White text for custom backgrounds: full white when selected, 80% when not
+                let lightness = if params.selected { 1.0 } else { 0.8 };
+                Color::Custom(Hsla { h: 0.0, s: 0.0, l: lightness, a: 1.0 })
+            } else {
+                params.text_color()
+            }))
             .into_any()
     }
 
