@@ -202,7 +202,7 @@ pub fn zeta2_prompt_input(
             MAX_CONTEXT_TOKENS,
         );
 
-    let related_files = crate::filter_intersecting_excerpts(
+    let related_files = crate::filter_redundant_excerpts(
         related_files,
         excerpt_path.as_ref(),
         context_range.start.row..context_range.end.row,

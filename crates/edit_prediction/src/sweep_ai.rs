@@ -91,7 +91,7 @@ impl SweepAi {
             let text = inputs.snapshot.text();
 
             // todo! should we filter for sweep? Or just assume they'll figure it out themselves
-            let related_files = crate::filter_intersecting_excerpts(
+            let related_files = crate::filter_redundant_excerpts(
                 inputs.related_files,
                 full_path.as_ref(),
                 0..inputs.snapshot.max_point().row,
