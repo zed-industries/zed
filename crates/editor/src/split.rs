@@ -975,7 +975,7 @@ impl SplittableEditor {
                     excerpts.extend(excerpt_ids.choose(rng).copied());
                 }
 
-                let line_count = rng.random_range(0..5);
+                let line_count = rng.random_range(1..5);
 
                 log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
@@ -988,7 +988,8 @@ impl SplittableEditor {
                 continue;
             }
 
-            if excerpt_ids.is_empty() || (rng.random() && excerpt_ids.len() < max_excerpts) {
+            if excerpt_ids.is_empty() || (rng.random_bool(0.8) && excerpt_ids.len() < max_excerpts)
+            {
                 let len = rng.random_range(100..500);
                 let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -1282,7 +1283,7 @@ mod tests {
             let mut quiesced = false;
 
             match rng.random_range(0..100) {
-                0..=69 if !buffers.is_empty() => {
+                0..=59 if !buffers.is_empty() => {
                     let buffer = buffers.iter().choose(rng).unwrap();
                     buffer.update(cx, |buffer, cx| {
                         if rng.random() {
@@ -1294,13 +1295,13 @@ mod tests {
                         }
                     });
                 }
-                70..=79 => {
+                60..=69 => {
                     log::info!("mutating excerpts");
                     editor.update(cx, |editor, cx| {
                         editor.randomly_edit_excerpts(rng, 2, cx);
                     });
                 }
-                80..=89 if !buffers.is_empty() => {
+                70..=79 if !buffers.is_empty() => {
                     log::info!("recalculating buffer diff");
                     let buffer = buffers.iter().choose(rng).unwrap();
                     editor.update(cx, |editor, cx| {
