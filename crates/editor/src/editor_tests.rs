@@ -30204,3 +30204,64 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
 
     // If we get here without hanging, the test passes
 }
+
+#[gpui::test]
+fn test_camel_hump_subword_navigation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.use_subword_navigation = Some(true);
+            });
+        });
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("const camelCaseVar = snake_case_var;", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    let _ = editor.update(cx, |editor, window, cx| {
+        // Initial state: cursor at start
+        assert_selection_ranges("ˇconst camelCaseVar = snake_case_var;", editor, cx);
+
+        // Move next word end (should stop at subwords)
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("constˇ camelCaseVar = snake_case_var;", editor, cx);
+
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("const camelˇCaseVar = snake_case_var;", editor, cx);
+
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("const camelCaseˇVar = snake_case_var;", editor, cx);
+
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("const camelCaseVarˇ = snake_case_var;", editor, cx);
+
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("const camelCaseVar =ˇ snake_case_var;", editor, cx);
+
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("const camelCaseVar = snakeˇ_case_var;", editor, cx);
+
+        // Move prev word start (should stop at subwords)
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("const camelCaseVar = ˇsnake_case_var;", editor, cx);
+
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("const camelCaseVar ˇ= snake_case_var;", editor, cx);
+
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("const camelCaseˇVar = snake_case_var;", editor, cx);
+
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("const camelˇCaseVar = snake_case_var;", editor, cx);
+
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("const ˇcamelCaseVar = snake_case_var;", editor, cx);
+
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("ˇconst camelCaseVar = snake_case_var;", editor, cx);
+    });
+}

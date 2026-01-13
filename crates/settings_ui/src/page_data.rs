@@ -1027,7 +1027,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn cursor_section() -> [SettingsPageItem; 5] {
+    fn cursor_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1077,6 +1077,21 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.hide_mouse = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Use Subword Navigation",
+                description: "Whether word navigation (alt-arrow) should stop at subword boundaries (CamelCase and snake_case).",
+                field: Box::new(SettingField {
+                    json_path: Some("use_subword_navigation"),
+                    pick: |settings_content| {
+                        settings_content.editor.use_subword_navigation.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.use_subword_navigation = value;
                     },
                 }),
                 metadata: None,

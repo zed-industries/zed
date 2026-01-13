@@ -14064,12 +14064,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        let use_subword = EditorSettings::get_global(cx).use_subword_navigation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(|map, head, _| {
-                (
-                    movement::previous_word_start(map, head),
-                    SelectionGoal::None,
-                )
+                let next = if use_subword {
+                    movement::previous_subword_start(map, head)
+                } else {
+                    movement::previous_word_start(map, head)
+                };
+                (next, SelectionGoal::None)
             });
         })
     }
@@ -14098,12 +14101,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        let use_subword = EditorSettings::get_global(cx).use_subword_navigation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (
-                    movement::previous_word_start(map, head),
-                    SelectionGoal::None,
-                )
+                let next = if use_subword {
+                    movement::previous_subword_start(map, head)
+                } else {
+                    movement::previous_word_start(map, head)
+                };
+                (next, SelectionGoal::None)
             });
         })
     }
@@ -14132,13 +14138,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        let use_subword = EditorSettings::get_global(cx).use_subword_navigation;
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::previous_word_start(map, selection.head())
+                            if use_subword {
+                                movement::previous_subword_start(map, selection.head())
+                            } else {
+                                movement::previous_word_start(map, selection.head())
+                            }
+                        } else if use_subword {
+                            movement::previous_subword_start_or_newline(map, selection.head())
                         } else {
                             movement::previous_word_start_or_newline(map, selection.head())
                         };
@@ -14194,9 +14207,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        let use_subword = EditorSettings::get_global(cx).use_subword_navigation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(|map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                let next = if use_subword {
+                    movement::next_subword_end(map, head)
+                } else {
+                    movement::next_word_end(map, head)
+                };
+                (next, SelectionGoal::None)
             });
         })
     }
@@ -14222,9 +14241,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        let use_subword = EditorSettings::get_global(cx).use_subword_navigation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                let next = if use_subword {
+                    movement::next_subword_end(map, head)
+                } else {
+                    movement::next_word_end(map, head)
+                };
+                (next, SelectionGoal::None)
             });
         })
     }
@@ -14250,12 +14275,19 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        let use_subword = EditorSettings::get_global(cx).use_subword_navigation;
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::next_word_end(map, selection.head())
+                            if use_subword {
+                                movement::next_subword_end(map, selection.head())
+                            } else {
+                                movement::next_word_end(map, selection.head())
+                            }
+                        } else if use_subword {
+                            movement::next_subword_end_or_newline(map, selection.head())
                         } else {
                             movement::next_word_end_or_newline(map, selection.head())
                         };
