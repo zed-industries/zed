@@ -694,22 +694,20 @@ impl Clone for TracingWaker {
 
 impl Drop for TracingWaker {
     fn drop(&mut self) {
-        // Skip the check if we're already panicking to avoid double-panic abort
-        if !std::thread::panicking() {
-            // Detect non-determinism: drop from unexpected thread
-            let current_thread = std::thread::current();
-            if current_thread.id() != self.thread.id() && !self.state.lock().allow_parking {
-                panic!(
-                    "Non-deterministic waker drop detected: waker was dropped from thread {:?} ({:?}) \
-                     but the test is running on thread {:?} ({:?}). \
-                     This indicates non-deterministic async behavior. \
-                     If this is intentional, call `allow_parking()` on the executor.",
-                    current_thread.name().unwrap_or("<unnamed>"),
-                    current_thread.id(),
-                    self.thread.name().unwrap_or("<unnamed>"),
-                    self.thread.id(),
-                );
-            }
+        // Detect non-determinism: drop from unexpected thread
+        let current_thread = std::thread::current();
+        if current_thread.id() != self.thread.id() && !self.state.lock().allow_parking {
+            eprintln!(
+                "Non-deterministic waker drop detected: waker was dropped from thread {:?} ({:?}) \
+                 but the test is running on thread {:?} ({:?}). \
+                 This indicates non-deterministic async behavior. \
+                 If this is intentional, call `allow_parking()` on the executor.",
+                current_thread.name().unwrap_or("<unnamed>"),
+                current_thread.id(),
+                self.thread.name().unwrap_or("<unnamed>"),
+                self.thread.id(),
+            );
+            std::process::exit(1);
         }
 
         if let Some(id) = self.id {
@@ -727,7 +725,7 @@ impl TracingWaker {
         // Detect non-determinism: wake from unexpected thread
         let current_thread = std::thread::current();
         if current_thread.id() != self.thread.id() && !self.state.lock().allow_parking {
-            panic!(
+            eprintln!(
                 "Non-deterministic wake detected: waker was called from thread {:?} ({:?}) \
                  but the test is running on thread {:?} ({:?}). \
                  This indicates non-deterministic async behavior. \
@@ -737,6 +735,7 @@ impl TracingWaker {
                 self.thread.name().unwrap_or("<unnamed>"),
                 self.thread.id(),
             );
+            std::process::exit(1);
         }
 
         if let Some(id) = self.id {
