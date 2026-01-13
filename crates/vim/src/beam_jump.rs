@@ -92,6 +92,8 @@ impl BeamJumpState {
         ch: char,
         buffer: &MultiBufferSnapshot,
     ) -> BeamJumpAction {
+        let was_pattern_extension = self.pattern_len >= 2;
+
         if self.pattern_len >= 2 && self.matches.len() > 1 {
             if let Some(labels) = &mut self.labels {
                 if labels.label_key_set.contains(&ch) {
@@ -118,9 +120,6 @@ impl BeamJumpState {
                 }
 
                 labels.label_buffer.clear();
-                if !self.can_extend_pattern_with(ch, buffer) {
-                    return BeamJumpAction::PassThrough;
-                }
             }
         }
 
@@ -128,6 +127,15 @@ impl BeamJumpState {
 
         if self.pattern_len < 2 {
             return BeamJumpAction::Continue;
+        }
+
+        if was_pattern_extension && self.matches.is_empty() {
+            if let Some(jump) = self.auto_global_jump(buffer) {
+                return BeamJumpAction::Jump(jump);
+            }
+
+            self.clear_pattern();
+            return BeamJumpAction::PassThrough;
         }
 
         match self.matches.len() {
@@ -171,18 +179,98 @@ impl BeamJumpState {
         }
     }
 
-    fn can_extend_pattern_with(&self, ch: char, buffer: &MultiBufferSnapshot) -> bool {
-        self.matches.iter().any(|m| {
-            if m.end >= self.view_end {
-                return false;
+    fn clear_pattern(&mut self) {
+        self.pattern.clear();
+        self.pattern_len = 0;
+        self.matches.clear();
+        self.labels = None;
+    }
+
+    fn auto_global_jump(&self, buffer: &MultiBufferSnapshot) -> Option<BeamJumpJump> {
+        let pattern: Vec<char> = self.pattern.chars().collect();
+        if pattern.is_empty() {
+            return None;
+        }
+
+        if self.has_global_match_after_cursor(buffer, &pattern) {
+            return Some(BeamJumpJump {
+                direction: BeamJumpDirection::Forward,
+                pattern: self.pattern.clone(),
+                smartcase: self.smartcase,
+                count: 1,
+                search_range: None,
+            });
+        }
+
+        let count_before_cursor = self.count_global_matches_before_cursor(buffer, &pattern);
+        if count_before_cursor == 0 {
+            return None;
+        }
+
+        Some(BeamJumpJump {
+            direction: BeamJumpDirection::Backward,
+            pattern: self.pattern.clone(),
+            smartcase: self.smartcase,
+            count: count_before_cursor,
+            search_range: None,
+        })
+    }
+
+    fn has_global_match_after_cursor(
+        &self,
+        buffer: &MultiBufferSnapshot,
+        pattern: &[char],
+    ) -> bool {
+        let buffer_end = buffer.len();
+        let cursor_offset = std::cmp::min(self.cursor_offset, buffer_end);
+        if cursor_offset >= buffer_end {
+            return false;
+        }
+
+        let Some(cursor_char) = buffer.chars_at(cursor_offset).next() else {
+            return false;
+        };
+
+        let mut offset = cursor_offset;
+        offset += cursor_char.len_utf8();
+        while offset < buffer_end {
+            if match_pattern_at(buffer, offset, pattern, self.smartcase).is_some() {
+                return true;
             }
 
-            let Some(next_ch) = buffer.chars_at(m.end).next() else {
-                return false;
+            let Some(ch) = buffer.chars_at(offset).next() else {
+                break;
             };
+            offset += ch.len_utf8();
+        }
 
-            is_character_match(ch, next_ch, self.smartcase)
-        })
+        false
+    }
+
+    fn count_global_matches_before_cursor(
+        &self,
+        buffer: &MultiBufferSnapshot,
+        pattern: &[char],
+    ) -> usize {
+        let buffer_end = buffer.len();
+        let cursor_offset = std::cmp::min(self.cursor_offset, buffer_end);
+
+        let mut count = 0;
+        let mut offset = MultiBufferOffset(0);
+        while offset < cursor_offset {
+            if let Some(match_end) = match_pattern_at(buffer, offset, pattern, self.smartcase) {
+                if match_end <= cursor_offset {
+                    count += 1;
+                }
+            }
+
+            let Some(ch) = buffer.chars_at(offset).next() else {
+                break;
+            };
+            offset += ch.len_utf8();
+        }
+
+        count
     }
 
     fn scan_first_char(&self, target: char, buffer: &MultiBufferSnapshot) -> Vec<BeamJumpMatch> {
@@ -431,6 +519,28 @@ impl BeamJumpState {
             std::cmp::Ordering::Equal => None,
         }
     }
+}
+
+fn match_pattern_at(
+    buffer: &MultiBufferSnapshot,
+    start: MultiBufferOffset,
+    pattern: &[char],
+    smartcase: bool,
+) -> Option<MultiBufferOffset> {
+    let mut offset = start;
+    for &target in pattern {
+        let Some(ch) = buffer.chars_at(offset).next() else {
+            return None;
+        };
+
+        if !is_character_match(target, ch, smartcase) {
+            return None;
+        }
+
+        offset += ch.len_utf8();
+    }
+
+    Some(offset)
 }
 
 #[derive(Clone, Copy)]
