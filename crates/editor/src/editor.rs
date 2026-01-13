@@ -23153,6 +23153,9 @@ impl Editor {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
+                // Clean up orphaned review comments after edits
+                self.cleanup_orphaned_review_comments(cx);
+
                 if let Some(buffer) = edited_buffer {
                     if buffer.read(cx).file().is_none() {
                         cx.emit(EditorEvent::TitleChanged);
