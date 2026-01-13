@@ -3341,7 +3341,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
-        relative_line_base: Option<DisplayRow>,
+        current_selection_head: Option<DisplayRow>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -3356,9 +3356,14 @@ impl EditorElement {
         let relative = self.editor.read(cx).relative_line_numbers(cx);
 
         let relative_line_numbers_enabled = relative.enabled();
-        let relative_rows = if relative_line_numbers_enabled && let Some(base) = relative_line_base
+        let relative_rows = if relative_line_numbers_enabled
+            && let Some(current_selection_head) = current_selection_head
         {
-            snapshot.calculate_relative_line_numbers(&rows, base, relative.wrapped())
+            snapshot.calculate_relative_line_numbers(
+                &rows,
+                current_selection_head,
+                relative.wrapped(),
+            )
         } else {
             Default::default()
         };
@@ -4770,12 +4775,13 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
+                let start_display_row = start_point.to_display_point(snapshot).row();
                 let relative_number = relative_to
                     .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
                     .map(|base| {
-                        snapshot.relative_line_delta_to_point(
+                        snapshot.relative_line_delta(
                             base,
-                            start_point,
+                            start_display_row,
                             relative_line_numbers == RelativeLineNumbers::Wrapped,
                         )
                     });
@@ -9778,7 +9784,7 @@ impl Element for EditorElement {
                         );
 
                     // relative rows are based on newest selection, even outside the visible area
-                    let relative_row_base = self.editor.update(cx, |editor, cx| {
+                    let current_selection_head = self.editor.update(cx, |editor, cx| {
                         (editor.selections.count() != 0).then(|| {
                             let newest = editor
                                 .selections
@@ -9816,7 +9822,7 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &row_infos,
                         &active_rows,
-                        relative_row_base,
+                        current_selection_head,
                         &snapshot,
                         window,
                         cx,
@@ -10151,7 +10157,7 @@ impl Element for EditorElement {
                             &text_hitbox,
                             &style,
                             relative,
-                            relative_row_base,
+                            current_selection_head,
                             window,
                             cx,
                         )
@@ -11970,7 +11976,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
     };
     use gpui::{TestAppContext, VisualTestContext};
-    use language::language_settings;
+    use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
     use std::num::NonZeroU32;
     use util::test::sample_text;
@@ -12179,6 +12185,98 @@ mod tests {
             layouts.get(&MultiBufferRow(DELETED_LINE)).is_none(),
             "Deleted line should not have a line number"
         );
+    }
+
+    #[gpui::test]
+    async fn test_layout_line_numbers_with_folded_lines(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let python_lang = languages::language("python", tree_sitter_python::LANGUAGE.into());
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = cx.new(|cx| {
+                Buffer::local(
+                    indoc::indoc! {"
+                        fn test() -> int {
+                            return 2;
+                        }
+
+                        fn another_test() -> int {
+                            # This is a very peculiar method that is hard to grasp.
+                            return 4;
+                        }
+                    "},
+                    cx,
+                )
+                .with_language(python_lang, cx)
+            });
+
+            let buffer = MultiBuffer::build_from_buffer(buffer, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| {
+                editor.fold_at(MultiBufferRow(0), window, cx);
+                editor.snapshot(window, cx)
+            })
+            .unwrap();
+
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::default(),
+                    Some(DisplayRow(3)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 6);
+
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                snapshot.calculate_relative_line_numbers(
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    DisplayRow(3),
+                    false,
+                )
+            })
+            .unwrap();
+        assert_eq!(relative_rows[&DisplayRow(0)], 3);
+        assert_eq!(relative_rows[&DisplayRow(1)], 2);
+        assert_eq!(relative_rows[&DisplayRow(2)], 1);
+        // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
+        assert_eq!(relative_rows[&DisplayRow(4)], 1);
+        assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }
 
     #[gpui::test]

@@ -60,7 +60,7 @@ pub struct MentionImage {
 
 pub struct MentionSet {
     project: WeakEntity<Project>,
-    thread_store: Entity<ThreadStore>,
+    thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
 }
@@ -68,7 +68,7 @@ pub struct MentionSet {
 impl MentionSet {
     pub fn new(
         project: WeakEntity<Project>,
-        thread_store: Entity<ThreadStore>,
+        thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
     ) -> Self {
         Self {
@@ -136,6 +136,11 @@ impl MentionSet {
 
     pub fn clear(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
         self.mentions.drain()
+    }
+
+    #[cfg(test)]
+    pub fn has_thread_store(&self) -> bool {
+        self.thread_store.is_some()
     }
 
     pub fn confirm_mention_completion(
@@ -473,13 +478,18 @@ impl MentionSet {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
+        let Some(thread_store) = self.thread_store.clone() else {
+            return Task::ready(Err(anyhow!(
+                "Thread mentions are only supported for the native agent"
+            )));
+        };
         let Some(project) = self.project.upgrade() else {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
         let server = Rc::new(agent::NativeAgentServer::new(
             project.read(cx).fs().clone(),
-            self.thread_store.clone(),
+            thread_store,
         ));
         let delegate = AgentServerDelegate::new(
             project.read(cx).agent_server_store().clone(),
@@ -500,6 +510,56 @@ impl MentionSet {
                 tracked_buffers: Vec::new(),
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use prompt_store;
+    use release_channel;
+    use semver::Version;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use theme;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(Version::new(0, 0, 0), cx);
+            prompt_store::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_mentions_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let thread_store = None;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store, None));
+
+        let task = mention_set.update(cx, |mention_set, cx| {
+            mention_set.confirm_mention_for_thread(acp::SessionId::new("thread-1"), cx)
+        });
+
+        let error = task.await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Thread mentions are only supported for the native agent"),
+            "Unexpected error: {error:#}"
+        );
     }
 }
 
