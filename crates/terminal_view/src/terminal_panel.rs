@@ -1974,6 +1974,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_local_terminal_in_local_project(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
