@@ -30300,6 +30300,10 @@ fn test_camel_hump_subword_navigation(cx: &mut TestAppContext) {
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
         assert_selection_ranges("ˇconst camelCaseVar = snake_case_var;", editor, cx);
+    });
+}
+
+#[gpui::test]
 async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
