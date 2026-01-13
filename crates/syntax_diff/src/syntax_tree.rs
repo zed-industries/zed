@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use language::LanguageScope;
+use language::{CharClassifier, LanguageScope};
 
 /// A unique identifier for a node within a `SyntaxTree`.
 ///
@@ -369,6 +369,7 @@ pub fn build_tree<'a>(
     language_scope: &LanguageScope,
 ) -> SyntaxTree<'a> {
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
+    let classifier = CharClassifier::new(Some(language_scope.clone()));
     let brackets: HashSet<_> = language_scope
         .brackets()
         .filter(|(pair, enabled)| pair.surround && *enabled)
@@ -376,7 +377,14 @@ pub fn build_tree<'a>(
         .collect();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
-        build_tree_recursive(&mut cursor, &mut nodes, None, source, &brackets);
+        build_tree_recursive(
+            &mut cursor,
+            &mut nodes,
+            None,
+            source,
+            &brackets,
+            &classifier,
+        );
     }
 
     SyntaxTree { nodes }
@@ -388,6 +396,7 @@ fn build_tree_recursive<'a>(
     parent: Option<SyntaxId>,
     source: &'a str,
     brackets: &HashSet<&str>,
+    classifier: &CharClassifier,
 ) -> SyntaxId {
     let mut ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
@@ -460,7 +469,8 @@ fn build_tree_recursive<'a>(
                 break;
             }
 
-            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source, brackets);
+            let child_id =
+                build_tree_recursive(cursor, nodes, Some(this_id), source, brackets, classifier);
             let child_node = &nodes[child_id.index()];
 
             remaining_children -= 1;
@@ -478,12 +488,7 @@ fn build_tree_recursive<'a>(
         if let Some(source) = source.get(ts_node.byte_range()) {
             source.hash(&mut hasher);
 
-            // Does this node look like punctuation?
-            //
-            // This check is deliberately conservative, because it's hard to
-            // accurately recognise punctuation in a language-agnostic way.
-            // https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
-            if source == "," || source == ";" || source == "." {
+            if source.len() == 1 && source.chars().all(|char| classifier.is_punctuation(char)) {
                 hint = Some(SyntaxHint::Punctuation);
             // TODO: we can use info provided by language scope here
             } else if ts_node.is_extra() {
@@ -517,6 +522,7 @@ fn detect_delimiters<'a>(
     }
 
     let is_delimiter = |delimiter: &str| {
+        // TODO: Could we extend the classifier to detect delimeters?
         !delimiter.is_empty() && delimiter.len() <= 2 && delimiters.contains(delimiter)
     };
 
