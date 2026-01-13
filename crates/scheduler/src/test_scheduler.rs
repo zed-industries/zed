@@ -617,7 +617,7 @@ impl Default for TestSchedulerConfig {
             allow_parking: false,
             capture_pending_traces: env::var(PENDING_TRACES_VAR_NAME)
                 .map_or(false, |var| var == "1" || var == "true"),
-            timeout_ticks: 0..=1000,
+            timeout_ticks: 1..=1000,
         }
     }
 }

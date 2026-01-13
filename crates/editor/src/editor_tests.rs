@@ -10250,6 +10250,7 @@ async fn test_autoindent_selections(cx: &mut TestAppContext) {
         cx.update_editor(|editor, window, cx| {
             editor.autoindent(&Default::default(), window, cx);
         });
+        cx.wait_for_autoindent_applied().await;
 
         cx.assert_editor_state(indoc! {"
             impl A {
@@ -18706,6 +18707,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     cx.update_editor(|editor, window, cx| {
         editor.context_menu_next(&Default::default(), window, cx);
     });
+    cx.run_until_parked();
 
     cx.update_editor(|editor, _, _| {
         let context_menu = editor.context_menu.borrow_mut();
@@ -28796,8 +28798,8 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
     //    fff
     //    f
 
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
-    editor.update_in(cx, |editor, window, cx| {
+    let editor = cx.add_window(|window, cx| build_editor(multibuffer, window, cx));
+    _ = editor.update(cx, |editor, window, cx| {
         editor.set_wrap_width(Some(30.0.into()), cx); // every 3 characters
 
         // includes trailing newlines.

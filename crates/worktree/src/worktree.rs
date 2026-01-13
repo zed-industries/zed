@@ -5381,6 +5381,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
     // This function mutates the worktree's directory and waits for those mutations to be picked up,
     // to ensure that all redundant FS events have already been processed.
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::disallowed_methods)] // smol::Timer used intentionally for timeout fallback when waiting for FS events
     fn flush_fs_events<'a>(
         &self,
         cx: &'a mut gpui::TestAppContext,
@@ -5394,29 +5395,47 @@ impl WorktreeModelHandle for Entity<Worktree> {
         });
 
         async move {
+            // Subscribe to events BEFORE creating the file to avoid race condition
+            // where events fire before subscription is set up
+            let mut events = cx.events(&tree);
+
             fs.create_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
 
-            let mut events = cx.events(&tree);
-            while events.next().await.is_some() {
-                if tree.read_with(cx, |tree, _| {
+            // Check if condition is already met before waiting for events
+            let file_exists = || {
+                tree.read_with(cx, |tree, _| {
                     tree.entry_for_path(RelPath::unix(file_name).unwrap())
                         .is_some()
-                }) {
-                    break;
+                })
+            };
+
+            // Use select to avoid blocking indefinitely if events are delayed
+            while !file_exists() {
+                futures::select_biased! {
+                    _ = events.next() => {}
+                    _ = futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_millis(10))) => {}
                 }
             }
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
-            while events.next().await.is_some() {
-                if tree.read_with(cx, |tree, _| {
+
+            // Check if condition is already met before waiting for events
+            let file_gone = || {
+                tree.read_with(cx, |tree, _| {
                     tree.entry_for_path(RelPath::unix(file_name).unwrap())
                         .is_none()
-                }) {
-                    break;
+                })
+            };
+
+            // Use select to avoid blocking indefinitely if events are delayed
+            while !file_gone() {
+                futures::select_biased! {
+                    _ = events.next() => {}
+                    _ = futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_millis(10))) => {}
                 }
             }
 
@@ -5433,6 +5452,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
     // In order to flush those, we need to create artificial events in the .git folder and wait
     // for the repository to be reloaded.
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::disallowed_methods)] // smol::Timer used intentionally for timeout fallback when waiting for FS events
     fn flush_fs_events_in_root_git_repository<'a>(
         &self,
         cx: &'a mut gpui::TestAppContext,
@@ -5472,14 +5492,19 @@ impl WorktreeModelHandle for Entity<Worktree> {
         };
 
         async move {
+            // Subscribe to events BEFORE creating the file to avoid race condition
+            // where events fire before subscription is set up
+            let mut events = cx.events(&tree);
+
             fs.create_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
 
-            let mut events = cx.events(&tree);
-            while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
-                    break;
+            // Use select to avoid blocking indefinitely if events are delayed
+            while !tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
+                futures::select_biased! {
+                    _ = events.next() => {}
+                    _ = futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_millis(10))) => {}
                 }
             }
 
@@ -5487,9 +5512,11 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
 
-            while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
-                    break;
+            // Use select to avoid blocking indefinitely if events are delayed
+            while !tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
+                futures::select_biased! {
+                    _ = events.next() => {}
+                    _ = futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_millis(10))) => {}
                 }
             }
 
