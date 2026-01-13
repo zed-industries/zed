@@ -32,7 +32,7 @@ use search::{ProjectSearchView, project_search};
 use serde_json::json;
 use workspace::DeploySearch;
 
-use crate::beam_jump::{BeamJumpAction, BeamJumpState};
+use crate::beam_jump::{BEAM_JUMP_PENDING_COMMIT_TIMEOUT, BeamJumpAction, BeamJumpState};
 use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
 use util_macros::perf;
@@ -2170,7 +2170,7 @@ async fn test_beam_jump_auto_global_search_on_viewport_miss(cx: &mut gpui::TestA
 
 #[perf]
 #[gpui::test]
-async fn test_beam_jump_auto_global_no_matches_passthrough_and_clears_pattern(
+async fn test_beam_jump_auto_global_no_matches_cancels_and_consumes_key(
     cx: &mut gpui::TestAppContext,
 ) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -2210,11 +2210,11 @@ async fn test_beam_jump_auto_global_no_matches_passthrough_and_clears_pattern(
         cx.assertion_context()
     );
 
-    // Extending to a pattern with no global matches cancels Beam Jump and passes through.
+    // Extending to a pattern with no global matches cancels Beam Jump and consumes the key.
     cx.simulate_keystrokes("l");
     cx.run_until_parked();
 
-    cx.assert_state("xxˇabxxabyyab", Mode::Normal);
+    cx.assert_state("xˇxabxxabyyab", Mode::Normal);
     assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
 
     let remaining = cx.update_editor(|editor, window, cx| {
@@ -2226,7 +2226,7 @@ async fn test_beam_jump_auto_global_no_matches_passthrough_and_clears_pattern(
     });
     assert!(
         remaining.is_empty(),
-        "beam jump highlights should be cleared after pass-through. {}",
+        "beam jump highlights should be cleared after cancellation. {}",
         cx.assertion_context()
     );
 
@@ -2322,6 +2322,192 @@ async fn test_beam_jump_hides_labels_when_units_unsafe(cx: &mut gpui::TestAppCon
 
 #[perf]
 #[gpui::test]
+async fn test_beam_jump_pending_commit_does_not_jump_until_semicolon(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    let mut lines = vec!["xx".to_string(); 2000];
+    lines[0] = "coxxˇyy".to_string();
+    // Ensure `;` in pending-commit is not treated as global navigation.
+    lines[1500] = "co".to_string();
+    let text = lines.join("\n");
+    cx.set_state(&text, Mode::Normal);
+
+    cx.simulate_keystrokes("s c o");
+    cx.assert_state(&text, Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert_eq!(
+        highlights.len(),
+        1,
+        "expected a single pending-commit candidate. {}",
+        cx.assertion_context()
+    );
+    assert_eq!(
+        highlights
+            .first()
+            .and_then(|highlight| highlight.label.as_ref())
+            .map(|label| label.as_ref()),
+        Some(";"),
+        "expected `;` to be the pending-commit label key. {}",
+        cx.assertion_context()
+    );
+
+    cx.simulate_keystrokes(";");
+
+    let mut expected_lines = vec!["xx".to_string(); 2000];
+    expected_lines[0] = "ˇcoxxyy".to_string();
+    expected_lines[1500] = "co".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "beam jump highlights should be cleared after pending-commit jump. {}",
+        cx.assertion_context()
+    );
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_pending_commit_auto_commits_after_delay(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    let mut lines = vec!["xx".to_string(); 2000];
+    lines[0] = "coxxˇyy".to_string();
+    lines[1500] = "co".to_string();
+    let text = lines.join("\n");
+    cx.set_state(&text, Mode::Normal);
+
+    cx.simulate_keystrokes("s c o");
+    cx.assert_state(&text, Mode::Normal);
+
+    cx.executor()
+        .advance_clock(BEAM_JUMP_PENDING_COMMIT_TIMEOUT);
+    cx.run_until_parked();
+
+    let mut expected_lines = vec!["xx".to_string(); 2000];
+    expected_lines[0] = "ˇcoxxyy".to_string();
+    expected_lines[1500] = "co".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "beam jump highlights should be cleared after timed pending-commit jump. {}",
+        cx.assertion_context()
+    );
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_pending_commit_treats_fast_typing_as_pattern_extension(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    let mut lines = vec!["xx".to_string(); 2000];
+    lines[0] = "cozyxxˇyy".to_string();
+    lines[1500] = "codex".to_string();
+    let text = lines.join("\n");
+    cx.set_state(&text, Mode::Normal);
+
+    cx.simulate_keystrokes("s c o");
+    cx.assert_state(&text, Mode::Normal);
+
+    // `co` is pending-commit, but typing another character should be treated as pattern extension.
+    // Since `cod` has V==0 in the viewport, Beam Jump should auto-trigger global navigation.
+    cx.simulate_keystrokes("d");
+
+    let mut expected_lines = vec!["xx".to_string(); 2000];
+    expected_lines[0] = "cozyxxyy".to_string();
+    expected_lines[1500] = "ˇcodex".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "beam jump highlights should be cleared after auto-global jump. {}",
+        cx.assertion_context()
+    );
+
+    // The timer from pending-commit should not fire after the session exits.
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    cx.assert_state(&expected, Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
 async fn test_beam_jump_semicolon_jumps_global_and_exits(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.update_global(|store: &mut SettingsStore, cx| {
@@ -2342,6 +2528,27 @@ async fn test_beam_jump_semicolon_jumps_global_and_exits(cx: &mut gpui::TestAppC
 
     cx.simulate_keystrokes("s a b");
     cx.assert_state("ˇxxabxxabyyab", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        highlights.iter().any(|highlight| highlight.label.is_some()),
+        "expected labels to be visible in multi-candidate mode. {}",
+        cx.assertion_context()
+    );
+    assert!(
+        highlights
+            .iter()
+            .filter_map(|highlight| highlight.label.as_ref())
+            .all(|label| !label.as_ref().contains(';')),
+        "expected `;` to remain reserved outside pending-commit. {}",
+        cx.assertion_context()
+    );
 
     cx.simulate_keystrokes(";");
     cx.assert_state("xxˇabxxabyyab", Mode::Normal);
