@@ -4750,6 +4750,7 @@ mod tests {
                 "lsp_tool",
                 "markdown",
                 "menu",
+                "new_process_modal",
                 "notebook",
                 "notification_panel",
                 "onboarding",
