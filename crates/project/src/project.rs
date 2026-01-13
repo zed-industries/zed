@@ -3706,6 +3706,20 @@ impl Project {
             .read(cx)
             .active_toolchain(path, language_name, cx)
     }
+
+    /// Get the cached active toolchain synchronously (local projects only).
+    /// Returns None for remote projects or if no toolchain is cached.
+    pub fn cached_active_toolchain(
+        &self,
+        path: ProjectPath,
+        language_name: LanguageName,
+        cx: &App,
+    ) -> Option<Toolchain> {
+        self.toolchain_store
+            .as_ref()?
+            .read(cx)
+            .cached_active_toolchain(path, language_name, cx)
+    }
     pub fn language_server_statuses<'a>(
         &'a self,
         cx: &'a App,

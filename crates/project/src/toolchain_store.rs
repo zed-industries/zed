@@ -228,6 +228,24 @@ impl ToolchainStore {
         })
     }
 
+    /// Get the cached active toolchain synchronously (local projects only).
+    /// Returns None for remote projects or if no toolchain is active.
+    pub fn cached_active_toolchain(
+        &self,
+        path: ProjectPath,
+        language_name: LanguageName,
+        cx: &App,
+    ) -> Option<Toolchain> {
+        match &self.mode {
+            ToolchainStoreInner::Local(local) => {
+                local
+                    .read(cx)
+                    .active_toolchain(path.worktree_id, &path.path, language_name)
+            }
+            ToolchainStoreInner::Remote(_) => None,
+        }
+    }
+
     pub(crate) fn active_toolchain(
         &self,
         path: ProjectPath,
