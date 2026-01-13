@@ -10,11 +10,13 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::{f64, ops::Range};
+use strum::{EnumDiscriminants, EnumIter, IntoDiscriminant};
 use workspace::searchable::Direction;
 
 use crate::{
-    Vim,
+    Vim, VimSettings,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
@@ -40,7 +42,8 @@ impl MotionKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, EnumDiscriminants)]
+#[strum_discriminants(derive(Hash, EnumIter))]
 pub enum Motion {
     Left,
     WrappingLeft,
@@ -169,6 +172,102 @@ pub enum Motion {
         anchor: Anchor,
         line: bool,
     },
+}
+
+impl MotionDiscriminants {
+    pub fn family_name(&self) -> &str {
+        use MotionDiscriminants::*;
+
+        // keep in sync with "vim.repeatable_motions" in `assets/settings/default.json`
+        match self {
+            Sneak | SneakBackward => "sneak",
+            FindForward | FindBackward => "find",
+            Jump => "jump",
+            PreviousLesserIndent
+            | PreviousGreaterIndent
+            | PreviousSameIndent
+            | NextLesserIndent
+            | NextGreaterIndent
+            | NextSameIndent => "indent",
+            NextComment | PreviousComment => "comment",
+            NextMethodStart | NextMethodEnd | PreviousMethodStart | PreviousMethodEnd => "method",
+            Left | WrappingLeft | Right | WrappingRight | Down | Up => "direction",
+            NextWordStart | NextWordEnd | PreviousWordStart | PreviousWordEnd
+            | NextSubwordStart | NextSubwordEnd | PreviousSubwordStart | PreviousSubwordEnd => {
+                "word"
+            }
+            StartOfLine | MiddleOfLine | EndOfLine | FirstNonWhitespace | CurrentLine => {
+                "curr_line"
+            }
+            NextLineStart | PreviousLineStart | StartOfLineDownward | EndOfLineDownward => "line",
+            StartOfDocument | EndOfDocument | GoToPercentage => "document",
+            WindowTop | WindowMiddle | WindowBottom => "window",
+            GoToColumn => "column",
+            SentenceBackward | SentenceForward => "sentence",
+            StartOfParagraph | EndOfParagraph => "paragraph",
+            RepeatFind | RepeatFindReversed => "repeat",
+            ZedSearchResult => "search",
+            Matching => "matching",
+            UnmatchedForward | UnmatchedBackward => "unmatched",
+            NextSectionStart | NextSectionEnd | PreviousSectionStart | PreviousSectionEnd => {
+                "section"
+            }
+        }
+    }
+
+    pub fn is_repeat(self) -> bool {
+        use MotionDiscriminants::*;
+        matches!(self, RepeatFind | RepeatFindReversed)
+    }
+
+    pub fn is_eligible_for_repeat(self) -> bool {
+        self.is_reversible() && !self.is_repeat()
+    }
+
+    // True if `Motion::reversed` returns `Some(..)` for this variant.
+    pub fn is_reversible(self) -> bool {
+        use MotionDiscriminants::*;
+
+        match self {
+            RepeatFind | RepeatFindReversed => true,
+            Sneak
+            | SneakBackward
+            | FindForward
+            | FindBackward
+            | SentenceBackward
+            | SentenceForward
+            | StartOfParagraph
+            | EndOfParagraph
+            | NextSectionStart
+            | NextSectionEnd
+            | PreviousSectionStart
+            | PreviousSectionEnd
+            | PreviousLesserIndent
+            | PreviousGreaterIndent
+            | PreviousSameIndent
+            | NextLesserIndent
+            | NextGreaterIndent
+            | NextSameIndent
+            | NextComment
+            | PreviousComment
+            | NextMethodStart
+            | NextMethodEnd
+            | PreviousMethodStart
+            | PreviousMethodEnd
+            | UnmatchedForward
+            | UnmatchedBackward => true,
+
+            Left | WrappingLeft | Right | WrappingRight | Down | Up | NextWordStart
+            | NextWordEnd | PreviousWordStart | PreviousWordEnd | NextSubwordStart
+            | NextSubwordEnd | PreviousSubwordStart | PreviousSubwordEnd => true,
+
+            Matching | StartOfDocument | EndOfDocument | GoToPercentage | WindowTop
+            | WindowMiddle | WindowBottom | GoToColumn | Jump | ZedSearchResult | StartOfLine
+            | FirstNonWhitespace | CurrentLine | MiddleOfLine | EndOfLine => false,
+
+            NextLineStart | PreviousLineStart | StartOfLineDownward | EndOfLineDownward => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -716,6 +815,14 @@ impl Vim {
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {
+        let is_repeatable = motion.discriminant().is_eligible_for_repeat()
+            && VimSettings::get_global(cx)
+                .repeatable_motions
+                .contains(&motion.discriminant());
+        if is_repeatable {
+            Vim::globals(cx).last_find = Some(motion.clone());
+        }
+
         if let Some(Operator::FindForward { .. })
         | Some(Operator::Sneak { .. })
         | Some(Operator::SneakBackward { .. })
@@ -823,6 +930,116 @@ impl Motion {
                 motion.default_kind()
             }
         }
+    }
+
+    fn reversed(&self) -> Option<Self> {
+        use Motion::*;
+        let ret = match *self {
+            RepeatFindReversed { ref last_find } => RepeatFind {
+                last_find: last_find.clone(),
+            },
+            RepeatFind { ref last_find } => RepeatFindReversed {
+                last_find: last_find.clone(),
+            },
+            Down { display_lines } => Up { display_lines },
+            Left => Right,
+            WrappingLeft => WrappingRight,
+            Right => Left,
+            WrappingRight => WrappingLeft,
+            Up { display_lines } => Down { display_lines },
+            NextWordStart { ignore_punctuation } => PreviousWordStart { ignore_punctuation },
+            NextWordEnd { ignore_punctuation } => PreviousWordEnd { ignore_punctuation },
+            PreviousWordStart { ignore_punctuation } => NextWordStart { ignore_punctuation },
+            PreviousWordEnd { ignore_punctuation } => NextWordEnd { ignore_punctuation },
+            NextSubwordStart { ignore_punctuation } => PreviousSubwordStart { ignore_punctuation },
+            NextSubwordEnd { ignore_punctuation } => PreviousSubwordEnd { ignore_punctuation },
+            PreviousSubwordStart { ignore_punctuation } => NextSubwordStart { ignore_punctuation },
+            PreviousSubwordEnd { ignore_punctuation } => NextSubwordEnd { ignore_punctuation },
+            SentenceBackward => SentenceForward,
+            SentenceForward => SentenceBackward,
+            StartOfParagraph => EndOfParagraph,
+            EndOfParagraph => StartOfParagraph,
+            StartOfDocument => EndOfDocument,
+            EndOfDocument => StartOfDocument,
+            UnmatchedForward { char } => UnmatchedBackward { char },
+            UnmatchedBackward { char } => UnmatchedForward { char },
+            FindForward {
+                before,
+                char,
+                mode,
+                smartcase,
+            } => FindBackward {
+                after: before,
+                char,
+                mode,
+                smartcase,
+            },
+            FindBackward {
+                after,
+                char,
+                mode,
+                smartcase,
+            } => FindForward {
+                before: after,
+                char,
+                mode,
+                smartcase,
+            },
+            Sneak {
+                first_char,
+                second_char,
+                smartcase,
+            } => SneakBackward {
+                first_char,
+                second_char,
+                smartcase,
+            },
+            SneakBackward {
+                first_char,
+                second_char,
+                smartcase,
+            } => Sneak {
+                first_char,
+                second_char,
+                smartcase,
+            },
+            NextSectionStart => PreviousSectionStart,
+            NextSectionEnd => PreviousSectionEnd,
+            PreviousSectionStart => NextSectionStart,
+            PreviousSectionEnd => NextSectionEnd,
+            NextMethodStart => PreviousMethodStart,
+            NextMethodEnd => PreviousMethodEnd,
+            PreviousMethodStart => NextMethodStart,
+            PreviousMethodEnd => NextMethodEnd,
+            NextComment => PreviousComment,
+            PreviousComment => NextComment,
+            PreviousLesserIndent => NextLesserIndent,
+            PreviousGreaterIndent => NextGreaterIndent,
+            PreviousSameIndent => NextSameIndent,
+            NextLesserIndent => PreviousLesserIndent,
+            NextGreaterIndent => PreviousGreaterIndent,
+            NextSameIndent => PreviousSameIndent,
+            NextLineStart => PreviousLineStart,
+            PreviousLineStart => NextLineStart,
+
+            FirstNonWhitespace { .. }
+            | CurrentLine
+            | StartOfLine { .. }
+            | MiddleOfLine { .. }
+            | EndOfLine { .. }
+            | Matching
+            | GoToPercentage
+            | StartOfLineDownward
+            | EndOfLineDownward
+            | GoToColumn
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
+            | ZedSearchResult { .. }
+            | Jump { .. } => return None,
+        };
+
+        Some(ret)
     }
 
     fn skip_exclusive_special_case(&self) -> bool {
@@ -961,7 +1178,8 @@ impl Motion {
         }
     }
 
-    pub fn move_point(
+    // Compute the move_point for a non-repeat motion
+    fn _move_point(
         &self,
         map: &DisplaySnapshot,
         point: DisplayPoint,
@@ -1082,10 +1300,10 @@ impl Motion {
                 char,
                 mode,
                 smartcase,
-            } => (
-                find_backward(map, point, *after, *char, times, *mode, *smartcase),
-                SelectionGoal::None,
-            ),
+            } => {
+                return find_backward(map, point, *after, *char, times, *mode, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
             Sneak {
                 first_char,
                 second_char,
@@ -1102,147 +1320,6 @@ impl Motion {
                 return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
                     .map(|new_point| (new_point, SelectionGoal::None));
             }
-            // ; -- repeat the last find done with t, f, T, F
-            RepeatFind { last_find } => match **last_find {
-                Motion::FindForward {
-                    before,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_forward(map, point, before, char, times, mode, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            find_forward(map, point, before, char, times + 1, mode, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::FindBackward {
-                    after,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_backward(map, point, after, char, times, mode, smartcase);
-                    if new_point == point {
-                        new_point =
-                            find_backward(map, point, after, char, times + 1, mode, smartcase);
-                    }
-
-                    (new_point, SelectionGoal::None)
-                }
-                Motion::Sneak {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            sneak(map, point, first_char, second_char, times + 1, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::SneakBackward {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak_backward(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point = sneak_backward(
-                            map,
-                            point,
-                            first_char,
-                            second_char,
-                            times + 1,
-                            smartcase,
-                        );
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-                _ => return None,
-            },
-            // , -- repeat the last find done with t, f, T, F, s, S, in opposite direction
-            RepeatFindReversed { last_find } => match **last_find {
-                Motion::FindForward {
-                    before,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_backward(map, point, before, char, times, mode, smartcase);
-                    if new_point == point {
-                        new_point =
-                            find_backward(map, point, before, char, times + 1, mode, smartcase);
-                    }
-
-                    (new_point, SelectionGoal::None)
-                }
-
-                Motion::FindBackward {
-                    after,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_forward(map, point, after, char, times, mode, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            find_forward(map, point, after, char, times + 1, mode, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::Sneak {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak_backward(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point = sneak_backward(
-                            map,
-                            point,
-                            first_char,
-                            second_char,
-                            times + 1,
-                            smartcase,
-                        );
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::SneakBackward {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            sneak(map, point, first_char, second_char, times + 1, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-                _ => return None,
-            },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             PreviousLineStart => (previous_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
@@ -1329,8 +1406,49 @@ impl Motion {
                 indent_motion(map, point, times, Direction::Next, IndentType::Same),
                 SelectionGoal::None,
             ),
+            RepeatFind { .. } | RepeatFindReversed { .. } => return None,
         };
         (new_point != point || infallible).then_some((new_point, goal))
+    }
+
+    pub fn move_point(
+        &self,
+        map: &DisplaySnapshot,
+        point: DisplayPoint,
+        goal: SelectionGoal,
+        maybe_times: Option<usize>,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<(DisplayPoint, SelectionGoal)> {
+        use Motion::*;
+
+        let base = match *self {
+            RepeatFindReversed { ref last_find } => &last_find
+                .reversed()
+                .unwrap_or_else(|| (**last_find).clone()),
+            RepeatFind { ref last_find } => &*last_find,
+
+            _ => self,
+        };
+
+        let mut ret = base._move_point(map, point, goal, maybe_times, text_layout_details);
+
+        // We want `t _ ;` to advance the cursor by two underscores.
+        // However, `t` moves the cursor BEFORE the target character, so
+        // without this we would only advance by one.
+        if ret.map(|x| x.0) == Some(point) {
+            let is_repeat_t = self.discriminant().is_repeat()
+                && matches!(
+                    *base,
+                    Motion::FindForward { before: true, .. }
+                        | Motion::FindBackward { after: true, .. }
+                );
+            if is_repeat_t {
+                let times_succ = maybe_times.unwrap_or(1) + 1;
+                ret = base._move_point(map, point, goal, Some(times_succ), text_layout_details);
+            }
+        }
+
+        ret
     }
 
     // Get the range value after self is applied to the specified selection.
@@ -2715,7 +2833,7 @@ fn find_backward(
     times: usize,
     mode: FindRange,
     smartcase: bool,
-) -> DisplayPoint {
+) -> Option<DisplayPoint> {
     let mut to = from;
 
     for _ in 0..times {
@@ -2729,7 +2847,7 @@ fn find_backward(
     }
 
     let next = map.buffer_snapshot().chars_at(to.to_point(map)).next();
-    if next.is_some() && is_character_match(target, next.unwrap(), smartcase) {
+    let ret = if next.is_some() && is_character_match(target, next.unwrap(), smartcase) {
         if after {
             *to.column_mut() += 1;
             map.clip_point(to, Bias::Right)
@@ -2737,8 +2855,10 @@ fn find_backward(
             to
         }
     } else {
-        from
-    }
+        return None;
+    };
+
+    Some(ret)
 }
 
 /// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
@@ -3203,6 +3323,10 @@ mod test {
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
+
+    fn cursor_at(base: &str, target: &str) -> String {
+        base.replacen(&target.replacen("ˇ", "", 1), &target, 1)
+    }
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3776,6 +3900,36 @@ mod test {
         cx.shared_state().await.assert_eq("oneˇ two three four");
         cx.simulate_shared_keystrokes(",").await;
         cx.shared_state().await.assert_eq("one two thˇree four");
+    }
+
+    #[gpui::test]
+    async fn test_t_and_repeat_t(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        let s = "wow_this_line_has_a_whole_lot_of_underscores";
+        cx.set_shared_state(&cursor_at(s, "_lˇine_")).await;
+        cx.simulate_shared_keystrokes("t _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_linˇe_"));
+        cx.simulate_shared_keystrokes("t _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_linˇe_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_haˇs_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇa_"));
+        cx.simulate_shared_keystrokes(",").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇhas_"));
+
+        cx.set_shared_state(&cursor_at(s, "_lˇot_")).await;
+        cx.simulate_shared_keystrokes("T _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇlot_"));
+        cx.simulate_shared_keystrokes("T _").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇlot_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇwhole_"));
+        cx.simulate_shared_keystrokes(";").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_ˇa_"));
+        cx.simulate_shared_keystrokes(",").await;
+        cx.shared_state().await.assert_eq(&cursor_at(s, "_wholˇe_"));
     }
 
     #[gpui::test]
