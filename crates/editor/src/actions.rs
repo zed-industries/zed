@@ -842,6 +842,10 @@ actions!(
         ToggleSelectedDiffHunks,
         /// Submits the diff review comment to the agent panel.
         SubmitDiffReviewComment,
+        /// Toggles the expanded state of the comments section in the overlay.
+        ToggleReviewCommentsExpanded,
+        /// Sends all stored review comments to the Agent panel.
+        SendReviewToAgent,
         /// Toggles the selection menu.
         ToggleSelectionMenu,
         /// Toggles soft wrap mode.
@@ -887,4 +891,20 @@ impl Default for FindAllReferences {
             always_open_multibuffer: true,
         }
     }
+}
+
+/// Edits a stored review comment inline.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct EditReviewComment {
+    pub id: usize,
+}
+
+/// Deletes a stored review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteReviewComment {
+    pub id: usize,
 }

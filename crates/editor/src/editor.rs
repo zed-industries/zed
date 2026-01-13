@@ -1031,6 +1031,51 @@ pub(crate) struct PhantomDiffReviewIndicator {
     pub is_active: bool,
 }
 
+/// Identifies a specific hunk in the diff buffer.
+/// Used as a key to group comments by their location.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DiffHunkKey {
+    /// The file path (relative to worktree) this hunk belongs to.
+    pub file_path: Arc<util::rel_path::RelPath>,
+    /// The starting row of the hunk in the display.
+    pub hunk_start_row: DisplayRow,
+}
+
+/// A review comment stored locally before being sent to the Agent panel.
+#[derive(Clone)]
+pub struct StoredReviewComment {
+    /// Unique identifier for this comment (for edit/delete operations).
+    pub id: usize,
+    /// The comment text entered by the user.
+    pub comment: String,
+    /// The display row where this comment was added (within the hunk).
+    pub display_row: DisplayRow,
+    /// Anchors for the code range being reviewed.
+    pub anchor_range: Range<Anchor>,
+    /// Timestamp when the comment was created (for chronological ordering).
+    pub created_at: Instant,
+    /// Whether this comment is currently being edited inline.
+    pub is_editing: bool,
+}
+
+impl StoredReviewComment {
+    pub fn new(
+        id: usize,
+        comment: String,
+        display_row: DisplayRow,
+        anchor_range: Range<Anchor>,
+    ) -> Self {
+        Self {
+            id,
+            comment,
+            display_row,
+            anchor_range,
+            created_at: Instant::now(),
+            is_editing: false,
+        }
+    }
+}
+
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
 #[allow(dead_code)]
 pub(crate) struct DiffReviewOverlay {
@@ -1042,6 +1087,10 @@ pub(crate) struct DiffReviewOverlay {
     pub block_id: CustomBlockId,
     /// The editor entity for the review input.
     pub prompt_editor: Entity<Editor>,
+    /// The hunk key this overlay belongs to.
+    pub hunk_key: DiffHunkKey,
+    /// Whether the comments section is expanded.
+    pub comments_expanded: bool,
     /// Subscription to keep the action handler alive.
     _subscription: Subscription,
 }
@@ -1246,6 +1295,12 @@ pub struct Editor {
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     pub(crate) diff_review_overlay: Option<DiffReviewOverlay>,
+    /// Stored review comments grouped by hunk.
+    /// Key: DiffHunkKey identifying the hunk
+    /// Value: Vec of comments for that hunk (ordered by creation time)
+    stored_review_comments: HashMap<DiffHunkKey, Vec<StoredReviewComment>>,
+    /// Counter for generating unique comment IDs.
+    next_review_comment_id: usize,
     /// Pending diff review data waiting to be sent to the agent panel.
     pending_diff_review: Option<PendingDiffReview>,
     hovered_diff_hunk_row: Option<DisplayRow>,
@@ -2414,6 +2469,8 @@ impl Editor {
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
             diff_review_overlay: None,
+            stored_review_comments: HashMap::default(),
+            next_review_comment_id: 0,
             pending_diff_review: None,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
@@ -20857,6 +20914,16 @@ impl Editor {
         let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
         let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
 
+        // Compute the hunk key for this overlay
+        let file_path = buffer_snapshot
+            .file_at(Point::new(buffer_point.row, 0))
+            .map(|file: &Arc<dyn language::File>| file.path().clone())
+            .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
+        let hunk_key = DiffHunkKey {
+            file_path,
+            hunk_start_row: display_row,
+        };
+
         // Create the prompt editor for the review input
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -20881,12 +20948,19 @@ impl Editor {
 
         // Create the overlay block
         let prompt_editor_for_render = prompt_editor.clone();
+        let hunk_key_for_render = hunk_key.clone();
+        let editor_handle = cx.entity().downgrade();
         let block = BlockProperties {
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Below(anchor),
             height: Some(8), // Height for the overlay with multiple comments
             render: Arc::new(move |cx| {
-                Self::render_diff_review_overlay(&prompt_editor_for_render, cx)
+                Self::render_diff_review_overlay(
+                    &prompt_editor_for_render,
+                    &hunk_key_for_render,
+                    &editor_handle,
+                    cx,
+                )
             }),
             priority: 0,
         };
@@ -20899,6 +20973,8 @@ impl Editor {
             anchor,
             block_id,
             prompt_editor: prompt_editor.clone(),
+            hunk_key,
+            comments_expanded: true,
             _subscription: subscription,
         });
 
@@ -20918,28 +20994,26 @@ impl Editor {
         }
     }
 
-    /// Submits the diff review comment to the agent panel.
-    /// Extracts the data from the overlay BEFORE dismissing it, then dispatches the action.
+    /// Stores the diff review comment locally.
+    /// Comments are stored per-hunk and can later be batch-submitted to the Agent panel.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        log::info!("submit_diff_review_comment called");
-
         let Some(overlay) = self.diff_review_overlay.as_ref() else {
-            log::warn!("No diff review overlay found");
             return;
         };
 
         // Get the comment text from the prompt editor
         let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
-        log::info!("Comment text: '{}'", comment_text);
 
         // Don't submit if the comment is empty
         if comment_text.is_empty() {
-            log::info!("Comment is empty, not submitting");
             return;
         }
 
-        // Get the display row and convert to buffer position
+        // Get the display row and hunk key
         let display_row = overlay.display_row;
+        let hunk_key = overlay.hunk_key.clone();
+
+        // Convert to buffer position for anchors
         let snapshot = self.snapshot(window, cx);
         let display_point = DisplayPoint::new(display_row, 0);
         let buffer_point = snapshot
@@ -20958,29 +21032,23 @@ impl Editor {
         let anchor_start = buffer_snapshot.anchor_after(line_start);
         let anchor_end = buffer_snapshot.anchor_before(line_end);
 
-        log::info!(
-            "Extracted review data: comment='{}', range={:?}",
+        // Store the comment locally
+        self.add_review_comment(
+            hunk_key,
             comment_text,
-            line_start..line_end
-        );
-
-        // Store the pending review data in a global for the action handler to retrieve
-        // We use a global because the editor might be nested inside other views
-        // (like ProjectDiff -> SplittableEditor -> Editor) and not directly accessible
-        PendingDiffReview::set_global(
-            PendingDiffReview {
-                comment: comment_text,
-                anchor_range: anchor_start..anchor_end,
-                buffer: self.buffer.clone(),
-            },
+            display_row,
+            anchor_start..anchor_end,
             cx,
         );
 
-        // Dismiss the overlay AFTER extracting data
-        self.dismiss_diff_review_overlay(cx);
+        // Clear the prompt editor but keep the overlay open
+        if let Some(overlay) = self.diff_review_overlay.as_ref() {
+            overlay.prompt_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+            });
+        }
 
-        // Now dispatch the action - the handler will retrieve the pending data
-        window.dispatch_action(Box::new(crate::actions::SubmitDiffReviewComment), cx);
+        cx.notify();
     }
 
     /// Returns the prompt editor for the diff review overlay, if one is active.
@@ -20998,6 +21066,136 @@ impl Editor {
             .map(|overlay| overlay.display_row)
     }
 
+    /// Returns comments for a specific hunk, ordered by creation time.
+    pub fn comments_for_hunk(&self, key: &DiffHunkKey) -> &[StoredReviewComment] {
+        self.stored_review_comments
+            .get(key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Returns the total count of stored review comments across all hunks.
+    pub fn total_review_comment_count(&self) -> usize {
+        self.stored_review_comments.values().map(|v| v.len()).sum()
+    }
+
+    /// Returns the count of comments for a specific hunk.
+    pub fn hunk_comment_count(&self, key: &DiffHunkKey) -> usize {
+        self.stored_review_comments
+            .get(key)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+
+    /// Adds a new review comment to a specific hunk.
+    pub fn add_review_comment(
+        &mut self,
+        hunk_key: DiffHunkKey,
+        comment: String,
+        display_row: DisplayRow,
+        anchor_range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let id = self.next_review_comment_id;
+        self.next_review_comment_id += 1;
+
+        let stored_comment = StoredReviewComment::new(id, comment, display_row, anchor_range);
+
+        self.stored_review_comments
+            .entry(hunk_key)
+            .or_default()
+            .push(stored_comment);
+
+        cx.notify();
+        id
+    }
+
+    /// Removes a review comment by ID from any hunk.
+    pub fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
+        for comments in self.stored_review_comments.values_mut() {
+            if let Some(index) = comments.iter().position(|c| c.id == id) {
+                comments.remove(index);
+                cx.notify();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Updates a review comment's text by ID.
+    pub fn update_review_comment(
+        &mut self,
+        id: usize,
+        new_comment: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        for comments in self.stored_review_comments.values_mut() {
+            if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
+                comment.comment = new_comment;
+                comment.is_editing = false;
+                cx.notify();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Sets a comment's editing state.
+    pub fn set_comment_editing(&mut self, id: usize, is_editing: bool, cx: &mut Context<Self>) {
+        for comments in self.stored_review_comments.values_mut() {
+            if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
+                comment.is_editing = is_editing;
+                cx.notify();
+                return;
+            }
+        }
+    }
+
+    /// Takes all stored comments from all hunks, clearing the storage.
+    /// Returns a Vec of (hunk_key, comments) pairs.
+    pub fn take_all_review_comments(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
+        cx.notify();
+        std::mem::take(&mut self.stored_review_comments)
+            .into_iter()
+            .collect()
+    }
+
+    /// Toggles the expanded state of the comments section in the overlay.
+    pub fn toggle_review_comments_expanded(
+        &mut self,
+        _: &ToggleReviewCommentsExpanded,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(overlay) = &mut self.diff_review_overlay {
+            overlay.comments_expanded = !overlay.comments_expanded;
+            cx.notify();
+        }
+    }
+
+    /// Handles the EditReviewComment action - sets a comment into editing mode.
+    pub fn edit_review_comment(
+        &mut self,
+        action: &EditReviewComment,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_comment_editing(action.id, true, cx);
+    }
+
+    /// Handles the DeleteReviewComment action - removes a comment.
+    pub fn delete_review_comment(
+        &mut self,
+        action: &DeleteReviewComment,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.remove_review_comment(action.id, cx);
+    }
+
     /// Returns and clears the pending diff review data, if any.
     pub fn take_pending_diff_review(&mut self) -> Option<PendingDiffReview> {
         self.pending_diff_review.take()
@@ -21010,23 +21208,29 @@ impl Editor {
 
     fn render_diff_review_overlay(
         prompt_editor: &Entity<Editor>,
+        hunk_key: &DiffHunkKey,
+        editor_handle: &WeakEntity<Editor>,
         cx: &mut BlockContext,
     ) -> AnyElement {
         let theme = cx.theme();
         let colors = theme.colors();
 
-        // Hardcoded review comments for now (icon path, comment text)
-        let hardcoded_comments = vec![
-            (
-                "icons/ai_claude.svg",
-                "The UserMessage component shouldn't have been deleted.",
-            ),
-            (
-                "icons/ai_gemini.svg",
-                "We should prefer to always use the import alias `@/`.",
-            ),
-        ];
+        // Get stored comments and expanded state from the editor
+        let (comments, comments_expanded) = editor_handle
+            .upgrade()
+            .map(|editor| {
+                let editor = editor.read(cx);
+                let comments = editor.comments_for_hunk(hunk_key).to_vec();
+                let expanded = editor
+                    .diff_review_overlay
+                    .as_ref()
+                    .map(|o| o.comments_expanded)
+                    .unwrap_or(true);
+                (comments, expanded)
+            })
+            .unwrap_or((Vec::new(), true));
 
+        let comment_count = comments.len();
         let avatar_size = px(20.);
         let action_icon_size = IconSize::XSmall;
 
@@ -21038,7 +21242,7 @@ impl Editor {
             .px_2()
             .pb_2()
             .gap_2()
-            // Top row: editable input with user's avatar, with darker background and close/return actions.
+            // Top row: editable input with user's avatar
             .child(
                 h_flex()
                     .w_full()
@@ -21050,8 +21254,6 @@ impl Editor {
                     .bg(colors.surface_background)
                     .child(
                         div().size(avatar_size).flex_shrink_0().child(
-                            // Placeholder for the user's avatar (should match "Toggle User Menu" avatar elsewhere).
-                            // We don't have access to user state here, so use an icon placeholder for now.
                             Icon::new(IconName::Person)
                                 .size(IconSize::Small)
                                 .color(ui::Color::Muted),
@@ -21083,10 +21285,10 @@ impl Editor {
                                     }),
                             )
                             .child(
-                                IconButton::new("diff-review-regenerate", IconName::Return)
+                                IconButton::new("diff-review-add", IconName::Return)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Submit review comment"))
+                                    .tooltip(Tooltip::text("Add comment"))
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::actions::SubmitDiffReviewComment),
@@ -21096,56 +21298,137 @@ impl Editor {
                             ),
                     ),
             )
-            // Hardcoded review comments below (each gets edit + delete actions on the right).
-            .children(hardcoded_comments.into_iter().enumerate().map(
-                |(comment_ix, (icon_path, comment))| {
-                    h_flex()
-                        .w_full()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_1p5()
-                        .rounded_md()
-                        .bg(colors.surface_background)
-                        .child(
-                            div().size(avatar_size).flex_shrink_0().child(
-                                Icon::from_path(icon_path)
-                                    .size(IconSize::Small)
-                                    .color(ui::Color::Muted),
-                            ),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_sm()
-                                .text_color(colors.text)
-                                .child(comment),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    IconButton::new(
-                                        format!("diff-review-edit-{comment_ix}"),
-                                        IconName::Pencil,
-                                    )
-                                    .icon_color(ui::Color::Muted)
-                                    .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Edit")),
-                                )
-                                .child(
-                                    IconButton::new(
-                                        format!("diff-review-delete-{comment_ix}"),
-                                        IconName::Trash,
-                                    )
-                                    .icon_color(ui::Color::Muted)
-                                    .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Delete")),
-                                ),
-                        )
-                },
-            ))
+            // Expandable comments section (only shown when there are comments)
+            .when(comment_count > 0, |el| {
+                el.child(Self::render_comments_section(
+                    comments,
+                    comments_expanded,
+                    avatar_size,
+                    action_icon_size,
+                    colors,
+                ))
+            })
             .into_any_element()
+    }
+
+    fn render_comments_section(
+        comments: Vec<StoredReviewComment>,
+        expanded: bool,
+        avatar_size: Pixels,
+        action_icon_size: IconSize,
+        colors: &theme::ThemeColors,
+    ) -> impl IntoElement {
+        let comment_count = comments.len();
+
+        v_flex()
+            .w_full()
+            .gap_1()
+            // Header with expand/collapse toggle
+            .child(
+                h_flex()
+                    .id("review-comments-header")
+                    .w_full()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .hover(|style| style.bg(colors.ghost_element_hover))
+                    .on_click(|_, window: &mut Window, cx| {
+                        window.dispatch_action(
+                            Box::new(crate::actions::ToggleReviewCommentsExpanded),
+                            cx,
+                        );
+                    })
+                    .child(
+                        Icon::new(if expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(IconSize::Small)
+                        .color(ui::Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!(
+                            "{} Comment{}",
+                            comment_count,
+                            if comment_count == 1 { "" } else { "s" }
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            // Comments list (when expanded)
+            .when(expanded, |el| {
+                el.children(comments.into_iter().map(|comment| {
+                    Self::render_comment_row(comment, avatar_size, action_icon_size, colors)
+                }))
+            })
+    }
+
+    fn render_comment_row(
+        comment: StoredReviewComment,
+        avatar_size: Pixels,
+        action_icon_size: IconSize,
+        colors: &theme::ThemeColors,
+    ) -> impl IntoElement {
+        let comment_id = comment.id;
+
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .bg(colors.surface_background)
+            .child(
+                div().size(avatar_size).flex_shrink_0().child(
+                    Icon::new(IconName::Person)
+                        .size(IconSize::Small)
+                        .color(ui::Color::Muted),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(colors.text)
+                    .child(comment.comment.clone()),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new(format!("diff-review-edit-{comment_id}"), IconName::Pencil)
+                            .icon_color(ui::Color::Muted)
+                            .icon_size(action_icon_size)
+                            .tooltip(Tooltip::text("Edit"))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::actions::EditReviewComment { id: comment_id }),
+                                    cx,
+                                );
+                            }),
+                    )
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-delete-{comment_id}"),
+                            IconName::Trash,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Delete"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::DeleteReviewComment { id: comment_id }),
+                                cx,
+                            );
+                        }),
+                    ),
+            )
     }
 
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
