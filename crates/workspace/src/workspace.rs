@@ -213,6 +213,8 @@ actions!(
         ActivatePreviousWindow,
         /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Opens the project switcher dropdown (only visible when multiple folders are open).
+        SwitchProject,
         /// Clears all notifications.
         ClearAllNotifications,
         /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
@@ -1181,6 +1183,7 @@ pub struct Workspace {
     bottom_dock: Entity<Dock>,
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
+    active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
@@ -1588,6 +1591,7 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
+            active_worktree_override: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
             left_dock,
@@ -2362,6 +2366,27 @@ impl Workspace {
 
     pub fn titlebar_item(&self) -> Option<AnyView> {
         self.titlebar_item.clone()
+    }
+
+    /// Returns the worktree override set by the user (e.g., via the project dropdown).
+    /// When set, git-related operations should use this worktree instead of deriving
+    /// the active worktree from the focused file.
+    pub fn active_worktree_override(&self) -> Option<WorktreeId> {
+        self.active_worktree_override
+    }
+
+    pub fn set_active_worktree_override(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_worktree_override = worktree_id;
+        cx.notify();
+    }
+
+    pub fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
+        self.active_worktree_override = None;
+        cx.notify();
     }
 
     /// Call the given callback with a workspace whose project is local.

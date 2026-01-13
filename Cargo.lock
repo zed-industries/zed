@@ -16930,6 +16930,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
+ "menu",
  "notifications",
  "pretty_assertions",
  "project",
