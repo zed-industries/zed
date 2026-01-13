@@ -26,12 +26,7 @@ pub struct Example {
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub buffer: Option<ExampleBuffer>,
-
-    /// The context retrieved for the prediction. This requires the worktree to
-    /// be loaded and the language server to be started.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<ExampleContext>,
+    pub prompt_inputs: Option<ExamplePromptInputs>,
 
     /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,18 +55,15 @@ pub struct ExampleState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleContext {
-    pub files: Arc<[RelatedFile]>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleBuffer {
+pub struct ExamplePromptInputs {
     pub content: String,
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
     pub context_range: Range<usize>,
     pub editable_range: Range<usize>,
+    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
+    pub related_files: Option<Arc<[RelatedFile]>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -240,8 +232,7 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
     let spec = ExampleSpec::from_markdown(input)?;
     Ok(Example {
         spec,
-        buffer: None,
-        context: None,
+        prompt_inputs: None,
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
