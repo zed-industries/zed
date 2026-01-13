@@ -161,6 +161,7 @@ pub enum ExternalAgent {
     Gemini,
     ClaudeCode,
     Codex,
+    Qwen,
     NativeAgent,
     Custom { name: SharedString },
 }
@@ -175,6 +176,7 @@ impl ExternalAgent {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
+            Self::Qwen => Rc::new(agent_servers::Qwen),
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }

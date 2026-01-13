@@ -3,6 +3,7 @@ mod claude;
 mod codex;
 mod custom;
 mod gemini;
+mod qwen;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;
@@ -14,6 +15,7 @@ use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 pub use gemini::*;
+pub use qwen::*;
 use http_client::read_no_proxy_from_env;
 use project::agent_server_store::AgentServerStore;
 
