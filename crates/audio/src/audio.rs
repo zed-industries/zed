@@ -204,7 +204,12 @@ impl Audio {
             })
             .denoise()
             .context("Could not set up denoiser")?
-            .automatic_gain_control(0.90, 1.0, 0.0, 5.0)
+            .automatic_gain_control(rodio::source::AutomaticGainControlSettings {
+                target_level: 0.9,
+                attack_time: Duration::from_secs(1),
+                release_time: Duration::ZERO,
+                absolute_max_gain: 5.0,
+            })
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
@@ -234,7 +239,12 @@ impl Audio {
     ) -> anyhow::Result<()> {
         let (replay_source, source) = source
             .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
-            .automatic_gain_control(0.90, 1.0, 0.0, 5.0)
+            .automatic_gain_control(rodio::source::AutomaticGainControlSettings {
+                target_level: 0.9,
+                attack_time: Duration::from_secs(1),
+                release_time: Duration::ZERO,
+                absolute_max_gain: 5.0,
+            })
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
