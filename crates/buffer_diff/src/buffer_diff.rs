@@ -1328,27 +1328,28 @@ impl BufferDiff {
         let base_snapshot =
             language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
 
-        cx.background_executor().spawn(async move {
-            let base_snapshot = base_snapshot.await;
-            let base_text_exists = base_text.is_some();
-            let hunks = compute_hunks(
-                base_text.clone(),
-                base_snapshot,
-                buffer.clone(),
-                diff_options,
-            );
-            let base_text = base_text.unwrap_or_default();
-            let inner = BufferDiffInner {
-                base_text,
-                hunks,
-                base_text_exists,
-                pending_hunks: SumTree::new(&buffer.text),
-            };
-            BufferDiffUpdate {
-                inner,
-                base_text_changed,
-            }
-        })
+        cx.background_executor()
+            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
+                let base_snapshot = base_snapshot.await;
+                let base_text_exists = base_text.is_some();
+                let hunks = compute_hunks(
+                    base_text.clone(),
+                    base_snapshot,
+                    buffer.clone(),
+                    diff_options,
+                );
+                let base_text = base_text.unwrap_or_default();
+                let inner = BufferDiffInner {
+                    base_text,
+                    hunks,
+                    base_text_exists,
+                    pending_hunks: SumTree::new(&buffer.text),
+                };
+                BufferDiffUpdate {
+                    inner,
+                    base_text_changed,
+                }
+            })
     }
 
     pub fn language_changed(
