@@ -1,7 +1,9 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, PromptFormat};
+use cloud_llm_client::predict_edits_v3::{
+    self, PromptFormat, RawCompletionRequest, RawCompletionResponse,
+};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
@@ -1884,16 +1886,21 @@ impl EditPredictionStore {
     }
 
     async fn send_raw_llm_request(
-        request: open_ai::Request,
+        request: RawCompletionRequest,
         client: Arc<Client>,
+        custom_url: Option<Arc<Url>>,
         llm_token: LlmApiToken,
         app_version: Version,
         #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
         #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
-    ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = client
-            .http_client()
-            .build_zed_llm_url("/predict_edits/raw", &[])?;
+    ) -> Result<(RawCompletionResponse, Option<EditPredictionUsage>)> {
+        let url = if let Some(custom_url) = custom_url {
+            custom_url.as_ref().clone()
+        } else {
+            client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/raw", &[])?
+        };
 
         #[cfg(feature = "cli-support")]
         let cache_key = if let Some(cache) = eval_cache {

@@ -31,7 +31,6 @@ visual-tests = [
     "dep:image",
     "dep:semver",
     "dep:tempfile",
-    "dep:acp_thread",
     "dep:action_log",
     "dep:agent_servers",
     "workspace/test-support",
@@ -120,7 +119,7 @@ image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
-acp_thread = { workspace = true, optional = true }
+acp_thread.workspace = true
 action_log = { workspace = true, optional = true }
 agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
