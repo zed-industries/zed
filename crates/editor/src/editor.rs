@@ -21396,7 +21396,7 @@ impl Editor {
                     .flex_1()
                     .text_sm()
                     .text_color(colors.text)
-                    .child(comment.comment.clone()),
+                    .child(comment.comment),
             )
             .child(
                 h_flex()
