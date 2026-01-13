@@ -6,6 +6,7 @@ mod migrate;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
+pub mod remote_debug;
 pub mod telemetry_log;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub mod visual_tests;
@@ -4761,6 +4762,7 @@ mod tests {
                 "project_search",
                 "project_symbols",
                 "projects",
+                "remote_debug",
                 "repl",
                 "rules_library",
                 "search",

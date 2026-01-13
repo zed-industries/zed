@@ -57,13 +57,7 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
         Commands::Proxy {
             identifier,
             reconnect,
-        } => execute_proxy(identifier, reconnect)
-            .inspect_err(|err| {
-                if let ExecuteProxyError::ServerNotRunning(err) = err {
-                    std::process::exit(err.to_exit_code());
-                }
-            })
-            .context("running proxy on the remote server"),
+        } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
