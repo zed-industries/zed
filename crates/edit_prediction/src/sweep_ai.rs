@@ -90,6 +90,13 @@ impl SweepAi {
         let result = cx.background_spawn(async move {
             let text = inputs.snapshot.text();
 
+            // todo! should we filter for sweep? Or just assume they'll figure it out themselves
+            let related_files = crate::filter_intersecting_excerpts(
+                inputs.related_files,
+                full_path.as_ref(),
+                0..inputs.snapshot.max_point().row,
+            );
+
             let mut recent_changes = String::new();
             for event in &inputs.events {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
@@ -120,8 +127,7 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            let retrieval_chunks = inputs
-                .related_files
+            let retrieval_chunks = related_files
                 .iter()
                 .flat_map(|related_file| {
                     related_file.excerpts.iter().map(|excerpt| FileChunk {
@@ -206,7 +212,7 @@ impl SweepAi {
 
             let ep_inputs = zeta_prompt::ZetaPromptInput {
                 events: inputs.events,
-                related_files: inputs.related_files.clone(),
+                related_files: related_files.clone(),
                 cursor_path: full_path.clone(),
                 cursor_excerpt: request_body.file_contents.clone().into(),
                 // we actually don't know

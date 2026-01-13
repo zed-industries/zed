@@ -68,6 +68,12 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
+            let related_files = crate::filter_intersecting_excerpts(
+                related_files,
+                full_path.as_ref(),
+                context_range.start.row..context_range.end.row,
+            );
+
             let context_offset_range = context_range.to_offset(&snapshot);
 
             let editable_offset_range = editable_range.to_offset(&snapshot);

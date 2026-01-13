@@ -202,6 +202,12 @@ pub fn zeta2_prompt_input(
             MAX_CONTEXT_TOKENS,
         );
 
+    let related_files = crate::filter_intersecting_excerpts(
+        related_files,
+        excerpt_path.as_ref(),
+        context_range.start.row..context_range.end.row,
+    );
+
     let context_start_offset = context_range.start.to_offset(snapshot);
     let editable_offset_range = editable_range.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset - context_start_offset;
