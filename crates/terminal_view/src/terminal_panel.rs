@@ -2015,24 +2015,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_local_terminal_creation(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-
-        let terminal = project
-            .update(cx, |project, cx| project.create_local_terminal(cx))
-            .await;
-
-        assert!(
-            terminal.is_ok(),
-            "create_local_terminal should successfully create a terminal"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_local_terminal_in_local_project_with_directory(cx: &mut TestAppContext) {
+    async fn test_local_terminal_in_local_project(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -2045,15 +2028,28 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [std::path::Path::new("/test-project")], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
 
-        // Verify create_local_terminal works in local projects with worktrees
-        let terminal = project
-            .update(cx, |project, cx| project.create_local_terminal(cx))
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        let result = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                })
+            })
+            .unwrap()
             .await;
 
         assert!(
-            terminal.is_ok(),
-            "create_local_terminal should work in local projects with worktrees"
+            result.is_ok(),
+            "local terminal should successfully create in local project"
         );
     }
 
