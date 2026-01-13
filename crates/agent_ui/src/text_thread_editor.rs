@@ -214,12 +214,10 @@ const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl TextThreadEditor {
     pub fn init(cx: &mut App) {
-        log::info!("TextThreadEditor::init called");
         workspace::FollowableViewRegistry::register::<TextThreadEditor>(cx);
 
         cx.observe_new(
             |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-                log::info!("TextThreadEditor: registering actions on new workspace");
                 workspace
                     .register_action(TextThreadEditor::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
@@ -1532,8 +1530,6 @@ impl TextThreadEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        log::info!("handle_submit_diff_review_comment called");
-
         // Get the pending diff review data from the global state
         // This is set by submit_diff_review_comment before the overlay is dismissed
         let Some(pending) = PendingDiffReview::take_global(cx) else {
@@ -1541,24 +1537,17 @@ impl TextThreadEditor {
             return;
         };
 
-        log::info!(
-            "Retrieved pending review data from global: comment='{}'",
-            pending.comment
-        );
-
         let comment_text = pending.comment;
         let buffer = pending.buffer.clone();
         let snapshot = buffer.read(cx).snapshot(cx);
         let point_range = pending.anchor_range.start.to_point(&snapshot)
             ..pending.anchor_range.end.to_point(&snapshot);
 
-        log::info!("Focusing agent panel");
         // Focus the agent panel
         workspace.focus_panel::<crate::AgentPanel>(window, cx);
 
         // Defer all the work to ensure the panel is focused and ready
         cx.defer_in(window, move |workspace, window, cx| {
-            log::info!("Deferred callback 1 executing");
             let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
                 log::warn!("No agent panel found");
                 return;
@@ -1567,31 +1556,24 @@ impl TextThreadEditor {
             // Check if there's an active agent thread view using panel.update()
             let has_active_thread =
                 panel.update(cx, |panel, _cx| panel.active_thread_view().is_some());
-            log::info!("Has active agent thread: {}", has_active_thread);
 
             if !has_active_thread {
                 // Create a new agent thread (native agent thread, not text thread)
-                log::info!("Dispatching NewThread action");
                 window.dispatch_action(Box::new(crate::NewThread), cx);
             }
 
             // Defer multiple times to ensure the new thread is fully created
             // The NewThread action is async and may take a few event loop cycles
             cx.defer_in(window, move |_workspace, window, cx| {
-                log::info!("Deferred callback 2 executing");
                 cx.defer_in(window, move |_workspace, window, cx| {
-                    log::info!("Deferred callback 3 executing");
                     cx.defer_in(window, move |workspace, window, cx| {
-                        log::info!("Deferred callback 4 executing");
                         let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                            log::warn!("No agent panel found in deferred callback 4");
+                            log::warn!("No agent panel found in deferred callback");
                             return;
                         };
 
                         panel.update(cx, |panel, cx| {
                             if let Some(thread_view) = panel.active_thread_view().cloned() {
-                                log::info!("Found active agent thread view, inserting content");
-
                                 // Create creases for the code snippet using the stored buffer and range
                                 let snapshot = buffer.read(cx).snapshot(cx);
                                 let mut creases =
@@ -1608,16 +1590,11 @@ impl TextThreadEditor {
                                 thread_view.update(
                                     cx,
                                     |thread_view: &mut crate::acp::AcpThreadView, cx| {
-                                        // Insert the code snippet with comment as a crease
-                                        log::info!(
-                                            "Inserting code crease with range {:?}",
-                                            point_range
-                                        );
                                         thread_view.insert_code_crease(creases, window, cx);
                                     },
                                 );
                             } else {
-                                log::warn!("No active agent thread view in deferred callback 4");
+                                log::warn!("No active agent thread view in deferred callback");
                             }
                         });
                     });
@@ -1663,11 +1640,8 @@ impl TextThreadEditor {
             .collect();
 
         if comments.is_empty() {
-            log::info!("No review comments to send");
             return;
         }
-
-        log::info!("Sending {} review comments to Agent", comments.len());
 
         // Focus the agent panel
         workspace.focus_panel::<crate::AgentPanel>(window, cx);
