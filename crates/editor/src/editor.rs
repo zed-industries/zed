@@ -1077,12 +1077,9 @@ impl StoredReviewComment {
 }
 
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
-#[allow(dead_code)]
 pub(crate) struct DiffReviewOverlay {
     /// The display row where the overlay is anchored.
     pub display_row: DisplayRow,
-    /// The anchor position for the block.
-    pub anchor: Anchor,
     /// The block ID for the overlay.
     pub block_id: CustomBlockId,
     /// The editor entity for the review input.
@@ -20946,7 +20943,6 @@ impl Editor {
 
         self.diff_review_overlay = Some(DiffReviewOverlay {
             display_row,
-            anchor,
             block_id,
             prompt_editor: prompt_editor.clone(),
             hunk_key,
