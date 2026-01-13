@@ -1556,7 +1556,15 @@ pub(crate) fn search_symbols(
                         SymbolLocation::OutsideProject { .. } => false,
                     })
             });
-
+        // Try to support rust-analyzer's path based symbols feature which
+        // allows to search by rust path syntax, in that case we only want to
+        // filter names by the last segment
+        // Ideally this was a first class LSP feature (rich queries)
+        let query = query
+            .rsplit_once("::")
+            .map_or(&*query, |(_, suffix)| suffix)
+            .to_owned();
+        // Note if you make changes to this filtering below, also change `project_symbols::ProjectSymbolsDelegate::filter`
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
             &visible_match_candidates,
@@ -2009,6 +2017,19 @@ mod tests {
                 source_range: 6..18,
                 mode: Some(PromptContextType::Symbol),
                 argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @symbol agent_ui::completion_provider",
+                0,
+                &supported_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 6..43,
+                mode: Some(PromptContextType::Symbol),
+                argument: Some("agent_ui::completion_provider".to_string()),
             })
         );
 
