@@ -55,6 +55,30 @@ async fn test_visible_list(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
+    fs.set_head_and_index_for_repo(
+        path!("/root1/.git").as_ref(),
+        &[
+            ("a/0/q", "".into()),
+            ("a/0/r", "".into()),
+            ("a/0/s", "".into()),
+            ("a/1/t", "".into()),
+            ("a/1/u", "".into()),
+            ("a/2/v", "".into()),
+            ("a/2/w", "".into()),
+            ("a/2/x", "".into()),
+            ("a/2/y", "".into()),
+            ("b/3/Q", "".into()),
+            ("b/4/R", "".into()),
+            ("b/4/S", "".into()),
+            ("b/4/T", "".into()),
+            ("b/4/U", "".into()),
+            ("C/6/V", "".into()),
+            ("C/6/W", "".into()),
+            ("C/7/X", "".into()),
+            ("C/8/Z", "".into()),
+        ],
+    );
+
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -208,6 +232,30 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
+    fs.set_head_and_index_for_repo(
+        path!("/root1/.git").as_ref(),
+        &[
+            ("a/0/q", "".into()),
+            ("a/0/r", "".into()),
+            ("a/0/s", "".into()),
+            ("a/1/t", "".into()),
+            ("a/1/u", "".into()),
+            ("a/2/v", "".into()),
+            ("a/2/w", "".into()),
+            ("a/2/x", "".into()),
+            ("a/2/y", "".into()),
+            ("b/3/Q", "".into()),
+            ("b/4/R", "".into()),
+            ("b/4/S", "".into()),
+            ("b/4/T", "".into()),
+            ("b/4/U", "".into()),
+            ("C/6/V", "".into()),
+            ("C/6/W", "".into()),
+            ("C/7/X", "".into()),
+            ("C/8/Z", "".into()),
+        ],
+    );
+
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -277,7 +325,7 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
+async fn test_auto_fold_dir_paths(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -502,6 +550,30 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/root1/.git").as_ref(),
+        &[
+            ("a/0/q", "".into()),
+            ("a/0/r", "".into()),
+            ("a/0/s", "".into()),
+            ("a/1/t", "".into()),
+            ("a/1/u", "".into()),
+            ("a/2/v", "".into()),
+            ("a/2/w", "".into()),
+            ("a/2/x", "".into()),
+            ("a/2/y", "".into()),
+            ("b/3/Q", "".into()),
+            ("b/4/R", "".into()),
+            ("b/4/S", "".into()),
+            ("b/4/T", "".into()),
+            ("b/4/U", "".into()),
+            ("C/6/V", "".into()),
+            ("C/6/W", "".into()),
+            ("C/7/X", "".into()),
+            ("C/8/Z", "".into()),
+        ],
+    );
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -898,6 +970,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
+    set_partial_collapse_setting(cx, false);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -935,6 +1008,30 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/root1/.git").as_ref(),
+        &[
+            ("a/0/q", "".into()),
+            ("a/0/r", "".into()),
+            ("a/0/s", "".into()),
+            ("a/1/t", "".into()),
+            ("a/1/u", "".into()),
+            ("a/2/v", "".into()),
+            ("a/2/w", "".into()),
+            ("a/2/x", "".into()),
+            ("a/2/y", "".into()),
+            ("b/3/Q", "".into()),
+            ("b/4/R", "".into()),
+            ("b/4/S", "".into()),
+            ("b/4/T", "".into()),
+            ("b/4/U", "".into()),
+            ("C/6/V", "".into()),
+            ("C/6/W", "".into()),
+            ("C/7/X", "".into()),
+            ("C/8/Z", "".into()),
+        ],
+    );
 
     let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2848,6 +2945,7 @@ async fn test_rename_item_and_check_history(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
+    set_partial_collapse_setting(cx, false);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -3353,6 +3451,218 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_pin_open_and_modified_files(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "HEAD": "",
+            },
+            "a": {
+                "ax": { "ax_1": "", "ax_2": "", "ax_3": "" },
+                "ay": {
+                    "ayi": {
+                        "ayi_1": "",
+                        "ayi_2": "",
+                        "ayiz": { "ayiz_1": "", "ayiz_2": "" },
+                    },
+                    "ay_1": "",
+                },
+                "a_1": "",
+                "a_2": "",
+            },
+            "b": {
+                "bx": { "bx_1": "", "bx_2": "" },
+                "by": {
+                    "byi": { "byi_1": "", "byi_2": "" },
+                },
+            },
+            "_1": "",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            ("a/ax/ax_1", "".into()),
+            ("a/ax/ax_2", "modified".into()),
+            ("a/ax/ax_3", "".into()),
+            ("a/ay/ayi/ayi_1", "".into()),
+            ("a/ay/ayi/ayi_2", "modified".into()),
+            ("a/ay/ayi/ayiz/ayiz_1", "".into()),
+            ("a/ay/ayi/ayiz/ayiz_2", "modified".into()),
+            ("a/ay/ay_1", "".into()),
+            ("a/a_1", "".into()),
+            ("a/a_2", "modified".into()),
+            ("b/bx/bx_1", "".into()),
+            ("b/bx/bx_2", "".into()),
+            ("b/by/byi/byi_1", "".into()),
+            ("b/by/byi/byi_2", "".into()),
+            ("_1", "".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    + a",
+            "        + ax",
+            "              ax_2",
+            "        + ay",
+            "            + ayi",
+            "                + ayiz",
+            "                      ayiz_2",
+            "                  ayi_2",
+            "          a_2",
+            "    > b",
+            "      _1",
+        ],
+        "Should pin modified directories"
+    );
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    toggle_expand_dir(&panel, "root/a/ay", cx);
+    toggle_expand_dir(&panel, "root/a/ay/ayi/ayiz", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v a",
+            "        + ax",
+            "              ax_2",
+            "        v ay",
+            "            + ayi",
+            "                v ayiz  <== selected",
+            "                      ayiz_1",
+            "                      ayiz_2",
+            "                  ayi_2",
+            "              ay_1",
+            "          a_1",
+            "          a_2",
+            "    > b",
+            "      _1",
+        ],
+        "Should expand pinned directory"
+    );
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    + a  <== selected",
+            "        + ax",
+            "              ax_2",
+            "        + ay",
+            "            + ayi",
+            "                + ayiz",
+            "                      ayiz_2",
+            "                  ayi_2",
+            "          a_2",
+            "    > b",
+            "      _1",
+        ],
+        "Should pin descendants when collapsing"
+    );
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v a  <== selected",
+            "        + ax",
+            "              ax_2",
+            "        v ay",
+            "            + ayi",
+            "                + ayiz",
+            "                      ayiz_2",
+            "                  ayi_2",
+            "              ay_1",
+            "          a_1",
+            "          a_2",
+            "    > b",
+            "      _1",
+        ],
+        "Should stop expansion at collapsed descendants"
+    );
+
+    select_path(&panel, "root/b/by/byi/byi_1", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+    toggle_expand_dir(&panel, "root/b", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v a",
+            "        + ax",
+            "              ax_2",
+            "        v ay",
+            "            + ayi",
+            "                + ayiz",
+            "                      ayiz_2",
+            "                  ayi_2",
+            "              ay_1",
+            "          a_1",
+            "          a_2",
+            "    > b  <== selected",
+            "      _1",
+        ],
+        "Should not pin previewed file"
+    );
+    ensure_single_file_is_opened(&workspace, "b/by/byi/byi_1", cx);
+
+    // Test open permanent file
+    toggle_expand_dir(&panel, "root/b", cx);
+    select_path(&panel, "root/b/by/byi/byi_2", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.open_permanent(&OpenPermanent, window, cx)
+    });
+    cx.executor().run_until_parked();
+    toggle_expand_dir(&panel, "root/b", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v a",
+            "        + ax",
+            "              ax_2",
+            "        v ay",
+            "            + ayi",
+            "                + ayiz",
+            "                      ayiz_2",
+            "                  ayi_2",
+            "              ay_1",
+            "          a_1",
+            "          a_2",
+            "    + b  <== selected",
+            "        + by",
+            "            + byi",
+            "                  byi_2  <== marked",
+            "      _1",
+        ],
+        "Should pin opened file"
+    );
+    ensure_single_file_is_opened(&workspace, "b/by/byi/byi_2", cx);
+}
+
+#[gpui::test]
 async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
@@ -3382,6 +3692,7 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
     select_path(&panel, "project_root/dir_1/nested_dir", cx);
     panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -4477,6 +4788,18 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
+    fs.set_head_and_index_for_repo(
+        path!("/project_root/.git").as_ref(),
+        &[
+            ("dir_1/file_1.py", "# File 1_1 contents".into()),
+            ("dir_1/file_2.py", "# File 1_2 contents".into()),
+            ("dir_1/file_3.py", "# File 1_3 contents".into()),
+            ("dir_2/file_1.py", "# File 2_1 contents".into()),
+            ("dir_2/file_2.py", "# File 2_2 contents".into()),
+            ("dir_2/file_3.py", "# File 2_3 contents".into()),
+        ],
+    );
+
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -4725,6 +5048,18 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
+    fs.set_head_and_index_for_repo(
+        path!("/project_root/.git").as_ref(),
+        &[
+            ("dir_1/file_1.py", "# File 1_1 contents".into()),
+            ("dir_1/file_2.py", "# File 1_2 contents".into()),
+            ("dir_1/file_3.py", "# File 1_3 contents".into()),
+            ("dir_2/file_1.py", "# File 2_1 contents".into()),
+            ("dir_2/file_2.py", "# File 2_2 contents".into()),
+            ("dir_2/file_3.py", "# File 2_3 contents".into()),
+        ],
+    );
+
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -4838,6 +5173,18 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/project_root/.git").as_ref(),
+        &[
+            ("dir_1/file_1.py", "# File 1_1 contents".into()),
+            ("dir_1/file_2.py", "# File 1_2 contents".into()),
+            ("dir_1/file_3.py", "# File 1_3 contents".into()),
+            ("dir_2/file_1.py", "# File 2_1 contents".into()),
+            ("dir_2/file_2.py", "# File 2_2 contents".into()),
+            ("dir_2/file_3.py", "# File 2_3 contents".into()),
+        ],
+    );
 
     let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -7930,7 +8277,13 @@ fn visible_entries_as_strings(
 
             let indent = "    ".repeat(details.depth);
             let icon = if details.kind.is_dir() {
-                if details.is_expanded { "v " } else { "> " }
+                if details.is_pinned {
+                    "+ "
+                } else if details.is_expanded {
+                    "v "
+                } else {
+                    "> "
+                }
             } else {
                 "  "
             };
@@ -8219,6 +8572,19 @@ fn set_auto_open_settings(
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project_panel.get_or_insert_default().auto_open = Some(auto_open_settings);
+            });
+        })
+    });
+}
+
+fn set_partial_collapse_setting(cx: &mut TestAppContext, partial_collapse: bool) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .partial_collapse = Some(partial_collapse);
             });
         })
     });
