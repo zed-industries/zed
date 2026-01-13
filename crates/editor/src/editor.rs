@@ -108,10 +108,10 @@ use gpui::{
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
-    Render, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun,
-    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    WeakEntity, WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative,
-    size,
+    Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
+    TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
+    pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -198,8 +198,8 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
+    Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
+    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -1094,6 +1094,8 @@ pub(crate) struct DiffReviewOverlay {
     /// Editors for comments currently being edited inline.
     /// Key: comment ID, Value: Editor entity for inline editing.
     pub inline_edit_editors: HashMap<usize, Entity<Editor>>,
+    /// The current user's avatar URI for display in comment rows.
+    pub user_avatar_uri: Option<SharedUri>,
     /// Subscription to keep the action handler alive.
     _subscription: Subscription,
 }
@@ -20904,6 +20906,15 @@ impl Editor {
         // Dismiss any existing overlay first
         self.dismiss_diff_review_overlay(cx);
 
+        // Get the current user's avatar URI from the project's user_store
+        let user_avatar_uri = self.project.as_ref().and_then(|project| {
+            let user_store = project.read(cx).user_store();
+            user_store
+                .read(cx)
+                .current_user()
+                .map(|user| user.avatar_uri.clone())
+        });
+
         // Create anchor for the block
         // Convert display row to buffer position using the display snapshot
         let editor_snapshot = self.snapshot(window, cx);
@@ -20979,6 +20990,7 @@ impl Editor {
             hunk_key,
             comments_expanded: true,
             inline_edit_editors: HashMap::default(),
+            user_avatar_uri,
             _subscription: subscription,
         });
 
@@ -21344,20 +21356,26 @@ impl Editor {
         let theme = cx.theme();
         let colors = theme.colors();
 
-        // Get stored comments, expanded state, and inline editors from the editor
-        let (comments, comments_expanded, inline_editors) = editor_handle
+        // Get stored comments, expanded state, inline editors, and user avatar from the editor
+        let (comments, comments_expanded, inline_editors, user_avatar_uri) = editor_handle
             .upgrade()
             .map(|editor| {
                 let editor = editor.read(cx);
                 let comments = editor.comments_for_hunk(hunk_key).to_vec();
-                let (expanded, editors) = editor
+                let (expanded, editors, avatar_uri) = editor
                     .diff_review_overlay
                     .as_ref()
-                    .map(|o| (o.comments_expanded, o.inline_edit_editors.clone()))
-                    .unwrap_or((true, HashMap::default()));
-                (comments, expanded, editors)
+                    .map(|o| {
+                        (
+                            o.comments_expanded,
+                            o.inline_edit_editors.clone(),
+                            o.user_avatar_uri.clone(),
+                        )
+                    })
+                    .unwrap_or((true, HashMap::default(), None));
+                (comments, expanded, editors, avatar_uri)
             })
-            .unwrap_or((Vec::new(), true, HashMap::default()));
+            .unwrap_or((Vec::new(), true, HashMap::default(), None));
 
         let comment_count = comments.len();
         let avatar_size = px(20.);
@@ -21382,11 +21400,21 @@ impl Editor {
                     .rounded_md()
                     .bg(colors.surface_background)
                     .child(
-                        div().size(avatar_size).flex_shrink_0().child(
-                            Icon::new(IconName::Person)
-                                .size(IconSize::Small)
-                                .color(ui::Color::Muted),
-                        ),
+                        div()
+                            .size(avatar_size)
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .overflow_hidden()
+                            .child(if let Some(ref avatar_uri) = user_avatar_uri {
+                                Avatar::new(avatar_uri.clone())
+                                    .size(avatar_size)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::Person)
+                                    .size(IconSize::Small)
+                                    .color(ui::Color::Muted)
+                                    .into_any_element()
+                            }),
                     )
                     .child(
                         div()
@@ -21433,6 +21461,7 @@ impl Editor {
                     comments,
                     comments_expanded,
                     inline_editors,
+                    user_avatar_uri,
                     avatar_size,
                     action_icon_size,
                     colors,
@@ -21445,6 +21474,7 @@ impl Editor {
         comments: Vec<StoredReviewComment>,
         expanded: bool,
         inline_editors: HashMap<usize, Entity<Editor>>,
+        user_avatar_uri: Option<SharedUri>,
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
@@ -21498,6 +21528,7 @@ impl Editor {
                     Self::render_comment_row(
                         comment,
                         inline_editor,
+                        user_avatar_uri.clone(),
                         avatar_size,
                         action_icon_size,
                         colors,
@@ -21509,6 +21540,7 @@ impl Editor {
     fn render_comment_row(
         comment: StoredReviewComment,
         inline_editor: Option<Entity<Editor>>,
+        user_avatar_uri: Option<SharedUri>,
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
@@ -21525,11 +21557,21 @@ impl Editor {
             .rounded_md()
             .bg(colors.surface_background)
             .child(
-                div().size(avatar_size).flex_shrink_0().child(
-                    Icon::new(IconName::Person)
-                        .size(IconSize::Small)
-                        .color(ui::Color::Muted),
-                ),
+                div()
+                    .size(avatar_size)
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .overflow_hidden()
+                    .child(if let Some(ref avatar_uri) = user_avatar_uri {
+                        Avatar::new(avatar_uri.clone())
+                            .size(avatar_size)
+                            .into_any_element()
+                    } else {
+                        Icon::new(IconName::Person)
+                            .size(IconSize::Small)
+                            .color(ui::Color::Muted)
+                            .into_any_element()
+                    }),
             )
             .child(if let Some(editor) = inline_editor {
                 // Inline edit mode: show an editable text field
