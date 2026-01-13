@@ -2741,38 +2741,6 @@ fn parse_initial_graph_output(output: &str) -> Vec<Arc<InitialGraphCommitData>> 
         .collect()
 }
 
-// todo! Move this to the caching layer
-// todo! remove this function
-fn parse_graph_log_output(output: &str) -> Vec<GraphCommitData> {
-    output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('\x1E').collect();
-
-            let sha = Oid::from_str(parts.get(0)?).ok()?;
-            let author_name = SharedString::from(parts.get(1)?.to_string());
-            let author_email = SharedString::from(parts.get(2)?.to_string());
-            let commit_timestamp = parts.get(4)?.parse().ok()?;
-            let subject = SharedString::from(parts.get(5)?.to_string());
-            let parents = parts
-                .get(6)?
-                .split_ascii_whitespace()
-                .filter_map(|hash| Oid::from_str(hash).ok())
-                .collect();
-
-            Some(GraphCommitData {
-                sha,
-                parents,
-                author_name,
-                author_email,
-                commit_timestamp,
-                subject,
-            })
-        })
-        .collect()
-}
-
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("--no-optional-locks"),

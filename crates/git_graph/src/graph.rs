@@ -8,8 +8,6 @@ use git::{
 use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
 
-pub use git::repository::GraphCommitData;
-
 pub(crate) const CHUNK_SIZE: usize = GRAPH_CHUNK_SIZE;
 
 pub fn format_timestamp(timestamp: i64) -> String {
@@ -140,15 +138,6 @@ type ActiveLaneIdx = usize;
 pub(crate) enum AllCommitCount {
     NotLoaded,
     Loaded(usize),
-}
-
-impl AllCommitCount {
-    pub fn count(&self) -> usize {
-        match self {
-            AllCommitCount::NotLoaded => 0,
-            AllCommitCount::Loaded(count) => *count,
-        }
-    }
 }
 
 #[derive(Debug)]

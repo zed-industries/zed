@@ -65,7 +65,6 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
-    rc::Rc,
     str::FromStr,
     sync::{
         Arc,
@@ -252,11 +251,6 @@ pub struct MergeDetails {
     pub conflicted_paths: TreeSet<RepoPath>,
     pub message: Option<SharedString>,
     pub heads: Vec<Option<SharedString>>,
-}
-
-enum GraphDataState {
-    Loading(Task<()>),
-    Loaded(Vec<InitialGraphCommitData>),
 }
 
 #[derive(Clone)]
@@ -4261,13 +4255,7 @@ impl Repository {
         if !self.commit_data.contains_key(&sha) {
             match &self.graph_commit_data_handler {
                 GraphCommitHandlerState::Open(handler) => {
-                    // don't want to send in an async env
-                    // todo! don't block main thread
-                    if handler
-                        .commit_data_request
-                        .send_blocking(sha.clone())
-                        .is_ok()
-                    {
+                    if handler.commit_data_request.try_send(sha).is_ok() {
                         let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
                         // todo! debug assert
                         assert!(old_value.is_none(), "We should never overwrite commit data");
