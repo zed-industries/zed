@@ -425,28 +425,27 @@ fn test_nondeterministic_wake_detection() {
     let scheduler = Arc::new(TestScheduler::new(config));
 
     // A future that captures its waker and sends it to an external thread
-    struct WakeFromExternalThread {
-        waker_sent: bool,
+    struct SendWakerToThread {
         waker_tx: Option<std::sync::mpsc::Sender<Waker>>,
     }
 
-    impl Future for WakeFromExternalThread {
+    impl Future for SendWakerToThread {
         type Output = ();
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            if !self.waker_sent {
-                self.waker_sent = true;
-                if let Some(tx) = self.waker_tx.take() {
-                    tx.send(cx.waker().clone()).ok();
-                }
-                Poll::Pending
-            } else {
-                Poll::Ready(())
+            if let Some(tx) = self.waker_tx.take() {
+                tx.send(cx.waker().clone()).ok();
             }
+            Poll::Ready(())
         }
     }
 
     let (waker_tx, waker_rx) = std::sync::mpsc::channel::<Waker>();
+
+    // Get a waker by running a future that sends it
+    scheduler.foreground().block_on(SendWakerToThread {
+        waker_tx: Some(waker_tx),
+    });
 
     // Spawn a real OS thread that will call wake() on the waker
     let handle = std::thread::spawn(move || {
@@ -456,22 +455,14 @@ fn test_nondeterministic_wake_detection() {
         }
     });
 
-    // The main thread will also panic with "Parking forbidden" since the external
-    // thread's wake panics before completing, leaving nothing to run.
-    let main_thread_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        scheduler.foreground().block_on(WakeFromExternalThread {
-            waker_sent: false,
-            waker_tx: Some(waker_tx),
-        });
-    }));
-    assert!(
-        main_thread_result.is_err(),
-        "Expected main thread to panic with 'Parking forbidden'"
-    );
+    // Wait for the spawned thread to complete
+    handle.join().ok();
 
-    // The spawned thread should have panicked with the non-determinism message
-    let result = handle.join();
-    assert!(result.is_err(), "Expected spawned thread to panic");
+    // The non-determinism error should be detected when end_test is called
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        scheduler.end_test();
+    }));
+    assert!(result.is_err(), "Expected end_test to panic");
     let panic_payload = result.unwrap_err();
     let panic_message = panic_payload
         .downcast_ref::<String>()
@@ -479,8 +470,8 @@ fn test_nondeterministic_wake_detection() {
         .or_else(|| panic_payload.downcast_ref::<&str>().copied())
         .unwrap_or("<unknown panic>");
     assert!(
-        panic_message.contains("Non-deterministic wake detected"),
-        "Expected panic message to contain 'Non-deterministic wake detected', got: {}",
+        panic_message.contains("Your test is not deterministic"),
+        "Expected panic message to contain non-determinism error, got: {}",
         panic_message
     );
 }
@@ -541,28 +532,27 @@ fn test_nondeterministic_waker_drop_detection() {
     let scheduler = Arc::new(TestScheduler::new(config));
 
     // A future that captures its waker and sends it to an external thread
-    struct DropWakerOnExternalThread {
-        waker_sent: bool,
+    struct SendWakerToThread {
         waker_tx: Option<std::sync::mpsc::Sender<Waker>>,
     }
 
-    impl Future for DropWakerOnExternalThread {
+    impl Future for SendWakerToThread {
         type Output = ();
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            if !self.waker_sent {
-                self.waker_sent = true;
-                if let Some(tx) = self.waker_tx.take() {
-                    tx.send(cx.waker().clone()).ok();
-                }
-                Poll::Pending
-            } else {
-                Poll::Ready(())
+            if let Some(tx) = self.waker_tx.take() {
+                tx.send(cx.waker().clone()).ok();
             }
+            Poll::Ready(())
         }
     }
 
     let (waker_tx, waker_rx) = std::sync::mpsc::channel::<Waker>();
+
+    // Get a waker by running a future that sends it
+    scheduler.foreground().block_on(SendWakerToThread {
+        waker_tx: Some(waker_tx),
+    });
 
     // Spawn a real OS thread that will drop the waker without calling wake
     let handle = std::thread::spawn(move || {
@@ -572,22 +562,14 @@ fn test_nondeterministic_waker_drop_detection() {
         }
     });
 
-    // The main thread will panic with "Parking forbidden" since the external
-    // thread's drop panics before waking, leaving nothing to run.
-    let main_thread_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        scheduler.foreground().block_on(DropWakerOnExternalThread {
-            waker_sent: false,
-            waker_tx: Some(waker_tx),
-        });
-    }));
-    assert!(
-        main_thread_result.is_err(),
-        "Expected main thread to panic with 'Parking forbidden'"
-    );
+    // Wait for the spawned thread to complete
+    handle.join().ok();
 
-    // The spawned thread should have panicked with the non-determinism message
-    let result = handle.join();
-    assert!(result.is_err(), "Expected spawned thread to panic");
+    // The non-determinism error should be detected when end_test is called
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        scheduler.end_test();
+    }));
+    assert!(result.is_err(), "Expected end_test to panic");
     let panic_payload = result.unwrap_err();
     let panic_message = panic_payload
         .downcast_ref::<String>()
@@ -595,8 +577,8 @@ fn test_nondeterministic_waker_drop_detection() {
         .or_else(|| panic_payload.downcast_ref::<&str>().copied())
         .unwrap_or("<unknown panic>");
     assert!(
-        panic_message.contains("Non-deterministic waker drop detected"),
-        "Expected panic message to contain 'Non-deterministic waker drop detected', got: {}",
+        panic_message.contains("Your test is not deterministic"),
+        "Expected panic message to contain non-determinism error, got: {}",
         panic_message
     );
 }
