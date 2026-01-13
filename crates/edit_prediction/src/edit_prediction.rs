@@ -197,7 +197,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
-    related_files: Arc<[RelatedFile]>,
+    related_files: Vec<RelatedFile>,
     recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
@@ -771,22 +771,31 @@ impl EditPredictionStore {
     pub fn context_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
-        cx: &'a App,
-    ) -> Arc<[RelatedFile]> {
+        cx: &'a mut App,
+    ) -> Vec<RelatedFile> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files())
-            .unwrap_or_else(|| vec![].into())
+            .map(|project| {
+                project
+                    .context
+                    .update(cx, |context, cx| context.related_files(cx))
+            })
+            .unwrap_or_default()
     }
 
     pub fn context_for_project_with_buffers<'a>(
         &'a self,
         project: &Entity<Project>,
-        cx: &'a App,
-    ) -> Option<impl 'a + Iterator<Item = (RelatedFile, Entity<Buffer>)>> {
+        cx: &'a mut App,
+    ) -> Vec<(RelatedFile, Entity<Buffer>)> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files_with_buffers())
+            .map(|project| {
+                project
+                    .context
+                    .update(cx, |context, cx| context.related_files_with_buffers(cx))
+            })
+            .unwrap_or_default()
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -1729,7 +1738,7 @@ impl EditPredictionStore {
         let related_files = if self.use_context {
             self.context_for_project(&project, cx)
         } else {
-            Vec::new().into()
+            Vec::new()
         };
 
         let inputs = EditPredictionModelInput {
@@ -2099,8 +2108,8 @@ impl EditPredictionStore {
     ) {
         self.get_or_init_project(project, cx)
             .context
-            .update(cx, |store, _| {
-                store.set_related_files(related_files);
+            .update(cx, |store, cx| {
+                store.set_related_files(related_files, cx);
             });
     }
 
@@ -2208,6 +2217,23 @@ impl EditPredictionStore {
         self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
             && all_language_settings(None, cx).edit_predictions.use_context;
     }
+}
+
+pub(crate) fn filter_redundant_excerpts(
+    mut related_files: Vec<RelatedFile>,
+    cursor_path: &Path,
+    cursor_row_range: Range<u32>,
+) -> Vec<RelatedFile> {
+    for file in &mut related_files {
+        if file.path.as_ref() == cursor_path {
+            file.excerpts.retain(|excerpt| {
+                excerpt.row_range.start < cursor_row_range.start
+                    || excerpt.row_range.end > cursor_row_range.end
+            });
+        }
+    }
+    related_files.retain(|file| !file.excerpts.is_empty());
+    related_files
 }
 
 #[derive(Error, Debug)]

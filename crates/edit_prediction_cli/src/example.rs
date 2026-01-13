@@ -10,7 +10,6 @@ use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
-use std::sync::Arc;
 use std::{
     borrow::Cow,
     io::Read,
