@@ -24,7 +24,7 @@ priority = 99
 
 # Extended timeouts for tests that were timing out at 60s
 [[profile.default.overrides]]
-filter = 'test(test_rainbow_bracket_highlights) or test(test_wrapped_invisibles_drawing)'
+filter = 'test(test_rainbow_bracket_highlights) or test(test_wrapped_invisibles_drawing) or test(test_basic_following) or test(test_random_diagnostics_blocks)'
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [[profile.default.overrides]]
