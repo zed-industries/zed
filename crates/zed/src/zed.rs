@@ -6,6 +6,7 @@ mod migrate;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
+pub mod remote_debug;
 pub mod telemetry_log;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub mod visual_tests;
@@ -1529,12 +1530,12 @@ pub fn handle_settings_file_changes(
 
     // Initial load of both settings files
     let global_content = cx
-        .foreground_executor()
-        .block_on(global_settings_file_rx.next())
+        .background_executor()
+        .block(global_settings_file_rx.next())
         .unwrap();
     let user_content = cx
-        .foreground_executor()
-        .block_on(user_settings_file_rx.next())
+        .background_executor()
+        .block(user_settings_file_rx.next())
         .unwrap();
 
     SettingsStore::update_global(cx, |store, cx| {
@@ -2195,7 +2196,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
         return;
     }
 
-    cx.foreground_executor().block_on(executor.scoped(|scope| {
+    executor.block(executor.scoped(|scope| {
         for load_target in themes_to_load {
             let theme_registry = &theme_registry;
             let reload_tasks = &reload_tasks;
@@ -4736,6 +4737,7 @@ mod tests {
                 "git",
                 "git_onboarding",
                 "git_panel",
+                "git_picker",
                 "go_to_line",
                 "icon_theme_selector",
                 "inline_assistant",
@@ -4760,6 +4762,7 @@ mod tests {
                 "project_search",
                 "project_symbols",
                 "projects",
+                "remote_debug",
                 "repl",
                 "rules_library",
                 "search",

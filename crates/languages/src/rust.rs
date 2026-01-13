@@ -568,13 +568,14 @@ impl LspAdapter for RustLspAdapter {
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (prefix, suffix) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
-            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
-            lsp::SymbolKind::ENUM => ("enum ", " {}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
-            lsp::SymbolKind::MODULE => ("mod ", " {}"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
+            lsp::SymbolKind::STRUCT => ("struct ", ";"),
+            lsp::SymbolKind::ENUM => ("enum ", "{}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
+            lsp::SymbolKind::MODULE => ("mod ", ";"),
+            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
             _ => return None,
         };
 
@@ -1822,6 +1823,17 @@ mod tests {
                 "type World".to_string(),
                 5..10,
                 vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol("zed", lsp::SymbolKind::PACKAGE, &language)
+                .await,
+            Some(CodeLabel::new(
+                "extern crate zed".to_string(),
+                13..16,
+                vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
             ))
         );
     }

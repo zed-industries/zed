@@ -6,6 +6,9 @@ use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
+    predict_edits_v3::{
+        RawCompletionChoice, RawCompletionRequest, RawCompletionResponse, RawCompletionUsage,
+    },
 };
 use futures::{
     AsyncReadExt, StreamExt,
@@ -18,7 +21,6 @@ use gpui::{
 use indoc::indoc;
 use language::Point;
 use lsp::LanguageServerId;
-use open_ai::Usage;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
@@ -1325,37 +1327,28 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 // }
 
 // Generate a model response that would apply the given diff to the active file.
-fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Response {
-    let prompt = match &request.messages[0] {
-        open_ai::RequestMessage::User {
-            content: open_ai::MessageContent::Plain(content),
-        } => content,
-        _ => panic!("unexpected request {request:?}"),
-    };
+fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawCompletionResponse {
+    let prompt = &request.prompt;
 
-    let open = "<editable_region>\n";
-    let close = "</editable_region>";
+    let current_marker = "<|fim_middle|>current\n";
+    let updated_marker = "<|fim_middle|>updated\n";
     let cursor = "<|user_cursor|>";
 
-    let start_ix = open.len() + prompt.find(open).unwrap();
-    let end_ix = start_ix + &prompt[start_ix..].find(close).unwrap();
+    let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
+    let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
     let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
-    open_ai::Response {
+    RawCompletionResponse {
         id: Uuid::new_v4().to_string(),
-        object: "response".into(),
+        object: "text_completion".into(),
         created: 0,
         model: "model".into(),
-        choices: vec![open_ai::Choice {
-            index: 0,
-            message: open_ai::RequestMessage::Assistant {
-                content: Some(open_ai::MessageContent::Plain(new_excerpt)),
-                tool_calls: vec![],
-            },
+        choices: vec![RawCompletionChoice {
+            text: new_excerpt,
             finish_reason: None,
         }],
-        usage: Usage {
+        usage: RawCompletionUsage {
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -1363,23 +1356,13 @@ fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Re
     }
 }
 
-fn prompt_from_request(request: &open_ai::Request) -> &str {
-    assert_eq!(request.messages.len(), 1);
-    let open_ai::RequestMessage::User {
-        content: open_ai::MessageContent::Plain(content),
-        ..
-    } = &request.messages[0]
-    else {
-        panic!(
-            "Request does not have single user message of type Plain. {:#?}",
-            request
-        );
-    };
-    content
+fn prompt_from_request(request: &RawCompletionRequest) -> &str {
+    &request.prompt
 }
 
 struct RequestChannels {
-    predict: mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
+    predict:
+        mpsc::UnboundedReceiver<(RawCompletionRequest, oneshot::Sender<RawCompletionResponse>)>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
 }
 

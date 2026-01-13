@@ -255,7 +255,7 @@ impl ExampleContext {
                     ThreadEvent::ToolCall(tool_call) => {
                         let meta = tool_call.meta.expect("Missing meta field in tool_call");
                         let tool_name = meta
-                            .get("tool_name")
+                            .get(acp_thread::TOOL_NAME_META_KEY)
                             .expect("Missing tool_name field in meta")
                             .as_str()
                             .expect("Unknown tool_name content in meta");

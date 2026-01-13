@@ -67,7 +67,8 @@ fn init_logging_proxy() {
     env_logger::builder()
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
-            log_record.message = format!("(remote proxy) {}", log_record.message);
+            log_record.message =
+                std::borrow::Cow::Owned(format!("(remote proxy) {}", log_record.message));
             serde_json::to_writer(&mut *buf, &log_record)?;
             buf.write_all(b"\n")?;
             Ok(())
@@ -75,7 +76,7 @@ fn init_logging_proxy() {
         .init();
 }
 
-fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
+fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
         file: File,
         channel: Sender<Vec<u8>>,
@@ -101,7 +102,7 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&log_file_path)
+        .open(log_file_path)
         .context("Failed to open log file in append mode")?;
 
     let (tx, rx) = smol::channel::unbounded();
@@ -112,13 +113,19 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         buffer: Vec::new(),
     });
 
+    let old_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("Panic occurred: {:?}", info);
+        old_hook(info);
+    }));
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
         .target(env_logger::Target::Pipe(target))
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
-            log_record.message = format!("(remote server) {}", log_record.message);
+            log_record.message =
+                std::borrow::Cow::Owned(format!("(remote server) {}", log_record.message));
             serde_json::to_writer(&mut *buf, &log_record)?;
             buf.write_all(b"\n")?;
             Ok(())
@@ -367,10 +374,11 @@ pub fn execute_run(
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
         }))
         .detach();
-    let log_rx = init_logging_server(log_file)?;
+    let log_rx = init_logging_server(&log_file)?;
     log::info!(
-        "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        "starting up. pid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
+        log_file,
         stdin_socket,
         stdout_socket,
         stderr_socket
@@ -723,6 +731,7 @@ pub(crate) enum SpawnServerError {
 }
 
 async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
+    log::info!("spawning server process",);
     if paths.stdin_socket.exists() {
         std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
@@ -929,8 +938,8 @@ pub fn handle_settings_file_changes(
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
     let server_settings_content = cx
-        .foreground_executor()
-        .block_on(server_settings_file.next())
+        .background_executor()
+        .block(server_settings_file.next())
         .unwrap();
     SettingsStore::update_global(cx, |store, cx| {
         store
