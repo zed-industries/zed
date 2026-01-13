@@ -85,7 +85,7 @@ impl AgentTool for CreateDirectoryTool {
                     tool_name: "create_directory".to_string(),
                     input_value: input.path.clone(),
                 };
-                Some(event_stream.authorize_with_context(
+                Some(event_stream.authorize(
                     format!("Create directory {}", MarkdownInlineCode(&input.path)),
                     context,
                     cx,

@@ -2927,71 +2927,6 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
-        }
-
-        self.authorize_required(title, cx)
-    }
-
-    /// Like `authorize`, but always prompts for confirmation regardless of
-    /// the `always_allow_tool_actions` setting. Use this when tool-specific
-    /// permission rules (like `always_confirm` patterns) have already determined
-    /// that confirmation is required.
-    pub fn authorize_required(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                ToolCallAuthorization {
-                    tool_call: acp::ToolCallUpdate::new(
-                        self.tool_use_id.to_string(),
-                        acp::ToolCallUpdateFields::new().title(title.into()),
-                    ),
-                    options: vec![
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("always_allow"),
-                            "Always Allow",
-                            acp::PermissionOptionKind::AllowAlways,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("allow"),
-                            "Allow once",
-                            acp::PermissionOptionKind::AllowOnce,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("deny"),
-                            "Deny",
-                            acp::PermissionOptionKind::RejectOnce,
-                        ),
-                    ],
-                    response: response_tx,
-                    context: None,
-                },
-            )))
-            .ok();
-        let fs = self.fs.clone();
-        cx.spawn(async move |cx| match response_rx.await?.0.as_ref() {
-            "always_allow" => {
-                if let Some(fs) = fs.clone() {
-                    cx.update(|cx| {
-                        update_settings_file(fs, cx, |settings, _| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_always_allow_tool_actions(true);
-                        });
-                    });
-                }
-
-                Ok(())
-            }
-            "allow" => Ok(()),
-            _ => Err(anyhow!("Permission to run tool denied by user")),
-        })
-    }
-
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
@@ -3076,17 +3011,13 @@ impl ToolCallEventStream {
         })
     }
 
-    pub fn authorize_with_context(
+    pub fn authorize(
         &self,
         title: impl Into<String>,
         context: ToolPermissionContext,
         cx: &mut App,
     ) -> Task<Result<()>> {
         use settings::ToolPermissionMode;
-
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
-        }
 
         let tool_name = context.tool_name.clone();
         let options = context.build_permission_options();
@@ -3110,20 +3041,6 @@ impl ToolCallEventStream {
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
             let response_str = response_rx.await?.0.to_string();
-
-            if response_str == "always_allow" {
-                if let Some(fs) = fs.clone() {
-                    cx.update(|cx| {
-                        update_settings_file(fs, cx, |settings, _| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_always_allow_tool_actions(true);
-                        });
-                    });
-                }
-                return Ok(());
-            }
 
             if response_str == format!("always_allow_{}", tool_name) {
                 if let Some(fs) = fs.clone() {

@@ -90,7 +90,7 @@ impl AgentTool for DeletePathTool {
                     tool_name: "delete_path".to_string(),
                     input_value: path.clone(),
                 };
-                Some(event_stream.authorize_with_context(
+                Some(event_stream.authorize(
                     format!("Delete {}", MarkdownInlineCode(&path)),
                     context,
                     cx,

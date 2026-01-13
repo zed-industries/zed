@@ -116,7 +116,7 @@ impl AgentTool for SaveFileTool {
                 tool_name: "save_file".to_string(),
                 input_value: first_path,
             };
-            Some(event_stream.authorize_with_context(title, context, cx))
+            Some(event_stream.authorize(title, context, cx))
         } else {
             None
         };

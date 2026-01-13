@@ -173,7 +173,7 @@ impl EditFileTool {
                 tool_name: "edit_file".to_string(),
                 input_value: path_str.to_string(),
             };
-            return event_stream.authorize_with_context(
+            return event_stream.authorize(
                 format!("{} (local settings)", input.display_description),
                 context,
                 cx,
@@ -190,7 +190,7 @@ impl EditFileTool {
                 tool_name: "edit_file".to_string(),
                 input_value: path_str.to_string(),
             };
-            return event_stream.authorize_with_context(
+            return event_stream.authorize(
                 format!("{} (global settings)", input.display_description),
                 context,
                 cx,
@@ -214,7 +214,7 @@ impl EditFileTool {
                 tool_name: "edit_file".to_string(),
                 input_value: path_str.to_string(),
             };
-            event_stream.authorize_with_context(&input.display_description, context, cx)
+            event_stream.authorize(&input.display_description, context, cx)
         }
     }
 }
