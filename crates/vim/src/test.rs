@@ -8,6 +8,7 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
+    ToOffset, ToPoint,
     actions::{DeleteLine, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::{DisplayRow, ToDisplayPoint},
@@ -2003,10 +2004,15 @@ async fn test_beam_jump_passthrough_key(cx: &mut gpui::TestAppContext) {
         )])
     });
 
-    cx.set_state("ˇxxabxxabyyab", Mode::Normal);
+    let mut lines = vec!["xx".to_string(); 2000];
+    lines[0] = "abc".to_string();
+    lines[100] = "abc".to_string();
+    lines[1999] = "ˇxxabxxabyyab".to_string();
+    let text = lines.join("\n");
+    cx.set_state(&text, Mode::Normal);
 
     cx.simulate_keystrokes("s a b");
-    cx.assert_state("ˇxxabxxabyyab", Mode::Normal);
+    cx.assert_state(&text, Mode::Normal);
 
     let highlights = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
@@ -2021,12 +2027,194 @@ async fn test_beam_jump_passthrough_key(cx: &mut gpui::TestAppContext) {
         cx.assertion_context()
     );
 
-    // `l` isn't a label key in this scenario and can't extend the pattern,
-    // so Beam Jump should cancel and pass the key through to normal-mode Vim.
+    // Extending the pattern to `abc` yields V == 0 in the viewport,
+    // so Beam Jump should auto-trigger global navigation.
+    cx.simulate_keystrokes("c");
+
+    let mut expected_lines = lines.clone();
+    expected_lines[0] = "ˇabc".to_string();
+    expected_lines[1999] = "xxabxxabyyab".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "beam jump highlights should be cleared after auto-global jump. {}",
+        cx.assertion_context()
+    );
+
+    // Subsequent repeats continue using the extended pattern.
+    cx.simulate_keystrokes(";");
+
+    expected_lines[0] = "abc".to_string();
+    expected_lines[100] = "ˇabc".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_auto_global_search_on_viewport_miss(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    let mut lines = vec!["xx".to_string(); 2000];
+    lines[0] = "ˇxxabxxabyyab".to_string();
+    lines[1500] = "abc".to_string();
+    lines[1600] = "abc".to_string();
+    let text = lines.join("\n");
+    cx.set_state(&text, Mode::Normal);
+
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state(&text, Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        highlights.len() > 1 && highlights.iter().any(|highlight| highlight.label.is_some()),
+        "beam jump should be active with labels visible. {}",
+        cx.assertion_context()
+    );
+
+    // Viewport has `ab` candidates, but no `abc`, so extending triggers auto-global navigation.
+    cx.simulate_keystrokes("c");
+
+    let mut expected_lines = lines.clone();
+    expected_lines[0] = "xxabxxabyyab".to_string();
+    expected_lines[1500] = "ˇabc".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "beam jump highlights should be cleared after auto-global jump. {}",
+        cx.assertion_context()
+    );
+
+    let cursor_is_visible = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let layout = editor.text_layout_details(window);
+        let buffer = snapshot.display_snapshot.buffer_snapshot();
+
+        let cursor = editor
+            .selections
+            .newest_anchor()
+            .head()
+            .to_display_point(&snapshot.display_snapshot);
+        let cursor_offset = cursor.to_offset(&snapshot.display_snapshot, Bias::Left);
+
+        let (visible_start, visible_end) = if let Some(visible_rows) = layout.visible_rows {
+            let visible_rows = visible_rows.ceil() as u32;
+            let visible_start_point = layout.scroll_anchor.anchor.to_point(&buffer);
+            let visible_end_point = buffer.clip_point(
+                visible_start_point + Point::new(visible_rows, 0),
+                Bias::Left,
+            );
+            (
+                visible_start_point.to_offset(&buffer),
+                visible_end_point.to_offset(&buffer),
+            )
+        } else {
+            (MultiBufferOffset(0), buffer.len())
+        };
+
+        cursor_offset >= visible_start && cursor_offset <= visible_end
+    });
+    assert!(
+        cursor_is_visible,
+        "expected cursor to be visible after jump. {}",
+        cx.assertion_context()
+    );
+
+    // Subsequent repeats continue using the extended pattern.
+    cx.simulate_keystrokes(";");
+
+    expected_lines[1500] = "abc".to_string();
+    expected_lines[1600] = "ˇabc".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_auto_global_no_matches_passthrough_and_clears_pattern(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state("ˇxxabxxabyyab", Mode::Normal);
+
+    // Seed `last_find` so we can confirm it is restored.
+    cx.simulate_keystrokes("f x");
+    cx.assert_state("xˇxabxxabyyab", Mode::Normal);
+
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state("xˇxabxxabyyab", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        highlights.len() > 1 && highlights.iter().any(|highlight| highlight.label.is_some()),
+        "beam jump should be active with labels visible. {}",
+        cx.assertion_context()
+    );
+
+    // Extending to a pattern with no global matches cancels Beam Jump and passes through.
     cx.simulate_keystrokes("l");
     cx.run_until_parked();
 
-    cx.assert_state("xˇxabxxabyyab", Mode::Normal);
+    cx.assert_state("xxˇabxxabyyab", Mode::Normal);
     assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
 
     let remaining = cx.update_editor(|editor, window, cx| {
@@ -2041,6 +2229,10 @@ async fn test_beam_jump_passthrough_key(cx: &mut gpui::TestAppContext) {
         "beam jump highlights should be cleared after pass-through. {}",
         cx.assertion_context()
     );
+
+    // Repeat should still use the pre-existing `last_find` motion.
+    cx.simulate_keystrokes(";");
+    cx.assert_state("xxabˇxxabyyab", Mode::Normal);
 }
 
 #[perf]
