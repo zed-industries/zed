@@ -2641,53 +2641,74 @@ async fn run_commit_data_reader(
     let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
     let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
 
-    while let Ok(request) = request_rx.recv().await {
-        let result = async {
+    const MAX_BATCH_SIZE: usize = 64;
+
+    while let Ok(first_request) = request_rx.recv().await {
+        let mut pending_requests = vec![first_request];
+
+        // Collect any additional pending requests without blocking
+        while pending_requests.len() < MAX_BATCH_SIZE {
+            match request_rx.try_recv() {
+                Ok(request) => pending_requests.push(request),
+                Err(_) => break,
+            }
+        }
+
+        // Write all SHAs to stdin at once
+        for request in &pending_requests {
             stdin.write_all(request.sha.to_string().as_bytes()).await?;
             stdin.write_all(b"\n").await?;
-            stdin.flush().await?;
-
-            let mut header_bytes = Vec::new();
-            stdout.read_until(b'\n', &mut header_bytes).await?;
-            let header_line = String::from_utf8_lossy(&header_bytes);
-
-            let parts: Vec<&str> = header_line.trim().split(' ').collect();
-            if parts.len() < 3 {
-                bail!("invalid cat-file header: {header_line}");
-            }
-
-            let object_type = parts[1];
-            if object_type == "missing" {
-                bail!("object not found: {}", request.sha);
-            }
-
-            if object_type != "commit" {
-                bail!("expected commit object, got {object_type}");
-            }
-
-            let size: usize = parts[2]
-                .parse()
-                .with_context(|| format!("invalid object size: {}", parts[2]))?;
-
-            let mut content = vec![0u8; size];
-            stdout.read_exact(&mut content).await?;
-
-            let mut newline = [0u8; 1];
-            stdout.read_exact(&mut newline).await?;
-
-            let content_str = String::from_utf8_lossy(&content);
-            parse_cat_file_commit(request.sha.clone(), &content_str)
-                .ok_or_else(|| anyhow!("failed to parse commit {}", request.sha))
         }
-        .await;
+        stdin.flush().await?;
 
-        request.response_tx.send(result).ok();
+        // Read all responses in order
+        for request in pending_requests {
+            let result = read_single_commit_response(&mut stdout, &request.sha).await;
+            request.response_tx.send(result).ok();
+        }
     }
 
     drop(stdin);
     process.kill().ok();
 
     Ok(())
+}
+
+async fn read_single_commit_response(
+    stdout: &mut BufReader<smol::process::ChildStdout>,
+    sha: &Oid,
+) -> Result<GraphCommitData> {
+    let mut header_bytes = Vec::new();
+    stdout.read_until(b'\n', &mut header_bytes).await?;
+    let header_line = String::from_utf8_lossy(&header_bytes);
+
+    let parts: Vec<&str> = header_line.trim().split(' ').collect();
+    if parts.len() < 3 {
+        bail!("invalid cat-file header: {header_line}");
+    }
+
+    let object_type = parts[1];
+    if object_type == "missing" {
+        bail!("object not found: {}", sha);
+    }
+
+    if object_type != "commit" {
+        bail!("expected commit object, got {object_type}");
+    }
+
+    let size: usize = parts[2]
+        .parse()
+        .with_context(|| format!("invalid object size: {}", parts[2]))?;
+
+    let mut content = vec![0u8; size];
+    stdout.read_exact(&mut content).await?;
+
+    let mut newline = [0u8; 1];
+    stdout.read_exact(&mut newline).await?;
+
+    let content_str = String::from_utf8_lossy(&content);
+    parse_cat_file_commit(sha.clone(), &content_str)
+        .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
 }
 
 fn parse_rev_list_output(output: &str) -> Vec<InitialGraphCommitData> {
