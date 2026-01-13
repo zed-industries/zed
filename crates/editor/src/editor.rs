@@ -1091,6 +1091,9 @@ pub(crate) struct DiffReviewOverlay {
     pub hunk_key: DiffHunkKey,
     /// Whether the comments section is expanded.
     pub comments_expanded: bool,
+    /// Editors for comments currently being edited inline.
+    /// Key: comment ID, Value: Editor entity for inline editing.
+    pub inline_edit_editors: HashMap<usize, Entity<Editor>>,
     /// Subscription to keep the action handler alive.
     _subscription: Subscription,
 }
@@ -20975,6 +20978,7 @@ impl Editor {
             prompt_editor: prompt_editor.clone(),
             hunk_key,
             comments_expanded: true,
+            inline_edit_editors: HashMap::default(),
             _subscription: subscription,
         });
 
@@ -21180,10 +21184,126 @@ impl Editor {
     pub fn edit_review_comment(
         &mut self,
         action: &EditReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let comment_id = action.id;
+
+        // Set the comment to editing mode
+        self.set_comment_editing(comment_id, true, cx);
+
+        // Create an inline editor for this comment if needed
+        if let Some(overlay) = &mut self.diff_review_overlay {
+            if !overlay.inline_edit_editors.contains_key(&comment_id) {
+                // Find the comment text
+                let comment_text = self
+                    .stored_review_comments
+                    .values()
+                    .flatten()
+                    .find(|c| c.id == comment_id)
+                    .map(|c| c.comment.clone())
+                    .unwrap_or_default();
+
+                // Create inline editor
+                let parent_editor = cx.entity().downgrade();
+                let inline_editor = cx.new(|cx| {
+                    let mut editor = Editor::single_line(window, cx);
+                    editor.set_text(&*comment_text, window, cx);
+                    // Select all text for easy replacement
+                    editor.select_all(&crate::actions::SelectAll, window, cx);
+                    editor
+                });
+
+                // Register the Newline action to confirm the edit
+                let _subscription = inline_editor.update(cx, |inline_editor, _cx| {
+                    inline_editor.register_action({
+                        let parent_editor = parent_editor.clone();
+                        move |_: &crate::actions::Newline, window, cx| {
+                            if let Some(editor) = parent_editor.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.confirm_edit_review_comment(comment_id, window, cx);
+                                });
+                            }
+                        }
+                    })
+                });
+
+                // Focus the inline editor
+                let focus_handle = inline_editor.focus_handle(cx);
+                window.focus(&focus_handle, cx);
+
+                overlay
+                    .inline_edit_editors
+                    .insert(comment_id, inline_editor);
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// Confirms an inline edit of a review comment.
+    pub fn confirm_edit_review_comment(
+        &mut self,
+        comment_id: usize,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_comment_editing(action.id, true, cx);
+        // Get the new text from the inline editor
+        let new_text = self
+            .diff_review_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.inline_edit_editors.get(&comment_id))
+            .map(|editor| editor.read(cx).text(cx).trim().to_string());
+
+        if let Some(new_text) = new_text {
+            if !new_text.is_empty() {
+                self.update_review_comment(comment_id, new_text, cx);
+            }
+        }
+
+        // Remove the inline editor
+        if let Some(overlay) = &mut self.diff_review_overlay {
+            overlay.inline_edit_editors.remove(&comment_id);
+        }
+
+        // Clear editing state
+        self.set_comment_editing(comment_id, false, cx);
+    }
+
+    /// Cancels an inline edit of a review comment.
+    pub fn cancel_edit_review_comment(
+        &mut self,
+        comment_id: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Remove the inline editor
+        if let Some(overlay) = &mut self.diff_review_overlay {
+            overlay.inline_edit_editors.remove(&comment_id);
+        }
+
+        // Clear editing state
+        self.set_comment_editing(comment_id, false, cx);
+    }
+
+    /// Action handler for ConfirmEditReviewComment.
+    pub fn confirm_edit_review_comment_action(
+        &mut self,
+        action: &ConfirmEditReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_edit_review_comment(action.id, window, cx);
+    }
+
+    /// Action handler for CancelEditReviewComment.
+    pub fn cancel_edit_review_comment_action(
+        &mut self,
+        action: &CancelEditReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_edit_review_comment(action.id, window, cx);
     }
 
     /// Handles the DeleteReviewComment action - removes a comment.
@@ -21215,20 +21335,20 @@ impl Editor {
         let theme = cx.theme();
         let colors = theme.colors();
 
-        // Get stored comments and expanded state from the editor
-        let (comments, comments_expanded) = editor_handle
+        // Get stored comments, expanded state, and inline editors from the editor
+        let (comments, comments_expanded, inline_editors) = editor_handle
             .upgrade()
             .map(|editor| {
                 let editor = editor.read(cx);
                 let comments = editor.comments_for_hunk(hunk_key).to_vec();
-                let expanded = editor
+                let (expanded, editors) = editor
                     .diff_review_overlay
                     .as_ref()
-                    .map(|o| o.comments_expanded)
-                    .unwrap_or(true);
-                (comments, expanded)
+                    .map(|o| (o.comments_expanded, o.inline_edit_editors.clone()))
+                    .unwrap_or((true, HashMap::default()));
+                (comments, expanded, editors)
             })
-            .unwrap_or((Vec::new(), true));
+            .unwrap_or((Vec::new(), true, HashMap::default()));
 
         let comment_count = comments.len();
         let avatar_size = px(20.);
@@ -21303,6 +21423,7 @@ impl Editor {
                 el.child(Self::render_comments_section(
                     comments,
                     comments_expanded,
+                    inline_editors,
                     avatar_size,
                     action_icon_size,
                     colors,
@@ -21314,6 +21435,7 @@ impl Editor {
     fn render_comments_section(
         comments: Vec<StoredReviewComment>,
         expanded: bool,
+        inline_editors: HashMap<usize, Entity<Editor>>,
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
@@ -21363,18 +21485,27 @@ impl Editor {
             // Comments list (when expanded)
             .when(expanded, |el| {
                 el.children(comments.into_iter().map(|comment| {
-                    Self::render_comment_row(comment, avatar_size, action_icon_size, colors)
+                    let inline_editor = inline_editors.get(&comment.id).cloned();
+                    Self::render_comment_row(
+                        comment,
+                        inline_editor,
+                        avatar_size,
+                        action_icon_size,
+                        colors,
+                    )
                 }))
             })
     }
 
     fn render_comment_row(
         comment: StoredReviewComment,
+        inline_editor: Option<Entity<Editor>>,
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
     ) -> impl IntoElement {
         let comment_id = comment.id;
+        let is_editing = inline_editor.is_some();
 
         h_flex()
             .w_full()
@@ -21391,14 +21522,68 @@ impl Editor {
                         .color(ui::Color::Muted),
                 ),
             )
-            .child(
+            .child(if let Some(editor) = inline_editor {
+                // Inline edit mode: show an editable text field
+                div()
+                    .flex_1()
+                    .border_1()
+                    .border_color(colors.border)
+                    .rounded_md()
+                    .bg(colors.editor_background)
+                    .px_2()
+                    .py_1()
+                    .child(editor)
+                    .into_any_element()
+            } else {
+                // Display mode: show the comment text
                 div()
                     .flex_1()
                     .text_sm()
                     .text_color(colors.text)
-                    .child(comment.comment),
-            )
-            .child(
+                    .child(comment.comment)
+                    .into_any_element()
+            })
+            .child(if is_editing {
+                // Editing mode: show close and confirm buttons
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-cancel-edit-{comment_id}"),
+                            IconName::Close,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Cancel"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::CancelEditReviewComment {
+                                    id: comment_id,
+                                }),
+                                cx,
+                            );
+                        }),
+                    )
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-confirm-edit-{comment_id}"),
+                            IconName::Return,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Confirm"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::ConfirmEditReviewComment {
+                                    id: comment_id,
+                                }),
+                                cx,
+                            );
+                        }),
+                    )
+                    .into_any_element()
+            } else {
+                // Display mode: show edit and delete buttons
                 h_flex()
                     .gap_1()
                     .child(
@@ -21427,8 +21612,9 @@ impl Editor {
                                 cx,
                             );
                         }),
-                    ),
-            )
+                    )
+                    .into_any_element()
+            })
     }
 
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
