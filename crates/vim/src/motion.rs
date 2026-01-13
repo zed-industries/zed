@@ -10,8 +10,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{f64, ops::Range};
-use std::{ops::Range, sync::Arc};
+use std::{f64, ops::Range, sync::Arc};
 use workspace::searchable::Direction;
 
 use crate::{
