@@ -478,7 +478,7 @@ pub enum DevContainerMessage {
 pub struct DevContainerModal {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    search_navigable_entry: NavigableEntry,
+    confirm_entry: NavigableEntry,
     back_entry: NavigableEntry,
     state: DevContainerState,
 }
@@ -489,7 +489,7 @@ impl DevContainerModal {
             workspace,
             state: DevContainerState::Initial,
             focus_handle: cx.focus_handle(),
-            search_navigable_entry: NavigableEntry::focusable(cx),
+            confirm_entry: NavigableEntry::focusable(cx),
             back_entry: NavigableEntry::focusable(cx),
         }
     }
@@ -507,7 +507,7 @@ impl DevContainerModal {
                 .child(ListSeparator)
                 .child(
                     div()
-                        .track_focus(&self.search_navigable_entry.focus_handle)
+                        .track_focus(&self.confirm_entry.focus_handle)
                         .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                             this.accept_message(DevContainerMessage::SearchTemplates, window, cx);
                         }))
@@ -517,16 +517,14 @@ impl DevContainerModal {
                                 .spacing(ui::ListItemSpacing::Sparse)
                                 .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
                                 .toggle_state(
-                                    self.search_navigable_entry
-                                        .focus_handle
-                                        .contains_focused(window, cx),
+                                    self.confirm_entry.focus_handle.contains_focused(window, cx),
                                 )
                                 .child(Label::new("Create dev container from template")),
                         ),
                 )
                 .into_any_element(),
         );
-        view = view.entry(self.search_navigable_entry.clone());
+        view = view.entry(self.confirm_entry.clone());
         view.render(window, cx).into_any_element()
     }
 
@@ -700,31 +698,42 @@ impl DevContainerModal {
                 )
                 .child(ListSeparator)
                 .children(template_entry.features.iter().map(|feature_entry| {
-                    SwitchField::new(
-                        feature_entry.feature.id.clone(),
-                        Some(feature_entry.feature.name.clone()),
-                        None,
-                        feature_entry.toggle_state,
-                        {
-                            let _template = template_entry.clone();
-                            let feature = feature_entry.clone();
-                            let feature = feature.clone();
-                            cx.listener(move |this, state: &ToggleState, window, cx| {
-                                let mut feature = feature.clone();
-                                feature.toggle_state = state.clone();
-                                this.accept_message(
-                                    DevContainerMessage::FeaturesSelecting(feature),
-                                    window,
-                                    cx,
-                                );
-                            })
-                        },
+                    div().track_focus(&feature_entry.entry.focus_handle).child(
+                        ListItem::new("li-what")
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .toggle_state(
+                                feature_entry
+                                    .entry
+                                    .focus_handle
+                                    .contains_focused(window, cx),
+                            )
+                            .child(SwitchField::new(
+                                feature_entry.feature.id.clone(),
+                                Some(feature_entry.feature.name.clone()),
+                                None,
+                                feature_entry.toggle_state,
+                                {
+                                    let _template = template_entry.clone();
+                                    let feature = feature_entry.clone();
+                                    let feature = feature.clone();
+                                    cx.listener(move |this, state: &ToggleState, window, cx| {
+                                        let mut feature = feature.clone();
+                                        feature.toggle_state = state.clone();
+                                        this.accept_message(
+                                            DevContainerMessage::FeaturesSelecting(feature),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                },
+                            )),
                     )
                 }))
                 .child(ListSeparator)
                 .child(
                     div()
-                        .track_focus(&self.search_navigable_entry.focus_handle) // TODO
+                        .track_focus(&self.confirm_entry.focus_handle) // TODO
                         .on_action({
                             let template_entry = template_entry.clone();
                             cx.listener(move |this, _: &menu::Confirm, window, cx| {
@@ -741,9 +750,7 @@ impl DevContainerModal {
                                 .spacing(ui::ListItemSpacing::Sparse)
                                 .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
                                 .toggle_state(
-                                    self.search_navigable_entry
-                                        .focus_handle
-                                        .contains_focused(window, cx),
+                                    self.confirm_entry.focus_handle.contains_focused(window, cx),
                                 )
                                 .child(Label::new("Confirm")),
                         ),
@@ -771,7 +778,7 @@ impl DevContainerModal {
         for feature in template_entry.features {
             view = view.entry(feature.entry.clone());
         }
-        view = view.entry(self.search_navigable_entry.clone());
+        view = view.entry(self.confirm_entry.clone());
         view = view.entry(self.back_entry.clone());
         view.render(window, cx).into_any_element()
     }
@@ -1050,10 +1057,16 @@ impl StatefulModal for DevContainerModal {
                     for feature in &mut template_entry.features {
                         if feature == &feature_entry {
                             *feature = feature_entry.clone();
-                            template_entry.features_selected.insert(
-                                feature_entry.feature.name.clone(),
-                                feature_entry.feature.clone(),
-                            );
+                            if feature_entry.toggle_state == ToggleState::Selected {
+                                template_entry.features_selected.insert(
+                                    feature_entry.feature.name.clone(),
+                                    feature_entry.feature.clone(),
+                                );
+                            } else {
+                                template_entry
+                                    .features_selected
+                                    .remove(&feature_entry.feature.name);
+                            }
                         }
                     }
                     Some(DevContainerState::FeaturesQueryReturned(template_entry))
