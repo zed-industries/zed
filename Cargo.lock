@@ -5308,6 +5308,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "cloud_llm_client",
  "collections",
  "env_logger 0.11.8",
@@ -16930,6 +16931,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
+ "menu",
  "notifications",
  "pretty_assertions",
  "project",
@@ -21178,7 +21180,9 @@ dependencies = [
 name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
+ "strum 0.27.2",
 ]
 
 [[package]]

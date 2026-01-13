@@ -61,6 +61,7 @@ impl ProjectSymbolsDelegate {
         }
     }
 
+    // Note if you make changes to this, also change `agent_ui::completion_provider::search_symbols`
     fn filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
