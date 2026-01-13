@@ -120,9 +120,10 @@ impl SplittableEditor {
         });
         let panes = PaneGroup::new(pane);
         // TODO(split-diff) we might want to tag editor events with whether they came from primary/secondary
-        let subscriptions = vec![cx.subscribe(
+        let subscriptions = vec![cx.subscribe_in(
             &primary_editor,
-            |this, _, event: &EditorEvent, cx| match event {
+            window,
+            |this, primary_editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -133,6 +134,22 @@ impl SplittableEditor {
                 EditorEvent::SelectionsChanged { .. } => {
                     if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = false;
+                    }
+                    cx.emit(event.clone());
+                }
+                EditorEvent::ScrollPositionChanged { local, autoscroll } => {
+                    if let Some(secondary) = &mut this.secondary {
+                        let primary_scroll_position =
+                            primary_editor.update(cx, |primary_editor, cx| {
+                                primary_editor.snapshot(window, cx).scroll_position()
+                            });
+                        secondary.editor.update(cx, |secondary_editor, cx| {
+                            secondary_editor.set_scroll_position(
+                                primary_scroll_position,
+                                window,
+                                cx,
+                            );
+                        })
                     }
                     cx.emit(event.clone());
                 }
@@ -214,9 +231,10 @@ impl SplittableEditor {
             pane
         });
 
-        let subscriptions = vec![cx.subscribe(
+        let subscriptions = vec![cx.subscribe_in(
             &secondary_editor,
-            |this, _, event: &EditorEvent, cx| match event {
+            window,
+            |this, secondary_editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -237,6 +255,16 @@ impl SplittableEditor {
                     if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = true;
                     }
+                    cx.emit(event.clone());
+                }
+                EditorEvent::ScrollPositionChanged { local, autoscroll } => {
+                    let secondary_scroll_position =
+                        secondary_editor.update(cx, |secondary_editor, cx| {
+                            secondary_editor.snapshot(window, cx).scroll_position()
+                        });
+                    this.primary_editor.update(cx, |primary_editor, cx| {
+                        primary_editor.set_scroll_position(secondary_scroll_position, window, cx);
+                    });
                     cx.emit(event.clone());
                 }
                 _ => cx.emit(event.clone()),
