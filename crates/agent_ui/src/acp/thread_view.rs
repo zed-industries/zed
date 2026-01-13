@@ -49,8 +49,8 @@ use text::ToPoint as _;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DiffStat, Disclosure,
-    Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor,
-    Tooltip, WithScrollbar, prelude::*, right_click_menu,
+    Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -69,10 +69,10 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
-    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
-    ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenHistory, QueueMessage, RejectAll, RejectOnce, SendNextQueuedMessage,
-    ToggleBurnMode, ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
+    ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
+    ExpandMessageEditor, Follow, KeepAll, NewThread, OpenHistory, QueueMessage, RejectAll,
+    RejectOnce, SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
@@ -3511,6 +3511,233 @@ impl AcpThreadView {
                 .first_tool_awaiting_confirmation()
                 .is_some_and(|call| call.id == tool_call_id)
         });
+
+        // For SwitchMode, use the old layout with all buttons
+        if kind == acp::ToolKind::SwitchMode {
+            return self.render_permission_buttons_legacy(options, entry_ix, tool_call_id, cx);
+        }
+
+        // Separate options into allow options and deny option
+        let allow_options: Vec<_> = options
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o.kind,
+                    acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways
+                )
+            })
+            .collect();
+
+        let deny_option = options
+            .iter()
+            .find(|o| matches!(o.kind, acp::PermissionOptionKind::RejectOnce));
+
+        // The dropdown label - just shows what clicking Allow will do
+        let dropdown_label: SharedString = "Only this time".into();
+
+        // Get the option that will be used when Allow is clicked (always "Allow once")
+        let selected_allow_option = allow_options
+            .iter()
+            .find(|o| o.kind == acp::PermissionOptionKind::AllowOnce)
+            .or(allow_options.first());
+
+        div()
+            .p_1()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .w_full()
+            .h_flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                // Left side: Allow and Deny buttons
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new(("allow-btn", entry_ix), "Allow")
+                            .icon(IconName::Check)
+                            .icon_color(Color::Success)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .label_size(LabelSize::Small)
+                            .map(|btn| {
+                                if is_first {
+                                    btn.key_binding(
+                                        KeyBinding::for_action_in(
+                                            &AllowOnce as &dyn Action,
+                                            &self.focus_handle,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                } else {
+                                    btn
+                                }
+                            })
+                            .on_click(cx.listener({
+                                let tool_call_id = tool_call_id.clone();
+                                let option_id = selected_allow_option
+                                    .map(|o| o.option_id.clone())
+                                    .unwrap_or_else(|| acp::PermissionOptionId::new("allow"));
+                                let option_kind = selected_allow_option
+                                    .map(|o| o.kind)
+                                    .unwrap_or(acp::PermissionOptionKind::AllowOnce);
+                                move |this, _, window, cx| {
+                                    this.authorize_tool_call(
+                                        tool_call_id.clone(),
+                                        option_id.clone(),
+                                        option_kind,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new(("deny-btn", entry_ix), "Deny")
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .label_size(LabelSize::Small)
+                            .map(|btn| {
+                                if is_first {
+                                    btn.key_binding(
+                                        KeyBinding::for_action_in(
+                                            &RejectOnce as &dyn Action,
+                                            &self.focus_handle,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                } else {
+                                    btn
+                                }
+                            })
+                            .on_click(cx.listener({
+                                let tool_call_id = tool_call_id.clone();
+                                let option_id = deny_option
+                                    .map(|o| o.option_id.clone())
+                                    .unwrap_or_else(|| acp::PermissionOptionId::new("deny"));
+                                move |this, _, window, cx| {
+                                    this.authorize_tool_call(
+                                        tool_call_id.clone(),
+                                        option_id.clone(),
+                                        acp::PermissionOptionKind::RejectOnce,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
+            )
+            .child(
+                // Right side: Granularity dropdown
+                self.render_permission_granularity_dropdown(
+                    &allow_options,
+                    dropdown_label,
+                    entry_ix,
+                    tool_call_id,
+                    cx,
+                ),
+            )
+    }
+
+    fn render_permission_granularity_dropdown(
+        &self,
+        allow_options: &[&acp::PermissionOption],
+        current_label: SharedString,
+        entry_ix: usize,
+        tool_call_id: acp::ToolCallId,
+        _cx: &Context<Self>,
+    ) -> impl IntoElement {
+        // Collect option info for the menu builder closure
+        // Each item is (option_id, option_kind, display_name)
+        let menu_options: Vec<(
+            acp::PermissionOptionId,
+            acp::PermissionOptionKind,
+            SharedString,
+        )> = allow_options
+            .iter()
+            .map(|o| (o.option_id.clone(), o.kind, o.name.clone().into()))
+            .collect();
+
+        PopoverMenu::new(("permission-granularity", entry_ix))
+            .trigger(
+                Button::new(("granularity-trigger", entry_ix), current_label)
+                    .icon(IconName::ChevronDown)
+                    .icon_position(IconPosition::End)
+                    .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Subtle),
+            )
+            .menu(move |window, cx| {
+                let tool_call_id = tool_call_id.clone();
+                let options = menu_options.clone();
+
+                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    for (option_id, option_kind, display_name) in options.iter() {
+                        let display_name = display_name.clone();
+                        let option_id = option_id.clone();
+                        let option_kind = *option_kind;
+                        let tool_call_id_for_entry = tool_call_id.clone();
+
+                        menu = menu.custom_entry(
+                            {
+                                let display_name = display_name.clone();
+                                move |_window, _cx| {
+                                    h_flex()
+                                        .w_full()
+                                        .child(
+                                            Label::new(display_name.clone()).size(LabelSize::Small),
+                                        )
+                                        .into_any_element()
+                                }
+                            },
+                            {
+                                let tool_call_id = tool_call_id_for_entry.clone();
+                                let option_id = option_id.clone();
+                                let option_kind_str = match option_kind {
+                                    acp::PermissionOptionKind::AllowOnce => "AllowOnce",
+                                    acp::PermissionOptionKind::AllowAlways => "AllowAlways",
+                                    acp::PermissionOptionKind::RejectOnce => "RejectOnce",
+                                    acp::PermissionOptionKind::RejectAlways => "RejectAlways",
+                                    _ => "AllowOnce",
+                                };
+                                move |window, cx| {
+                                    window.dispatch_action(
+                                        AuthorizeToolCall {
+                                            tool_call_id: tool_call_id.0.to_string(),
+                                            option_id: option_id.0.to_string(),
+                                            option_kind: option_kind_str.to_string(),
+                                        }
+                                        .boxed_clone(),
+                                        cx,
+                                    );
+                                }
+                            },
+                        );
+                    }
+
+                    menu
+                }))
+            })
+    }
+
+    fn render_permission_buttons_legacy(
+        &self,
+        options: &[acp::PermissionOption],
+        entry_ix: usize,
+        tool_call_id: acp::ToolCallId,
+        cx: &Context<Self>,
+    ) -> Div {
+        let is_first = self.thread().is_some_and(|thread| {
+            thread
+                .read(cx)
+                .first_tool_awaiting_confirmation()
+                .is_some_and(|call| call.id == tool_call_id)
+        });
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
 
         div()
@@ -3518,13 +3745,7 @@ impl AcpThreadView {
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .w_full()
-            .map(|this| {
-                if kind == acp::ToolKind::SwitchMode {
-                    this.v_flex()
-                } else {
-                    this.h_flex().justify_end().flex_wrap()
-                }
-            })
+            .v_flex()
             .gap_0p5()
             .children(options.iter().map(move |option| {
                 let option_id = SharedString::from(option.option_id.0.clone());
@@ -5203,6 +5424,25 @@ impl AcpThreadView {
         self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx);
     }
 
+    fn handle_authorize_tool_call(
+        &mut self,
+        action: &AuthorizeToolCall,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+        let option_id = acp::PermissionOptionId::new(action.option_id.clone());
+        let option_kind = match action.option_kind.as_str() {
+            "AllowOnce" => acp::PermissionOptionKind::AllowOnce,
+            "AllowAlways" => acp::PermissionOptionKind::AllowAlways,
+            "RejectOnce" => acp::PermissionOptionKind::RejectOnce,
+            "RejectAlways" => acp::PermissionOptionKind::RejectAlways,
+            _ => acp::PermissionOptionKind::AllowOnce,
+        };
+
+        self.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
+    }
+
     fn authorize_pending_tool_call(
         &mut self,
         kind: acp::PermissionOptionKind,
@@ -6868,6 +7108,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_always))
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
+            .on_action(cx.listener(Self::handle_authorize_tool_call))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))

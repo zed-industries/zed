@@ -132,6 +132,20 @@ actions!(
     ]
 );
 
+/// Action to authorize a tool call with a specific permission option.
+/// This is used by the permission granularity dropdown to authorize tool calls.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeToolCall {
+    /// The tool call ID to authorize.
+    pub tool_call_id: String,
+    /// The permission option ID to use.
+    pub option_id: String,
+    /// The kind of permission option (serialized as string).
+    pub option_kind: String,
+}
+
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
