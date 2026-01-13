@@ -7632,6 +7632,65 @@ async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(
+        path!("/file.txt"),
+        "first line\nsecond line\nthird line\nfourth line\nfifth line\n".into(),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange::new(Point::new(2, 0)..Point::new(5, 0))],
+            cx,
+        );
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(editor.text(cx), "third line\nfourth line\nfifth line\n");
+
+        editor.select_all(&SelectAll, window, cx);
+        editor.copy(&Copy, window, cx);
+    });
+
+    let clipboard_selections: Option<Vec<ClipboardSelection>> = cx
+        .read_from_clipboard()
+        .and_then(|item| item.entries().first().cloned())
+        .and_then(|entry| match entry {
+            gpui::ClipboardEntry::String(text) => text.metadata_json(),
+            _ => None,
+        });
+
+    let selections = clipboard_selections.expect("should have clipboard selections");
+    assert_eq!(selections.len(), 1);
+    let selection = &selections[0];
+    assert_eq!(
+        selection.line_range,
+        Some(2..=5),
+        "line range should be from original file (rows 2-5), not multibuffer rows (0-2)"
+    );
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
