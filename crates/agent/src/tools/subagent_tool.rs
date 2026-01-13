@@ -635,26 +635,52 @@ mod tests {
         );
         let properties = schema_json.get("properties").unwrap();
 
-        assert!(properties.get("label").is_some(), "should have label field");
         assert!(
-            properties.get("task_prompt").is_some(),
-            "should have task_prompt field"
+            properties.get("subagents").is_some(),
+            "should have subagents field"
+        );
+
+        let subagents_schema = properties.get("subagents").unwrap();
+        assert!(
+            subagents_schema.get("items").is_some(),
+            "subagents should have items schema"
+        );
+
+        // The items use a $ref to definitions/SubagentConfig, so we need to look up
+        // the actual schema in the definitions section
+        let definitions = schema_json
+            .get("definitions")
+            .expect("schema should have definitions");
+        let subagent_config_schema = definitions
+            .get("SubagentConfig")
+            .expect("definitions should have SubagentConfig");
+        let item_properties = subagent_config_schema
+            .get("properties")
+            .expect("SubagentConfig should have properties");
+
+        assert!(
+            item_properties.get("label").is_some(),
+            "subagent item should have label field"
         );
         assert!(
-            properties.get("summary_prompt").is_some(),
-            "should have summary_prompt field"
+            item_properties.get("task_prompt").is_some(),
+            "subagent item should have task_prompt field"
         );
         assert!(
-            properties.get("context_low_prompt").is_some(),
-            "should have context_low_prompt field"
+            item_properties.get("summary_prompt").is_some(),
+            "subagent item should have summary_prompt field"
         );
         assert!(
-            properties.get("timeout_ms").is_some(),
-            "should have timeout_ms field"
+            item_properties.get("context_low_prompt").is_some(),
+            "subagent item should have context_low_prompt field"
         );
         assert!(
-            properties.get("allowed_tools").is_some(),
-            "should have allowed_tools field"
+            item_properties.get("timeout_ms").is_some(),
+            "subagent item should have timeout_ms field"
+        );
+        assert!(
+            item_properties.get("allowed_tools").is_some(),
+            "subagent item should have allowed_tools field"
         );
     }
 

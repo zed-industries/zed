@@ -3408,10 +3408,9 @@ impl AcpThreadView {
                     .bg(self.tool_card_header_bg(cx))
                     .child(
                         div()
-                            .id(disclosure_id.clone())
+                            .id(disclosure_id)
                             .cursor_pointer()
                             .on_click(cx.listener({
-                                let session_id = session_id.clone();
                                 move |this, _, _, cx| {
                                     if this.expanded_subagents.contains(&session_id) {
                                         this.expanded_subagents.remove(&session_id);
@@ -3468,15 +3467,16 @@ impl AcpThreadView {
                         )
                     })
                     .child(
-                        Button::new(
+                        IconButton::new(
                             SharedString::from(format!(
                                 "expand-subagent-btn-{}-{}",
                                 entry_ix, context_ix
                             )),
-                            "Expand Subagent",
+                            IconName::Maximize,
                         )
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined),
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .tooltip(Tooltip::text("Expand Subagent")),
                     ),
             )
             .when(is_expanded, |this| {
@@ -3532,16 +3532,7 @@ impl AcpThreadView {
                 )
             })
             .when(is_running && !has_content, |this| {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .child(SpinnerLabel::new().size(LabelSize::Small))
-                        .child(
-                            Label::new("Working...")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
+                this.child(SpinnerLabel::new().size(LabelSize::Small))
             })
     }
 
