@@ -313,8 +313,6 @@ impl RemoteConnectionModal {
             RemoteConnectionOptions::Mock(options) => {
                 (format!("mock-{}", options.id), None, false, false)
             }
-            #[allow(unreachable_patterns)]
-            _ => ("".to_string(), None, false, false),
         };
         Self {
             prompt: cx.new(|cx| {
@@ -730,8 +728,6 @@ pub async fn open_remote_project(
                                     RemoteConnectionOptions::Mock(_) => {
                                         "Failed to connect to mock server"
                                     }
-                                    #[allow(unreachable_patterns)]
-                                    _ => "Failed to connect",
                                 },
                                 Some(&format!("{e:#}")),
                                 &["Retry", "Cancel"],
@@ -795,8 +791,6 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Mock(_) => {
                                     "Failed to connect to mock server"
                                 }
-                                #[allow(unreachable_patterns)]
-                                _ => "Failed to connect",
                             },
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
