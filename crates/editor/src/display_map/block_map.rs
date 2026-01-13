@@ -702,6 +702,21 @@ impl BlockMap {
             return;
         }
 
+        eprintln!(
+            "BlockMap::sync starting: edits={:?}, wrap_max_row={:?}",
+            edits,
+            wrap_snapshot.max_point().row()
+        );
+        eprintln!("  existing transforms:");
+        for item in self.transforms.borrow().iter() {
+            eprintln!(
+                "    input_rows={:?}, output_rows={:?}, block={:?}",
+                item.summary.input_rows,
+                item.summary.output_rows,
+                item.block.as_ref().map(|b| std::mem::discriminant(b))
+            );
+        }
+
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
         let mut cursor = transforms.cursor::<WrapRow>(());
@@ -726,7 +741,13 @@ impl BlockMap {
             // * Isomorphic transforms that end *at* the start of the edit
             // * Below blocks that end at the start of the edit
             // However, if we hit a replace block that ends at the start of the edit we want to reconstruct it.
-            new_transforms.append(cursor.slice(&old_start, Bias::Left), ());
+            let slice = cursor.slice(&old_start, Bias::Left);
+            eprintln!(
+                "  appending slice to old_start={:?}, slice input_rows={:?}",
+                old_start,
+                slice.summary().input_rows
+            );
+            new_transforms.append(slice, ());
             if let Some(transform) = cursor.item()
                 && transform.summary.input_rows > WrapRow(0)
                 && cursor.end() == old_start
@@ -887,9 +908,8 @@ impl BlockMap {
             if let Some((companion_snapshot, _)) = companion_wrap_edits
                 && let Some((companion, display_map_id)) = companion
             {
-                let new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
                 blocks_in_edit.extend(self.spacer_blocks(
-                    new_buffer_start..new_buffer_end,
+                    (start_bound, end_bound),
                     wrap_snapshot,
                     companion_snapshot,
                     companion,
@@ -898,6 +918,16 @@ impl BlockMap {
             }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
+
+            eprintln!("  blocks_in_edit count={}", blocks_in_edit.len());
+            for (placement, block) in &blocks_in_edit {
+                eprintln!(
+                    "    block: placement={:?}, type={:?}, height={}",
+                    placement,
+                    std::mem::discriminant(block),
+                    block.height()
+                );
+            }
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
@@ -930,14 +960,24 @@ impl BlockMap {
                         rows_before_block =
                             (position + RowDelta(1)) - new_transforms.summary().input_rows;
                     }
-                    BlockPlacement::Replace(range) => {
+                    BlockPlacement::Replace(ref range) => {
                         rows_before_block = *range.start() - new_transforms.summary().input_rows;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
                         just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }
                 }
 
+                eprintln!(
+                    "    processing block: placement={:?}, rows_before_block={:?}, current_input_rows={:?}",
+                    block_placement,
+                    rows_before_block,
+                    new_transforms.summary().input_rows
+                );
                 push_isomorphic(&mut new_transforms, rows_before_block, wrap_snapshot);
+                eprintln!(
+                    "    after push_isomorphic: input_rows={:?}",
+                    new_transforms.summary().input_rows
+                );
                 new_transforms.push(
                     Transform {
                         summary,
@@ -950,13 +990,35 @@ impl BlockMap {
             // Insert an isomorphic transform after the final block.
             let rows_after_last_block =
                 RowDelta(new_end.0).saturating_sub(RowDelta(new_transforms.summary().input_rows.0));
+            eprintln!(
+                "  rows_after_last_block: new_end={:?}, current_input_rows={:?}, rows_after={:?}",
+                new_end,
+                new_transforms.summary().input_rows,
+                rows_after_last_block
+            );
             push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
         }
 
         new_transforms.append(cursor.suffix(), ());
-        debug_assert_eq!(
+
+        eprintln!(
+            "BlockMap::sync finished: input_rows={:?}, expected={:?}",
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + WrapRow(1)
+        );
+        eprintln!("  new transforms:");
+        for item in new_transforms.iter() {
+            eprintln!(
+                "    input_rows={:?}, output_rows={:?}, block={:?}",
+                item.summary.input_rows,
+                item.summary.output_rows,
+                item.block.as_ref().map(|b| std::mem::discriminant(b))
+            );
+        }
+
+        debug_assert_eq!(
+            new_transforms.summary().input_rows,
+            wrap_snapshot.max_point().row() + WrapRow(1),
         );
 
         drop(cursor);
@@ -1063,7 +1125,7 @@ impl BlockMap {
 
     fn spacer_blocks(
         &self,
-        new_buffer_range: Range<MultiBufferPoint>,
+        bounds: impl RangeBounds<MultiBufferPoint>,
         wrap_snapshot: &WrapSnapshot,
         companion_snapshot: &WrapSnapshot,
         companion: &Companion,
@@ -1072,15 +1134,22 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        let row_range =
-            MultiBufferRow(new_buffer_range.start.row)..MultiBufferRow(new_buffer_range.end.row);
+        eprintln!(
+            "  spacer_blocks: new_buffer_range={:?}, row_range={:?}",
+            new_buffer_range, row_range
+        );
 
         let row_mappings = companion.convert_rows_to_companion(
             display_map_id,
             companion_buffer,
             our_buffer,
-            row_range,
+            row_range.clone(),
         );
+
+        eprintln!("  row_mappings count={}", row_mappings.len());
+        for (i, rm) in row_mappings.iter().enumerate() {
+            eprintln!("    row_mapping[{}]: boundaries={:?}", i, rm.boundaries);
+        }
 
         let determine_spacer = |our_point, their_point, delta| {
             let our_wrap = wrap_snapshot.make_wrap_point(our_point, Bias::Left).row();
@@ -1190,6 +1259,10 @@ impl BlockMap {
                     delta,
                 );
                 if let Some((wrap_row, height)) = spacer {
+                    eprintln!(
+                        "    creating Below spacer: wrap_row={:?}, height={}, last_boundary={:?}",
+                        wrap_row, height, last_boundary
+                    );
                     result.push((
                         BlockPlacement::Below(wrap_row),
                         Block::Spacer {

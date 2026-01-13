@@ -3108,6 +3108,129 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_split_editor_soft_wrap_spacers_two_excerpts(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use language::language_settings::SoftWrap;
+        use rope::Point;
+        use ui::px;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks_and_width;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text = "aaaa bbbb cccc dddd eeee ffff";
+
+        let buffer1 = cx.new(|cx| Buffer::local(text.to_string(), cx));
+        let diff1 = cx
+            .new(|cx| BufferDiff::new_with_base_text(&text, &buffer1.read(cx).text_snapshot(), cx));
+
+        let buffer2 = cx.new(|cx| Buffer::local(text.to_string(), cx));
+        let diff2 = cx
+            .new(|cx| BufferDiff::new_with_base_text(&text, &buffer2.read(cx).text_snapshot(), cx));
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        let path1 = cx.update(|_, cx| PathKey::for_buffer(&buffer1, cx));
+        let path2 = cx.update(|_, cx| PathKey::for_buffer(&buffer2, cx));
+
+        editor.update(cx, |editor, cx| {
+            let end = Point::new(0, text.len() as u32);
+            editor.set_excerpts_for_path(
+                path1.clone(),
+                buffer1.clone(),
+                vec![Point::new(0, 0)..end],
+                0,
+                diff1.clone(),
+                cx,
+            );
+            editor.set_excerpts_for_path(
+                path2.clone(),
+                buffer2.clone(),
+                vec![Point::new(0, 0)..end],
+                0,
+                diff2.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        primary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+        secondary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+
+        cx.run_until_parked();
+
+        let primary_content =
+            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
+        cx.run_until_parked();
+        let secondary_content =
+            editor_content_with_blocks_and_width(&secondary_editor, px(200.0), &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff"
+                .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff"
+                .unindent()
+        );
+    }
+
+    #[gpui::test]
     async fn test_soft_wrap_before_modification_hunk(cx: &mut gpui::TestAppContext) {
         use buffer_diff::BufferDiff;
         use language::Buffer;
