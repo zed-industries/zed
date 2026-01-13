@@ -4,7 +4,7 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
+    Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity, rgb,
 };
 use language::{Buffer, Capability};
 use multi_buffer::{
@@ -15,7 +15,7 @@ use rope::Point;
 use text::OffsetRangeExt as _;
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
+    Styled as _, Window, div, v_flex,
 };
 use workspace::{
     ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
@@ -24,6 +24,7 @@ use workspace::{
 use crate::{
     DisplayMap, Editor, EditorEvent,
     display_map::{Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
+    split_element::SplitEditorElement,
 };
 
 struct SplitDiffFeatureFlag;
@@ -68,6 +69,10 @@ struct SecondaryEditor {
 impl SplittableEditor {
     pub fn primary_editor(&self) -> &Entity<Editor> {
         &self.primary_editor
+    }
+
+    pub fn secondary_editor(&self) -> Option<&Entity<Editor>> {
+        self.secondary.as_ref().map(|se| &se.editor)
     }
 
     pub fn last_selected_editor(&self) -> &Entity<Editor> {
@@ -931,6 +936,28 @@ impl Render for SplittableEditor {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
+        if let Some(secondary) = &self.secondary {
+            // todo! ugly hack
+            let style = self
+                .primary_editor
+                .clone()
+                .into_element()
+                .update(cx, |elem, cx| elem.style(cx).clone());
+
+            // return div().size_full().bg(rgb(0x0000FF)).into_any_element();
+            return v_flex()
+                .w_full()
+                .h_full()
+                .size_full()
+                .child(SplitEditorElement::new(
+                    &self.primary_editor,
+                    &secondary.editor,
+                    style,
+                    cx,
+                ))
+                .into_any_element();
+        }
+
         let inner = if self.secondary.is_none() {
             self.primary_editor.clone().into_any_element()
         } else if let Some(active) = self.panes.panes().into_iter().next() {
@@ -951,6 +978,7 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::unsplit))
             .size_full()
             .child(inner)
+            .into_any_element()
     }
 }
 

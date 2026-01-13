@@ -37,6 +37,7 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 mod split;
+mod split_element;
 pub mod tasks;
 
 #[cfg(test)]

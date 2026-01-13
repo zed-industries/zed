@@ -204,6 +204,10 @@ impl EditorElement {
         }
     }
 
+    pub fn set_style(&mut self, style: EditorStyle) {
+        self.style = style;
+    }
+
     fn register_actions(&self, window: &mut Window, cx: &mut App) {
         let editor = &self.editor;
         editor.update(cx, |editor, cx| {
@@ -9043,7 +9047,7 @@ impl Element for EditorElement {
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
-            window.set_view_id(self.editor.entity_id());
+           window.set_view_id(self.editor.entity_id());
             window.set_focus_handle(&focus_handle, cx);
         }
 
