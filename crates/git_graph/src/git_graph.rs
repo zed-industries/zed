@@ -1,7 +1,8 @@
 mod graph;
 mod graph_rendering;
 
-use anyhow::Context as _;
+use graph::format_timestamp;
+
 use git::repository::{LogOrder, LogSource};
 use gpui::{
     AnyElement, App, Context, Corner, DefiniteLength, ElementId, Entity, EventEmitter, FocusHandle,
@@ -57,11 +58,10 @@ pub struct GitGraph {
     max_lanes: usize,
     loading: bool,
     error: Option<SharedString>,
-    _load_task: Option<Task<()>>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    work_dir: Option<PathBuf>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
+    _load_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -98,7 +98,6 @@ impl GitGraph {
             error: None,
             _load_task: None,
             context_menu: None,
-            work_dir: None,
             row_height,
             table_interaction_state,
             // todo! We can just make this a simple Subscription instead of wrapping it
@@ -117,8 +116,6 @@ impl GitGraph {
         if self._load_task.is_some() {
             return;
         }
-
-        let now = std::time::Instant::now();
 
         let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx))
         else {
@@ -148,7 +145,6 @@ impl GitGraph {
                     }
                 };
 
-                dbg!(now.elapsed());
                 this._load_task.take();
                 cx.notify();
             })
@@ -168,6 +164,20 @@ impl GitGraph {
 
         let row_height = self.row_height;
 
+        // We fetch data outside the visible viewport to avoid loading entries when
+        // users scroll through the git graph
+        if let Some(repository) = repository.as_ref() {
+            const FETCH_RANGE: usize = 100;
+            repository.update(cx, |repository, cx| {
+                self.graph.commits[range.start.saturating_sub(FETCH_RANGE)
+                    ..(range.end + FETCH_RANGE).min(self.graph.commits.len().saturating_sub(1))]
+                    .iter()
+                    .for_each(|commit| {
+                        repository.fetch_commit_data(commit.data.sha, cx);
+                    });
+            });
+        }
+
         range
             .map(|idx| {
                 let Some((commit, repository)) =
@@ -182,18 +192,18 @@ impl GitGraph {
                 };
 
                 let data = repository.update(cx, |repository, cx| {
-                    repository.commit_data(commit.data.sha, cx).clone()
+                    repository.fetch_commit_data(commit.data.sha, cx).clone()
                 });
 
                 let short_sha = commit.data.sha.display_short();
-                let formatted_time = String::new();
+                let mut formatted_time = String::new();
                 let subject;
                 let author_name;
 
                 if let CommitDataState::Loaded(data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
-                    // todo! format the timestamp
+                    formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
                     subject = "Loading...".into();
                     author_name = "".into();

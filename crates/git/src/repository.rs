@@ -2569,20 +2569,16 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let git = GitBinary::new(git_binary_path, working_directory, executor);
 
+            // todo! we should figure out how to fetch in chunk's
             let args = [
                 "rev-list",
                 "--parents",
-                "--max-count=1000",
                 log_order.as_arg(),
                 log_source.get_arg(),
             ];
 
-            let now = std::time::Instant::now();
             let output = git.run(&args).await?;
-            dbg!(now.elapsed());
-            let result = Ok(parse_rev_list_output(&output));
-            dbg!(now.elapsed());
-            result
+            Ok(parse_rev_list_output(&output))
         }
         .boxed()
     }

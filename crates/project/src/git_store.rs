@@ -4256,7 +4256,7 @@ impl Repository {
             .clone()
     }
 
-    pub fn commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
+    pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
         if !self.commit_data.contains_key(&sha) {
             match &self.graph_commit_data_handler {
                 GraphCommitHandlerState::Open(handler) => {
@@ -4267,7 +4267,9 @@ impl Repository {
                         .send_blocking(sha.clone())
                         .is_ok()
                     {
-                        self.commit_data.insert(sha, CommitDataState::Loading);
+                        let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
+                        // todo! debug assert
+                        assert!(old_value.is_none(), "We should never overwrite commit data");
                     }
                 }
                 GraphCommitHandlerState::Closed => {
@@ -4292,8 +4294,12 @@ impl Repository {
         let foreground_task = cx.spawn(async move |this, cx| {
             while let Ok((sha, commit_data)) = result_rx.recv().await {
                 let result = this.update(cx, |this, cx| {
-                    this.commit_data
+                    let old_value = this
+                        .commit_data
                         .insert(sha, CommitDataState::Loaded(Arc::new(commit_data)));
+
+                    // todo! debug
+                    assert!(!matches!(old_value, Some(CommitDataState::Loaded(_))));
                     cx.notify();
                 });
                 if result.is_err() {
