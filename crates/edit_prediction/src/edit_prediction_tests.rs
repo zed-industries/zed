@@ -1332,12 +1332,20 @@ fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawComp
 
     let current_marker = "<|fim_middle|>current\n";
     let updated_marker = "<|fim_middle|>updated\n";
+    let suffix_marker = "<|fim_suffix|>\n";
     let cursor = "<|user_cursor|>";
 
     let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
     let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
     let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
-    let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
+    // In v0113_ordered format, the excerpt contains <|fim_suffix|> and suffix content.
+    // Strip that out to get just the editable region.
+    let excerpt = if let Some(suffix_pos) = excerpt.find(suffix_marker) {
+        &excerpt[..suffix_pos]
+    } else {
+        &excerpt
+    };
+    let new_excerpt = apply_diff_to_string(diff_to_apply, excerpt).unwrap();
 
     RawCompletionResponse {
         id: Uuid::new_v4().to_string(),
