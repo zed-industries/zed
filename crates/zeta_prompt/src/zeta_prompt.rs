@@ -66,7 +66,7 @@ pub struct RelatedFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
-    pub text: String,
+    pub text: Arc<str>,
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput) -> String {

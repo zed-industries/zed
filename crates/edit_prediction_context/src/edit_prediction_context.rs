@@ -318,7 +318,7 @@ impl RelatedExcerptStore {
 
 async fn rebuild_related_files(
     project: &Entity<Project>,
-    new_entries: HashMap<Identifier, Arc<CacheEntry>>,
+    mut new_entries: HashMap<Identifier, Arc<CacheEntry>>,
     cx: &mut AsyncApp,
 ) -> Result<(HashMap<Identifier, Arc<CacheEntry>>, Vec<RelatedBuffer>)> {
     let mut snapshots = HashMap::default();
@@ -354,12 +354,13 @@ async fn rebuild_related_files(
             let mut ranges_by_buffer =
                 HashMap::<EntityId, (Entity<Buffer>, Vec<Range<Point>>)>::default();
             let mut paths_by_buffer = HashMap::default();
-            for entry in new_entries.values() {
+            for entry in new_entries.values_mut() {
                 for definition in &entry.definitions {
                     let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
                         continue;
                     };
                     paths_by_buffer.insert(definition.buffer.entity_id(), definition.path.clone());
+
                     ranges_by_buffer
                         .entry(definition.buffer.entity_id())
                         .or_insert_with(|| (definition.buffer.clone(), Vec::new()))
@@ -393,12 +394,14 @@ async fn rebuild_related_files(
                         })
                         .collect();
 
-                    Some(RelatedBuffer {
+                    let mut related_buffer = RelatedBuffer {
                         buffer,
                         path,
                         anchor_ranges,
                         cached_file: None,
-                    })
+                    };
+                    related_buffer.fill_cache(snapshot);
+                    Some(related_buffer)
                 })
                 .collect();
 
@@ -412,35 +415,40 @@ async fn rebuild_related_files(
 impl RelatedBuffer {
     fn related_file(&mut self, cx: &App) -> RelatedFile {
         let buffer = self.buffer.read(cx);
-        let cached = if let Some(cached) = self.cached_file.take()
+        let path = self.path.clone();
+        let cached = if let Some(cached) = &self.cached_file
             && buffer.version() == cached.buffer_version
         {
             cached
         } else {
-            let excerpts = self
-                .anchor_ranges
-                .iter()
-                .map(|range| {
-                    let start = range.start.to_point(buffer);
-                    let end = range.end.to_point(buffer);
-                    RelatedExcerpt {
-                        row_range: start.row..end.row,
-                        text: buffer.text_for_range(start..end).collect(),
-                    }
-                })
-                .collect::<Vec<_>>();
-            CachedRelatedFile {
-                excerpts: excerpts.clone(),
-                buffer_version: buffer.version(),
-            }
+            self.fill_cache(buffer)
         };
         let related_file = RelatedFile {
-            path: self.path.clone(),
+            path,
             excerpts: cached.excerpts.clone(),
             max_row: buffer.max_point().row,
         };
-        self.cached_file = Some(cached);
         return related_file;
+    }
+
+    fn fill_cache(&mut self, buffer: &text::BufferSnapshot) -> &CachedRelatedFile {
+        let excerpts = self
+            .anchor_ranges
+            .iter()
+            .map(|range| {
+                let start = range.start.to_point(buffer);
+                let end = range.end.to_point(buffer);
+                RelatedExcerpt {
+                    row_range: start.row..end.row,
+                    text: buffer.text_for_range(start..end).collect::<String>().into(),
+                }
+            })
+            .collect::<Vec<_>>();
+        self.cached_file = Some(CachedRelatedFile {
+            excerpts: excerpts.clone(),
+            buffer_version: buffer.version().clone(),
+        });
+        self.cached_file.as_ref().unwrap()
     }
 }
 
