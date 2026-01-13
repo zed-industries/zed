@@ -338,6 +338,7 @@ pub enum Block {
     Spacer {
         id: SpacerId,
         height: u32,
+        is_below: bool,
     },
 }
 
@@ -394,7 +395,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
-            Block::Spacer { .. } => true,
+            Block::Spacer { is_below, .. } => !*is_below,
         }
     }
 
@@ -417,7 +418,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
-            Block::Spacer { .. } => false,
+            Block::Spacer { is_below, .. } => *is_below,
         }
     }
 
@@ -474,7 +475,11 @@ impl Debug for Block {
                 .field("excerpt", excerpt)
                 .field("height", height)
                 .finish(),
-            Self::Spacer { id, height } => f
+            Self::Spacer {
+                id,
+                height,
+                is_below: _,
+            } => f
                 .debug_struct("Spacer")
                 .field("id", id)
                 .field("height", height)
@@ -1070,26 +1075,35 @@ impl BlockMap {
         let row_range =
             MultiBufferRow(new_buffer_range.start.row)..MultiBufferRow(new_buffer_range.end.row);
 
-        let excerpt_translations = companion.convert_rows_to_companion(
+        let row_mappings = companion.convert_rows_to_companion(
             display_map_id,
             companion_buffer,
             our_buffer,
             row_range,
         );
 
+        let determine_spacer = |our_point, their_point, delta| {
+            let our_wrap = wrap_snapshot.make_wrap_point(our_point, Bias::Left).row();
+            let companion_wrap = companion_snapshot
+                .make_wrap_point(their_point, Bias::Left)
+                .row();
+            let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
+            let spacer = if new_delta > delta {
+                let height = (new_delta - delta) as u32;
+                Some((our_wrap, height))
+            } else {
+                None
+            };
+            (new_delta, spacer)
+        };
+
         let mut result = Vec::new();
-        let num_excerpts = excerpt_translations.len();
 
-        for (excerpt_idx, excerpt_translation) in excerpt_translations.into_iter().enumerate() {
-            let boundaries = &excerpt_translation.boundaries;
-            if boundaries.is_empty() {
+        for row_mapping in row_mappings.into_iter() {
+            let boundaries = &row_mapping.boundaries;
+            let Some((first_boundary, first_range)) = boundaries.first() else {
                 continue;
-            }
-
-            let excerpt_end = excerpt_translation.excerpt_end;
-            let is_last_excerpt = excerpt_idx == num_excerpts - 1;
-
-            let (first_boundary, first_range) = &boundaries[0];
+            };
 
             let first_our_wrap = wrap_snapshot
                 .make_wrap_point(Point::new(first_boundary.0, 0), Bias::Left)
@@ -1105,38 +1119,86 @@ impl BlockMap {
                 let mut current_boundary = *boundary;
                 let mut current_range = range.clone();
 
-                while iter.peek().is_some_and(|(next_boundary, next_range)| {
-                    next_range.end <= current_range.end
-                        && (*next_boundary != excerpt_end || is_last_excerpt)
-                }) {
+                let use_start = iter
+                    .peek()
+                    .is_some_and(|(_, next_range)| next_range.end <= current_range.end);
+                let (new_delta, spacer) = determine_spacer(
+                    Point::new(current_boundary.0, 0),
+                    Point::new(
+                        if use_start {
+                            current_range.start.0
+                        } else {
+                            current_range.end.0
+                        },
+                        0,
+                    ),
+                    delta,
+                );
+                delta = new_delta;
+                if let Some((wrap_row, height)) = spacer {
+                    result.push((
+                        BlockPlacement::Above(wrap_row),
+                        Block::Spacer {
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: false,
+                        },
+                    ));
+                }
+
+                while iter
+                    .peek()
+                    .is_some_and(|(_, next_range)| next_range.end <= current_range.end)
+                {
                     let (b, r) = iter.next().unwrap();
                     current_boundary = *b;
                     current_range = r.clone();
                 }
 
-                let our_wrap = wrap_snapshot
-                    .make_wrap_point(Point::new(current_boundary.0, 0), Bias::Left)
-                    .row();
-                let companion_wrap = companion_snapshot
-                    .make_wrap_point(Point::new(current_range.end.0, 0), Bias::Left)
-                    .row();
-
-                let expected_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
-
-                if expected_delta > delta {
-                    let spacer_height = (expected_delta - delta) as u32;
-                    let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
-
+                let (new_delta, spacer) = determine_spacer(
+                    Point::new(current_boundary.0, 0),
+                    Point::new(current_range.end.0, 0),
+                    delta,
+                );
+                delta = new_delta;
+                if let Some((wrap_row, height)) = spacer {
                     result.push((
-                        BlockPlacement::Above(our_wrap),
+                        BlockPlacement::Above(wrap_row),
                         Block::Spacer {
-                            id: spacer_id,
-                            height: spacer_height,
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: false,
                         },
                     ));
                 }
+            }
 
-                delta = expected_delta;
+            let Some((last_boundary, last_range)) = boundaries.last() else {
+                continue;
+            };
+
+            let our_next_excerpt_boundary = our_buffer
+                .excerpt_boundaries_in_range(Point::new(last_boundary.0, 0)..)
+                .next()
+                .map(|boundary| boundary.row);
+            if our_next_excerpt_boundary == Some(*last_boundary + 1)
+                || *last_boundary == our_buffer.max_row()
+            {
+                let (_new_delta, spacer) = determine_spacer(
+                    Point::new(last_boundary.0, our_buffer.line_len(*last_boundary)),
+                    Point::new(last_range.end.0, companion_buffer.line_len(last_range.end)),
+                    delta,
+                );
+                if let Some((wrap_row, height)) = spacer {
+                    result.push((
+                        BlockPlacement::Below(wrap_row),
+                        Block::Spacer {
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: true,
+                        },
+                    ));
+                }
             }
         }
 
@@ -2367,9 +2429,9 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs, fold_map::FoldMap,
-            inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+            Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
         },
+        split::{convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
         test::test_font,
     };
     use buffer_diff::BufferDiff;
@@ -4247,7 +4309,7 @@ mod tests {
         // - bbb
         // - ccc
         //   ddd
-        //   *ddd
+        //   ddd
         //   ddd
         //   <extra line>
         //   <extra line>
@@ -4262,7 +4324,7 @@ mod tests {
         //   foo
         //   foo
         //   foo
-        //   *ddd
+        //   ddd
         //   ddd
         // + XXX
         // + YYY

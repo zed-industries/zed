@@ -1,13 +1,16 @@
 use std::ops::Range;
 
-use buffer_diff::BufferDiff;
+use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use language::{Buffer, Capability};
-use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey};
+use multi_buffer::{
+    Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
+    MultiBufferRow, MultiBufferSnapshot, PathKey, ToPoint,
+};
 use project::Project;
 use rope::Point;
 use text::OffsetRangeExt as _;
@@ -21,8 +24,136 @@ use workspace::{
 
 use crate::{
     DisplayMap, Editor, EditorEvent,
-    display_map::{Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
+    display_map::{Companion, MultiBufferRowMapping},
 };
+
+pub(crate) fn convert_lhs_rows_to_rhs(
+    lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
+    rhs_snapshot: &MultiBufferSnapshot,
+    lhs_snapshot: &MultiBufferSnapshot,
+    lhs_rows: Range<MultiBufferRow>,
+) -> Vec<MultiBufferRowMapping> {
+    convert_rows(
+        lhs_excerpt_to_rhs_excerpt,
+        lhs_snapshot,
+        rhs_snapshot,
+        lhs_rows,
+        |diff, rows, buffer| diff.base_text_rows_to_rows(rows, buffer).collect(),
+    )
+}
+
+pub(crate) fn convert_rhs_rows_to_lhs(
+    rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
+    lhs_snapshot: &MultiBufferSnapshot,
+    rhs_snapshot: &MultiBufferSnapshot,
+    rhs_rows: Range<MultiBufferRow>,
+) -> Vec<MultiBufferRowMapping> {
+    convert_rows(
+        rhs_excerpt_to_lhs_excerpt,
+        rhs_snapshot,
+        lhs_snapshot,
+        rhs_rows,
+        |diff, rows, buffer| diff.rows_to_base_text_rows(rows, buffer).collect(),
+    )
+}
+
+fn convert_rows<F>(
+    excerpt_map: &HashMap<ExcerptId, ExcerptId>,
+    source_snapshot: &MultiBufferSnapshot,
+    target_snapshot: &MultiBufferSnapshot,
+    source_rows: Range<MultiBufferRow>,
+    translate_fn: F,
+) -> Vec<MultiBufferRowMapping>
+where
+    F: Fn(&BufferDiffSnapshot, Range<u32>, &text::BufferSnapshot) -> Vec<Range<u32>>,
+{
+    let mut result = Vec::new();
+
+    let start_point = Point::new(source_rows.start.0, 0);
+    let end_point = Point::new(source_rows.end.0, 0);
+
+    for (buffer, buffer_offset_range, source_excerpt_id) in
+        source_snapshot.range_to_buffer_ranges(start_point..end_point)
+    {
+        if let Some(translation) = convert_excerpt_rows(
+            excerpt_map,
+            source_snapshot,
+            target_snapshot,
+            source_excerpt_id,
+            buffer,
+            buffer_offset_range,
+            &translate_fn,
+        ) {
+            result.push(translation);
+        }
+    }
+
+    result
+}
+
+fn convert_excerpt_rows<F>(
+    excerpt_map: &HashMap<ExcerptId, ExcerptId>,
+    source_snapshot: &MultiBufferSnapshot,
+    target_snapshot: &MultiBufferSnapshot,
+    source_excerpt_id: ExcerptId,
+    source_buffer: &text::BufferSnapshot,
+    source_buffer_range: Range<BufferOffset>,
+    translate_fn: F,
+) -> Option<MultiBufferRowMapping>
+where
+    F: Fn(&BufferDiffSnapshot, Range<u32>, &text::BufferSnapshot) -> Vec<Range<u32>>,
+{
+    let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied()?;
+    let target_buffer = target_snapshot.buffer_for_excerpt(target_excerpt_id)?;
+
+    let diff = source_snapshot.diff_for_buffer_id(source_buffer.remote_id())?;
+    let rhs_buffer = if source_buffer.remote_id() == diff.base_text().remote_id() {
+        &target_buffer
+    } else {
+        source_buffer
+    };
+
+    let local_start = source_buffer
+        .offset_to_point(source_buffer_range.start.0)
+        .row;
+    let local_end = source_buffer.offset_to_point(source_buffer_range.end.0).row;
+
+    let translated_ranges = translate_fn(&diff, local_start..local_end, rhs_buffer);
+
+    let target_context_range = target_snapshot.context_range_for_excerpt(target_excerpt_id)?;
+
+    let boundaries: Vec<_> = (local_start..=local_end)
+        .zip(translated_ranges)
+        .filter_map(|(buffer_row, target_range)| {
+            let buffer_anchor = source_buffer.anchor_before(Point::new(buffer_row, 0));
+            let mb_anchor = source_snapshot.anchor_in_excerpt(source_excerpt_id, buffer_anchor)?;
+            let mb_row = mb_anchor.to_point(source_snapshot).row;
+
+            let target_start_anchor =
+                target_buffer.anchor_before(Point::new(target_range.start, 0));
+            let target_end_anchor = target_buffer.anchor_before(Point::new(target_range.end, 0));
+
+            let target_start_anchor = *target_start_anchor
+                .max(&target_context_range.start, &target_buffer)
+                .min(&target_context_range.end, &target_buffer);
+            let target_end_anchor = *target_end_anchor
+                .max(&target_context_range.start, &target_buffer)
+                .min(&target_context_range.end, &target_buffer);
+
+            let target_start_mb =
+                target_snapshot.anchor_in_excerpt(target_excerpt_id, target_start_anchor)?;
+            let target_end_mb =
+                target_snapshot.anchor_in_excerpt(target_excerpt_id, target_end_anchor)?;
+
+            let target_mb_range = MultiBufferRow(target_start_mb.to_point(target_snapshot).row)
+                ..MultiBufferRow(target_end_mb.to_point(target_snapshot).row);
+
+            Some((MultiBufferRow(mb_row), target_mb_range))
+        })
+        .collect();
+
+    Some(MultiBufferRowMapping { boundaries })
+}
 
 struct SplitDiffFeatureFlag;
 
@@ -617,7 +748,11 @@ impl SplittableEditor {
                 snapshot.blocks_in_range(DisplayRow(0)..DisplayRow(max_row + 1))
             {
                 let (block_type, height) = match block {
-                    Block::Spacer { id, height } => (format!("SPACER[{}]", id.0), *height),
+                    Block::Spacer {
+                        id,
+                        height,
+                        is_below: _,
+                    } => (format!("SPACER[{}]", id.0), *height),
                     Block::ExcerptBoundary { height, .. } => {
                         ("EXCERPT_BOUNDARY".to_string(), *height)
                     }
@@ -1079,6 +1214,7 @@ mod tests {
     use gpui::AppContext as _;
     use language::Capability;
     use multi_buffer::{MultiBuffer, PathKey};
+    use pretty_assertions::assert_eq;
     use project::Project;
     use rand::rngs::StdRng;
     use settings::SettingsStore;
@@ -2868,6 +3004,375 @@ mod tests {
             § -----
             zzz"
             .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_editor_soft_wrap_spacers(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use language::language_settings::SoftWrap;
+        use rope::Point;
+        use ui::px;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks_and_width;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let text = "aaaa bbbb cccc dddd eeee ffff\n";
+
+        let buffer = cx.new(|cx| Buffer::local(text.to_string(), cx));
+        let diff = cx
+            .new(|cx| BufferDiff::new_with_base_text(&text, &buffer.read(cx).text_snapshot(), cx));
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            let end = Point::new(0, 29);
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..end],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        primary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+        secondary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+
+        cx.run_until_parked();
+
+        let primary_content =
+            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
+        cx.run_until_parked();
+        let secondary_content =
+            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
+
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff"
+                .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer"
+                .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_soft_wrap_before_modification_hunk(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use language::language_settings::SoftWrap;
+        use rope::Point;
+        use ui::px;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks_and_width;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Base text has a long line followed by lines that get modified
+        let base_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            old line one
+            old line two
+        "
+        .unindent();
+
+        // Current text has the long line plus a replacement line (modification hunk)
+        let current_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            new line
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        primary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+        secondary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Primary (RHS) at narrow width wraps the long line into 3 rows
+        // Secondary (LHS) at wide width shows the long line on 1 row
+        // Spacers are inserted before the hunk on secondary to account for wrap differences
+
+        // First pass: update wrap state for both editors at their respective widths
+        let _ = editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
+        cx.run_until_parked();
+        let _ = editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
+        cx.run_until_parked();
+
+        // Second pass: get actual content with companion snapshots now reflecting correct wrap state
+        let primary_content =
+            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
+        let secondary_content =
+            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
+
+        // Primary (RHS, narrow): long line wraps to 3 rows, then the added line in the hunk
+        // Secondary (LHS, wide): long line on 1 row, spacers, then the deleted lines in the hunk
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            new line
+            § spacer"
+                .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer
+            old line one
+            old line two"
+                .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_soft_wrap_before_deletion_hunk(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use language::language_settings::SoftWrap;
+        use rope::Point;
+        use ui::px;
+        use unindent::Unindent as _;
+
+        use crate::test::editor_content_with_blocks_and_width;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Base text has a long line followed by additional lines that get deleted, then more content
+        let base_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            deleted line one
+            deleted line two
+            after
+        "
+        .unindent();
+
+        // Current text has the long line and content after (deleted lines are gone)
+        let current_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            after
+        "
+        .unindent();
+
+        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        primary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+        secondary_editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Primary (RHS) at wide width shows the long line on 1 row
+        // Secondary (LHS) at narrow width wraps the long line into 3 rows
+        // Spacers are inserted before the hunk on primary to account for wrap differences
+
+        // First pass: update wrap state for both editors at their respective widths
+        let _ = editor_content_with_blocks_and_width(&primary_editor, px(400.0), &mut cx);
+        cx.run_until_parked();
+        let _ = editor_content_with_blocks_and_width(&secondary_editor, px(200.0), &mut cx);
+        cx.run_until_parked();
+
+        // Second pass: get actual content with companion snapshots now reflecting correct wrap state
+        let primary_content =
+            editor_content_with_blocks_and_width(&primary_editor, px(400.0), &mut cx);
+        let secondary_content =
+            editor_content_with_blocks_and_width(&secondary_editor, px(200.0), &mut cx);
+
+        // Primary (RHS, wide): long line on 1 row, spacers for wrap difference + deleted lines, then content after
+        // Secondary (LHS, narrow): long line wraps to 3 rows, then deleted lines (which also wrap), then content after
+        assert_eq!(
+            primary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer
+            § spacer
+            § spacer
+            § spacer
+            § spacer
+            after"
+                .unindent()
+        );
+        assert_eq!(
+            secondary_content,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            deleted\x20
+            line one
+            deleted\x20
+            line two
+            after"
+                .unindent()
         );
     }
 }

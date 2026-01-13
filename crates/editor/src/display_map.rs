@@ -106,7 +106,7 @@ use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch, ToPoint as TextToPoint};
+use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -149,11 +149,9 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
-pub type AlignCheckpoint = MultiBufferRow;
-pub struct ExcerptRowTranslation {
-    pub excerpt_id: ExcerptId,
+#[derive(Debug)]
+pub struct MultiBufferRowMapping {
     pub boundaries: Vec<(MultiBufferRow, Range<MultiBufferRow>)>,
-    pub excerpt_end: MultiBufferRow,
 }
 
 pub type ConvertMultiBufferRows = fn(
@@ -161,271 +159,7 @@ pub type ConvertMultiBufferRows = fn(
     &MultiBufferSnapshot,
     &MultiBufferSnapshot,
     Range<MultiBufferRow>,
-) -> Vec<ExcerptRowTranslation>;
-
-pub(crate) fn convert_lhs_rows_to_rhs(
-    lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
-    rhs_snapshot: &MultiBufferSnapshot,
-    lhs_snapshot: &MultiBufferSnapshot,
-    lhs_rows: Range<MultiBufferRow>,
-) -> Vec<ExcerptRowTranslation> {
-    let mut result = Vec::new();
-
-    if lhs_rows.start > lhs_rows.end {
-        return result;
-    }
-
-    let start_point = Point::new(lhs_rows.start.0, 0);
-    let end_point = Point::new(lhs_rows.end.0, 0);
-
-    let Some((_, _, first_excerpt_id)) = lhs_snapshot.point_to_buffer_point(start_point) else {
-        return result;
-    };
-
-    let boundaries: Vec<_> = lhs_snapshot
-        .excerpt_boundaries_in_range(start_point..end_point)
-        .collect();
-
-    let first_excerpt_end = boundaries.first().map(|b| b.row).unwrap_or(lhs_rows.end);
-    let first_boundary_excerpt_id = boundaries.first().map(|b| b.next.id);
-
-    if first_boundary_excerpt_id != Some(first_excerpt_id) {
-        if let Some(translation) = translate_excerpt_rows_lhs_to_rhs(
-            lhs_excerpt_to_rhs_excerpt,
-            rhs_snapshot,
-            lhs_snapshot,
-            first_excerpt_id,
-            lhs_rows.start..first_excerpt_end,
-        ) {
-            result.push(translation);
-        }
-    }
-
-    for (i, boundary) in boundaries.iter().enumerate() {
-        let excerpt_start = boundary.row;
-        let excerpt_end = boundaries.get(i + 1).map(|b| b.row).unwrap_or(lhs_rows.end);
-
-        if let Some(translation) = translate_excerpt_rows_lhs_to_rhs(
-            lhs_excerpt_to_rhs_excerpt,
-            rhs_snapshot,
-            lhs_snapshot,
-            boundary.next.id,
-            excerpt_start..excerpt_end,
-        ) {
-            result.push(translation);
-        }
-    }
-
-    result
-}
-
-fn translate_excerpt_rows_lhs_to_rhs(
-    excerpt_map: &HashMap<ExcerptId, ExcerptId>,
-    rhs_snapshot: &MultiBufferSnapshot,
-    lhs_snapshot: &MultiBufferSnapshot,
-    lhs_excerpt_id: ExcerptId,
-    lhs_rows: Range<MultiBufferRow>,
-) -> Option<ExcerptRowTranslation> {
-    let rhs_excerpt_id = excerpt_map.get(&lhs_excerpt_id).copied()?;
-    let rhs_buffer = rhs_snapshot.buffer_for_excerpt(rhs_excerpt_id)?;
-    let lhs_buffer = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id)?;
-    let diff = rhs_snapshot.diff_for_buffer_id(rhs_buffer.remote_id())?;
-    let rhs_context_range = rhs_snapshot.context_range_for_excerpt(rhs_excerpt_id)?;
-
-    let lhs_context_range = lhs_snapshot.context_range_for_excerpt(lhs_excerpt_id)?;
-    let lhs_context_start = TextToPoint::to_point(&lhs_context_range.start, &lhs_buffer);
-    let lhs_excerpt_start_row = {
-        let anchor = lhs_snapshot.anchor_in_excerpt(lhs_excerpt_id, text::Anchor::MIN)?;
-        anchor.to_point(lhs_snapshot).row
-    };
-
-    let local_start =
-        lhs_rows.start.0.saturating_sub(lhs_excerpt_start_row) + lhs_context_start.row;
-    let local_end = lhs_rows.end.0.saturating_sub(lhs_excerpt_start_row) + lhs_context_start.row;
-
-    let translated_ranges: Vec<_> = diff
-        .base_text_rows_to_rows(local_start..local_end, &rhs_buffer)
-        .collect();
-
-    let boundaries: Vec<_> = (lhs_rows.start.0..=lhs_rows.end.0)
-        .zip(translated_ranges)
-        .map(|(mb_row, rhs_range)| {
-            let rhs_mb_range = buffer_row_to_multibuffer_row(
-                rhs_snapshot,
-                rhs_excerpt_id,
-                &rhs_buffer,
-                &rhs_context_range,
-                rhs_range,
-            );
-            (MultiBufferRow(mb_row), rhs_mb_range)
-        })
-        .collect();
-
-    let excerpt_end = get_excerpt_end_row(lhs_snapshot, lhs_excerpt_id);
-
-    Some(ExcerptRowTranslation {
-        excerpt_id: lhs_excerpt_id,
-        boundaries,
-        excerpt_end,
-    })
-}
-
-pub(crate) fn convert_rhs_rows_to_lhs(
-    rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
-    lhs_snapshot: &MultiBufferSnapshot,
-    rhs_snapshot: &MultiBufferSnapshot,
-    rhs_rows: Range<MultiBufferRow>,
-) -> Vec<ExcerptRowTranslation> {
-    let mut result = Vec::new();
-
-    if rhs_rows.start > rhs_rows.end {
-        return result;
-    }
-
-    let start_point = Point::new(rhs_rows.start.0, 0);
-    let end_point = Point::new(rhs_rows.end.0, 0);
-
-    let Some((_, _, first_excerpt_id)) = rhs_snapshot.point_to_buffer_point(start_point) else {
-        return result;
-    };
-
-    let boundaries: Vec<_> = rhs_snapshot
-        .excerpt_boundaries_in_range(start_point..end_point)
-        .collect();
-
-    let first_excerpt_end = boundaries.first().map(|b| b.row).unwrap_or(rhs_rows.end);
-    let first_boundary_excerpt_id = boundaries.first().map(|b| b.next.id);
-
-    if first_boundary_excerpt_id != Some(first_excerpt_id) {
-        if let Some(translation) = translate_excerpt_rows_rhs_to_lhs(
-            rhs_excerpt_to_lhs_excerpt,
-            lhs_snapshot,
-            rhs_snapshot,
-            first_excerpt_id,
-            rhs_rows.start..first_excerpt_end,
-        ) {
-            result.push(translation);
-        }
-    }
-
-    for (i, boundary) in boundaries.iter().enumerate() {
-        let excerpt_start = boundary.row;
-        let excerpt_end = boundaries.get(i + 1).map(|b| b.row).unwrap_or(rhs_rows.end);
-
-        if let Some(translation) = translate_excerpt_rows_rhs_to_lhs(
-            rhs_excerpt_to_lhs_excerpt,
-            lhs_snapshot,
-            rhs_snapshot,
-            boundary.next.id,
-            excerpt_start..excerpt_end,
-        ) {
-            result.push(translation);
-        }
-    }
-
-    result
-}
-
-fn translate_excerpt_rows_rhs_to_lhs(
-    excerpt_map: &HashMap<ExcerptId, ExcerptId>,
-    lhs_snapshot: &MultiBufferSnapshot,
-    rhs_snapshot: &MultiBufferSnapshot,
-    rhs_excerpt_id: ExcerptId,
-    rhs_rows: Range<MultiBufferRow>,
-) -> Option<ExcerptRowTranslation> {
-    let lhs_excerpt_id = excerpt_map.get(&rhs_excerpt_id).copied()?;
-    let rhs_buffer = rhs_snapshot.buffer_for_excerpt(rhs_excerpt_id)?;
-    let lhs_buffer = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id)?;
-    let diff = rhs_snapshot.diff_for_buffer_id(rhs_buffer.remote_id())?;
-    let lhs_context_range = lhs_snapshot.context_range_for_excerpt(lhs_excerpt_id)?;
-
-    let rhs_context_range = rhs_snapshot.context_range_for_excerpt(rhs_excerpt_id)?;
-    let rhs_context_start = TextToPoint::to_point(&rhs_context_range.start, &rhs_buffer);
-    let rhs_excerpt_start_row = {
-        let anchor = rhs_snapshot.anchor_in_excerpt(rhs_excerpt_id, text::Anchor::MIN)?;
-        anchor.to_point(rhs_snapshot).row
-    };
-
-    let local_start =
-        rhs_rows.start.0.saturating_sub(rhs_excerpt_start_row) + rhs_context_start.row;
-    let local_end = rhs_rows.end.0.saturating_sub(rhs_excerpt_start_row) + rhs_context_start.row;
-
-    let translated_ranges: Vec<_> = diff
-        .rows_to_base_text_rows(local_start..local_end, &rhs_buffer)
-        .collect();
-
-    let boundaries: Vec<_> = (rhs_rows.start.0..=rhs_rows.end.0)
-        .zip(translated_ranges)
-        .map(|(mb_row, lhs_range)| {
-            let lhs_mb_range = buffer_row_to_multibuffer_row(
-                lhs_snapshot,
-                lhs_excerpt_id,
-                &lhs_buffer,
-                &lhs_context_range,
-                lhs_range,
-            );
-            (MultiBufferRow(mb_row), lhs_mb_range)
-        })
-        .collect();
-
-    let excerpt_end = get_excerpt_end_row(rhs_snapshot, rhs_excerpt_id);
-
-    Some(ExcerptRowTranslation {
-        excerpt_id: rhs_excerpt_id,
-        boundaries,
-        excerpt_end,
-    })
-}
-
-fn get_excerpt_end_row(snapshot: &MultiBufferSnapshot, excerpt_id: ExcerptId) -> MultiBufferRow {
-    let Some(buffer) = snapshot.buffer_for_excerpt(excerpt_id) else {
-        return MultiBufferRow(snapshot.max_point().row + 1);
-    };
-    let Some(context_range) = snapshot.context_range_for_excerpt(excerpt_id) else {
-        return MultiBufferRow(snapshot.max_point().row + 1);
-    };
-    let Some(end_anchor) = snapshot.anchor_in_excerpt(excerpt_id, context_range.end) else {
-        return MultiBufferRow(snapshot.max_point().row + 1);
-    };
-    let end_row = end_anchor.to_point(snapshot).row;
-    let _ = buffer;
-    MultiBufferRow(end_row + 1)
-}
-
-fn buffer_row_to_multibuffer_row(
-    snapshot: &MultiBufferSnapshot,
-    excerpt_id: ExcerptId,
-    buffer: &text::BufferSnapshot,
-    context_range: &Range<text::Anchor>,
-    buffer_row_range: Range<u32>,
-) -> Range<MultiBufferRow> {
-    let start_point = Point::new(buffer_row_range.start, 0);
-    let end_point = Point::new(buffer_row_range.end, 0);
-
-    let start_anchor = buffer.anchor_before(start_point);
-    let end_anchor = buffer.anchor_before(end_point);
-
-    let start_anchor = *start_anchor
-        .max(&context_range.start, buffer)
-        .min(&context_range.end, buffer);
-    let end_anchor = *end_anchor
-        .max(&context_range.start, buffer)
-        .min(&context_range.end, buffer);
-
-    let Some(start_anchor) = snapshot.anchor_in_excerpt(excerpt_id, start_anchor) else {
-        let row = MultiBufferRow(snapshot.max_point().row);
-        return row..row;
-    };
-    let Some(end_anchor) = snapshot.anchor_in_excerpt(excerpt_id, end_anchor) else {
-        let row = MultiBufferRow(snapshot.max_point().row);
-        return row..row;
-    };
-
-    let start_row = start_anchor.to_point(snapshot).row;
-    let end_row = end_anchor.to_point(snapshot).row;
-
-    MultiBufferRow(start_row)..MultiBufferRow(end_row)
-}
+) -> Vec<MultiBufferRowMapping>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -492,7 +226,7 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         our_snapshot: &MultiBufferSnapshot,
         rows: Range<MultiBufferRow>,
-    ) -> Vec<ExcerptRowTranslation> {
+    ) -> Vec<MultiBufferRowMapping> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         } else {
@@ -507,7 +241,7 @@ impl Companion {
         our_snapshot: &MultiBufferSnapshot,
         companion_snapshot: &MultiBufferSnapshot,
         rows: Range<MultiBufferRow>,
-    ) -> Vec<ExcerptRowTranslation> {
+    ) -> Vec<MultiBufferRowMapping> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
         } else {

@@ -20452,7 +20452,6 @@ impl Editor {
     pub fn set_soft_wrap_mode(
         &mut self,
         mode: language_settings::SoftWrap,
-
         cx: &mut Context<Self>,
     ) {
         self.soft_wrap_mode_override = Some(mode);
