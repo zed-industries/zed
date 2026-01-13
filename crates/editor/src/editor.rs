@@ -13516,21 +13516,24 @@ impl Editor {
 
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
         if let Some(item) = cx.read_from_clipboard() {
             let entries = item.entries();
 
-            match entries.first() {
-                // For now, we only support applying metadata if there's one string. In the future, we can incorporate all the selections
-                // of all the pasted entries.
-                Some(ClipboardEntry::String(clipboard_string)) if entries.len() == 1 => self
-                    .do_paste(
-                        clipboard_string.text(),
-                        clipboard_string.metadata_json::<Vec<ClipboardSelection>>(),
-                        true,
-                        window,
-                        cx,
-                    ),
-                _ => self.do_paste(&item.text().unwrap_or_default(), None, true, window, cx),
+            if let Some(ClipboardEntry::String(clipboard_string)) = entries.first() {
+                let mut text = clipboard_string.text().to_string();
+                let mut metadata = clipboard_string.metadata_json::<Vec<ClipboardSelection>>();
+
+                if entries.len() == 1 && self.mode.is_single_line() {
+                    let trimmed = text.trim_end_matches(['\n', '\r']);
+                    if trimmed.len() != text.len() {
+                        text = trimmed.to_string();
+                        metadata = None;
+                    }
+                }
+                self.do_paste(&text, metadata, true, window, cx);
+            } else {
+                self.do_paste(&item.text().unwrap_or_default(), None, true, window, cx);
             }
         }
     }
