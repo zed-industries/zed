@@ -232,7 +232,7 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
-            true,
+            !headless,
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
@@ -277,17 +277,6 @@ impl ContextServerStore {
         {
             *downstream_client = Some((project_id, client));
         }
-    }
-
-    /// Returns true if this store is running on a headless (remote) server.
-    fn is_headless(&self) -> bool {
-        matches!(
-            self.state,
-            ContextServerStoreState::Local {
-                is_headless: true,
-                ..
-            }
-        )
     }
 
     /// Returns true if this store is for a remote (SSH) project.
@@ -379,24 +368,23 @@ impl ContextServerStore {
         state: ContextServerStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = if maintain_server_loop {
-            vec![
-                cx.observe(&registry, |this, _registry, cx| {
-                    this.available_context_servers_changed(cx);
-                }),
-                cx.observe_global::<SettingsStore>(|this, cx| {
-                    let settings =
-                        &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
-                    if &this.context_server_settings == settings {
-                        return;
-                    }
-                    this.context_server_settings = settings.clone();
-                    this.available_context_servers_changed(cx);
-                }),
-            ]
-        } else {
-            Vec::new()
-        };
+        let mut subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
+            let settings =
+                &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
+            if &this.context_server_settings == settings {
+                return;
+            }
+            this.context_server_settings = settings.clone();
+            if maintain_server_loop {
+                this.available_context_servers_changed(cx);
+            }
+        })];
+
+        if maintain_server_loop {
+            subscriptions.push(cx.observe(&registry, |this, _registry, cx| {
+                this.available_context_servers_changed(cx);
+            }));
+        }
 
         let mut this = Self {
             state,
@@ -566,12 +554,6 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
-
-        let local_only = configuration.local_only();
-        if self.is_headless() && local_only {
-            return;
-        }
-
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
@@ -644,45 +626,44 @@ impl ContextServerStore {
         cx: &mut AsyncApp,
     ) -> Result<(Arc<ContextServer>, Arc<ContextServerConfiguration>)> {
         let local_only = configuration.local_only();
+        let needs_remote_command = match configuration.as_ref() {
+            ContextServerConfiguration::Custom { .. }
+            | ContextServerConfiguration::Extension { .. } => !local_only,
+            ContextServerConfiguration::Http { .. } => false,
+        };
 
         let (remote_state, is_remote_project) = this.update(cx, |this, _| {
             let remote_state = match &this.state {
                 ContextServerStoreState::Remote {
                     project_id,
                     upstream_client,
-                } if !local_only => Some((*project_id, upstream_client.clone())),
+                } if needs_remote_command => Some((*project_id, upstream_client.clone())),
                 _ => None,
             };
             (remote_state, this.is_remote_project())
         })?;
 
-        // For local-only servers on remote projects, use no working directory
-        // to avoid passing remote paths to a local process
-        let root_path: Option<Arc<Path>> = if local_only && is_remote_project {
-            None
-        } else {
-            this.update(cx, |this, cx| {
-                this.project
-                    .as_ref()
-                    .and_then(|project| {
-                        project
-                            .read_with(cx, |project, cx| project.active_project_directory(cx))
-                            .ok()
-                            .flatten()
-                    })
-                    .or_else(|| {
-                        this.worktree_store.read_with(cx, |store, cx| {
-                            store.visible_worktrees(cx).fold(None, |acc, item| {
-                                if acc.is_none() {
-                                    item.read(cx).root_dir()
-                                } else {
-                                    acc
-                                }
-                            })
+        let root_path: Option<Arc<Path>> = this.update(cx, |this, cx| {
+            this.project
+                .as_ref()
+                .and_then(|project| {
+                    project
+                        .read_with(cx, |project, cx| project.active_project_directory(cx))
+                        .ok()
+                        .flatten()
+                })
+                .or_else(|| {
+                    this.worktree_store.read_with(cx, |store, cx| {
+                        store.visible_worktrees(cx).fold(None, |acc, item| {
+                            if acc.is_none() {
+                                item.read(cx).root_dir()
+                            } else {
+                                acc
+                            }
                         })
                     })
-            })?
-        };
+                })
+        })?;
 
         let configuration = if let Some((project_id, upstream_client)) = remote_state {
             let root_dir = root_path.as_ref().map(|p| p.display().to_string());
@@ -759,7 +740,13 @@ impl ContextServerStore {
                             .min(MAX_TIMEOUT_SECS),
                     );
 
-                    anyhow::Ok(Arc::new(ContextServer::stdio(id, command, root_path)))
+                    // Don't pass remote paths as working directory for locally-spawned processes
+                    let working_directory = if is_remote_project { None } else { root_path };
+                    anyhow::Ok(Arc::new(ContextServer::stdio(
+                        id,
+                        command,
+                        working_directory,
+                    )))
                 }
             }
         })??;
@@ -774,7 +761,7 @@ impl ContextServerStore {
     ) -> Result<proto::ContextServerCommand> {
         let server_id = ContextServerId(envelope.payload.server_id.into());
 
-        let configuration = this.update(&mut cx, |this, _cx| {
+        let (settings, registry, worktree_store) = this.update(&mut cx, |this, _cx| {
             let ContextServerStoreState::Local {
                 is_headless: true, ..
             } = &this.state
@@ -783,9 +770,24 @@ impl ContextServerStore {
                 bail!("unexpected GetContextServerCommand request in a non-local project");
             };
 
-            this.configuration_for_server(&server_id)
-                .with_context(|| format!("context server `{}` not found", server_id))
+            let settings = this
+                .context_server_settings
+                .get(&server_id.0)
+                .cloned()
+                .with_context(|| format!("context server `{}` not found", server_id))?;
+
+            anyhow::Ok((settings, this.registry.clone(), this.worktree_store.clone()))
         })?;
+
+        let configuration = ContextServerConfiguration::from_settings(
+            settings,
+            server_id.clone(),
+            registry,
+            worktree_store,
+            &cx,
+        )
+        .await
+        .with_context(|| format!("failed to build configuration for `{}`", server_id))?;
 
         let command = configuration
             .command()
