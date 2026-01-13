@@ -9,11 +9,12 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
 use std::{
     borrow::Cow,
     io::Read,
+    ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use zeta_prompt::RelatedFile;
 
@@ -62,7 +63,7 @@ pub struct ExamplePromptInputs {
     pub context_range: Range<usize>,
     pub editable_range: Range<usize>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
-    pub related_files: Option<Arc<[RelatedFile]>>,
+    pub related_files: Option<Vec<RelatedFile>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
