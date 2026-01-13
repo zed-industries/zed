@@ -1518,7 +1518,6 @@ impl AcpThread {
                     .push(ToolCallContent::Terminal(update.terminal));
             }
             ToolCallUpdate::UpdateSubagentThread(update) => {
-                call.content.clear();
                 call.content
                     .push(ToolCallContent::SubagentThread(update.thread));
             }

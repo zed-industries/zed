@@ -12,7 +12,7 @@ use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use agent_client_protocol as acp;
 use agent_settings::{
     AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT, builtin_profiles,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -720,6 +720,7 @@ impl Thread {
         templates: Arc<Templates>,
         model: Arc<dyn LanguageModel>,
         subagent_context: SubagentContext,
+        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -739,7 +740,7 @@ impl Thread {
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
-            tools: BTreeMap::default(),
+            tools: parent_tools,
             tool_use_limit_reached: false,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
@@ -1107,7 +1108,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let tool_names = self.registered_tool_names();
+            let parent_tools = self.tools.clone();
             self.add_tool(SubagentTool::new(
                 cx.weak_entity(),
                 self.project.clone(),
@@ -1115,7 +1116,7 @@ impl Thread {
                 self.context_server_registry.clone(),
                 self.templates.clone(),
                 self.depth(),
-                tool_names,
+                parent_tools,
             ));
         }
     }
@@ -1764,7 +1765,15 @@ impl Thread {
     ) -> Option<Task<LanguageModelToolResult>> {
         cx.notify();
 
+        eprintln!(
+            "[THREAD handle_tool_use_event] Tool use event for: {:?}, id: {:?}, is_input_complete: {}",
+            tool_use.name, tool_use.id, tool_use.is_input_complete
+        );
         let tool = self.tool(tool_use.name.as_ref());
+        eprintln!(
+            "[THREAD handle_tool_use_event] Tool found: {}",
+            tool.is_some()
+        );
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
@@ -2161,6 +2170,12 @@ impl Thread {
         model: &Arc<dyn LanguageModel>,
         cx: &App,
     ) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+        eprintln!(
+            "[THREAD enabled_tools] profile_id: {:?}, registered tools: {:?}",
+            self.profile_id,
+            self.tools.keys().collect::<Vec<_>>()
+        );
+
         fn truncate(tool_name: &SharedString) -> SharedString {
             if tool_name.len() > MAX_TOOL_NAME_LENGTH {
                 let mut truncated = tool_name.to_string();
@@ -2171,13 +2186,32 @@ impl Thread {
             }
         }
 
+        let subagent_enabled_by_default = cx.has_flag::<SubagentsFeatureFlag>()
+            && (self.profile_id.as_str() == builtin_profiles::WRITE
+                || self.profile_id.as_str() == builtin_profiles::ASK);
+        eprintln!(
+            "[THREAD enabled_tools] subagent_enabled_by_default: {}, has SubagentsFeatureFlag: {}",
+            subagent_enabled_by_default,
+            cx.has_flag::<SubagentsFeatureFlag>()
+        );
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
-                {
+                let is_enabled = if tool_name.as_ref() == acp_thread::SUBAGENT_TOOL_NAME {
+                    let explicitly_enabled = profile.is_tool_enabled(tool_name);
+                    eprintln!(
+                        "[THREAD enabled_tools] subagent tool - explicitly_enabled: {}, subagent_enabled_by_default: {}",
+                        explicitly_enabled,
+                        subagent_enabled_by_default
+                    );
+                    explicitly_enabled || subagent_enabled_by_default
+                } else {
+                    profile.is_tool_enabled(tool_name)
+                };
+
+                if tool.supports_provider(&model.provider_id()) && is_enabled {
                     Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
@@ -2224,7 +2258,24 @@ impl Thread {
     }
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
-        self.running_turn.as_ref()?.tools.get(name).cloned()
+        eprintln!("[THREAD tool()] Looking for tool: {:?}", name);
+        let turn = self.running_turn.as_ref();
+        if turn.is_none() {
+            eprintln!("[THREAD tool()] No running turn!");
+            return None;
+        }
+        let tools = &turn.unwrap().tools;
+        eprintln!(
+            "[THREAD tool()] Available tools in running turn: {:?}",
+            tools.keys().collect::<Vec<_>>()
+        );
+        let result = tools.get(name).cloned();
+        eprintln!(
+            "[THREAD tool()] Found tool {:?}: {}",
+            name,
+            result.is_some()
+        );
+        result
     }
 
     pub fn has_tool(&self, name: &str) -> bool {
