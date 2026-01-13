@@ -48,9 +48,10 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DiffStat, Disclosure,
-    Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor,
-    Tooltip, WithScrollbar, prelude::*, right_click_menu,
+    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
+    DiffStat, Disclosure, Divider, DividerColor, ElevationIndex, IconDecoration,
+    IconDecorationKind, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip,
+    WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -2912,6 +2913,8 @@ impl AcpThreadView {
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
 
+        let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
+
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
@@ -2945,6 +2948,7 @@ impl AcpThreadView {
                                         tool_call,
                                         use_card_layout,
                                         has_image_content,
+                                        failed_or_canceled,
                                         window,
                                         cx,
                                     ))
@@ -3063,6 +3067,7 @@ impl AcpThreadView {
                                         tool_call,
                                         use_card_layout,
                                         has_image_content,
+                                        failed_or_canceled,
                                         window,
                                         cx,
                                     ),
@@ -3084,6 +3089,7 @@ impl AcpThreadView {
                     this.my_1p5()
                         .rounded_md()
                         .border_1()
+                        .when(failed_or_canceled, |this| this.border_dashed())
                         .border_color(self.tool_card_border_color(cx))
                         .bg(cx.theme().colors().editor_background)
                         .overflow_hidden()
@@ -3144,13 +3150,12 @@ impl AcpThreadView {
                                 entry_ix,
                                 tool_call,
                                 is_edit,
+                                is_cancelled_edit,
                                 use_card_layout,
                                 window,
                                 cx,
                             ))
                             .when(is_collapsible || failed_or_canceled, |this| {
-                                let is_cancelled_edit = is_edit
-                                    && matches!(tool_call.status, ToolCallStatus::Canceled);
                                 let diff_for_discard =
                                     if is_cancelled_edit && cx.has_flag::<AgentV2FeatureFlag>() {
                                         tool_call.diffs().next().cloned()
@@ -3160,27 +3165,8 @@ impl AcpThreadView {
                                 this.child(
                                     h_flex()
                                         .px_1()
+                                        .when_some(diff_for_discard.clone(), |this, _| this.pr_0p5())
                                         .gap_1()
-                                        .when_some(diff_for_discard, |this, diff| {
-                                            this.child(
-                                                Button::new(
-                                                    ("discard-partial-edit", entry_ix),
-                                                    "Discard",
-                                                )
-                                                .label_size(LabelSize::Small)
-                                                .tooltip(Tooltip::text(
-                                                    "Discard partial edits and restore the original file content",
-                                                ))
-                                                .on_click(cx.listener(move |_this, _, _window, cx| {
-                                                    let diff_data = diff.read(cx);
-                                                    let base_text = diff_data.base_text().clone();
-                                                    let buffer = diff_data.buffer().clone();
-                                                    buffer.update(cx, |buffer, cx| {
-                                                        buffer.set_text(base_text.as_ref(), cx);
-                                                    });
-                                                })),
-                                            )
-                                        })
                                         .when(is_collapsible, |this| {
                                             this.child(
                                             Disclosure::new(("expand-output", entry_ix), is_open)
@@ -3202,16 +3188,7 @@ impl AcpThreadView {
                                         })
                                         .when(failed_or_canceled, |this| {
                                             if is_cancelled_edit {
-                                                this.child(
-                                                    div()
-                                                        .id(("tool-call-status-icon", entry_ix))
-                                                        .child(
-                                                            Icon::new(IconName::Warning)
-                                                                .color(Color::Error)
-                                                                .size(IconSize::Small),
-                                                        )
-                                                        .tooltip(Tooltip::text("Edit Interrupted")),
-                                                )
+                                                this
                                             } else {
                                                 this.child(
                                                     Icon::new(IconName::Close)
@@ -3219,6 +3196,29 @@ impl AcpThreadView {
                                                         .size(IconSize::Small),
                                                 )
                                             }
+                                        })
+                                        .when_some(diff_for_discard, |this, diff| {
+                                            this.child(
+                                                IconButton::new(
+                                                    ("discard-partial-edit", entry_ix),
+                                                    IconName::Trash,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .tooltip(move |_, cx| Tooltip::with_meta(
+                                                    "Discard Interrupted Edit",
+                                                    None,
+                                                    "You can discard this interrupted partial edit and restore the original file content.",
+                                                    cx
+                                                ))
+                                                .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                    let diff_data = diff.read(cx);
+                                                    let base_text = diff_data.base_text().clone();
+                                                    let buffer = diff_data.buffer().clone();
+                                                    buffer.update(cx, |buffer, cx| {
+                                                        buffer.set_text(base_text.as_ref(), cx);
+                                                    });
+                                                })),
+                                            )
                                         }),
                                 )
                             }),
@@ -3233,32 +3233,64 @@ impl AcpThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         is_edit: bool,
+        has_failed: bool,
         use_card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
+        let is_file = tool_call.kind == acp::ToolKind::Edit && has_location;
 
-        let tool_icon = if tool_call.kind == acp::ToolKind::Edit && has_location {
+        let file_icon = if has_location {
             FileIcons::get_icon(&tool_call.locations[0].path, cx)
                 .map(Icon::from_path)
                 .unwrap_or(Icon::new(IconName::ToolPencil))
         } else {
-            Icon::new(match tool_call.kind {
-                acp::ToolKind::Read => IconName::ToolSearch,
-                acp::ToolKind::Edit => IconName::ToolPencil,
-                acp::ToolKind::Delete => IconName::ToolDeleteFile,
-                acp::ToolKind::Move => IconName::ArrowRightLeft,
-                acp::ToolKind::Search => IconName::ToolSearch,
-                acp::ToolKind::Execute => IconName::ToolTerminal,
-                acp::ToolKind::Think => IconName::ToolThink,
-                acp::ToolKind::Fetch => IconName::ToolWeb,
-                acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
-                acp::ToolKind::Other | _ => IconName::ToolHammer,
-            })
-        }
-        .size(IconSize::Small)
-        .color(Color::Muted);
+            Icon::new(IconName::ToolPencil)
+        };
+
+        let tool_icon = if is_file && has_failed {
+            div()
+                .id(entry_ix)
+                .tooltip(Tooltip::text("Interrupted Edit"))
+                .child(DecoratedIcon::new(
+                    file_icon,
+                    Some(
+                        IconDecoration::new(
+                            IconDecorationKind::Triangle,
+                            self.tool_card_header_bg(cx),
+                            cx,
+                        )
+                        .color(cx.theme().status().warning)
+                        .position(gpui::Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        }),
+                    ),
+                ))
+                .into_any_element()
+        } else if is_file {
+            div().child(file_icon).into_any_element()
+        } else {
+            div()
+                .child(
+                    Icon::new(match tool_call.kind {
+                        acp::ToolKind::Read => IconName::ToolSearch,
+                        acp::ToolKind::Edit => IconName::ToolPencil,
+                        acp::ToolKind::Delete => IconName::ToolDeleteFile,
+                        acp::ToolKind::Move => IconName::ArrowRightLeft,
+                        acp::ToolKind::Search => IconName::ToolSearch,
+                        acp::ToolKind::Execute => IconName::ToolTerminal,
+                        acp::ToolKind::Think => IconName::ToolThink,
+                        acp::ToolKind::Fetch => IconName::ToolWeb,
+                        acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
+                        acp::ToolKind::Other | _ => IconName::ToolHammer,
+                    })
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+                )
+                .into_any_element()
+        };
 
         let gradient_overlay = {
             div()
@@ -3344,6 +3376,7 @@ impl AcpThreadView {
         tool_call: &ToolCall,
         card_layout: bool,
         is_image_tool_call: bool,
+        has_failed: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3374,7 +3407,9 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, diff, tool_call, cx),
+            ToolCallContent::Diff(diff) => {
+                self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
+            }
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
@@ -3698,6 +3733,7 @@ impl AcpThreadView {
         entry_ix: usize,
         diff: &Entity<acp_thread::Diff>,
         tool_call: &ToolCall,
+        has_failed: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
         let tool_progress = matches!(
@@ -3705,22 +3741,32 @@ impl AcpThreadView {
             ToolCallStatus::InProgress | ToolCallStatus::Pending
         );
 
+        let revealed_diff_editor = if let Some(entry) =
+            self.entry_view_state.read(cx).entry(entry_ix)
+            && let Some(editor) = entry.editor_for_diff(diff)
+            && diff.read(cx).has_revealed_range(cx)
+        {
+            Some(editor)
+        } else {
+            None
+        };
+
+        let show_top_border = !has_failed || revealed_diff_editor.is_some();
+
         v_flex()
             .h_full()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .child(
-                if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
-                    && let Some(editor) = entry.editor_for_diff(diff)
-                    && diff.read(cx).has_revealed_range(cx)
-                {
-                    editor.into_any_element()
-                } else if tool_progress && self.as_native_connection(cx).is_some() {
-                    self.render_diff_loading(cx)
-                } else {
-                    Empty.into_any()
-                },
-            )
+            .when(show_top_border, |this| {
+                this.border_t_1()
+                    .when(has_failed, |this| this.border_dashed())
+                    .border_color(self.tool_card_border_color(cx))
+            })
+            .child(if let Some(editor) = revealed_diff_editor {
+                editor.into_any_element()
+            } else if tool_progress && self.as_native_connection(cx).is_some() {
+                self.render_diff_loading(cx)
+            } else {
+                Empty.into_any()
+            })
             .into_any()
     }
 
