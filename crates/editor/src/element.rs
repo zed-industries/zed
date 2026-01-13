@@ -4386,6 +4386,7 @@ impl EditorElement {
                                         window.dispatch_action(
                                             OpenTerminal {
                                                 working_directory: parent_abs_path.clone(),
+                                                local: false,
                                             }
                                             .boxed_clone(),
                                             cx,
