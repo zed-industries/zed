@@ -43,7 +43,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     });
 
     cx.executor().advance_clock(DEBOUNCE_DURATION);
-    related_excerpt_store.read_with(cx, |store, cx| {
+    related_excerpt_store.update(cx, |store, cx| {
         let excerpts = store.related_files(cx);
         assert_related_files(
             &excerpts,

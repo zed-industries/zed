@@ -42,6 +42,12 @@ struct RelatedBuffer {
     buffer: Entity<Buffer>,
     path: Arc<Path>,
     anchor_ranges: Vec<Range<Anchor>>,
+    cached_file: Option<CachedRelatedFile>,
+}
+
+struct CachedRelatedFile {
+    excerpts: Vec<RelatedExcerpt>,
+    buffer_version: clock::Global,
 }
 
 pub enum RelatedExcerptStoreEvent {
@@ -126,22 +132,18 @@ impl RelatedExcerptStore {
         self.update_tx.unbounded_send((buffer, position)).ok();
     }
 
-    pub fn related_files(&self, cx: &App) -> Vec<RelatedFile> {
+    pub fn related_files(&mut self, cx: &App) -> Vec<RelatedFile> {
         self.related_buffers
-            .iter()
-            .map(|related| related.to_related_file(cx))
+            .iter_mut()
+            .map(|related| related.related_file(cx))
             .collect()
     }
 
-    pub fn related_files_with_buffers(
-        &self,
-        cx: &App,
-    ) -> impl Iterator<Item = (RelatedFile, Entity<Buffer>)> {
+    pub fn related_files_with_buffers(&mut self, cx: &App) -> Vec<(RelatedFile, Entity<Buffer>)> {
         self.related_buffers
-            .iter()
-            .map(|related| (related.to_related_file(cx), related.buffer.clone()))
+            .iter_mut()
+            .map(|related| (related.related_file(cx), related.buffer.clone()))
             .collect::<Vec<_>>()
-            .into_iter()
     }
 
     pub fn set_related_files(&mut self, files: Vec<RelatedFile>, cx: &App) {
@@ -184,6 +186,7 @@ impl RelatedExcerptStore {
                     buffer,
                     path: file.path.clone(),
                     anchor_ranges,
+                    cached_file: None,
                 })
             })
             .collect();
@@ -394,6 +397,7 @@ async fn rebuild_related_files(
                         buffer,
                         path,
                         anchor_ranges,
+                        cached_file: None,
                     })
                 })
                 .collect();
@@ -406,25 +410,37 @@ async fn rebuild_related_files(
 }
 
 impl RelatedBuffer {
-    fn to_related_file(&self, cx: &App) -> RelatedFile {
-        let snapshot = self.buffer.read(cx).snapshot();
-        let excerpts = self
-            .anchor_ranges
-            .iter()
-            .map(|range| {
-                let start = range.start.to_point(&snapshot);
-                let end = range.end.to_point(&snapshot);
-                RelatedExcerpt {
-                    row_range: start.row..end.row,
-                    text: snapshot.text_for_range(start..end).collect(),
-                }
-            })
-            .collect();
-        RelatedFile {
+    fn related_file(&mut self, cx: &App) -> RelatedFile {
+        let buffer = self.buffer.read(cx);
+        let cached = if let Some(cached) = self.cached_file.take()
+            && buffer.version() == cached.buffer_version
+        {
+            cached
+        } else {
+            let excerpts = self
+                .anchor_ranges
+                .iter()
+                .map(|range| {
+                    let start = range.start.to_point(buffer);
+                    let end = range.end.to_point(buffer);
+                    RelatedExcerpt {
+                        row_range: start.row..end.row,
+                        text: buffer.text_for_range(start..end).collect(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            CachedRelatedFile {
+                excerpts: excerpts.clone(),
+                buffer_version: buffer.version(),
+            }
+        };
+        let related_file = RelatedFile {
             path: self.path.clone(),
-            excerpts,
-            max_row: snapshot.max_point().row,
-        }
+            excerpts: cached.excerpts.clone(),
+            max_row: buffer.max_point().row,
+        };
+        self.cached_file = Some(cached);
+        return related_file;
     }
 }
 

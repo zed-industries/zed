@@ -766,22 +766,31 @@ impl EditPredictionStore {
     pub fn context_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
-        cx: &'a App,
+        cx: &'a mut App,
     ) -> Vec<RelatedFile> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files(cx))
+            .map(|project| {
+                project
+                    .context
+                    .update(cx, |context, cx| context.related_files(cx))
+            })
             .unwrap_or_default()
     }
 
     pub fn context_for_project_with_buffers<'a>(
         &'a self,
         project: &Entity<Project>,
-        cx: &'a App,
-    ) -> Option<impl 'a + Iterator<Item = (RelatedFile, Entity<Buffer>)>> {
+        cx: &'a mut App,
+    ) -> Vec<(RelatedFile, Entity<Buffer>)> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files_with_buffers(cx))
+            .map(|project| {
+                project
+                    .context
+                    .update(cx, |context, cx| context.related_files_with_buffers(cx))
+            })
+            .unwrap_or_default()
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
