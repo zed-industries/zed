@@ -7569,6 +7569,7 @@ impl EditorElement {
 
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
+            dbg!(block.is_buffer_header);
             if self.is_in_split && block.is_buffer_header {
                 continue; // split editors paint their own unified headers
             }
@@ -10359,11 +10360,13 @@ impl Element for EditorElement {
                         });
                     }
 
-                    window.with_element_namespace("blocks", |window| {
-                        if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
-                            sticky_header.paint(window, cx)
-                        }
-                    });
+                    if !self.is_in_split {
+                        window.with_element_namespace("blocks", |window| {
+                            if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
+                                sticky_header.paint(window, cx)
+                            }
+                        });
+                    }
 
                     self.paint_sticky_headers(layout, window, cx);
                     self.paint_minimap(layout, window, cx);

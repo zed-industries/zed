@@ -4,7 +4,8 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity, rgb,
+    Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
+    rgb,
 };
 use language::{Buffer, Capability};
 use multi_buffer::{
@@ -926,7 +927,7 @@ impl SplittableEditor {
 impl EventEmitter<EditorEvent> for SplittableEditor {}
 impl Focusable for SplittableEditor {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.primary_editor.read(cx).focus_handle(cx)
+        self.last_selected_editor().read(cx).focus_handle(cx)
     }
 }
 

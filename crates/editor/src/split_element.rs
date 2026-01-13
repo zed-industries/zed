@@ -143,7 +143,6 @@ impl Element for SplitEditorElement {
         window: &mut ui::Window,
         cx: &mut ui::App,
     ) -> Self::PrepaintState {
-        dbg!(bounds);
         if self.lhs_width == BEFORE_FIRST_PREPAINT {
             self.lhs_width = (bounds.size.width - SEPARATOR_WIDTH) / 2.0;
         }
