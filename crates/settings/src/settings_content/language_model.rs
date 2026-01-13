@@ -20,6 +20,7 @@ pub struct AllLanguageModelSettingsContent {
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel: Option<VercelSettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
+    pub z_ai: Option<ZAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
 }
@@ -321,6 +322,26 @@ pub struct XAiSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct XaiAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    pub supports_images: Option<bool>,
+    pub supports_tools: Option<bool>,
+    pub parallel_tool_calls: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct ZAiSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<ZaiAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ZaiAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,
