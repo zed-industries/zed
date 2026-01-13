@@ -204,6 +204,7 @@ impl CommitView {
 
             editor.disable_inline_diagnostics();
             editor.set_show_breakpoints(false, cx);
+            editor.set_show_diff_review_button(true, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
             editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);

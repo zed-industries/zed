@@ -12,6 +12,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
+ "chrono",
  "collections",
  "editor",
  "env_logger 0.11.8",
@@ -362,6 +363,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git_ui",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",
@@ -427,6 +429,7 @@ dependencies = [
 name = "agent_ui_v2"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
  "agent-client-protocol",
  "agent_servers",
@@ -440,6 +443,7 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "log",
  "menu",
  "project",
  "prompt_store",
@@ -784,9 +788,9 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0986d5b4f0802160191ad75f8d33ada000558757db3defb70299ca95d9fcbd"
+checksum = "618a409b91d5265798a99e3d1d0b226911605e581c4e7255e83c1e397b172bce"
 dependencies = [
  "async-fs",
  "async-net",
@@ -7092,6 +7096,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
@@ -7331,7 +7336,6 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
- "chrono",
  "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
@@ -7381,7 +7385,6 @@ dependencies = [
  "refineable",
  "reqwest_client",
  "resvg",
- "scheduler",
  "schemars",
  "seahash",
  "semver",
@@ -13582,7 +13585,6 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
- "async-task",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -15254,6 +15256,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
+ "log",
  "parking_lot",
  "paths",
  "schemars",

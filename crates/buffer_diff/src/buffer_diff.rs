@@ -1,17 +1,23 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
     BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
     language_settings::{DiffStrategy, language_settings},
     word_diff_ranges,
 };
 use rope::Rope;
-use std::{cmp::Ordering, future::Future, iter, ops::Range, sync::Arc};
+use std::{
+    cmp::Ordering,
+    iter,
+    ops::Range,
+    sync::{Arc, LazyLock},
+};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
+pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
@@ -1190,6 +1196,7 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = BufferDiff::new(&buffer, cx);
+        let executor = cx.background_executor().clone();
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
         let update_future = this.update_diff(
@@ -1200,7 +1207,7 @@ impl BufferDiff {
             None,
             cx,
         );
-        let inner = cx.foreground_executor().block_on(update_future);
+        let inner = executor.block(update_future);
         this.set_snapshot(inner, &buffer, cx).detach();
         this
     }
@@ -1572,10 +1579,10 @@ impl BufferDiff {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, None, cx);
-        let fg_executor = cx.foreground_executor().clone();
-        let snapshot = fg_executor.block_on(fut);
+        let executor = cx.background_executor().clone();
+        let snapshot = executor.block(fut);
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
-        let (changed_range, base_text_changed_range) = fg_executor.block_on(fut);
+        let (changed_range, base_text_changed_range) = executor.block(fut);
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range,
             base_text_changed_range,

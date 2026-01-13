@@ -1021,6 +1021,16 @@ struct PhantomBreakpointIndicator {
     collides_with_existing_breakpoint: bool,
 }
 
+/// Represents a diff review button indicator that shows up when hovering over lines in the gutter
+/// in diff view mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PhantomDiffReviewIndicator {
+    pub display_row: DisplayRow,
+    /// There's a small debounce between hovering over the line and showing the indicator.
+    /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
+    pub is_active: bool,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1081,6 +1091,7 @@ pub struct Editor {
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
+    show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
@@ -1183,6 +1194,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
@@ -2246,6 +2258,7 @@ impl Editor {
             show_code_actions: None,
             show_runnables: None,
             show_breakpoints: None,
+            show_diff_review_button: false,
             show_wrap_guides: None,
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
@@ -2346,6 +2359,7 @@ impl Editor {
 
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
+            gutter_diff_review_indicator: (None, None),
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
@@ -8632,11 +8646,15 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
-            let color = cx.theme().colors();
+            let theme_colors = cx.theme().colors();
 
             let color = if is_phantom {
                 if collides_with_existing {
-                    Color::Custom(color.debugger_accent.blend(color.text.opacity(0.6)))
+                    Color::Custom(
+                        theme_colors
+                            .debugger_accent
+                            .blend(theme_colors.text.opacity(0.6)),
+                    )
                 } else {
                     Color::Hint
                 }
@@ -15358,12 +15376,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
-        let Some(select_next_state) = self.select_next_state.as_mut() else {
+        let Some(select_next_state) = self.select_next_state.as_mut().filter(|state| !state.done)
+        else {
             return Ok(());
         };
-        if select_next_state.done {
-            return Ok(());
-        }
 
         let mut new_selections = Vec::new();
 
@@ -15399,7 +15415,7 @@ impl Editor {
             return Ok(());
         }
 
-        self.unfold_ranges(&new_selections.clone(), false, false, cx);
+        self.unfold_ranges(&new_selections, false, false, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(new_selections)
         });
@@ -15421,8 +15437,7 @@ impl Editor {
             Some(Autoscroll::newest()),
             window,
             cx,
-        )?;
-        Ok(())
+        )
     }
 
     pub fn select_previous(
@@ -20735,6 +20750,15 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_diff_review_button(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_diff_review_button = show;
+        cx.notify();
+    }
+
+    pub fn show_diff_review_button(&self) -> bool {
+        self.show_diff_review_button
+    }
+
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
         if self.display_map.read(cx).masked != masked {
             self.display_map.update(cx, |map, _| map.masked = masked);
@@ -25559,31 +25583,37 @@ impl EditorSnapshot {
     /// This is positive if `base` is before `line`.
     fn relative_line_delta(
         &self,
-        base: DisplayRow,
-        line: DisplayRow,
+        current_selection_head: DisplayRow,
+        first_visible_row: DisplayRow,
         consider_wrapped_lines: bool,
     ) -> i64 {
-        let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_line_delta_to_point(base, point, consider_wrapped_lines)
-    }
+        let current_selection_head = current_selection_head.as_display_point().to_point(self);
+        let first_visible_row = first_visible_row.as_display_point().to_point(self);
 
-    /// Returns the line delta from `base` to `point` in the multibuffer.
-    ///
-    /// This is positive if `base` is before `point`.
-    pub fn relative_line_delta_to_point(
-        &self,
-        base: DisplayRow,
-        point: Point,
-        consider_wrapped_lines: bool,
-    ) -> i64 {
-        let base_point = DisplayPoint::new(base, 0).to_point(self);
         if consider_wrapped_lines {
             let wrap_snapshot = self.wrap_snapshot();
-            let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
-            let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
+            let base_wrap_row = wrap_snapshot
+                .make_wrap_point(current_selection_head, Bias::Left)
+                .row();
+            let wrap_row = wrap_snapshot
+                .make_wrap_point(first_visible_row, Bias::Left)
+                .row();
             wrap_row.0 as i64 - base_wrap_row.0 as i64
         } else {
-            point.row as i64 - base_point.row as i64
+            let folds = if current_selection_head < first_visible_row {
+                self.folds_in_range(current_selection_head..first_visible_row)
+            } else {
+                self.folds_in_range(first_visible_row..current_selection_head)
+            };
+
+            let folded_lines = folds
+                .map(|fold| {
+                    let range = fold.range.0.to_point(self);
+                    range.end.row.saturating_sub(range.start.row)
+                })
+                .sum::<u32>() as i64;
+
+            first_visible_row.row as i64 - current_selection_head.row as i64 + folded_lines
         }
     }
 
@@ -25593,10 +25623,12 @@ impl EditorSnapshot {
     pub fn calculate_relative_line_numbers(
         &self,
         rows: &Range<DisplayRow>,
-        relative_to: DisplayRow,
+        current_selection_head: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset = self.relative_line_delta(relative_to, rows.start, count_wrapped_lines);
+        let initial_offset =
+            self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
+        let current_selection_point = current_selection_head.as_display_point().to_point(self);
 
         self.row_infos(rows.start)
             .take(rows.len())
@@ -25607,10 +25639,23 @@ impl EditorSnapshot {
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .flat_map(|(i, (row, _row_info))| {
-                (row != relative_to)
-                    .then_some((row, (initial_offset + i as i64).unsigned_abs() as u32))
+            .filter(|(_, (row, row_info))| {
+                // We want to check here that
+                // - the row is not the current selection head to ensure the current
+                // line has absolute numbering
+                // - similarly, should the selection head live in a soft-wrapped line
+                // and we are not counting those, that the parent line keeps its
+                // absolute number
+                // - lastly, if we are in a deleted line, it is fine to number this
+                // relative with 0, as otherwise it would have no line number at all
+                (*row != current_selection_head
+                    && (count_wrapped_lines
+                        || row_info.buffer_row != Some(current_selection_point.row)))
+                    || row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
             })
+            .map(|(i, (row, _))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
             .collect()
     }
 }
