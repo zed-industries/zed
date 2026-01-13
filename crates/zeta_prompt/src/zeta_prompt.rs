@@ -13,7 +13,7 @@ pub struct ZetaPromptInput {
     pub editable_range_in_excerpt: Range<usize>,
     pub cursor_offset_in_excerpt: usize,
     pub events: Vec<Arc<Event>>,
-    pub related_files: Arc<[RelatedFile]>,
+    pub related_files: Vec<RelatedFile>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

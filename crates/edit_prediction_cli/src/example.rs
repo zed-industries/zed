@@ -10,7 +10,6 @@ use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
-use std::sync::Arc;
 use std::{
     borrow::Cow,
     io::Read,
@@ -61,7 +60,7 @@ pub struct ExampleState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleContext {
-    pub files: Arc<[RelatedFile]>,
+    pub files: Vec<RelatedFile>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -194,7 +194,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
-    related_files: Arc<[RelatedFile]>,
+    related_files: Vec<RelatedFile>,
     recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
@@ -767,11 +767,11 @@ impl EditPredictionStore {
         &'a self,
         project: &Entity<Project>,
         cx: &'a App,
-    ) -> Arc<[RelatedFile]> {
+    ) -> Vec<RelatedFile> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files())
-            .unwrap_or_else(|| vec![].into())
+            .map(|project| project.context.read(cx).related_files(cx))
+            .unwrap_or_default()
     }
 
     pub fn context_for_project_with_buffers<'a>(
@@ -781,7 +781,7 @@ impl EditPredictionStore {
     ) -> Option<impl 'a + Iterator<Item = (RelatedFile, Entity<Buffer>)>> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files_with_buffers())
+            .map(|project| project.context.read(cx).related_files_with_buffers(cx))
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -1721,7 +1721,7 @@ impl EditPredictionStore {
         let related_files = if self.use_context {
             self.context_for_project(&project, cx)
         } else {
-            Vec::new().into()
+            Vec::new()
         };
 
         let inputs = EditPredictionModelInput {
@@ -2084,8 +2084,8 @@ impl EditPredictionStore {
     ) {
         self.get_or_init_project(project, cx)
             .context
-            .update(cx, |store, _| {
-                store.set_related_files(related_files);
+            .update(cx, |store, cx| {
+                store.set_related_files(related_files, cx);
             });
     }
 

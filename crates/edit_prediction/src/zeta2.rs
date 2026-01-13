@@ -187,7 +187,7 @@ pub fn request_prediction_with_zeta2(
 
 pub fn zeta2_prompt_input(
     snapshot: &language::BufferSnapshot,
-    related_files: Arc<[zeta_prompt::RelatedFile]>,
+    related_files: Vec<zeta_prompt::RelatedFile>,
     events: Vec<Arc<zeta_prompt::Event>>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,

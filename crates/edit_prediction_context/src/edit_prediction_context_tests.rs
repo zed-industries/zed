@@ -1,4 +1,5 @@
 use super::*;
+use crate::assemble_excerpts::assemble_excerpt_ranges;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
@@ -42,8 +43,8 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     });
 
     cx.executor().advance_clock(DEBOUNCE_DURATION);
-    related_excerpt_store.update(cx, |store, _| {
-        let excerpts = store.related_files();
+    related_excerpt_store.read_with(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
         assert_related_files(
             &excerpts,
             &[
@@ -222,7 +223,18 @@ fn test_assemble_excerpts(cx: &mut TestAppContext) {
                 .map(|range| range.to_point(&buffer))
                 .collect();
 
-            let excerpts = assemble_excerpts(&buffer.snapshot(), ranges);
+            let row_ranges = assemble_excerpt_ranges(&buffer.snapshot(), ranges);
+            let excerpts: Vec<RelatedExcerpt> = row_ranges
+                .into_iter()
+                .map(|row_range| {
+                    let start = Point::new(row_range.start, 0);
+                    let end = Point::new(row_range.end, buffer.line_len(row_range.end));
+                    RelatedExcerpt {
+                        row_range,
+                        text: buffer.text_for_range(start..end).collect(),
+                    }
+                })
+                .collect();
 
             let output = format_excerpts(buffer, &excerpts);
             assert_eq!(output, expected_output);
