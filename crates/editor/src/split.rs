@@ -116,20 +116,22 @@ where
         source_buffer
     };
 
-    let local_start = source_buffer
-        .offset_to_point(source_buffer_range.start.0)
-        .row;
-    let local_end = source_buffer.offset_to_point(source_buffer_range.end.0).row;
+    let local_start = source_buffer.offset_to_point(source_buffer_range.start.0);
+    let local_end = source_buffer.offset_to_point(source_buffer_range.end.0);
 
-    let translated_ranges = translate_fn(&diff, local_start..local_end, rhs_buffer);
+    let translated_ranges = translate_fn(&diff, local_start.row..local_end.row, rhs_buffer);
 
+    let source_context_range = source_snapshot.context_range_for_excerpt(source_excerpt_id)?;
     let target_context_range = target_snapshot.context_range_for_excerpt(target_excerpt_id)?;
 
-    let boundaries: Vec<_> = (local_start..=local_end)
+    let boundaries: Vec<_> = (local_start.row..=local_end.row)
         .zip(translated_ranges)
         .filter_map(|(buffer_row, target_range)| {
             let buffer_anchor = source_buffer.anchor_before(Point::new(buffer_row, 0));
-            let mb_anchor = source_snapshot.anchor_in_excerpt(source_excerpt_id, buffer_anchor)?;
+            let buffer_anchor = buffer_anchor
+                .max(&source_context_range.start, &source_buffer)
+                .min(&source_context_range.end, &source_buffer);
+            let mb_anchor = source_snapshot.anchor_in_excerpt(source_excerpt_id, *buffer_anchor)?;
             let mb_row = mb_anchor.to_point(source_snapshot).row;
 
             let target_start_anchor =
