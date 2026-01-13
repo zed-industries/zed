@@ -90,13 +90,6 @@ impl SweepAi {
         let result = cx.background_spawn(async move {
             let text = inputs.snapshot.text();
 
-            // todo! should we filter for sweep? Or just assume they'll figure it out themselves
-            let related_files = crate::filter_redundant_excerpts(
-                inputs.related_files,
-                full_path.as_ref(),
-                0..inputs.snapshot.max_point().row,
-            );
-
             let mut recent_changes = String::new();
             for event in &inputs.events {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
