@@ -1091,6 +1091,9 @@ pub(crate) struct DiffReviewOverlay {
     /// Editors for comments currently being edited inline.
     /// Key: comment ID, Value: Editor entity for inline editing.
     pub inline_edit_editors: HashMap<usize, Entity<Editor>>,
+    /// Subscriptions for inline edit editors' action handlers.
+    /// Key: comment ID, Value: Subscription keeping the Newline action handler alive.
+    pub inline_edit_subscriptions: HashMap<usize, Subscription>,
     /// The current user's avatar URI for display in comment rows.
     pub user_avatar_uri: Option<SharedUri>,
     /// Subscription to keep the action handler alive.
@@ -20973,6 +20976,7 @@ impl Editor {
             hunk_key,
             comments_expanded: true,
             inline_edit_editors: HashMap::default(),
+            inline_edit_subscriptions: HashMap::default(),
             user_avatar_uri,
             _subscription: subscription,
         });
@@ -20993,15 +20997,16 @@ impl Editor {
         }
     }
 
-    /// Refreshes the diff review overlay block to update its height based on current comment count.
+    /// Refreshes the diff review overlay block to update its height and render function.
+    /// Uses resize_blocks and replace_blocks to avoid visual flicker from remove+insert.
     fn refresh_diff_review_overlay_height(
         &mut self,
         hunk_key: &DiffHunkKey,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Extract all needed data from overlay first to avoid borrow conflicts
-        let (display_row, comments_expanded, old_block_id, prompt_editor) = {
+        let (comments_expanded, block_id, prompt_editor) = {
             let Some(overlay) = self.diff_review_overlay.as_ref() else {
                 return;
             };
@@ -21012,7 +21017,6 @@ impl Editor {
             }
 
             (
-                overlay.display_row,
                 overlay.comments_expanded,
                 overlay.block_id,
                 overlay.prompt_editor.clone(),
@@ -21022,45 +21026,27 @@ impl Editor {
         // Calculate new height
         let new_height = self.calculate_overlay_height(hunk_key, comments_expanded);
 
-        // Get the anchor for the block
-        let editor_snapshot = self.snapshot(window, cx);
-        let display_point = DisplayPoint::new(display_row, 0);
-        let buffer_point = editor_snapshot
-            .display_snapshot
-            .display_point_to_point(display_point, Bias::Left);
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
-        let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
+        // Update the block height using resize_blocks (avoids flicker)
+        let mut heights = HashMap::default();
+        heights.insert(block_id, new_height);
+        self.resize_blocks(heights, None, cx);
 
-        // Remove old block
-        let mut block_ids = HashSet::default();
-        block_ids.insert(old_block_id);
-        self.remove_blocks(block_ids, None, cx);
-
-        // Create new block with updated height
+        // Update the render function using replace_blocks (avoids flicker)
         let hunk_key_for_render = hunk_key.clone();
         let editor_handle = cx.entity().downgrade();
-        let block = BlockProperties {
-            style: BlockStyle::Sticky,
-            placement: BlockPlacement::Below(anchor),
-            height: Some(new_height),
-            render: Arc::new(move |cx| {
+        let render: Arc<dyn Fn(&mut BlockContext) -> AnyElement + Send + Sync> =
+            Arc::new(move |cx| {
                 Self::render_diff_review_overlay(
                     &prompt_editor,
                     &hunk_key_for_render,
                     &editor_handle,
                     cx,
                 )
-            }),
-            priority: 0,
-        };
+            });
 
-        let block_ids = self.insert_blocks([block], None, cx);
-        if let Some(new_block_id) = block_ids.into_iter().next() {
-            if let Some(overlay) = self.diff_review_overlay.as_mut() {
-                overlay.block_id = new_block_id;
-            }
-        }
+        let mut renderers = HashMap::default();
+        renderers.insert(block_id, render);
+        self.replace_blocks(renderers, None, cx);
     }
 
     /// Action handler for SubmitDiffReviewComment.
@@ -21307,7 +21293,7 @@ impl Editor {
                 });
 
                 // Register the Newline action to confirm the edit
-                let _subscription = inline_editor.update(cx, |inline_editor, _cx| {
+                let subscription = inline_editor.update(cx, |inline_editor, _cx| {
                     inline_editor.register_action({
                         let parent_editor = parent_editor.clone();
                         move |_: &crate::actions::Newline, window, cx| {
@@ -21319,6 +21305,11 @@ impl Editor {
                         }
                     })
                 });
+
+                // Store the subscription to keep the action handler alive
+                overlay
+                    .inline_edit_subscriptions
+                    .insert(comment_id, subscription);
 
                 // Focus the inline editor
                 let focus_handle = inline_editor.focus_handle(cx);
@@ -21351,9 +21342,10 @@ impl Editor {
             }
         }
 
-        // Remove the inline editor
+        // Remove the inline editor and its subscription
         if let Some(overlay) = &mut self.diff_review_overlay {
             overlay.inline_edit_editors.remove(&comment_id);
+            overlay.inline_edit_subscriptions.remove(&comment_id);
         }
 
         // Clear editing state
@@ -21367,9 +21359,10 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Remove the inline editor
+        // Remove the inline editor and its subscription
         if let Some(overlay) = &mut self.diff_review_overlay {
             overlay.inline_edit_editors.remove(&comment_id);
+            overlay.inline_edit_subscriptions.remove(&comment_id);
         }
 
         // Clear editing state

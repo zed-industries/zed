@@ -1604,12 +1604,17 @@ import { AiPaneTabContext } from 'context';
         }
     });
 
+    // Note: Individual test failures return Err via the ? operator above,
+    // so we only reach here if all tests either passed or updated baselines.
+    // If not all passed, at least one must be BaselineUpdated.
     if all_passed {
         Ok(TestResult::Passed)
     } else if let Some(path) = baseline_updated {
         Ok(TestResult::BaselineUpdated(path))
     } else {
-        Ok(TestResult::Passed)
+        // This branch is logically unreachable: if all_passed is false,
+        // at least one result must be BaselineUpdated (the only other variant).
+        unreachable!("All tests should be either Passed or BaselineUpdated")
     }
 }
 

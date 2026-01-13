@@ -30400,6 +30400,35 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
     });
 }
 
+/// Helper function to create a DiffHunkKey for testing.
+fn test_hunk_key(file_path: &str, start_row: u32) -> DiffHunkKey {
+    DiffHunkKey {
+        file_path: if file_path.is_empty() {
+            Arc::from(util::rel_path::RelPath::empty())
+        } else {
+            Arc::from(util::rel_path::RelPath::unix(file_path).unwrap())
+        },
+        hunk_start_row: DisplayRow(start_row),
+    }
+}
+
+/// Helper function to add a review comment with default anchors for testing.
+fn add_test_comment(
+    editor: &mut Editor,
+    key: DiffHunkKey,
+    comment: &str,
+    display_row: u32,
+    cx: &mut Context<Editor>,
+) -> usize {
+    editor.add_review_comment(
+        key,
+        comment.to_string(),
+        DisplayRow(display_row),
+        Anchor::min()..Anchor::max(),
+        cx,
+    )
+}
+
 #[gpui::test]
 fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -30407,18 +30436,9 @@ fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::empty()),
-            hunk_start_row: DisplayRow(0),
-        };
+        let key = test_hunk_key("", 0);
 
-        let id = editor.add_review_comment(
-            key.clone(),
-            "Test comment".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        let id = add_test_comment(editor, key.clone(), "Test comment", 0, cx);
 
         assert_eq!(editor.total_review_comment_count(), 1);
         assert_eq!(editor.hunk_comment_count(&key), 1);
@@ -30437,29 +30457,11 @@ fn test_review_comments_are_per_hunk(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key1 = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::unix("file1.rs").unwrap()),
-            hunk_start_row: DisplayRow(0),
-        };
-        let key2 = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::unix("file2.rs").unwrap()),
-            hunk_start_row: DisplayRow(10),
-        };
+        let key1 = test_hunk_key("file1.rs", 0);
+        let key2 = test_hunk_key("file2.rs", 10);
 
-        editor.add_review_comment(
-            key1.clone(),
-            "Comment for file1".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
-        editor.add_review_comment(
-            key2.clone(),
-            "Comment for file2".to_string(),
-            DisplayRow(10),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        add_test_comment(editor, key1.clone(), "Comment for file1", 0, cx);
+        add_test_comment(editor, key2.clone(), "Comment for file2", 10, cx);
 
         assert_eq!(editor.total_review_comment_count(), 2);
         assert_eq!(editor.hunk_comment_count(&key1), 1);
@@ -30483,18 +30485,9 @@ fn test_review_comment_remove(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::empty()),
-            hunk_start_row: DisplayRow(0),
-        };
+        let key = test_hunk_key("", 0);
 
-        let id = editor.add_review_comment(
-            key,
-            "To be removed".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        let id = add_test_comment(editor, key, "To be removed", 0, cx);
 
         assert_eq!(editor.total_review_comment_count(), 1);
 
@@ -30515,18 +30508,9 @@ fn test_review_comment_update(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::empty()),
-            hunk_start_row: DisplayRow(0),
-        };
+        let key = test_hunk_key("", 0);
 
-        let id = editor.add_review_comment(
-            key.clone(),
-            "Original text".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        let id = add_test_comment(editor, key.clone(), "Original text", 0, cx);
 
         let updated = editor.update_review_comment(id, "Updated text".to_string(), cx);
         assert!(updated);
@@ -30544,36 +30528,12 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key1 = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::unix("file1.rs").unwrap()),
-            hunk_start_row: DisplayRow(0),
-        };
-        let key2 = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::unix("file2.rs").unwrap()),
-            hunk_start_row: DisplayRow(10),
-        };
+        let key1 = test_hunk_key("file1.rs", 0);
+        let key2 = test_hunk_key("file2.rs", 10);
 
-        editor.add_review_comment(
-            key1.clone(),
-            "Comment 1".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
-        editor.add_review_comment(
-            key1,
-            "Comment 2".to_string(),
-            DisplayRow(1),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
-        editor.add_review_comment(
-            key2,
-            "Comment 3".to_string(),
-            DisplayRow(10),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        add_test_comment(editor, key1.clone(), "Comment 1", 0, cx);
+        add_test_comment(editor, key1, "Comment 2", 1, cx);
+        add_test_comment(editor, key2, "Comment 3", 10, cx);
 
         assert_eq!(editor.total_review_comment_count(), 3);
 
@@ -30724,17 +30684,8 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
     // Add a comment directly
     let comment_id = editor
         .update(cx, |editor, _window, cx| {
-            let key = DiffHunkKey {
-                file_path: Arc::from(util::rel_path::RelPath::empty()),
-                hunk_start_row: DisplayRow(0),
-            };
-            editor.add_review_comment(
-                key,
-                "Original comment".to_string(),
-                DisplayRow(0),
-                Anchor::min()..Anchor::max(),
-                cx,
-            )
+            let key = test_hunk_key("", 0);
+            add_test_comment(editor, key, "Original comment", 0, cx)
         })
         .unwrap();
 
@@ -30748,10 +30699,7 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
     // Verify editing flag is set
     editor
         .update(cx, |editor, _window, _cx| {
-            let key = DiffHunkKey {
-                file_path: Arc::from(util::rel_path::RelPath::empty()),
-                hunk_start_row: DisplayRow(0),
-            };
+            let key = test_hunk_key("", 0);
             let comments = editor.comments_for_hunk(&key);
             assert_eq!(comments.len(), 1);
             assert!(comments[0].is_editing);
@@ -30770,10 +30718,7 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
     // Verify comment was updated and editing flag is cleared
     editor
         .update(cx, |editor, _window, _cx| {
-            let key = DiffHunkKey {
-                file_path: Arc::from(util::rel_path::RelPath::empty()),
-                hunk_start_row: DisplayRow(0),
-            };
+            let key = test_hunk_key("", 0);
             let comments = editor.comments_for_hunk(&key);
             assert_eq!(comments[0].comment, "Updated comment");
             assert!(!comments[0].is_editing);
@@ -30788,23 +30733,14 @@ fn test_diff_review_overlay_height_calculation(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor, _window, cx| {
-        let key = DiffHunkKey {
-            file_path: Arc::from(util::rel_path::RelPath::empty()),
-            hunk_start_row: DisplayRow(0),
-        };
+        let key = test_hunk_key("", 0);
 
         // No comments: base height only (2 lines)
         let height = editor.calculate_overlay_height(&key, true);
         assert_eq!(height, 2);
 
         // Add one comment
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 1".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        add_test_comment(editor, key.clone(), "Comment 1", 0, cx);
 
         // With 1 comment expanded: 2 (base) + 1 (header) + 2 (comment) = 5
         let height = editor.calculate_overlay_height(&key, true);
@@ -30815,20 +30751,8 @@ fn test_diff_review_overlay_height_calculation(cx: &mut TestAppContext) {
         assert_eq!(height, 3);
 
         // Add more comments
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 2".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 3".to_string(),
-            DisplayRow(0),
-            Anchor::min()..Anchor::max(),
-            cx,
-        );
+        add_test_comment(editor, key.clone(), "Comment 2", 0, cx);
+        add_test_comment(editor, key.clone(), "Comment 3", 0, cx);
 
         // With 3 comments expanded: 2 (base) + 1 (header) + 6 (3 * 2) = 9
         let height = editor.calculate_overlay_height(&key, true);
