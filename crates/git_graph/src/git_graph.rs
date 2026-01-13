@@ -93,7 +93,7 @@ impl GitGraph {
 
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.buffer_font_size(cx);
-        let row_height = font_size + px(10.0);
+        let row_height = font_size + px(12.0);
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
 
@@ -221,23 +221,65 @@ impl GitGraph {
                     author_name = "".into();
                 }
 
+                let accent_colors = cx.theme().accents();
+                let accent_color = accent_colors
+                    .0
+                    .get(commit.color_idx)
+                    .copied()
+                    .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
+                let is_selected = self.selected_entry_idx == Some(idx);
+                let text_color = if is_selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                };
+
                 vec![
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
                         .tooltip(Tooltip::text(subject.clone()))
-                        .child(Label::new(subject).single_line())
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .overflow_hidden()
+                                .children((!commit.data.ref_names.is_empty()).then(|| {
+                                    h_flex().gap_2().items_center().overflow_hidden().children(
+                                        commit.data.ref_names.iter().map(|name| {
+                                            div()
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .h(px(22.0))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_md()
+                                                .bg(accent_color.opacity(0.18))
+                                                .border_1()
+                                                .border_color(accent_color.opacity(0.55))
+                                                .child(
+                                                    Label::new(name.clone())
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Default)
+                                                        .single_line(),
+                                                )
+                                        }),
+                                    )
+                                }))
+                                .child(Label::new(subject).color(text_color).single_line()),
+                        )
                         .into_any_element(),
                     Label::new(formatted_time)
-                        .color(Color::Muted)
+                        .color(text_color)
                         .single_line()
                         .into_any_element(),
                     Label::new(author_name)
-                        .color(Color::Muted)
+                        .color(text_color)
                         .single_line()
                         .into_any_element(),
                     Label::new(short_sha)
-                        .color(Color::Accent)
+                        .color(text_color)
                         .single_line()
                         .into_any_element(),
                 ]
