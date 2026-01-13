@@ -164,6 +164,27 @@ impl GitGraph {
         }));
     }
 
+    fn render_badge(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
+        div()
+            .px_1p5()
+            .py_0p5()
+            // todo! height should probably be based off of font size
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .bg(accent_color.opacity(0.18))
+            .border_1()
+            .border_color(accent_color.opacity(0.55))
+            .child(
+                Label::new(name.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Default)
+                    .single_line(),
+            )
+    }
+
     fn render_table_rows(
         &mut self,
         range: Range<usize>,
@@ -246,25 +267,11 @@ impl GitGraph {
                                 .overflow_hidden()
                                 .children((!commit.data.ref_names.is_empty()).then(|| {
                                     h_flex().gap_2().items_center().overflow_hidden().children(
-                                        commit.data.ref_names.iter().map(|name| {
-                                            div()
-                                                .px_1p5()
-                                                .py_0p5()
-                                                .h(px(22.0))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded_md()
-                                                .bg(accent_color.opacity(0.18))
-                                                .border_1()
-                                                .border_color(accent_color.opacity(0.55))
-                                                .child(
-                                                    Label::new(name.clone())
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Default)
-                                                        .single_line(),
-                                                )
-                                        }),
+                                        commit
+                                            .data
+                                            .ref_names
+                                            .iter()
+                                            .map(|name| self.render_badge(name, accent_color)),
                                     )
                                 }))
                                 .child(Label::new(subject).color(text_color).single_line()),
@@ -376,6 +383,12 @@ impl GitGraph {
             }
         };
         let ref_names = commit_entry.data.ref_names.clone();
+        let accent_colors = cx.theme().accents();
+        let accent_color = accent_colors
+            .0
+            .get(commit_entry.color_idx)
+            .copied()
+            .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
 
         let (author_name, author_email, commit_timestamp, subject) = match &data {
             CommitDataState::Loaded(data) => (
@@ -464,21 +477,11 @@ impl GitGraph {
                             ),
                     )
                     .children((!ref_names.is_empty()).then(|| {
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .children(ref_names.iter().map(|name| {
-                                div()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(cx.theme().colors().element_background)
-                                    .child(
-                                        Label::new(name.clone())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Accent),
-                                    )
-                            }))
+                        h_flex().gap_1().flex_wrap().children(
+                            ref_names
+                                .iter()
+                                .map(|name| self.render_badge(name, accent_color)),
+                        )
                     }))
                     .child(
                         v_flex()
