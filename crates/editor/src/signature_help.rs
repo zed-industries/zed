@@ -170,6 +170,8 @@ impl Editor {
             return;
         }
 
+        self.signature_help_state.task = None;
+
         let position = self.selections.newest_anchor().head();
         let Some((buffer, buffer_position)) =
             self.buffer.read(cx).text_anchor_for_position(position, cx)
@@ -184,8 +186,18 @@ impl Editor {
         });
         let language = self.language_at(position, cx);
 
+        // respect hover_popover_delay
+        let signature_help_delay_ms = EditorSettings::get_global(cx).hover_popover_delay.0;
+
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
+                // wait for debounce delay
+                if signature_help_delay_ms > 0 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(signature_help_delay_ms))
+                        .await;
+                }
+                // wait for lsp
                 let signature_help = task.await;
                 editor
                     .update(cx, |editor, cx| {
