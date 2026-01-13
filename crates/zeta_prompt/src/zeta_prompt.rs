@@ -109,6 +109,9 @@ fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
 
     prompt.push_str("<|fim_suffix|>\n");
     prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+    if !prompt.ends_with('\n') {
+        prompt.push('\n');
+    }
 
     prompt.push_str("<|fim_middle|>current\n");
     prompt.push_str(
@@ -119,7 +122,6 @@ fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
     prompt.push_str(
         &input.cursor_excerpt[input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
     );
-
     if !prompt.ends_with('\n') {
         prompt.push('\n');
     }
