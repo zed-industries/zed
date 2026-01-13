@@ -13,6 +13,8 @@ use rpc::proto::Envelope;
 use smol::process::Child;
 
 pub mod docker;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock;
 pub mod ssh;
 pub mod wsl;
 
@@ -168,7 +170,7 @@ fn handle_rpc_messages_over_child_process_stdio(
     })
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
     delegate: &dyn crate::RemoteClientDelegate,
@@ -356,7 +358,7 @@ async fn build_remote_server_from_source(
     Ok(Some(path))
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn which(
     binary_name: impl AsRef<str>,
     cx: &mut AsyncApp,

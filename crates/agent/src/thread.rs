@@ -2,11 +2,12 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -57,6 +58,27 @@ use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
+pub const MAX_SUBAGENT_DEPTH: u8 = 4;
+pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
+
+/// Context passed to a subagent thread for lifecycle management
+#[derive(Clone)]
+pub struct SubagentContext {
+    /// ID of the parent thread
+    pub parent_thread_id: acp::SessionId,
+
+    /// ID of the tool call that spawned this subagent
+    pub tool_use_id: LanguageModelToolUseId,
+
+    /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
+    pub depth: u8,
+
+    /// Prompt to send when subagent completes successfully
+    pub summary_prompt: String,
+
+    /// Prompt to send when context is running low (≤25% remaining)
+    pub context_low_prompt: String,
+}
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -625,6 +647,10 @@ pub struct Thread {
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
     /// True if this thread was imported from a shared thread and can be synced.
     imported: bool,
+    /// If this is a subagent thread, contains context about the parent
+    subagent_context: Option<SubagentContext>,
+    /// Weak references to running subagent threads for cancellation propagation
+    running_subagents: Vec<WeakEntity<Thread>>,
 }
 
 impl Thread {
@@ -682,6 +708,56 @@ impl Thread {
             action_log,
             file_read_times: HashMap::default(),
             imported: false,
+            subagent_context: None,
+            running_subagents: Vec::new(),
+        }
+    }
+
+    pub fn new_subagent(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Arc<dyn LanguageModel>,
+        subagent_context: SubagentContext,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
+        let (prompt_capabilities_tx, prompt_capabilities_rx) =
+            watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+        Self {
+            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
+            prompt_id: PromptId::new(),
+            updated_at: Utc::now(),
+            title: None,
+            pending_title_generation: None,
+            pending_summary_generation: None,
+            summary: None,
+            messages: Vec::new(),
+            user_store: project.read(cx).user_store(),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
+            running_turn: None,
+            pending_message: None,
+            tools: BTreeMap::default(),
+            tool_use_limit_reached: false,
+            request_token_usage: HashMap::default(),
+            cumulative_token_usage: TokenUsage::default(),
+            initial_project_snapshot: Task::ready(None).shared(),
+            context_server_registry,
+            profile_id,
+            project_context,
+            templates,
+            model: Some(model),
+            summarization_model: None,
+            prompt_capabilities_tx,
+            prompt_capabilities_rx,
+            project,
+            action_log,
+            file_read_times: HashMap::default(),
+            imported: false,
+            subagent_context: Some(subagent_context),
+            running_subagents: Vec::new(),
         }
     }
 
@@ -879,6 +955,8 @@ impl Thread {
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
             imported: db_thread.imported,
+            subagent_context: None,
+            running_subagents: Vec::new(),
         }
     }
 
@@ -983,7 +1061,6 @@ impl Thread {
         cx.notify()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1028,6 +1105,19 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+
+        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+            let tool_names = self.registered_tool_names();
+            self.add_tool(SubagentTool::new(
+                cx.weak_entity(),
+                self.project.clone(),
+                self.project_context.clone(),
+                self.context_server_registry.clone(),
+                self.templates.clone(),
+                self.depth(),
+                tool_names,
+            ));
+        }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1036,6 +1126,10 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
+    }
+
+    pub fn restrict_tools(&mut self, allowed: &collections::HashSet<SharedString>) {
+        self.tools.retain(|name, _| allowed.contains(name));
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -1055,11 +1149,27 @@ impl Thread {
         }
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(running_turn) = self.running_turn.take() {
-            running_turn.cancel();
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        for subagent in self.running_subagents.drain(..) {
+            if let Some(subagent) = subagent.upgrade() {
+                subagent.update(cx, |thread, cx| thread.cancel(cx)).detach();
+            }
         }
-        self.flush_pending_message(cx);
+
+        let Some(running_turn) = self.running_turn.take() else {
+            self.flush_pending_message(cx);
+            return Task::ready(());
+        };
+
+        let turn_task = running_turn.cancel();
+
+        cx.spawn(async move |this, cx| {
+            turn_task.await;
+            this.update(cx, |this, cx| {
+                this.flush_pending_message(cx);
+            })
+            .ok();
+        })
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -1074,7 +1184,10 @@ impl Thread {
     }
 
     pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
-        self.cancel(cx);
+        self.cancel(cx).detach();
+        // Clear pending message since cancel will try to flush it asynchronously,
+        // and we don't want that content to be added after we truncate
+        self.pending_message.take();
         let Some(position) = self.messages.iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
@@ -1106,6 +1219,7 @@ impl Thread {
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
             used_tokens: usage.total_tokens(),
+            output_tokens: usage.output_tokens,
         })
     }
 
@@ -1255,7 +1369,11 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.cancel(cx);
+        // Flush the old pending message synchronously before cancelling,
+        // to avoid a race where the detached cancel task might flush the NEW
+        // turn's pending message instead of the old one.
+        self.flush_pending_message(cx);
+        self.cancel(cx).detach();
 
         let model = self.model.clone().context("No language model configured")?;
         let profile = AgentSettings::get_global(cx)
@@ -1267,7 +1385,7 @@ impl Thread {
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
         self.clear_summary();
-        let (cancellation_tx, cancellation_rx) = watch::channel(false);
+        let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
@@ -1275,8 +1393,23 @@ impl Thread {
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result =
-                    Self::run_turn_internal(&this, model, &event_stream, cancellation_rx, cx).await;
+                let turn_result = Self::run_turn_internal(
+                    &this,
+                    model,
+                    &event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await;
+
+                // Check if we were cancelled - if so, cancel() already took running_turn
+                // and we shouldn't touch it (it might be a NEW turn now)
+                let was_cancelled = *cancellation_rx.borrow();
+                if was_cancelled {
+                    log::debug!("Turn was cancelled, skipping cleanup");
+                    return;
+                }
+
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
                 match turn_result {
@@ -1311,7 +1444,7 @@ impl Thread {
         this: &WeakEntity<Self>,
         model: Arc<dyn LanguageModel>,
         event_stream: &ThreadEventStream,
-        cancellation_rx: watch::Receiver<bool>,
+        mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut attempt = 0;
@@ -1336,7 +1469,22 @@ impl Thread {
                 Err(err) => (stream::empty().boxed(), Some(err)),
             };
             let mut tool_results = FuturesUnordered::new();
-            while let Some(event) = events.next().await {
+            let mut cancelled = false;
+            loop {
+                // Race between getting the next event and cancellation
+                let event = futures::select! {
+                    event = events.next().fuse() => event,
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            cancelled = true;
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let Some(event) = event else {
+                    break;
+                };
                 log::trace!("Received completion event: {:?}", event);
                 match event {
                     Ok(event) => {
@@ -1383,6 +1531,11 @@ impl Thread {
                     this.generate_title(cx);
                 }
             })?;
+
+            if cancelled {
+                log::debug!("Turn cancelled by user, exiting");
+                return Ok(());
+            }
 
             if let Some(error) = error {
                 attempt += 1;
@@ -2080,6 +2233,82 @@ impl Thread {
             .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_registered_tool(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
+    pub fn registered_tool_names(&self) -> Vec<SharedString> {
+        self.tools.keys().cloned().collect()
+    }
+
+    pub fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
+        self.running_subagents.push(subagent);
+    }
+
+    pub fn unregister_running_subagent(&mut self, subagent: &WeakEntity<Thread>) {
+        self.running_subagents
+            .retain(|s| s.entity_id() != subagent.entity_id());
+    }
+
+    pub fn running_subagent_count(&self) -> usize {
+        self.running_subagents
+            .iter()
+            .filter(|s| s.upgrade().is_some())
+            .count()
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        self.subagent_context.is_some()
+    }
+
+    pub fn depth(&self) -> u8 {
+        self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
+    }
+
+    pub fn is_turn_complete(&self) -> bool {
+        self.running_turn.is_none()
+    }
+
+    pub fn submit_user_message(
+        &mut self,
+        content: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let content = content.into();
+        self.messages.push(Message::User(UserMessage {
+            id: UserMessageId::new(),
+            content: vec![UserMessageContent::Text(content)],
+        }));
+        cx.notify();
+        self.send_existing(cx)
+    }
+
+    pub fn interrupt_for_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let context = self
+            .subagent_context
+            .as_ref()
+            .context("Not a subagent thread")?;
+        let prompt = context.context_low_prompt.clone();
+        self.cancel(cx).detach();
+        self.submit_user_message(prompt, cx)
+    }
+
+    pub fn request_final_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let context = self
+            .subagent_context
+            .as_ref()
+            .context("Not a subagent thread")?;
+        let prompt = context.summary_prompt.clone();
+        self.submit_user_message(prompt, cx)
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -2264,10 +2493,11 @@ struct RunningTurn {
 }
 
 impl RunningTurn {
-    fn cancel(mut self) {
+    fn cancel(mut self) -> Task<()> {
         log::debug!("Cancelling in progress turn");
         self.cancellation_tx.send(true).ok();
         self.event_stream.send_canceled();
+        self._task
     }
 }
 
@@ -2487,10 +2717,7 @@ impl ThreadEventStream {
         acp::ToolCall::new(id.to_string(), title)
             .kind(kind)
             .raw_input(input)
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                tool_name.into(),
-            )]))
+            .meta(acp_thread::meta_with_tool_name(tool_name))
     }
 
     fn update_tool_call_fields(
@@ -2586,6 +2813,10 @@ impl ToolCallEventStream {
         *self.cancellation_rx.clone().borrow()
     }
 
+    pub fn tool_use_id(&self) -> &LanguageModelToolUseId {
+        &self.tool_use_id
+    }
+
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
         self.stream
             .update_tool_call_fields(&self.tool_use_id, fields);
@@ -2604,11 +2835,32 @@ impl ToolCallEventStream {
             .ok();
     }
 
+    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateSubagentThread {
+                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
+                    thread,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
     pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));
         }
 
+        self.authorize_required(title, cx)
+    }
+
+    /// Like `authorize`, but always prompts for confirmation regardless of
+    /// the `always_allow_tool_actions` setting. Use this when tool-specific
+    /// permission rules (like `always_confirm` patterns) have already determined
+    /// that confirmation is required.
+    pub fn authorize_required(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
             .0

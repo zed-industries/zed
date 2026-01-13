@@ -22,8 +22,10 @@ test-support = [
     "gpui/test-support",
     "http_client/test-support",
     "project/test-support",
+    "remote/test-support",
     "util/test-support",
     "workspace/test-support",
+    "recent_projects/test-support",
 ]
 
 [dependencies]

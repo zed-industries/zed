@@ -78,4 +78,5 @@ lsp.workspace = true
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

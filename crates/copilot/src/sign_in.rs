@@ -89,10 +89,12 @@ fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
         return;
     };
 
-    workspace.update(cx, |workspace, cx| match message {
-        Some(message) => workspace.show_toast(Toast::new(NOTIFICATION_ID, message), cx),
-        None => workspace.dismiss_toast(&NOTIFICATION_ID, cx),
-    });
+    cx.defer(move |cx| {
+        workspace.update(cx, |workspace, cx| match message {
+            Some(message) => workspace.show_toast(Toast::new(NOTIFICATION_ID, message), cx),
+            None => workspace.dismiss_toast(&NOTIFICATION_ID, cx),
+        });
+    })
 }
 
 pub fn initiate_sign_in_impl(is_reinstall: bool, window: &mut Window, cx: &mut App) {

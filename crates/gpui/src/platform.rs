@@ -20,6 +20,9 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -89,6 +92,9 @@ pub use linux::layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test::VisualTestPlatform;
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -590,8 +596,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 /// be considered part of our public API.
 #[doc(hidden)]
 pub struct RunnableMeta {
-    pub priority: Priority,
-    /// Location of the runnable, only set for futures we spawn
+    /// Location of the runnable
     pub location: &'static core::panic::Location<'static>,
     /// Weak reference to check if the app is still alive before running this task
     pub app: Option<std::sync::Weak<()>>,
@@ -600,7 +605,6 @@ pub struct RunnableMeta {
 impl std::fmt::Debug for RunnableMeta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunnableMeta")
-            .field("priority", &self.priority)
             .field("location", &self.location)
             .field("app_alive", &self.is_app_alive())
             .finish()
@@ -617,69 +621,10 @@ impl RunnableMeta {
     }
 }
 
-/// Both of these need meta for priority
 #[doc(hidden)]
-pub enum GpuiRunnable {
-    /// Spawned by us, we set useful metadata for profiling and scheduling.
-    /// Yay we have nice things!
-    GpuiSpawned(Runnable<RunnableMeta>),
-    /// Spawned by a dependency through runtimelib. We only have the
-    /// runnable ('task'). No access to metadata.
-    DependencySpawned(Runnable<()>),
-}
-
-impl GpuiRunnable {
-    fn run_and_profile(self) -> Instant {
-        if self.app_dropped() {
-            // optimizer will cut it out if it doesnt it does not really matter
-            // cause we are closing the app anyway.
-            return Instant::now();
-        }
-
-        let mut timing = TaskTiming {
-            // use a placeholder location if we dont have one
-            location: self.location().unwrap_or(core::panic::Location::caller()),
-            start: Instant::now(),
-            end: None,
-        };
-
-        crate::profiler::add_task_timing(timing);
-        self.run_unprofiled(); // surrounded by profiling so its ok
-        timing.end = Some(Instant::now());
-        crate::profiler::add_task_timing(timing);
-        timing.start
-    }
-
-    fn app_dropped(&self) -> bool {
-        match self {
-            GpuiRunnable::GpuiSpawned(runnable) => !runnable.metadata().is_app_alive(),
-            GpuiRunnable::DependencySpawned(_) => false,
-        }
-    }
-
-    fn location(&self) -> Option<&'static core::panic::Location<'static>> {
-        match self {
-            GpuiRunnable::GpuiSpawned(runnable) => runnable.metadata().location.into(),
-            GpuiRunnable::DependencySpawned(_) => None,
-        }
-    }
-
-    /// ONLY use for tests or headless client.
-    /// ideally everything should be profiled
-    fn run_unprofiled(self) {
-        self.priority().set_as_default_for_spawns();
-        match self {
-            GpuiRunnable::GpuiSpawned(r) => r.run(),
-            GpuiRunnable::DependencySpawned(r) => r.run(),
-        };
-    }
-
-    fn priority(&self) -> Priority {
-        match self {
-            GpuiRunnable::GpuiSpawned(r) => r.metadata().priority,
-            GpuiRunnable::DependencySpawned(_) => Priority::Medium,
-        }
-    }
+pub enum RunnableVariant {
+    Meta(Runnable<RunnableMeta>),
+    Compat(Runnable),
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not
@@ -689,9 +634,9 @@ pub trait PlatformDispatcher: Send + Sync {
     fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
     fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: GpuiRunnable, label: Option<TaskLabel>);
-    fn dispatch_on_main_thread(&self, runnable: GpuiRunnable);
-    fn dispatch_after(&self, duration: Duration, runnable: GpuiRunnable);
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority);
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
     fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {

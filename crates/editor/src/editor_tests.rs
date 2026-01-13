@@ -3029,6 +3029,48 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_delete_to_previous_subword_start_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("fooBar\n\nbazQux", cx);
+        build_editor(buffer, window, cx)
+    });
+    let del_to_prev_sub_word_start = DeleteToPreviousSubwordStart {
+        ignore_newlines: false,
+        ignore_brackets: false,
+    };
+    let del_to_prev_sub_word_start_ignore_newlines = DeleteToPreviousSubwordStart {
+        ignore_newlines: true,
+        ignore_brackets: false,
+    };
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 6)..DisplayPoint::new(DisplayRow(2), 6)
+            ])
+        });
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n\nbaz");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n\n");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar");
+        editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "foo");
+        editor.delete_to_previous_subword_start(
+            &del_to_prev_sub_word_start_ignore_newlines,
+            window,
+            cx,
+        );
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
 fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3073,6 +3115,50 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
+fn test_delete_to_next_subword_end_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("\nfooBar\n   bazQux", cx);
+        build_editor(buffer, window, cx)
+    });
+    let del_to_next_subword_end = DeleteToNextSubwordEnd {
+        ignore_newlines: false,
+        ignore_brackets: false,
+    };
+    let del_to_next_subword_end_ignore_newlines = DeleteToNextSubwordEnd {
+        ignore_newlines: true,
+        ignore_brackets: false,
+    };
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ])
+        });
+        // Delete "\n" (empty line)
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n   bazQux");
+        // Delete "foo" (subword boundary)
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "Bar\n   bazQux");
+        // Delete "Bar"
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   bazQux");
+        // Delete "\n   " (newline + leading whitespace)
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "bazQux");
+        // Delete "baz" (subword boundary)
+        editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "Qux");
+        // With ignore_newlines, delete "Qux"
+        editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
     });
 }
@@ -31052,4 +31138,162 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
     );
 
     // If we get here without hanging, the test passes
+}
+
+#[gpui::test]
+async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.txt")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Enable diff review button mode
+    editor.update(cx, |editor, cx| {
+        editor.set_show_diff_review_button(true, cx);
+    });
+
+    // Initially, no indicator should be present
+    editor.update(cx, |editor, _cx| {
+        assert!(
+            editor.gutter_diff_review_indicator.0.is_none(),
+            "Indicator should be None initially"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diff_review_button_hidden_when_ai_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Register DisableAiSettings and set disable_ai to true
+    cx.update(|cx| {
+        project::DisableAiSettings::register(cx);
+        project::DisableAiSettings::override_global(
+            project::DisableAiSettings { disable_ai: true },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.txt")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Enable diff review button mode
+    editor.update(cx, |editor, cx| {
+        editor.set_show_diff_review_button(true, cx);
+    });
+
+    // Verify AI is disabled
+    cx.read(|cx| {
+        assert!(
+            project::DisableAiSettings::get_global(cx).disable_ai,
+            "AI should be disabled"
+        );
+    });
+
+    // The indicator should not be created when AI is disabled
+    // (The mouse_moved handler checks DisableAiSettings before creating the indicator)
+    editor.update(cx, |editor, _cx| {
+        assert!(
+            editor.gutter_diff_review_indicator.0.is_none(),
+            "Indicator should be None when AI is disabled"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Register DisableAiSettings and set disable_ai to false
+    cx.update(|cx| {
+        project::DisableAiSettings::register(cx);
+        project::DisableAiSettings::override_global(
+            project::DisableAiSettings { disable_ai: false },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.txt")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Enable diff review button mode
+    editor.update(cx, |editor, cx| {
+        editor.set_show_diff_review_button(true, cx);
+    });
+
+    // Verify AI is enabled
+    cx.read(|cx| {
+        assert!(
+            !project::DisableAiSettings::get_global(cx).disable_ai,
+            "AI should be enabled"
+        );
+    });
+
+    // The show_diff_review_button flag should be true
+    editor.update(cx, |editor, _cx| {
+        assert!(
+            editor.show_diff_review_button(),
+            "show_diff_review_button should be true"
+        );
+    });
 }

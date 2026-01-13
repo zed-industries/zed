@@ -153,7 +153,7 @@ impl DockerExecConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&remote_platform, delegate.as_ref(), cx).await?
         {

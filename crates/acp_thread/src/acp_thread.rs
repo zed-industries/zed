@@ -4,6 +4,26 @@ mod mention;
 mod terminal;
 
 use agent_settings::AgentSettings;
+
+/// Key used in ACP ToolCall meta to store the tool's programmatic name.
+/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+pub const TOOL_NAME_META_KEY: &str = "tool_name";
+
+/// The tool name for subagent spawning
+pub const SUBAGENT_TOOL_NAME: &str = "subagent";
+
+/// Helper to extract tool name from ACP meta
+pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(TOOL_NAME_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to create meta with tool name
+pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
+}
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -195,6 +215,7 @@ pub struct ToolCall {
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    pub tool_name: Option<SharedString>,
 }
 
 impl ToolCall {
@@ -229,6 +250,8 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
+        let tool_name = tool_name_from_meta(&tool_call.meta);
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -241,6 +264,7 @@ impl ToolCall {
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            tool_name,
         };
         Ok(result)
     }
@@ -338,6 +362,7 @@ impl ToolCall {
             ToolCallContent::Diff(diff) => Some(diff),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Terminal(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
     }
 
@@ -346,7 +371,24 @@ impl ToolCall {
             ToolCallContent::Terminal(terminal) => Some(terminal),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Diff(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        self.content.iter().find_map(|content| match content {
+            ToolCallContent::SubagentThread(thread) => Some(thread),
+            _ => None,
+        })
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.kind, acp::ToolKind::Other)
+            && self
+                .tool_name
+                .as_ref()
+                .map(|n| n.as_ref() == SUBAGENT_TOOL_NAME)
+                .unwrap_or(false)
     }
 
     fn to_markdown(&self, cx: &App) -> String {
@@ -642,6 +684,7 @@ pub enum ToolCallContent {
     ContentBlock(ContentBlock),
     Diff(Entity<Diff>),
     Terminal(Entity<Terminal>),
+    SubagentThread(Entity<AcpThread>),
 }
 
 impl ToolCallContent {
@@ -713,12 +756,20 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+            Self::SubagentThread(thread) => thread.read(cx).to_markdown(cx),
         }
     }
 
     pub fn image(&self) -> Option<&Arc<gpui::Image>> {
         match self {
             Self::ContentBlock(content) => content.image(),
+            _ => None,
+        }
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        match self {
+            Self::SubagentThread(thread) => Some(thread),
             _ => None,
         }
     }
@@ -729,6 +780,7 @@ pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
+    UpdateSubagentThread(ToolCallUpdateSubagentThread),
 }
 
 impl ToolCallUpdate {
@@ -737,6 +789,7 @@ impl ToolCallUpdate {
             Self::UpdateFields(update) => &update.tool_call_id,
             Self::UpdateDiff(diff) => &diff.id,
             Self::UpdateTerminal(terminal) => &terminal.id,
+            Self::UpdateSubagentThread(subagent) => &subagent.id,
         }
     }
 }
@@ -769,6 +822,18 @@ impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
 pub struct ToolCallUpdateTerminal {
     pub id: acp::ToolCallId,
     pub terminal: Entity<Terminal>,
+}
+
+impl From<ToolCallUpdateSubagentThread> for ToolCallUpdate {
+    fn from(subagent: ToolCallUpdateSubagentThread) -> Self {
+        Self::UpdateSubagentThread(subagent)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateSubagentThread {
+    pub id: acp::ToolCallId,
+    pub thread: Entity<AcpThread>,
 }
 
 #[derive(Debug, Default)]
@@ -835,6 +900,7 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub output_tokens: u64,
 }
 
 impl TokenUsage {
@@ -1186,6 +1252,23 @@ impl AcpThread {
         false
     }
 
+    pub fn has_in_progress_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
+                    ..
+                }) => {
+                    return true;
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
     pub fn used_tools_since_last_user_message(&self) -> bool {
         for entry in self.entries.iter().rev() {
             match entry {
@@ -1407,6 +1490,7 @@ impl AcpThread {
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    tool_name: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1432,6 +1516,11 @@ impl AcpThread {
                 call.content.clear();
                 call.content
                     .push(ToolCallContent::Terminal(update.terminal));
+            }
+            ToolCallUpdate::UpdateSubagentThread(update) => {
+                call.content.clear();
+                call.content
+                    .push(ToolCallContent::SubagentThread(update.thread));
             }
         }
 
@@ -2640,6 +2729,128 @@ mod tests {
         assert!(
             content.contains("pre-exit data"),
             "expected pre-exit data to render, got: {content}"
+        );
+    }
+
+    /// Test that killing a terminal via Terminal::kill properly:
+    /// 1. Causes wait_for_exit to complete (doesn't hang forever)
+    /// 2. The underlying terminal still has the output that was written before the kill
+    ///
+    /// This test verifies that the fix to kill_active_task (which now also kills
+    /// the shell process in addition to the foreground process) properly allows
+    /// wait_for_exit to complete instead of hanging indefinitely.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        use std::collections::HashMap;
+        use task::Shell;
+        use util::shell_builder::ShellBuilder;
+
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project.clone(), Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+
+        // Create a real PTY terminal that runs a command which prints output then sleeps
+        // We use printf instead of echo and chain with && sleep to ensure proper execution
+        let (completion_tx, _completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+            Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
+            &[],
+        );
+
+        let builder = cx
+            .update(|cx| {
+                ::terminal::TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    ::terminal::terminal_settings::CursorShape::default(),
+                    ::terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+
+        let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+
+        // Create the acp_thread Terminal wrapper
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "printf output_before_kill && sleep 60".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower_terminal.clone(),
+                },
+                cx,
+            );
+        });
+
+        // Wait for the printf command to execute and produce output
+        smol::Timer::after(Duration::from_millis(500)).await;
+
+        // Get the acp_thread Terminal and kill it
+        let wait_for_exit = thread.update(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            let wait_for_exit = term.read(cx).wait_for_exit();
+            term.update(cx, |term, cx| {
+                term.kill(cx);
+            });
+            wait_for_exit
+        });
+
+        // KEY ASSERTION: wait_for_exit should complete within a reasonable time (not hang).
+        // Before the fix to kill_active_task, this would hang forever because
+        // only the foreground process was killed, not the shell, so the PTY
+        // child never exited and wait_for_completed_task never completed.
+        let exit_result = futures::select! {
+            result = futures::FutureExt::fuse(wait_for_exit) => Some(result),
+            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => None,
+        };
+
+        assert!(
+            exit_result.is_some(),
+            "wait_for_exit should complete after kill, but it timed out. \
+            This indicates kill_active_task is not properly killing the shell process."
+        );
+
+        // Give the system a chance to process any pending updates
+        cx.run_until_parked();
+
+        // Verify that the underlying terminal still has the output that was
+        // written before the kill. This verifies that killing doesn't lose output.
+        let inner_content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            term.read(cx).inner().read(cx).get_content()
+        });
+
+        assert!(
+            inner_content.contains("output_before_kill"),
+            "Underlying terminal should contain output from before kill, got: {}",
+            inner_content
         );
     }
 

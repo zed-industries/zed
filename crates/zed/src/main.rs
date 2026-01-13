@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use agent::{HistoryStore, SharedThread};
+use agent::{SharedThread, ThreadStore};
 use agent_client_protocol;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
@@ -602,6 +602,7 @@ fn main() {
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
+        zed::telemetry_log::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
@@ -844,17 +845,16 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let workspace =
                         workspace::get_any_active_workspace(app_state.clone(), cx.clone()).await?;
 
-                    let (client, history_store) =
+                    let (client, thread_store) =
                         workspace.update(cx, |workspace, _window, cx| {
                             let client = workspace.project().read(cx).client();
-                            let history_store: Option<gpui::Entity<HistoryStore>> = workspace
+                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
                                 .panel::<AgentPanel>(cx)
                                 .map(|panel| panel.read(cx).thread_store().clone());
-                            (client, history_store)
+                            (client, thread_store)
                         })?;
 
-                    let Some(history_store): Option<gpui::Entity<HistoryStore>> = history_store
-                    else {
+                    let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");
                     };
 
@@ -869,16 +869,20 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let db_thread = shared_thread.to_db_thread();
                     let session_id = agent_client_protocol::SessionId::new(session_id);
 
-                    history_store
+                    let save_session_id = session_id.clone();
+
+                    thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(session_id.clone(), db_thread, cx)
+                            store.save_thread(save_session_id.clone(), db_thread, cx)
                         })
                         .await?;
 
-                    let thread_metadata = agent::DbThreadMetadata {
-                        id: session_id,
-                        title: format!("🔗 {}", response.title).into(),
-                        updated_at: chrono::Utc::now(),
+                    let thread_metadata = acp_thread::AgentSessionInfo {
+                        session_id,
+                        cwd: None,
+                        title: Some(format!("🔗 {}", response.title).into()),
+                        updated_at: Some(chrono::Utc::now()),
+                        meta: None,
                     };
 
                     workspace.update(cx, |workspace, window, cx| {
