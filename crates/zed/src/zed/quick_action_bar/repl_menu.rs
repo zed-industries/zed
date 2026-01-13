@@ -283,6 +283,8 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
+        let active_toolchain_path = repl::active_python_toolchain_path(worktree_id, cx);
+
         let session = repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
@@ -305,6 +307,7 @@ impl QuickActionBar {
                 })
             },
             worktree_id,
+            active_toolchain_path,
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .size(ButtonSize::Compact)

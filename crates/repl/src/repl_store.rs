@@ -5,9 +5,10 @@ use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{App, Context, Entity, EntityId, Global, Subscription, Task, prelude::*};
 use jupyter_websocket_client::RemoteServer;
-use language::Language;
-use project::{Fs, Project, WorktreeId};
+use language::{Language, LanguageName, Toolchain};
+use project::{Fs, Project, ProjectPath, WorktreeId};
 use settings::{Settings, SettingsStore};
+use util::rel_path::RelPath;
 
 use crate::kernels::{
     list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
@@ -25,6 +26,7 @@ pub struct ReplStore {
     kernel_specifications: Vec<KernelSpecification>,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
+    active_python_toolchain_for_worktree: HashMap<WorktreeId, Toolchain>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -59,6 +61,7 @@ impl ReplStore {
             _subscriptions: subscriptions,
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
+            active_python_toolchain_for_worktree: HashMap::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -116,6 +119,13 @@ impl ReplStore {
         cx.notify();
     }
 
+    pub fn active_python_toolchain(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<&Toolchain> {
+        self.active_python_toolchain_for_worktree.get(&worktree_id)
+    }
+
     pub fn refresh_python_kernelspecs(
         &mut self,
         worktree_id: WorktreeId,
@@ -123,14 +133,30 @@ impl ReplStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
+        let active_toolchain = project.read(cx).active_toolchain(
+            ProjectPath {
+                worktree_id,
+                path: RelPath::empty().into(),
+            },
+            LanguageName::new_static("Python"),
+            cx,
+        );
         cx.spawn(async move |this, cx| {
             let kernel_specifications = kernel_specifications
                 .await
                 .context("getting python kernelspecs")?;
+            let active_toolchain = active_toolchain.await;
 
             this.update(cx, |this, cx| {
                 this.kernel_specifications_for_worktree
                     .insert(worktree_id, kernel_specifications);
+                if let Some(toolchain) = active_toolchain {
+                    this.active_python_toolchain_for_worktree
+                        .insert(worktree_id, toolchain);
+                } else {
+                    this.active_python_toolchain_for_worktree
+                        .remove(&worktree_id);
+                }
                 cx.notify();
             })
         })

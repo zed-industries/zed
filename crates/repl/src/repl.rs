@@ -12,8 +12,8 @@ mod session;
 use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
-use gpui::{App, PlatformDispatcher, Priority, RunnableMeta};
-use project::Fs;
+use gpui::{App, PlatformDispatcher, Priority, RunnableMeta, SharedString};
+use project::{Fs, WorktreeId};
 pub use runtimelib::ExecutionState;
 
 pub use crate::jupyter_settings::JupyterSettings;
@@ -27,6 +27,13 @@ use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
 pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
+
+pub fn active_python_toolchain_path(worktree_id: WorktreeId, cx: &App) -> Option<SharedString> {
+    let store = ReplStore::global(cx).read(cx);
+    store
+        .active_python_toolchain(worktree_id)
+        .map(|t| t.path.clone())
+}
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));

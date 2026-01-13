@@ -1093,6 +1093,7 @@ impl NotebookEditor {
                         }
                     }),
                     worktree_id,
+                    None,
                     Button::new("kernel-selector", kernel_name.clone())
                         .label_size(LabelSize::Small)
                         .icon(status_icon)
