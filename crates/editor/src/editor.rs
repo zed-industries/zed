@@ -21203,7 +21203,9 @@ impl Editor {
 
         // Create an inline editor for this comment if needed
         if let Some(overlay) = &mut self.diff_review_overlay {
-            if !overlay.inline_edit_editors.contains_key(&comment_id) {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                overlay.inline_edit_editors.entry(comment_id)
+            {
                 // Find the comment text
                 let comment_text = self
                     .stored_review_comments
@@ -21241,9 +21243,7 @@ impl Editor {
                 let focus_handle = inline_editor.focus_handle(cx);
                 window.focus(&focus_handle, cx);
 
-                overlay
-                    .inline_edit_editors
-                    .insert(comment_id, inline_editor);
+                entry.insert(inline_editor);
             }
         }
 

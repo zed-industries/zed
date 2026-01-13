@@ -30452,7 +30452,7 @@ fn test_review_comment_remove(cx: &mut TestAppContext) {
         };
 
         let id = editor.add_review_comment(
-            key.clone(),
+            key,
             "To be removed".to_string(),
             DisplayRow(0),
             Anchor::min()..Anchor::max(),
@@ -30524,14 +30524,14 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
             cx,
         );
         editor.add_review_comment(
-            key1.clone(),
+            key1,
             "Comment 2".to_string(),
             DisplayRow(1),
             Anchor::min()..Anchor::max(),
             cx,
         );
         editor.add_review_comment(
-            key2.clone(),
+            key2,
             "Comment 3".to_string(),
             DisplayRow(10),
             Anchor::min()..Anchor::max(),
