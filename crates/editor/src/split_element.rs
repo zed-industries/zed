@@ -4,6 +4,7 @@ use gpui::{
     px, relative, rgb, rgba,
 };
 use multi_buffer::Anchor;
+use sum_tree::Dimension;
 use theme::ThemeColors;
 
 use crate::{Editor, EditorElement, EditorMode, EditorStyle, SplittableEditor, element::SplitSide};
@@ -164,6 +165,7 @@ impl Element for SplitEditorElement {
             window,
             cx,
         );
+        self.rhs.set_split_bounds(bounds);
         let rhs = self.rhs.prepaint(
             id,
             inspector_id,
