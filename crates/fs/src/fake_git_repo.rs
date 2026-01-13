@@ -22,6 +22,7 @@ use rope::Rope;
 use smol::future::FutureExt as _;
 use std::{
     path::PathBuf,
+    rc::Rc,
     sync::{Arc, LazyLock},
 };
 use text::LineEnding;
@@ -743,7 +744,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _log_source: LogSource,
         _log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>> {
+    ) -> BoxFuture<'_, Result<Vec<Arc<InitialGraphCommitData>>>> {
         async { Ok(Vec::new()) }.boxed()
     }
 

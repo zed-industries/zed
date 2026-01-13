@@ -130,7 +130,7 @@ impl LaneState {
 }
 
 pub struct CommitEntry {
-    pub data: InitialGraphCommitData,
+    pub data: Arc<InitialGraphCommitData>,
     pub lane: usize,
     pub color_idx: usize,
 }
@@ -280,7 +280,7 @@ impl GitGraph {
         })
     }
 
-    pub(crate) fn add_commits(&mut self, commits: Arc<Vec<InitialGraphCommitData>>) {
+    pub(crate) fn add_commits(&mut self, commits: Arc<Vec<Arc<InitialGraphCommitData>>>) {
         for commit in commits.as_ref().into_iter() {
             let commit_row = self.commits.len();
 

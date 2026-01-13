@@ -21,6 +21,7 @@ use text::LineEnding;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
+use std::rc::Rc;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -65,14 +66,13 @@ pub struct GraphCommitData {
     pub author_email: SharedString,
     pub commit_timestamp: i64,
     pub subject: SharedString,
-    pub ref_names: Vec<SharedString>,
 }
 
 // todo! Should we wrap the small vec with a rc to make this cheaply clonable?
-#[derive(Clone)]
 pub struct InitialGraphCommitData {
     pub sha: Oid,
     pub parents: SmallVec<[Oid; 1]>,
+    pub ref_names: Vec<SharedString>,
 }
 
 struct CommitDataRequest {
@@ -143,7 +143,6 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
         author_email,
         commit_timestamp,
         subject: subject.unwrap_or_default(),
-        ref_names: Vec::new(),
     })
 }
 
@@ -806,7 +805,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>>;
+    ) -> BoxFuture<'_, Result<Vec<Arc<InitialGraphCommitData>>>>;
 
     fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
 
@@ -2560,7 +2559,7 @@ impl GitRepository for RealGitRepository {
         &self,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<InitialGraphCommitData>>> {
+    ) -> BoxFuture<'_, Result<Vec<Arc<InitialGraphCommitData>>>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
         let executor = self.executor.clone();
@@ -2569,16 +2568,17 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let git = GitBinary::new(git_binary_path, working_directory, executor);
 
-            // todo! we should figure out how to fetch in chunk's
+            // Format: SHA PARENTS\x00REF_NAMES
+            // Using \x00 as separator since ref names can contain spaces
             let args = [
-                "rev-list",
-                "--parents",
+                "log",
+                "--format=%H %P%x00%D",
                 log_order.as_arg(),
                 log_source.get_arg(),
             ];
 
             let output = git.run(&args).await?;
-            Ok(parse_rev_list_output(&output))
+            Ok(parse_initial_graph_output(&output))
         }
         .boxed()
     }
@@ -2711,20 +2711,38 @@ async fn read_single_commit_response(
         .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
 }
 
-fn parse_rev_list_output(output: &str) -> Vec<InitialGraphCommitData> {
+fn parse_initial_graph_output(output: &str) -> Vec<Arc<InitialGraphCommitData>> {
     output
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let mut parts = line.split_whitespace();
+            // Format: "SHA PARENT1 PARENT2...\x00REF1, REF2, ..."
+            let (sha_parents, ref_names_str) = line.split_once('\x00')?;
+
+            let mut parts = sha_parents.split_whitespace();
             let sha = Oid::from_str(parts.next()?).ok()?;
             let parents = parts.filter_map(|p| Oid::from_str(p).ok()).collect();
-            Some(InitialGraphCommitData { sha, parents })
+
+            let ref_names = if ref_names_str.is_empty() {
+                Vec::new()
+            } else {
+                ref_names_str
+                    .split(", ")
+                    .map(|s| SharedString::from(s.to_string()))
+                    .collect()
+            };
+
+            Some(Arc::new(InitialGraphCommitData {
+                sha,
+                parents,
+                ref_names,
+            }))
         })
         .collect()
 }
 
 // todo! Move this to the caching layer
+// todo! remove this function
 fn parse_graph_log_output(output: &str) -> Vec<GraphCommitData> {
     output
         .lines()
@@ -2742,16 +2760,6 @@ fn parse_graph_log_output(output: &str) -> Vec<GraphCommitData> {
                 .split_ascii_whitespace()
                 .filter_map(|hash| Oid::from_str(hash).ok())
                 .collect();
-            let ref_names = parts
-                .get(7)
-                .filter(|ref_name| !ref_name.is_empty())
-                .map(|ref_names| {
-                    ref_names
-                        .split(", ")
-                        .map(|s| SharedString::from(s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
 
             Some(GraphCommitData {
                 sha,
@@ -2760,7 +2768,6 @@ fn parse_graph_log_output(output: &str) -> Vec<GraphCommitData> {
                 author_email,
                 commit_timestamp,
                 subject,
-                ref_names,
             })
         })
         .collect()

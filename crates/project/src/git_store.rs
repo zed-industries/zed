@@ -65,6 +65,7 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::{
         Arc,
@@ -315,7 +316,7 @@ pub struct Repository {
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     pub initial_graph_data: HashMap<
         (LogOrder, LogSource),
-        Shared<Task<Result<Arc<Vec<InitialGraphCommitData>>, SharedString>>>,
+        Shared<Task<Result<Arc<Vec<Arc<InitialGraphCommitData>>>, SharedString>>>,
     >,
     graph_commit_data_handler: GraphCommitHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
@@ -4228,7 +4229,7 @@ impl Repository {
         log_source: LogSource,
         log_order: LogOrder,
         cx: &mut App,
-    ) -> Shared<Task<Result<Arc<Vec<InitialGraphCommitData>>, SharedString>>> {
+    ) -> Shared<Task<Result<Arc<Vec<Arc<InitialGraphCommitData>>>, SharedString>>> {
         self.initial_graph_data
             .entry((log_order.clone(), log_source.clone()))
             .or_insert_with(|| {
