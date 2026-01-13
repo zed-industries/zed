@@ -403,36 +403,42 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     }
 
     // Run Test 3: Agent Thread View tests
-    println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
-    match run_agent_thread_view_test(app_state.clone(), &mut cx, update_baseline) {
-        Ok(TestResult::Passed) => {
-            println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
-            passed += 1;
-        }
-        Ok(TestResult::BaselineUpdated(_)) => {
-            println!("✓ agent_thread_with_image: Baselines updated (collapsed + expanded)");
-            updated += 1;
-        }
-        Err(e) => {
-            eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
-            failed += 1;
+    #[cfg(feature = "visual-tests")]
+    {
+        println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
+        match run_agent_thread_view_test(app_state.clone(), &mut cx, update_baseline) {
+            Ok(TestResult::Passed) => {
+                println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
+                passed += 1;
+            }
+            Ok(TestResult::BaselineUpdated(_)) => {
+                println!("✓ agent_thread_with_image: Baselines updated (collapsed + expanded)");
+                updated += 1;
+            }
+            Err(e) => {
+                eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
+                failed += 1;
+            }
         }
     }
 
     // Run Test 4: Subagent Cards visual tests
-    println!("\n--- Test 4: subagent_cards (running, completed, expanded) ---");
-    match run_subagent_visual_tests(app_state.clone(), &mut cx, update_baseline) {
-        Ok(TestResult::Passed) => {
-            println!("✓ subagent_cards: PASSED");
-            passed += 1;
-        }
-        Ok(TestResult::BaselineUpdated(_)) => {
-            println!("✓ subagent_cards: Baselines updated");
-            updated += 1;
-        }
-        Err(e) => {
-            eprintln!("✗ subagent_cards: FAILED - {}", e);
-            failed += 1;
+    #[cfg(feature = "visual-tests")]
+    {
+        println!("\n--- Test 4: subagent_cards (running, completed, expanded) ---");
+        match run_subagent_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+            Ok(TestResult::Passed) => {
+                println!("✓ subagent_cards: PASSED");
+                passed += 1;
+            }
+            Ok(TestResult::BaselineUpdated(_)) => {
+                println!("✓ subagent_cards: Baselines updated");
+                updated += 1;
+            }
+            Err(e) => {
+                eprintln!("✗ subagent_cards: FAILED - {}", e);
+                failed += 1;
+            }
         }
     }
 
@@ -1455,7 +1461,7 @@ impl AgentServer for StubAgentServer {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
 fn run_subagent_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
@@ -1785,7 +1791,7 @@ fn run_subagent_visual_tests(
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
 fn run_agent_thread_view_test(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
