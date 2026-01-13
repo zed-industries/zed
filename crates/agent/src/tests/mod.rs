@@ -3469,6 +3469,7 @@ fn setup_context_server(
             name.into(),
             project::project_settings::ContextServerSettings::Stdio {
                 enabled: true,
+                local_only: false,
                 command: ContextServerCommand {
                     path: "somebinary".into(),
                     args: Vec::new(),

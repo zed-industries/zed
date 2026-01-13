@@ -1103,7 +1103,12 @@ impl Project {
 
             let weak_self = cx.weak_entity();
             let context_server_store = cx.new(|cx| {
-                ContextServerStore::local(worktree_store.clone(), Some(weak_self.clone()), cx)
+                ContextServerStore::local(
+                    worktree_store.clone(),
+                    Some(weak_self.clone()),
+                    false,
+                    cx,
+                )
             });
 
             let environment = cx.new(|cx| {
@@ -1685,8 +1690,9 @@ impl Project {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), Some(weak_self), cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::local(worktree_store.clone(), Some(weak_self), false, cx)
+            });
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {

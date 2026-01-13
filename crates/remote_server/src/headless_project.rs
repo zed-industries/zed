@@ -236,7 +236,7 @@ impl HeadlessProject {
 
         let context_server_store = cx.new(|cx| {
             let mut context_server_store =
-                ContextServerStore::local(worktree_store.clone(), None, cx);
+                ContextServerStore::local(worktree_store.clone(), None, true, cx);
             context_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
             context_server_store
         });

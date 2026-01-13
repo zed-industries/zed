@@ -102,10 +102,12 @@ impl ContextServerState {
 pub enum ContextServerConfiguration {
     Custom {
         command: ContextServerCommand,
+        local_only: bool,
     },
     Extension {
         command: ContextServerCommand,
         settings: serde_json::Value,
+        local_only: bool,
     },
     Http {
         url: url::Url,
@@ -117,9 +119,17 @@ pub enum ContextServerConfiguration {
 impl ContextServerConfiguration {
     pub fn command(&self) -> Option<&ContextServerCommand> {
         match self {
-            ContextServerConfiguration::Custom { command } => Some(command),
+            ContextServerConfiguration::Custom { command, .. } => Some(command),
             ContextServerConfiguration::Extension { command, .. } => Some(command),
             ContextServerConfiguration::Http { .. } => None,
+        }
+    }
+
+    pub fn local_only(&self) -> bool {
+        match self {
+            ContextServerConfiguration::Custom { local_only, .. } => *local_only,
+            ContextServerConfiguration::Extension { local_only, .. } => *local_only,
+            ContextServerConfiguration::Http { .. } => false,
         }
     }
 
@@ -134,18 +144,25 @@ impl ContextServerConfiguration {
             ContextServerSettings::Stdio {
                 enabled: _,
                 command,
-            } => Some(ContextServerConfiguration::Custom { command }),
+                local_only,
+            } => Some(ContextServerConfiguration::Custom {
+                command,
+                local_only,
+            }),
             ContextServerSettings::Extension {
                 enabled: _,
                 settings,
+                local_only,
             } => {
                 let descriptor =
                     cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
 
                 match descriptor.command(worktree_store, cx).await {
-                    Ok(command) => {
-                        Some(ContextServerConfiguration::Extension { command, settings })
-                    }
+                    Ok(command) => Some(ContextServerConfiguration::Extension {
+                        command,
+                        settings,
+                        local_only,
+                    }),
                     Err(e) => {
                         log::error!(
                             "Failed to create context server configuration from settings: {e:#}"
@@ -177,6 +194,7 @@ pub type ContextServerFactory =
 enum ContextServerStoreState {
     Local {
         downstream_client: Option<(u64, AnyProtoClient)>,
+        is_headless: bool,
     },
     Remote {
         project_id: u64,
@@ -210,6 +228,7 @@ impl ContextServerStore {
     pub fn local(
         worktree_store: Entity<WorktreeStore>,
         weak_project: Option<WeakEntity<Project>>,
+        headless: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -220,6 +239,7 @@ impl ContextServerStore {
             weak_project,
             ContextServerStoreState::Local {
                 downstream_client: None,
+                is_headless: headless,
             },
             cx,
         )
@@ -251,9 +271,28 @@ impl ContextServerStore {
     }
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient) {
-        if let ContextServerStoreState::Local { downstream_client } = &mut self.state {
+        if let ContextServerStoreState::Local {
+            downstream_client, ..
+        } = &mut self.state
+        {
             *downstream_client = Some((project_id, client));
         }
+    }
+
+    /// Returns true if this store is running on a headless (remote) server.
+    fn is_headless(&self) -> bool {
+        matches!(
+            self.state,
+            ContextServerStoreState::Local {
+                is_headless: true,
+                ..
+            }
+        )
+    }
+
+    /// Returns true if this store is for a remote (SSH) project.
+    pub fn is_remote_project(&self) -> bool {
+        matches!(self.state, ContextServerStoreState::Remote { .. })
     }
 
     pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
@@ -279,6 +318,7 @@ impl ContextServerStore {
             weak_project,
             ContextServerStoreState::Local {
                 downstream_client: None,
+                is_headless: false,
             },
             cx,
         )
@@ -300,6 +340,7 @@ impl ContextServerStore {
             weak_project,
             ContextServerStoreState::Local {
                 downstream_client: None,
+                is_headless: false,
             },
             cx,
         )
@@ -324,6 +365,7 @@ impl ContextServerStore {
                 env: None,
                 timeout: None,
             },
+            local_only: false,
         });
         self.run_server(server, configuration, cx);
     }
@@ -371,9 +413,11 @@ impl ContextServerStore {
             context_server_factory,
         };
         if maintain_server_loop {
-            // For remote mode, delay starting servers to allow settings to sync to the headless
-            // server first. This avoids a race condition where GetContextServerCommand is sent
-            // before the headless server receives the user's settings via UpdateUserSettings.
+            // TODO: For remote projects, there's a potential race condition where
+            // GetContextServerCommand is sent before the headless server receives
+            // UpdateUserSettings. The proper fix would be to have the headless server
+            // signal when settings are ready, or have the RPC handler wait for settings.
+            // For now, we use a delay as a workaround.
             if matches!(this.state, ContextServerStoreState::Remote { .. }) {
                 cx.spawn(async move |this, cx| {
                     cx.background_executor()
@@ -382,7 +426,7 @@ impl ContextServerStore {
                     this.update(cx, |this, cx| {
                         this.available_context_servers_changed(cx);
                     })
-                    .ok();
+                    .log_err();
                 })
                 .detach();
             } else {
@@ -523,12 +567,17 @@ impl ContextServerStore {
             self.stop_server(&id, cx).log_err();
         }
 
+        let local_only = configuration.local_only();
+        if self.is_headless() && local_only {
+            return;
+        }
+
         let remote_state = match &self.state {
             ContextServerStoreState::Remote {
                 project_id,
                 upstream_client,
-            } => Some((*project_id, upstream_client.clone())),
-            ContextServerStoreState::Local { .. } => None,
+            } if !local_only => Some((*project_id, upstream_client.clone())),
+            _ => None,
         };
 
         let task = cx.spawn({
@@ -537,69 +586,68 @@ impl ContextServerStore {
             let configuration = configuration.clone();
 
             async move |this, cx| {
-                // For remote mode, get the command via RPC from the headless server,
-                // then wrap it with SSH for local execution
-                let (server, configuration) = if let Some((project_id, upstream_client)) =
-                    remote_state
-                {
-                    let root_dir = this.update(cx, |this, cx| {
-                        this.project.as_ref().and_then(|project| {
-                            project
-                                .read_with(cx, |project, cx| {
-                                    project
-                                        .active_project_directory(cx)
-                                        .map(|p| p.display().to_string())
-                                })
-                                .ok()
-                                .flatten()
-                        })
-                    })?;
+                let (server, configuration) =
+                    if let Some((project_id, upstream_client)) = remote_state {
+                        let root_dir = this.update(cx, |this, cx| {
+                            this.project.as_ref().and_then(|project| {
+                                project
+                                    .read_with(cx, |project, cx| {
+                                        project
+                                            .active_project_directory(cx)
+                                            .map(|p| p.display().to_string())
+                                    })
+                                    .ok()
+                                    .flatten()
+                            })
+                        })?;
 
-                    let response = upstream_client
-                        .update(cx, |client, _| {
-                            client
-                                .proto_client()
-                                .request(proto::GetContextServerCommand {
-                                    project_id,
-                                    server_id: id.0.to_string(),
-                                    root_dir: root_dir.clone(),
-                                })
-                        })
-                        .await?;
+                        let response = upstream_client
+                            .update(cx, |client, _| {
+                                client
+                                    .proto_client()
+                                    .request(proto::GetContextServerCommand {
+                                        project_id,
+                                        server_id: id.0.to_string(),
+                                        root_dir: root_dir.clone(),
+                                    })
+                            })
+                            .await?;
 
-                    let remote_command = upstream_client.update(cx, |client, _| {
-                        client.build_command(
-                            Some(response.path),
-                            &response.args,
-                            &response.env.into_iter().collect(),
-                            root_dir,
-                            None,
-                        )
-                    })?;
+                        let remote_command = upstream_client.update(cx, |client, _| {
+                            client.build_command(
+                                Some(response.path),
+                                &response.args,
+                                &response.env.into_iter().collect(),
+                                root_dir,
+                                None,
+                            )
+                        })?;
 
-                    let command = ContextServerCommand {
-                        path: remote_command.program.into(),
-                        args: remote_command.args,
-                        env: Some(remote_command.env.into_iter().collect()),
-                        timeout: None,
+                        let command = ContextServerCommand {
+                            path: remote_command.program.into(),
+                            args: remote_command.args,
+                            env: Some(remote_command.env.into_iter().collect()),
+                            timeout: None,
+                        };
+
+                        let configuration = Arc::new(ContextServerConfiguration::Custom {
+                            command,
+                            local_only,
+                        });
+
+                        let server = this.update(cx, |this, cx| {
+                            this.create_context_server(
+                                id.clone(),
+                                configuration.clone(),
+                                Some(None),
+                                cx,
+                            )
+                        })??;
+
+                        (server, configuration)
+                    } else {
+                        (server, configuration)
                     };
-
-                    let configuration = Arc::new(ContextServerConfiguration::Custom { command });
-
-                    // Create a new server with the SSH-wrapped command
-                    let server = this.update(cx, |this, cx| {
-                        this.create_context_server(
-                            id.clone(),
-                            configuration.clone(),
-                            Some(None),
-                            cx,
-                        )
-                    })??;
-
-                    (server, configuration)
-                } else {
-                    (server, configuration)
-                };
 
                 match server.clone().start(cx).await {
                     Ok(_) => {
@@ -614,7 +662,8 @@ impl ContextServerStore {
                                 },
                                 cx,
                             )
-                        })?;
+                        })
+                        .log_err();
                     }
                     Err(err) => {
                         log::error!("{} context server failed to start: {}", id, err);
@@ -628,7 +677,8 @@ impl ContextServerStore {
                                 },
                                 cx,
                             )
-                        })?;
+                        })
+                        .log_err();
                     }
                 };
 
@@ -737,8 +787,11 @@ impl ContextServerStore {
     ) -> Result<proto::ContextServerCommand> {
         let server_id = ContextServerId(envelope.payload.server_id.into());
 
-        let configuration = this.update(&mut cx, |this, cx| {
-            let ContextServerStoreState::Local { .. } = &this.state else {
+        let configuration = this.update(&mut cx, |this, _cx| {
+            let ContextServerStoreState::Local {
+                is_headless: true, ..
+            } = &this.state
+            else {
                 debug_panic!("should not receive GetContextServerCommand in a non-local project");
                 bail!("unexpected GetContextServerCommand request in a non-local project");
             };
@@ -842,7 +895,7 @@ impl ContextServerStore {
                 worktree_store.clone(),
                 cx,
             )
-            .map(|config| (id, config))
+            .map(move |config| (id, config))
         }))
         .await
         .into_iter()
@@ -872,8 +925,19 @@ impl ContextServerStore {
                 let existing_config = state.as_ref().map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) || is_stopped {
                     let config = Arc::new(config);
-                    let server =
-                        this.create_context_server(id.clone(), config.clone(), None, cx)?;
+                    // For local-only servers on remote projects, use no working directory
+                    // to avoid passing remote paths to a local process
+                    let working_directory = if config.local_only() && this.is_remote_project() {
+                        Some(None)
+                    } else {
+                        None
+                    };
+                    let server = this.create_context_server(
+                        id.clone(),
+                        config.clone(),
+                        working_directory,
+                        cx,
+                    )?;
                     servers_to_start.push((server, config));
                     if this.servers.contains_key(&id) {
                         servers_to_stop.insert(id);
@@ -925,7 +989,7 @@ mod tests {
             ContextServerStore::test(
                 registry.clone(),
                 project.read(cx).worktree_store(),
-                project.downgrade(),
+                Some(project.downgrade()),
                 cx,
             )
         });
@@ -999,7 +1063,7 @@ mod tests {
             ContextServerStore::test(
                 registry.clone(),
                 project.read(cx).worktree_store(),
-                project.downgrade(),
+                Some(project.downgrade()),
                 cx,
             )
         });
@@ -1054,7 +1118,7 @@ mod tests {
             ContextServerStore::test(
                 registry.clone(),
                 project.read(cx).worktree_store(),
-                project.downgrade(),
+                Some(project.downgrade()),
                 cx,
             )
         });
@@ -1134,6 +1198,7 @@ mod tests {
                 server_1_id.0.clone(),
                 settings::ContextServerSettingsContent::Extension {
                     enabled: true,
+                    local_only: false,
                     settings: json!({
                         "somevalue": true
                     }),
@@ -1171,6 +1236,7 @@ mod tests {
                     server_1_id.0.clone(),
                     settings::ContextServerSettingsContent::Extension {
                         enabled: true,
+                        local_only: false,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -1190,6 +1256,7 @@ mod tests {
                     server_1_id.0.clone(),
                     settings::ContextServerSettingsContent::Extension {
                         enabled: true,
+                        local_only: false,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -1217,6 +1284,7 @@ mod tests {
                         server_1_id.0.clone(),
                         settings::ContextServerSettingsContent::Extension {
                             enabled: true,
+                            local_only: false,
                             settings: json!({
                                 "somevalue": false
                             }),
@@ -1226,9 +1294,10 @@ mod tests {
                         server_2_id.0.clone(),
                         settings::ContextServerSettingsContent::Stdio {
                             enabled: true,
+                            local_only: false,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
-                                args: vec!["arg".to_string()],
+                                args: vec!["anotherArg".to_string()],
                                 env: None,
                                 timeout: None,
                             },
@@ -1258,6 +1327,7 @@ mod tests {
                         server_1_id.0.clone(),
                         settings::ContextServerSettingsContent::Extension {
                             enabled: true,
+                            local_only: false,
                             settings: json!({
                                 "somevalue": false
                             }),
@@ -1267,6 +1337,7 @@ mod tests {
                         server_2_id.0.clone(),
                         settings::ContextServerSettingsContent::Stdio {
                             enabled: true,
+                            local_only: false,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
                                 args: vec!["anotherArg".to_string()],
@@ -1294,6 +1365,7 @@ mod tests {
                     server_1_id.0.clone(),
                     settings::ContextServerSettingsContent::Extension {
                         enabled: true,
+                        local_only: false,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -1317,6 +1389,7 @@ mod tests {
                     server_1_id.0.clone(),
                     settings::ContextServerSettingsContent::Extension {
                         enabled: true,
+                        local_only: false,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -1361,6 +1434,7 @@ mod tests {
                 server_1_id.0.clone(),
                 settings::ContextServerSettingsContent::Stdio {
                     enabled: true,
+                    local_only: false,
                     command: ContextServerCommand {
                         path: "somebinary".into(),
                         args: vec!["arg".to_string()],
@@ -1397,6 +1471,7 @@ mod tests {
                     server_1_id.0.clone(),
                     settings::ContextServerSettingsContent::Stdio {
                         enabled: false,
+                        local_only: false,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
@@ -1426,6 +1501,7 @@ mod tests {
                     server_1_id.0.clone(),
                     settings::ContextServerSettingsContent::Stdio {
                         enabled: true,
+                        local_only: false,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
@@ -1554,7 +1630,7 @@ mod tests {
             ContextServerStore::test(
                 registry.clone(),
                 project.read(cx).worktree_store(),
-                project.downgrade(),
+                Some(project.downgrade()),
                 cx,
             )
         });
@@ -1613,7 +1689,7 @@ mod tests {
             ContextServerStore::test(
                 registry.clone(),
                 project.read(cx).worktree_store(),
-                project.downgrade(),
+                Some(project.downgrade()),
                 cx,
             )
         });
@@ -1647,7 +1723,7 @@ mod tests {
             ContextServerStore::test(
                 registry.clone(),
                 project.read(cx).worktree_store(),
-                project.downgrade(),
+                Some(project.downgrade()),
                 cx,
             )
         });
@@ -1662,6 +1738,7 @@ mod tests {
                         env: None,
                         timeout: Some(180000),
                     },
+                    local_only: false,
                 }),
                 None,
                 cx,
