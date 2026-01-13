@@ -120,7 +120,8 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            let retrieval_chunks = related_files
+            let retrieval_chunks = inputs
+                .related_files
                 .iter()
                 .flat_map(|related_file| {
                     related_file.excerpts.iter().map(|excerpt| FileChunk {
@@ -205,7 +206,7 @@ impl SweepAi {
 
             let ep_inputs = zeta_prompt::ZetaPromptInput {
                 events: inputs.events,
-                related_files: related_files.clone(),
+                related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
                 cursor_excerpt: request_body.file_contents.clone().into(),
                 // we actually don't know

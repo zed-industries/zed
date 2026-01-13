@@ -445,7 +445,7 @@ impl RelatedBuffer {
             })
             .collect::<Vec<_>>();
         self.cached_file = Some(CachedRelatedFile {
-            excerpts: excerpts.clone(),
+            excerpts: excerpts,
             buffer_version: buffer.version().clone(),
         });
         self.cached_file.as_ref().unwrap()

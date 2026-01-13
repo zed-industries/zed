@@ -251,7 +251,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
                             prompt.push_str(CODE_SNIPPET_FILE_PATH_PREFIX);
                             prompt.push_str(related_file.path.to_string_lossy().as_ref());
                             prompt.push('\n');
-                            prompt.push_str(&related_excerpt.text.to_string());
+                            prompt.push_str(related_excerpt.text.as_ref());
                         },
                     );
                 }
