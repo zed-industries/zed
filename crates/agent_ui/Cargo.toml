@@ -47,6 +47,7 @@ feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+git_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true

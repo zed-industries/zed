@@ -1,11 +1,31 @@
+use acp_thread::{AcpThread, AgentConnection, UserMessageId};
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::Result;
-use gpui::{App, SharedString, Task};
+use anyhow::{Result, anyhow};
+use collections::HashSet;
+use futures::channel::mpsc;
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use project::Project;
+use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smol::stream::StreamExt;
+use std::any::Any;
+use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
+use util::ResultExt;
+use watch;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ContextServerRegistry, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext,
+    Templates, Thread, ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
+};
+
+/// When a subagent's remaining context window falls below this fraction (25%),
+/// the "context running out" prompt is sent to encourage the subagent to wrap up.
+const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 
 /// Spawns a subagent with its own context window to perform a delegated task.
 ///
@@ -63,11 +83,50 @@ pub struct SubagentToolInput {
     pub allowed_tools: Option<Vec<String>>,
 }
 
-pub struct SubagentTool;
+pub struct SubagentTool {
+    parent_thread: WeakEntity<Thread>,
+    project: Entity<Project>,
+    project_context: Entity<ProjectContext>,
+    context_server_registry: Entity<ContextServerRegistry>,
+    templates: Arc<Templates>,
+    current_depth: u8,
+    parent_tool_names: HashSet<SharedString>,
+}
 
 impl SubagentTool {
-    pub fn new() -> Self {
-        Self
+    pub fn new(
+        parent_thread: WeakEntity<Thread>,
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        current_depth: u8,
+        parent_tool_names: Vec<SharedString>,
+    ) -> Self {
+        Self {
+            parent_thread,
+            project,
+            project_context,
+            context_server_registry,
+            templates,
+            current_depth,
+            parent_tool_names: parent_tool_names.into_iter().collect(),
+        }
+    }
+
+    pub fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
+        if let Some(tools) = allowed_tools {
+            for tool in tools {
+                if !self.parent_tool_names.contains(tool.as_str()) {
+                    return Err(anyhow!(
+                        "Tool '{}' is not available to the parent agent. Available tools: {:?}",
+                        tool,
+                        self.parent_tool_names.iter().collect::<Vec<_>>()
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -76,7 +135,7 @@ impl AgentTool for SubagentTool {
     type Output = String;
 
     fn name() -> &'static str {
-        "subagent"
+        acp_thread::SUBAGENT_TOOL_NAME
     }
 
     fn kind() -> acp::ToolKind {
@@ -88,22 +147,405 @@ impl AgentTool for SubagentTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        match input {
-            Ok(input) => format!("Subagent: {}", input.label).into(),
-            Err(_) => "Subagent".into(),
-        }
+        input
+            .map(|i| i.label.into())
+            .unwrap_or_else(|_| "Subagent".into())
     }
 
     fn run(
         self: Arc<Self>,
         input: Self::Input,
         event_stream: ToolCallEventStream,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<String>> {
-        event_stream.update_fields(
-            acp::ToolCallUpdateFields::new()
-                .content(vec![format!("Starting subagent: {}", input.label).into()]),
+        if self.current_depth >= MAX_SUBAGENT_DEPTH {
+            return Task::ready(Err(anyhow!(
+                "Maximum subagent depth ({}) reached",
+                MAX_SUBAGENT_DEPTH
+            )));
+        }
+
+        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools) {
+            return Task::ready(Err(e));
+        }
+
+        let Some(parent_thread) = self.parent_thread.upgrade() else {
+            return Task::ready(Err(anyhow!(
+                "Parent thread no longer exists (subagent depth={})",
+                self.current_depth + 1
+            )));
+        };
+
+        let running_count = parent_thread.read(cx).running_subagent_count();
+        if running_count >= MAX_PARALLEL_SUBAGENTS {
+            return Task::ready(Err(anyhow!(
+                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
+                MAX_PARALLEL_SUBAGENTS
+            )));
+        }
+
+        let parent_thread_id = parent_thread.read(cx).id().clone();
+        let parent_model = parent_thread.read(cx).model().cloned();
+        let tool_use_id = event_stream.tool_use_id().clone();
+
+        let Some(model) = parent_model else {
+            return Task::ready(Err(anyhow!("No model configured")));
+        };
+
+        let subagent_context = SubagentContext {
+            parent_thread_id,
+            tool_use_id,
+            depth: self.current_depth + 1,
+            summary_prompt: input.summary_prompt.clone(),
+            context_low_prompt: input.context_low_prompt.clone(),
+        };
+
+        let project = self.project.clone();
+        let project_context = self.project_context.clone();
+        let context_server_registry = self.context_server_registry.clone();
+        let templates = self.templates.clone();
+        let task_prompt = input.task_prompt;
+        let timeout_ms = input.timeout_ms;
+        let allowed_tools: Option<HashSet<SharedString>> = input
+            .allowed_tools
+            .map(|tools| tools.into_iter().map(SharedString::from).collect());
+
+        let parent_thread = self.parent_thread.clone();
+
+        cx.spawn(async move |cx| {
+            let subagent_thread: Entity<Thread> = cx.new(|cx| {
+                Thread::new_subagent(
+                    project.clone(),
+                    project_context.clone(),
+                    context_server_registry.clone(),
+                    templates.clone(),
+                    model,
+                    subagent_context,
+                    cx,
+                )
+            });
+
+            let subagent_weak = subagent_thread.downgrade();
+
+            let acp_thread: Entity<AcpThread> = cx.new(|cx| {
+                let session_id = subagent_thread.read(cx).id().clone();
+                let action_log: Entity<ActionLog> = cx.new(|_| ActionLog::new(project.clone()));
+                let connection: Rc<dyn AgentConnection> = Rc::new(SubagentDisplayConnection);
+                AcpThread::new(
+                    "Subagent",
+                    connection,
+                    project.clone(),
+                    action_log,
+                    session_id,
+                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    cx,
+                )
+            });
+
+            event_stream.update_subagent_thread(acp_thread.clone());
+
+            if let Some(parent) = parent_thread.upgrade() {
+                parent.update(cx, |thread, _cx| {
+                    thread.register_running_subagent(subagent_weak.clone());
+                });
+            }
+
+            let result = run_subagent(
+                &subagent_thread,
+                &acp_thread,
+                allowed_tools,
+                task_prompt,
+                timeout_ms,
+                cx,
+            )
+            .await;
+
+            if let Some(parent) = parent_thread.upgrade() {
+                let _ = parent.update(cx, |thread, _cx| {
+                    thread.unregister_running_subagent(&subagent_weak);
+                });
+            }
+
+            result
+        })
+    }
+}
+
+async fn run_subagent(
+    subagent_thread: &Entity<Thread>,
+    acp_thread: &Entity<AcpThread>,
+    allowed_tools: Option<HashSet<SharedString>>,
+    task_prompt: String,
+    timeout_ms: Option<u64>,
+    cx: &mut AsyncApp,
+) -> Result<String> {
+    if let Some(ref allowed) = allowed_tools {
+        subagent_thread.update(cx, |thread, _cx| {
+            thread.restrict_tools(allowed);
+        });
+    }
+
+    let mut events_rx =
+        subagent_thread.update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))?;
+
+    let acp_thread_weak = acp_thread.downgrade();
+
+    let timed_out = if let Some(timeout) = timeout_ms {
+        forward_events_with_timeout(
+            &mut events_rx,
+            &acp_thread_weak,
+            Duration::from_millis(timeout),
+            cx,
+        )
+        .await
+    } else {
+        forward_events_until_stop(&mut events_rx, &acp_thread_weak, cx).await;
+        false
+    };
+
+    let should_interrupt =
+        timed_out || check_context_low(subagent_thread, CONTEXT_LOW_THRESHOLD, cx);
+
+    if should_interrupt {
+        let mut summary_rx =
+            subagent_thread.update(cx, |thread, cx| thread.interrupt_for_summary(cx))?;
+        forward_events_until_stop(&mut summary_rx, &acp_thread_weak, cx).await;
+    } else {
+        let mut summary_rx =
+            subagent_thread.update(cx, |thread, cx| thread.request_final_summary(cx))?;
+        forward_events_until_stop(&mut summary_rx, &acp_thread_weak, cx).await;
+    }
+
+    Ok(extract_last_message(subagent_thread, cx))
+}
+
+async fn forward_events_until_stop(
+    events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    acp_thread: &WeakEntity<AcpThread>,
+    cx: &mut AsyncApp,
+) {
+    while let Some(event) = events_rx.next().await {
+        match event {
+            Ok(ThreadEvent::Stop(_)) => break,
+            Ok(event) => {
+                forward_event_to_acp_thread(event, acp_thread, cx);
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+async fn forward_events_with_timeout(
+    events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+    acp_thread: &WeakEntity<AcpThread>,
+    timeout: Duration,
+    cx: &mut AsyncApp,
+) -> bool {
+    use futures::future::{self, Either};
+
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+
+        let timeout_future = cx.background_executor().timer(remaining);
+        let event_future = events_rx.next();
+
+        match future::select(event_future, timeout_future).await {
+            Either::Left((event, _)) => match event {
+                Some(Ok(ThreadEvent::Stop(_))) => return false,
+                Some(Ok(event)) => {
+                    forward_event_to_acp_thread(event, acp_thread, cx);
+                }
+                Some(Err(_)) => return false,
+                None => return false,
+            },
+            Either::Right((_, _)) => return true,
+        }
+    }
+}
+
+fn forward_event_to_acp_thread(
+    event: ThreadEvent,
+    acp_thread: &WeakEntity<AcpThread>,
+    cx: &mut AsyncApp,
+) {
+    match event {
+        ThreadEvent::UserMessage(message) => {
+            acp_thread
+                .update(cx, |thread, cx| {
+                    for content in message.content {
+                        thread.push_user_content_block(
+                            Some(message.id.clone()),
+                            content.into(),
+                            cx,
+                        );
+                    }
+                })
+                .log_err();
+        }
+        ThreadEvent::AgentText(text) => {
+            acp_thread
+                .update(cx, |thread, cx| {
+                    thread.push_assistant_content_block(text.into(), false, cx)
+                })
+                .log_err();
+        }
+        ThreadEvent::AgentThinking(text) => {
+            acp_thread
+                .update(cx, |thread, cx| {
+                    thread.push_assistant_content_block(text.into(), true, cx)
+                })
+                .log_err();
+        }
+        ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
+            tool_call,
+            options,
+            response,
+        }) => {
+            let outcome_task = acp_thread.update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(tool_call, options, true, cx)
+            });
+            if let Ok(Ok(task)) = outcome_task {
+                cx.background_spawn(async move {
+                    if let acp::RequestPermissionOutcome::Selected(
+                        acp::SelectedPermissionOutcome { option_id, .. },
+                    ) = task.await
+                    {
+                        response.send(option_id).ok();
+                    }
+                })
+                .detach();
+            }
+        }
+        ThreadEvent::ToolCall(tool_call) => {
+            acp_thread
+                .update(cx, |thread, cx| thread.upsert_tool_call(tool_call, cx))
+                .log_err();
+        }
+        ThreadEvent::ToolCallUpdate(update) => {
+            acp_thread
+                .update(cx, |thread, cx| thread.update_tool_call(update, cx))
+                .log_err();
+        }
+        ThreadEvent::Retry(status) => {
+            acp_thread
+                .update(cx, |thread, cx| thread.update_retry_status(status, cx))
+                .log_err();
+        }
+        ThreadEvent::Stop(_) => {}
+    }
+}
+
+fn check_context_low(thread: &Entity<Thread>, threshold: f32, cx: &mut AsyncApp) -> bool {
+    thread.read_with(cx, |thread, _| {
+        if let Some(usage) = thread.latest_token_usage() {
+            let remaining_ratio = 1.0 - (usage.used_tokens as f32 / usage.max_tokens as f32);
+            remaining_ratio <= threshold
+        } else {
+            false
+        }
+    })
+}
+
+fn extract_last_message(thread: &Entity<Thread>, cx: &mut AsyncApp) -> String {
+    thread.read_with(cx, |thread, _| {
+        thread
+            .last_message()
+            .map(|m| m.to_markdown())
+            .unwrap_or_else(|| "No response from subagent".to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::LanguageModelToolSchemaFormat;
+
+    #[test]
+    fn test_subagent_tool_input_json_schema_is_valid() {
+        let schema = SubagentTool::input_schema(LanguageModelToolSchemaFormat::JsonSchema);
+        let schema_json = serde_json::to_value(&schema).expect("schema should serialize to JSON");
+
+        assert!(
+            schema_json.get("properties").is_some(),
+            "schema should have properties"
         );
-        Task::ready(Ok("Subagent tool not yet implemented.".to_string()))
+        let properties = schema_json.get("properties").unwrap();
+
+        assert!(properties.get("label").is_some(), "should have label field");
+        assert!(
+            properties.get("task_prompt").is_some(),
+            "should have task_prompt field"
+        );
+        assert!(
+            properties.get("summary_prompt").is_some(),
+            "should have summary_prompt field"
+        );
+        assert!(
+            properties.get("context_low_prompt").is_some(),
+            "should have context_low_prompt field"
+        );
+        assert!(
+            properties.get("timeout_ms").is_some(),
+            "should have timeout_ms field"
+        );
+        assert!(
+            properties.get("allowed_tools").is_some(),
+            "should have allowed_tools field"
+        );
+    }
+
+    #[test]
+    fn test_subagent_tool_name() {
+        assert_eq!(SubagentTool::name(), "subagent");
+    }
+
+    #[test]
+    fn test_subagent_tool_kind() {
+        assert_eq!(SubagentTool::kind(), acp::ToolKind::Other);
+    }
+}
+
+struct SubagentDisplayConnection;
+
+impl AgentConnection for SubagentDisplayConnection {
+    fn telemetry_id(&self) -> SharedString {
+        "subagent".into()
+    }
+
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
+    }
+
+    fn new_thread(
+        self: Rc<Self>,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        unimplemented!("SubagentDisplayConnection does not support new_thread")
+    }
+
+    fn authenticate(&self, _method_id: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+        unimplemented!("SubagentDisplayConnection does not support authenticate")
+    }
+
+    fn prompt(
+        &self,
+        _id: Option<UserMessageId>,
+        _params: acp::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        unimplemented!("SubagentDisplayConnection does not support prompt")
+    }
+
+    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }

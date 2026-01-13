@@ -1399,6 +1399,7 @@ impl Project {
                     worktree_store.clone(),
                     task_store.clone(),
                     Some(remote_proto.clone()),
+                    false,
                     cx,
                 )
             });
@@ -1696,6 +1697,7 @@ impl Project {
                 worktree_store.clone(),
                 task_store.clone(),
                 None,
+                true,
                 cx,
             )
         });

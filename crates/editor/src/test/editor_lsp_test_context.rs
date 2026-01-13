@@ -130,10 +130,6 @@ impl EditorLspTestContext {
         });
 
         let lsp = fake_servers.next().await.unwrap();
-
-        // Ensure the language server is fully registered with the buffer
-        cx.executor().run_until_parked();
-
         Self {
             cx: EditorTestContext {
                 cx,

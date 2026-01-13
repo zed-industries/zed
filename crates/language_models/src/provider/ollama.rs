@@ -202,6 +202,10 @@ impl OllamaLanguageModelProvider {
             SharedString::new(api_url.as_str())
         }
     }
+
+    fn has_custom_url(cx: &App) -> bool {
+        Self::settings(cx).api_url != OLLAMA_API_URL
+    }
 }
 
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
@@ -625,9 +629,21 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut App) {
-        self.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    fn retry_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_api_url = OllamaLanguageModelProvider::has_custom_url(cx);
+        let has_api_key = self
+            .state
+            .read_with(cx, |state, _| state.api_key_state.has_key());
+        if !has_api_url {
+            self.save_api_url(cx);
+        }
+        if !has_api_key {
+            self.save_api_key(&Default::default(), window, cx);
+        }
+
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -664,7 +680,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+    fn save_api_url(&self, cx: &mut Context<Self>) {
         let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
@@ -867,11 +883,11 @@ impl Render for ConfigurationView {
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
                                             .tooltip(Tooltip::text("Refresh Models"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.state.update(cx, |state, _| {
                                                     state.fetched_models.clear();
                                                 });
-                                                this.retry_connection(cx);
+                                                this.retry_connection(window, cx);
                                             })),
                                     ),
                             )
@@ -881,11 +897,9 @@ impl Render for ConfigurationView {
                                     .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::XSmall)
                                     .icon(IconName::PlayOutlined)
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.retry_connection(cx)
-                                        }),
-                                    ),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.retry_connection(window, cx)
+                                    })),
                             )
                         }
                     }),
