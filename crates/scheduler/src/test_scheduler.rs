@@ -97,10 +97,20 @@ impl TestScheduler {
                 is_main_thread: true,
                 parking_timeout: Duration::from_secs(15),
                 parking_timeout_message: None,
+                non_determinism_error: None,
+                finished: false,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
         }
+    }
+
+    pub fn end_test(&self) {
+        let mut state = self.state.lock();
+        if let Some((message, backtrace)) = &state.non_determinism_error {
+            panic!("{}\n{:?}", message, backtrace)
+        }
+        state.finished = true;
     }
 
     pub fn clock(&self) -> Arc<TestClock> {
@@ -169,12 +179,6 @@ impl TestScheduler {
 
     pub fn run(&self) {
         while self.step() {
-            // Continue until no work remains
-        }
-    }
-
-    pub fn run_with_clock_advancement(&self) {
-        while self.step() || self.advance_clock_to_next_timer() {
             // Continue until no work remains
         }
     }
@@ -444,6 +448,31 @@ impl TestScheduler {
     }
 }
 
+fn assert_correct_thread(expected: &Thread, state: &Arc<Mutex<SchedulerState>>) {
+    let current_thread = thread::current();
+    let mut state = state.lock();
+    if state.allow_parking {
+        return;
+    }
+    if current_thread.id() == expected.id() {
+        return;
+    }
+
+    let message = format!(
+        "Detected activity on thread {:?} {:?}, but test scheduler is running on {:?} {:?}. Your test is not deterministic.",
+        current_thread.name(),
+        current_thread.id(),
+        expected.name(),
+        expected.id(),
+    );
+    let backtrace = Backtrace::new();
+    if state.finished {
+        panic!("{}", message);
+    } else {
+        state.non_determinism_error = Some((message, backtrace))
+    }
+}
+
 impl Scheduler for TestScheduler {
     /// Block until the given future completes, with an optional timeout. If the
     /// future is unable to make progress at any moment before the timeout and
@@ -517,6 +546,7 @@ impl Scheduler for TestScheduler {
     }
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
+        assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {
             let start_ix = state
@@ -547,6 +577,7 @@ impl Scheduler for TestScheduler {
         runnable: Runnable<RunnableMeta>,
         priority: Priority,
     ) {
+        assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {
             self.rng.lock().random_range(0..=state.runnables.len())
@@ -653,6 +684,8 @@ struct SchedulerState {
     is_main_thread: bool,
     parking_timeout: Duration,
     parking_timeout_message: Option<String>,
+    non_determinism_error: Option<(String, Backtrace)>,
+    finished: bool,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
@@ -694,21 +727,7 @@ impl Clone for TracingWaker {
 
 impl Drop for TracingWaker {
     fn drop(&mut self) {
-        // Detect non-determinism: drop from unexpected thread
-        let current_thread = std::thread::current();
-        if current_thread.id() != self.thread.id() && !self.state.lock().allow_parking {
-            eprintln!(
-                "Non-deterministic waker drop detected: waker was dropped from thread {:?} ({:?}) \
-                 but the test is running on thread {:?} ({:?}). \
-                 This indicates non-deterministic async behavior. \
-                 If this is intentional, call `allow_parking()` on the executor.",
-                current_thread.name().unwrap_or("<unnamed>"),
-                current_thread.id(),
-                self.thread.name().unwrap_or("<unnamed>"),
-                self.thread.id(),
-            );
-            std::process::exit(1);
-        }
+        assert_correct_thread(&self.thread, &self.state);
 
         if let Some(id) = self.id {
             self.state.lock().pending_traces.remove(&id);
@@ -722,21 +741,7 @@ impl TracingWaker {
     }
 
     fn wake_by_ref(&self) {
-        // Detect non-determinism: wake from unexpected thread
-        let current_thread = std::thread::current();
-        if current_thread.id() != self.thread.id() && !self.state.lock().allow_parking {
-            eprintln!(
-                "Non-deterministic wake detected: waker was called from thread {:?} ({:?}) \
-                 but the test is running on thread {:?} ({:?}). \
-                 This indicates non-deterministic async behavior. \
-                 If this is intentional, call `allow_parking()` on the executor.",
-                current_thread.name().unwrap_or("<unnamed>"),
-                current_thread.id(),
-                self.thread.name().unwrap_or("<unnamed>"),
-                self.thread.id(),
-            );
-            std::process::exit(1);
-        }
+        assert_correct_thread(&self.thread, &self.state);
 
         if let Some(id) = self.id {
             self.state.lock().pending_traces.remove(&id);
