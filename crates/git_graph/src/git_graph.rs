@@ -182,8 +182,7 @@ impl GitGraph {
                 };
 
                 let data = repository.update(cx, |repository, cx| {
-                    repository.request_commit_data(commit.data.sha, cx);
-                    repository.get_commit_data(&commit.data.sha).cloned()
+                    repository.commit_data(commit.data.sha, cx).clone()
                 });
 
                 let short_sha = commit.data.sha.display_short();
@@ -191,7 +190,7 @@ impl GitGraph {
                 let subject;
                 let author_name;
 
-                if let Some(CommitDataState::Loaded(data)) = data {
+                if let CommitDataState::Loaded(data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
                 } else {

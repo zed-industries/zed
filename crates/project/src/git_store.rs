@@ -261,7 +261,7 @@ enum GraphDataState {
 #[derive(Clone)]
 pub enum CommitDataState {
     Loading,
-    Loaded(GraphCommitData),
+    Loaded(Arc<GraphCommitData>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -287,6 +287,21 @@ pub struct JobInfo {
     pub message: SharedString,
 }
 
+struct GraphCommitDataHandler {
+    _task: Task<()>,
+    commit_data_request: smol::channel::Sender<Oid>,
+}
+
+enum GraphCommitHandlerState {
+    Starting,
+    Idle(GraphCommitDataHandler),
+    Closed,
+}
+
+impl GraphCommitHandlerState {
+    fn open(&mut self) {}
+}
+
 pub struct Repository {
     this: WeakEntity<Self>,
     snapshot: RepositorySnapshot,
@@ -306,9 +321,8 @@ pub struct Repository {
         (LogOrder, LogSource),
         Shared<Task<Result<Arc<Vec<InitialGraphCommitData>>, SharedString>>>,
     >,
+    graph_commit_data_handler: GraphCommitHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
-    commit_data_request_tx: Option<smol::channel::Sender<Oid>>,
-    _commit_data_task: Option<Task<()>>,
 }
 
 impl std::ops::Deref for Repository {
@@ -3617,8 +3631,7 @@ impl Repository {
             active_jobs: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            commit_data_request_tx: None,
-            _commit_data_task: None,
+            graph_commit_data_handler: GraphCommitHandlerState::Closed,
         }
     }
 
@@ -3650,8 +3663,7 @@ impl Repository {
             job_id: 0,
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            commit_data_request_tx: None,
-            _commit_data_task: None,
+            graph_commit_data_handler: GraphCommitHandlerState::Closed,
         }
     }
 
@@ -4248,85 +4260,27 @@ impl Repository {
             .clone()
     }
 
-    pub fn get_commit_data(&self, sha: &Oid) -> Option<&CommitDataState> {
-        self.commit_data.get(sha)
-    }
-
-    pub fn request_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) {
-        if self.commit_data.contains_key(&sha) {
-            return;
+    pub fn commit_data(&mut self, sha: Oid, cx: &mut App) -> &CommitDataState {
+        if !self.commit_data.contains_key(&sha) {
+            match &self.graph_commit_data_handler {
+                GraphCommitHandlerState::Idle(handler) => {
+                    // don't want to send in an async env
+                    // todo! don't block main thread ahhhh
+                    if handler.commit_data_request.send_blocking(sha).is_ok() {
+                        self.commit_data.insert(sha, CommitDataState::Loading);
+                    }
+                }
+                GraphCommitHandlerState::Closed => self.graph_commit_data_handler.open(),
+                GraphCommitHandlerState::Starting => {}
+            }
         }
 
         self.commit_data
-            .insert(sha.clone(), CommitDataState::Loading);
-
-        if self.commit_data_request_tx.is_none() {
-            let state = self.repository_state.clone();
-
-            let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
-            let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
-
-            let task = cx.spawn(async move |this, cx| {
-                while let Ok((sha, commit_data)) = result_rx.recv().await {
-                    let result = this.update(cx, |this, cx| {
-                        this.commit_data
-                            .insert(sha, CommitDataState::Loaded(commit_data));
-                        cx.notify();
-                    });
-                    if result.is_err() {
-                        break;
-                    }
-                }
-            });
-
-            self._commit_data_task = Some(task);
-
-            cx.background_spawn({
-                async move {
-                    let backend = match state.await {
-                        Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
-                        Ok(RepositoryState::Remote(_)) => {
-                            log::error!("commit_data_reader not supported for remote repositories");
-                            return;
-                        }
-                        Err(error) => {
-                            log::error!("failed to get repository state: {error}");
-                            return;
-                        }
-                    };
-
-                    let reader = match backend.commit_data_reader() {
-                        Ok(reader) => reader,
-                        Err(error) => {
-                            log::error!("failed to create commit data reader: {error:?}");
-                            return;
-                        }
-                    };
-
-                    while let Ok(sha) = request_rx.recv().await {
-                        match reader.read(sha.clone()).await {
-                            Ok(commit_data) => {
-                                if result_tx.send((sha, commit_data)).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(error) => {
-                                log::error!("failed to read commit data for {sha}: {error:?}");
-                            }
-                        }
-                    }
-                }
-            })
-            .detach();
-
-            self.commit_data_request_tx = Some(request_tx);
-        }
-
-        if let Some(request_tx) = &self.commit_data_request_tx {
-            request_tx.send_blocking(sha).ok();
-        }
+            .get(&sha)
+            .unwrap_or(&CommitDataState::Loading)
     }
 
+    // todo! remove this functionality from repository
     pub fn commit_count(&mut self, source: LogSource) -> oneshot::Receiver<Result<usize>> {
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
