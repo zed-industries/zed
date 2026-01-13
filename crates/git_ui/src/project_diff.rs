@@ -70,8 +70,9 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    review_comment_count: usize,
     _task: Task<Result<()>>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -311,8 +312,16 @@ impl ProjectDiff {
                 });
             diff_display_editor
         });
-        cx.subscribe_in(&editor, window, Self::handle_editor_event)
-            .detach();
+        let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
+
+        let primary_editor = editor.read(cx).primary_editor().clone();
+        let review_comment_subscription =
+            cx.subscribe(&primary_editor, |this, _editor, event: &EditorEvent, cx| {
+                if let EditorEvent::ReviewCommentsChanged { total_count } = event {
+                    this.review_comment_count = *total_count;
+                    cx.notify();
+                }
+            });
 
         let branch_diff_subscription = cx.subscribe_in(
             &branch_diff,
@@ -363,8 +372,13 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            review_comment_count: 0,
             _task: task,
-            _subscription: branch_diff_subscription,
+            _subscriptions: vec![
+                branch_diff_subscription,
+                editor_subscription,
+                review_comment_subscription,
+            ],
         }
     }
 
@@ -454,12 +468,8 @@ impl ProjectDiff {
     }
 
     /// Returns the total count of review comments across all hunks/files.
-    pub fn total_review_comment_count(&self, cx: &App) -> usize {
-        self.editor
-            .read(cx)
-            .primary_editor()
-            .read(cx)
-            .total_review_comment_count()
+    pub fn total_review_comment_count(&self) -> usize {
+        self.review_comment_count
     }
 
     /// Returns a reference to the splittable editor.
@@ -1292,7 +1302,7 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
-        let review_count = project_diff.read(cx).total_review_comment_count(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
 
         h_group_xl()
             .my_neg_1()

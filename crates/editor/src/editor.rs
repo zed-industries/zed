@@ -1033,12 +1033,12 @@ pub(crate) struct PhantomDiffReviewIndicator {
 
 /// Identifies a specific hunk in the diff buffer.
 /// Used as a key to group comments by their location.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub struct DiffHunkKey {
     /// The file path (relative to worktree) this hunk belongs to.
     pub file_path: Arc<util::rel_path::RelPath>,
-    /// The starting row of the hunk in the display.
-    pub hunk_start_row: DisplayRow,
+    /// An anchor at the start of the hunk. This tracks position as the buffer changes.
+    pub hunk_start_anchor: Anchor,
 }
 
 /// A review comment stored locally before being sent to the Agent panel.
@@ -1266,9 +1266,9 @@ pub struct Editor {
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     pub(crate) diff_review_overlay: Option<DiffReviewOverlay>,
     /// Stored review comments grouped by hunk.
-    /// Key: DiffHunkKey identifying the hunk
-    /// Value: Vec of comments for that hunk (ordered by creation time)
-    stored_review_comments: HashMap<DiffHunkKey, Vec<StoredReviewComment>>,
+    /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
+    /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
+    stored_review_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)>,
     /// Counter for generating unique comment IDs.
     next_review_comment_id: usize,
     hovered_diff_hunk_row: Option<DisplayRow>,
@@ -2437,7 +2437,7 @@ impl Editor {
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
             diff_review_overlay: None,
-            stored_review_comments: HashMap::default(),
+            stored_review_comments: Vec::new(),
             next_review_comment_id: 0,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
@@ -20863,8 +20863,13 @@ impl Editor {
     /// Calculates the appropriate block height for the diff review overlay.
     /// Height is in lines: 2 for input row, 1 for header when comments exist,
     /// and 2 lines per comment when expanded.
-    fn calculate_overlay_height(&self, hunk_key: &DiffHunkKey, comments_expanded: bool) -> u32 {
-        let comment_count = self.hunk_comment_count(hunk_key);
+    fn calculate_overlay_height(
+        &self,
+        hunk_key: &DiffHunkKey,
+        comments_expanded: bool,
+        snapshot: &MultiBufferSnapshot,
+    ) -> u32 {
+        let comment_count = self.hunk_comment_count(hunk_key, snapshot);
         let base_height: u32 = 2; // Input row with avatar and buttons
 
         if comment_count == 0 {
@@ -20914,9 +20919,11 @@ impl Editor {
             .file_at(Point::new(buffer_point.row, 0))
             .map(|file: &Arc<dyn language::File>| file.path().clone())
             .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
+        // Create an anchor at the start of the hunk
+        let hunk_start_anchor = buffer_snapshot.anchor_before(Point::new(buffer_point.row, 0));
         let hunk_key = DiffHunkKey {
             file_path,
-            hunk_start_row: display_row,
+            hunk_start_anchor,
         };
 
         // Create the prompt editor for the review input
@@ -20942,7 +20949,7 @@ impl Editor {
         });
 
         // Calculate initial height based on existing comments for this hunk
-        let initial_height = self.calculate_overlay_height(&hunk_key, true);
+        let initial_height = self.calculate_overlay_height(&hunk_key, true, &buffer_snapshot);
 
         // Create the overlay block
         let prompt_editor_for_render = prompt_editor.clone();
@@ -21012,7 +21019,8 @@ impl Editor {
             };
 
             // Only refresh if the hunk key matches
-            if &overlay.hunk_key != hunk_key {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            if !Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot) {
                 return;
             }
 
@@ -21024,7 +21032,8 @@ impl Editor {
         };
 
         // Calculate new height
-        let new_height = self.calculate_overlay_height(hunk_key, comments_expanded);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let new_height = self.calculate_overlay_height(hunk_key, comments_expanded, &snapshot);
 
         // Update the block height using resize_blocks (avoids flicker)
         let mut heights = HashMap::default();
@@ -21143,24 +21152,45 @@ impl Editor {
         }
     }
 
+    /// Compares two DiffHunkKeys for equality by resolving their anchors.
+    fn hunk_keys_match(a: &DiffHunkKey, b: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> bool {
+        a.file_path == b.file_path
+            && a.hunk_start_anchor.to_point(snapshot) == b.hunk_start_anchor.to_point(snapshot)
+    }
+
     /// Returns comments for a specific hunk, ordered by creation time.
-    pub fn comments_for_hunk(&self, key: &DiffHunkKey) -> &[StoredReviewComment] {
+    pub fn comments_for_hunk<'a>(
+        &'a self,
+        key: &DiffHunkKey,
+        snapshot: &MultiBufferSnapshot,
+    ) -> &'a [StoredReviewComment] {
+        let key_point = key.hunk_start_anchor.to_point(snapshot);
         self.stored_review_comments
-            .get(key)
-            .map(|v| v.as_slice())
+            .iter()
+            .find(|(k, _)| {
+                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+            })
+            .map(|(_, comments)| comments.as_slice())
             .unwrap_or(&[])
     }
 
     /// Returns the total count of stored review comments across all hunks.
     pub fn total_review_comment_count(&self) -> usize {
-        self.stored_review_comments.values().map(|v| v.len()).sum()
+        self.stored_review_comments
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum()
     }
 
     /// Returns the count of comments for a specific hunk.
-    pub fn hunk_comment_count(&self, key: &DiffHunkKey) -> usize {
+    pub fn hunk_comment_count(&self, key: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> usize {
+        let key_point = key.hunk_start_anchor.to_point(snapshot);
         self.stored_review_comments
-            .get(key)
-            .map(|v| v.len())
+            .iter()
+            .find(|(k, _)| {
+                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+            })
+            .map(|(_, v)| v.len())
             .unwrap_or(0)
     }
 
@@ -21178,20 +21208,35 @@ impl Editor {
 
         let stored_comment = StoredReviewComment::new(id, comment, display_row, anchor_range);
 
-        self.stored_review_comments
-            .entry(hunk_key)
-            .or_default()
-            .push(stored_comment);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let key_point = hunk_key.hunk_start_anchor.to_point(&snapshot);
 
+        // Find existing entry for this hunk or add a new one
+        if let Some((_, comments)) = self.stored_review_comments.iter_mut().find(|(k, _)| {
+            k.file_path == hunk_key.file_path
+                && k.hunk_start_anchor.to_point(&snapshot) == key_point
+        }) {
+            comments.push(stored_comment);
+        } else {
+            self.stored_review_comments
+                .push((hunk_key, vec![stored_comment]));
+        }
+
+        cx.emit(EditorEvent::ReviewCommentsChanged {
+            total_count: self.total_review_comment_count(),
+        });
         cx.notify();
         id
     }
 
     /// Removes a review comment by ID from any hunk.
     pub fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
-        for comments in self.stored_review_comments.values_mut() {
+        for (_, comments) in self.stored_review_comments.iter_mut() {
             if let Some(index) = comments.iter().position(|c| c.id == id) {
                 comments.remove(index);
+                cx.emit(EditorEvent::ReviewCommentsChanged {
+                    total_count: self.total_review_comment_count(),
+                });
                 cx.notify();
                 return true;
             }
@@ -21206,10 +21251,13 @@ impl Editor {
         new_comment: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        for comments in self.stored_review_comments.values_mut() {
+        for (_, comments) in self.stored_review_comments.iter_mut() {
             if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
                 comment.comment = new_comment;
                 comment.is_editing = false;
+                cx.emit(EditorEvent::ReviewCommentsChanged {
+                    total_count: self.total_review_comment_count(),
+                });
                 cx.notify();
                 return true;
             }
@@ -21219,7 +21267,7 @@ impl Editor {
 
     /// Sets a comment's editing state.
     pub fn set_comment_editing(&mut self, id: usize, is_editing: bool, cx: &mut Context<Self>) {
-        for comments in self.stored_review_comments.values_mut() {
+        for (_, comments) in self.stored_review_comments.iter_mut() {
             if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
                 comment.is_editing = is_editing;
                 cx.notify();
@@ -21234,10 +21282,44 @@ impl Editor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
+        let comments = std::mem::take(&mut self.stored_review_comments);
+        cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
         cx.notify();
-        std::mem::take(&mut self.stored_review_comments)
-            .into_iter()
-            .collect()
+        comments
+    }
+
+    /// Removes review comments whose anchors are no longer valid or whose
+    /// associated diff hunks no longer exist.
+    ///
+    /// This should be called when the buffer changes to prevent orphaned comments
+    /// from accumulating.
+    pub fn cleanup_orphaned_review_comments(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let original_count = self.total_review_comment_count();
+
+        // Remove comments with invalid hunk anchors
+        self.stored_review_comments
+            .retain(|(hunk_key, _)| hunk_key.hunk_start_anchor.is_valid(&snapshot));
+
+        // Also clean up individual comments with invalid anchor ranges
+        for (_, comments) in &mut self.stored_review_comments {
+            comments.retain(|comment| {
+                comment.anchor_range.start.is_valid(&snapshot)
+                    && comment.anchor_range.end.is_valid(&snapshot)
+            });
+        }
+
+        // Remove empty hunk entries
+        self.stored_review_comments
+            .retain(|(_, comments)| !comments.is_empty());
+
+        let new_count = self.total_review_comment_count();
+        if new_count != original_count {
+            cx.emit(EditorEvent::ReviewCommentsChanged {
+                total_count: new_count,
+            });
+            cx.notify();
+        }
     }
 
     /// Toggles the expanded state of the comments section in the overlay.
@@ -21276,8 +21358,8 @@ impl Editor {
                 // Find the comment text
                 let comment_text = self
                     .stored_review_comments
-                    .values()
-                    .flatten()
+                    .iter()
+                    .flat_map(|(_, comments)| comments)
                     .find(|c| c.id == comment_id)
                     .map(|c| c.comment.clone())
                     .unwrap_or_default();
@@ -21424,7 +21506,8 @@ impl Editor {
             .upgrade()
             .map(|editor| {
                 let editor = editor.read(cx);
-                let comments = editor.comments_for_hunk(hunk_key).to_vec();
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
                 let (expanded, editors, avatar_uri) = editor
                     .diff_review_overlay
                     .as_ref()
@@ -26659,6 +26742,11 @@ impl Deref for EditorSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditorEvent {
+    /// Emitted when the stored review comments change (added, removed, or updated).
+    ReviewCommentsChanged {
+        /// The new total count of review comments.
+        total_count: usize,
+    },
     InputIgnored {
         text: Arc<str>,
     },

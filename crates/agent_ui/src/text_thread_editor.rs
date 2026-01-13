@@ -1533,7 +1533,13 @@ impl TextThreadEditor {
 
         // Find the ProjectDiff item
         let Some(project_diff) = workspace.items_of_type::<ProjectDiff>(cx).next() else {
-            log::warn!("No ProjectDiff found when sending review");
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<SendReviewToAgent>(),
+                    "No Project Diff panel found. Open it first to add review comments.",
+                ),
+                cx,
+            );
             return;
         };
 
@@ -1563,12 +1569,25 @@ impl TextThreadEditor {
             .collect();
 
         if comments.is_empty() {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<SendReviewToAgent>(),
+                    "No review comments to send. Add comments using the + button in the diff view.",
+                ),
+                cx,
+            );
             return;
         }
 
         // Get or create the agent panel
         let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-            log::warn!("No agent panel found when sending review");
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<SendReviewToAgent>(),
+                    "Agent panel is not available.",
+                ),
+                cx,
+            );
             return;
         };
 
@@ -1586,40 +1605,51 @@ impl TextThreadEditor {
         // Now insert the creases - use a single defer to ensure the panel is ready
         cx.defer_in(window, move |workspace, window, cx| {
             let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                log::warn!("Agent panel no longer available");
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<SendReviewToAgent>(),
+                        "Agent panel closed unexpectedly.",
+                    ),
+                    cx,
+                );
                 return;
             };
 
-            panel.update(cx, |panel, cx| {
-                let Some(thread_view) = panel.active_thread_view().cloned() else {
-                    log::warn!("No active thread view available after creating thread");
-                    return;
-                };
+            let thread_view = panel.read(cx).active_thread_view().cloned();
+            let Some(thread_view) = thread_view else {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<SendReviewToAgent>(),
+                        "No active thread view available after creating thread.",
+                    ),
+                    cx,
+                );
+                return;
+            };
 
-                // Build creases for all comments
-                let snapshot = buffer.read(cx).snapshot(cx);
-                let mut all_creases = Vec::new();
+            // Build creases for all comments
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let mut all_creases = Vec::new();
 
-                for comment in comments {
-                    let point_range = comment.anchor_range.start.to_point(&snapshot)
-                        ..comment.anchor_range.end.to_point(&snapshot);
+            for comment in comments {
+                let point_range = comment.anchor_range.start.to_point(&snapshot)
+                    ..comment.anchor_range.end.to_point(&snapshot);
 
-                    let mut creases =
-                        selections_creases(vec![point_range.clone()], snapshot.clone(), cx);
+                let mut creases =
+                    selections_creases(vec![point_range.clone()], snapshot.clone(), cx);
 
-                    // Prepend user's comment to the code
-                    for (code_text, crease_title) in &mut creases {
-                        *code_text = format!("{}\n\n{}", comment.comment, code_text);
-                        *crease_title = format!("Review: {}", crease_title);
-                    }
-
-                    all_creases.extend(creases);
+                // Prepend user's comment to the code
+                for (code_text, crease_title) in &mut creases {
+                    *code_text = format!("{}\n\n{}", comment.comment, code_text);
+                    *crease_title = format!("Review: {}", crease_title);
                 }
 
-                // Insert all creases into the message editor
-                thread_view.update(cx, |thread_view, cx| {
-                    thread_view.insert_code_crease(all_creases, window, cx);
-                });
+                all_creases.extend(creases);
+            }
+
+            // Insert all creases into the message editor
+            thread_view.update(cx, |thread_view, cx| {
+                thread_view.insert_code_crease(all_creases, window, cx);
             });
         });
     }

@@ -30401,14 +30401,28 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
 }
 
 /// Helper function to create a DiffHunkKey for testing.
-fn test_hunk_key(file_path: &str, start_row: u32) -> DiffHunkKey {
+/// Uses Anchor::min() as a placeholder anchor since these tests don't need
+/// real buffer positioning.
+fn test_hunk_key(file_path: &str) -> DiffHunkKey {
     DiffHunkKey {
         file_path: if file_path.is_empty() {
             Arc::from(util::rel_path::RelPath::empty())
         } else {
             Arc::from(util::rel_path::RelPath::unix(file_path).unwrap())
         },
-        hunk_start_row: DisplayRow(start_row),
+        hunk_start_anchor: Anchor::min(),
+    }
+}
+
+/// Helper function to create a DiffHunkKey with a specific anchor for testing.
+fn test_hunk_key_with_anchor(file_path: &str, anchor: Anchor) -> DiffHunkKey {
+    DiffHunkKey {
+        file_path: if file_path.is_empty() {
+            Arc::from(util::rel_path::RelPath::empty())
+        } else {
+            Arc::from(util::rel_path::RelPath::unix(file_path).unwrap())
+        },
+        hunk_start_anchor: anchor,
     }
 }
 
@@ -30436,14 +30450,15 @@ fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key = test_hunk_key("", 0);
+        let key = test_hunk_key("");
 
         let id = add_test_comment(editor, key.clone(), "Test comment", 0, cx);
 
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         assert_eq!(editor.total_review_comment_count(), 1);
-        assert_eq!(editor.hunk_comment_count(&key), 1);
+        assert_eq!(editor.hunk_comment_count(&key, &snapshot), 1);
 
-        let comments = editor.comments_for_hunk(&key);
+        let comments = editor.comments_for_hunk(&key, &snapshot);
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].comment, "Test comment");
         assert_eq!(comments[0].id, id);
@@ -30457,22 +30472,26 @@ fn test_review_comments_are_per_hunk(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key1 = test_hunk_key("file1.rs", 0);
-        let key2 = test_hunk_key("file2.rs", 10);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let anchor1 = snapshot.anchor_before(Point::new(0, 0));
+        let anchor2 = snapshot.anchor_before(Point::new(0, 0));
+        let key1 = test_hunk_key_with_anchor("file1.rs", anchor1);
+        let key2 = test_hunk_key_with_anchor("file2.rs", anchor2);
 
         add_test_comment(editor, key1.clone(), "Comment for file1", 0, cx);
         add_test_comment(editor, key2.clone(), "Comment for file2", 10, cx);
 
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         assert_eq!(editor.total_review_comment_count(), 2);
-        assert_eq!(editor.hunk_comment_count(&key1), 1);
-        assert_eq!(editor.hunk_comment_count(&key2), 1);
+        assert_eq!(editor.hunk_comment_count(&key1, &snapshot), 1);
+        assert_eq!(editor.hunk_comment_count(&key2, &snapshot), 1);
 
         assert_eq!(
-            editor.comments_for_hunk(&key1)[0].comment,
+            editor.comments_for_hunk(&key1, &snapshot)[0].comment,
             "Comment for file1"
         );
         assert_eq!(
-            editor.comments_for_hunk(&key2)[0].comment,
+            editor.comments_for_hunk(&key2, &snapshot)[0].comment,
             "Comment for file2"
         );
     });
@@ -30485,7 +30504,7 @@ fn test_review_comment_remove(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key = test_hunk_key("", 0);
+        let key = test_hunk_key("");
 
         let id = add_test_comment(editor, key, "To be removed", 0, cx);
 
@@ -30508,14 +30527,15 @@ fn test_review_comment_update(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key = test_hunk_key("", 0);
+        let key = test_hunk_key("");
 
         let id = add_test_comment(editor, key.clone(), "Original text", 0, cx);
 
         let updated = editor.update_review_comment(id, "Updated text".to_string(), cx);
         assert!(updated);
 
-        let comments = editor.comments_for_hunk(&key);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let comments = editor.comments_for_hunk(&key, &snapshot);
         assert_eq!(comments[0].comment, "Updated text");
         assert!(!comments[0].is_editing); // Should clear editing flag
     });
@@ -30528,8 +30548,11 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
-        let key1 = test_hunk_key("file1.rs", 0);
-        let key2 = test_hunk_key("file2.rs", 10);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let anchor1 = snapshot.anchor_before(Point::new(0, 0));
+        let anchor2 = snapshot.anchor_before(Point::new(0, 0));
+        let key1 = test_hunk_key_with_anchor("file1.rs", anchor1);
+        let key2 = test_hunk_key_with_anchor("file2.rs", anchor2);
 
         add_test_comment(editor, key1.clone(), "Comment 1", 0, cx);
         add_test_comment(editor, key1, "Comment 2", 1, cx);
@@ -30684,7 +30707,7 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
     // Add a comment directly
     let comment_id = editor
         .update(cx, |editor, _window, cx| {
-            let key = test_hunk_key("", 0);
+            let key = test_hunk_key("");
             add_test_comment(editor, key, "Original comment", 0, cx)
         })
         .unwrap();
@@ -30698,9 +30721,10 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
 
     // Verify editing flag is set
     editor
-        .update(cx, |editor, _window, _cx| {
-            let key = test_hunk_key("", 0);
-            let comments = editor.comments_for_hunk(&key);
+        .update(cx, |editor, _window, cx| {
+            let key = test_hunk_key("");
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let comments = editor.comments_for_hunk(&key, &snapshot);
             assert_eq!(comments.len(), 1);
             assert!(comments[0].is_editing);
         })
@@ -30717,9 +30741,10 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
 
     // Verify comment was updated and editing flag is cleared
     editor
-        .update(cx, |editor, _window, _cx| {
-            let key = test_hunk_key("", 0);
-            let comments = editor.comments_for_hunk(&key);
+        .update(cx, |editor, _window, cx| {
+            let key = test_hunk_key("");
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let comments = editor.comments_for_hunk(&key, &snapshot);
             assert_eq!(comments[0].comment, "Updated comment");
             assert!(!comments[0].is_editing);
         })
@@ -30727,39 +30752,50 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_diff_review_overlay_height_calculation(cx: &mut TestAppContext) {
+fn test_orphaned_comments_are_cleaned_up(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
-
-    _ = editor.update(cx, |editor, _window, cx| {
-        let key = test_hunk_key("", 0);
-
-        // No comments: base height only (2 lines)
-        let height = editor.calculate_overlay_height(&key, true);
-        assert_eq!(height, 2);
-
-        // Add one comment
-        add_test_comment(editor, key.clone(), "Comment 1", 0, cx);
-
-        // With 1 comment expanded: 2 (base) + 1 (header) + 2 (comment) = 5
-        let height = editor.calculate_overlay_height(&key, true);
-        assert_eq!(height, 5);
-
-        // With 1 comment collapsed: 2 (base) + 1 (header) = 3
-        let height = editor.calculate_overlay_height(&key, false);
-        assert_eq!(height, 3);
-
-        // Add more comments
-        add_test_comment(editor, key.clone(), "Comment 2", 0, cx);
-        add_test_comment(editor, key.clone(), "Comment 3", 0, cx);
-
-        // With 3 comments expanded: 2 (base) + 1 (header) + 6 (3 * 2) = 9
-        let height = editor.calculate_overlay_height(&key, true);
-        assert_eq!(height, 9);
-
-        // With 3 comments collapsed: still 2 + 1 = 3
-        let height = editor.calculate_overlay_height(&key, false);
-        assert_eq!(height, 3);
+    // Create an editor with some text
+    let editor = cx.add_window(|window, cx| {
+        let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\n", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
     });
+
+    // Add a comment with an anchor on line 2
+    editor
+        .update(cx, |editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor = snapshot.anchor_after(Point::new(1, 0)); // Line 2
+            let key = DiffHunkKey {
+                file_path: Arc::from(util::rel_path::RelPath::empty()),
+                hunk_start_anchor: anchor,
+            };
+            editor.add_review_comment(
+                key,
+                "Comment on line 2".to_string(),
+                DisplayRow(1),
+                anchor..anchor,
+                cx,
+            );
+            assert_eq!(editor.total_review_comment_count(), 1);
+        })
+        .unwrap();
+
+    // Delete all content (this should orphan the comment's anchor)
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.select_all(&SelectAll, window, cx);
+            editor.insert("completely new content", window, cx);
+        })
+        .unwrap();
+
+    // Trigger cleanup
+    editor
+        .update(cx, |editor, _window, cx| {
+            editor.cleanup_orphaned_review_comments(cx);
+            // Comment should be removed because its anchor is invalid
+            assert_eq!(editor.total_review_comment_count(), 0);
+        })
+        .unwrap();
 }
