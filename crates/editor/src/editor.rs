@@ -4361,7 +4361,6 @@ impl Editor {
         let mut clear_linked_edit_ranges = false;
         let mut all_selections_read_only = true;
         let mut has_adjacent_edits = false;
-        let mut in_adjacent_group = false;
 
         let mut regions = self
             .selections_with_autoclose_regions(selections, &snapshot)
@@ -4635,9 +4634,7 @@ impl Editor {
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-            let anchor = if in_adjacent_group || next_is_adjacent {
-                // After edits the right bias would shift those anchor to the next visible fragment
-                // but we want to resolve to the previous one
+            let anchor = if next_is_adjacent {
                 snapshot.anchor_before(selection.end)
             } else {
                 snapshot.anchor_after(selection.end)
@@ -4673,7 +4670,6 @@ impl Editor {
             edits.push((selection.start..selection.end, text.clone()));
 
             has_adjacent_edits |= next_is_adjacent;
-            in_adjacent_group = next_is_adjacent;
         }
 
         if all_selections_read_only {

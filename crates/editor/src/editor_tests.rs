@@ -8772,6 +8772,177 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_all_matches_adjacent_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test adjacent identical characters - selecting single char should create multiple selections
+    cx.set_state("miks on p«iˇ»iiiks parem kui prääääks?");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("m«iˇ»ks on p«iˇ»«iˇ»«iˇ»«iˇ»ks parem ku«iˇ» prääääks?");
+
+    // Test typing replacement - each selection should be replaced independently
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("e", window, cx);
+    });
+    cx.assert_editor_state("meˇks on peˇeˇeˇeˇks parem kueˇ prääääks?");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_adjacent_chars_at_word_boundary(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test at start of word
+    cx.set_state("aaab «aˇ»aac aaad");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»«aˇ»«aˇ»b «aˇ»«aˇ»«aˇ»c «aˇ»«aˇ»«aˇ»d");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("x", window, cx);
+    });
+    cx.assert_editor_state("xˇxˇxˇb xˇxˇxˇc xˇxˇxˇd");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_adjacent_special_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test with special characters
+    cx.set_state("a...b «.ˇ»..c d...e");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("a«.ˇ»«.ˇ»«.ˇ»b «.ˇ»«.ˇ»«.ˇ»c d«.ˇ»«.ˇ»«.ˇ»e");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state("a-ˇ-ˇ-ˇb -ˇ-ˇ-ˇc d-ˇ-ˇ-ˇe");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_unicode_adjacent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test with unicode characters (from original bug report)
+    cx.set_state("pr«äˇ»äääks");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("pr«äˇ»«äˇ»«äˇ»«äˇ»ks");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("a", window, cx);
+    });
+    cx.assert_editor_state("praˇaˇaˇaˇks");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_mixed_adjacent_non_adjacent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Mix of adjacent and non-adjacent matches
+    cx.set_state("x«xˇ»x y xx z xxx");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«xˇ»«xˇ»«xˇ» y «xˇ»«xˇ» z «xˇ»«xˇ»«xˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("o", window, cx);
+    });
+    cx.assert_editor_state("oˇoˇoˇ y oˇoˇ z oˇoˇoˇ");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_two_adjacent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Simplest case: two adjacent identical chars
+    cx.set_state("a«bˇ»b c");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("a«bˇ»«bˇ» c");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("x", window, cx);
+    });
+    cx.assert_editor_state("axˇxˇ c");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_single_char_multiple_groups(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Multiple groups of adjacent chars separated by other text
+    cx.set_state("aa«aˇ» bbb aaa ccc aaa");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»«aˇ»«aˇ» bbb «aˇ»«aˇ»«aˇ» ccc «aˇ»«aˇ»«aˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+    cx.assert_editor_state("XˇXˇXˇ bbb XˇXˇXˇ ccc XˇXˇXˇ");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_backspace_adjacent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test backspace on adjacent selections
+    cx.set_state("te«sˇ»sst");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("te«sˇ»«sˇ»«sˇ»t");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backspace(&Backspace, window, cx);
+    });
+    cx.assert_editor_state("teˇt");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_delete_adjacent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test delete on adjacent selections
+    cx.set_state("he«lˇ»llo");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("he«lˇ»«lˇ»«lˇ»o");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete(&Delete, window, cx);
+    });
+    cx.assert_editor_state("heˇo");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_multiline_adjacent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test across multiple lines
+    cx.set_state("aaa\n«aˇ»aa\naaa");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»«aˇ»«aˇ»\n«aˇ»«aˇ»«aˇ»\n«aˇ»«aˇ»«aˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("b", window, cx);
+    });
+    cx.assert_editor_state("bˇbˇbˇ\nbˇbˇbˇ\nbˇbˇbˇ");
+}
+
+#[gpui::test]
 async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
