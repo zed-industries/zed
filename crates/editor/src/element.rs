@@ -192,6 +192,7 @@ struct RenderBlocksOutput {
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
+    is_in_split: bool,
 }
 
 impl EditorElement {
@@ -201,7 +202,12 @@ impl EditorElement {
         Self {
             editor: editor.clone(),
             style,
+            is_in_split: false,
         }
+    }
+
+    pub fn set_in_split(&mut self) {
+        self.is_in_split = true;
     }
 
     pub fn set_style(&mut self, style: EditorStyle) {
@@ -6451,7 +6457,7 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter {
+        if show_git_gutter && !self.is_in_split {
             Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
@@ -7563,6 +7569,10 @@ impl EditorElement {
 
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
+            if self.is_in_split && block.is_buffer_header {
+                continue; // split editors paint their own unified headers
+            }
+
             if block.overlaps_gutter {
                 block.element.paint(window, cx);
             } else {
@@ -9047,7 +9057,7 @@ impl Element for EditorElement {
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
-           window.set_view_id(self.editor.entity_id());
+            window.set_view_id(self.editor.entity_id());
             window.set_focus_handle(&focus_handle, cx);
         }
 

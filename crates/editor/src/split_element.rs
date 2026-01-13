@@ -1,6 +1,7 @@
 use gpui::{
-    App, Background, Bounds, Context, Corners, Edges, Element, Entity, IntoElement, Length, PaintQuad, Pixels, Point, Size, Style, hsla, px, relative, rgb
+    App, Background, Bounds, Context, Corners, Edges, Element, ElementInputHandler, Entity, IntoElement, Length, PaintQuad, Pixels, Point, Size, Style, hsla, px, relative, rgb
 };
+use multi_buffer::Anchor;
 
 use crate::{Editor, EditorElement, EditorMode, EditorStyle, SplittableEditor};
 
@@ -25,8 +26,11 @@ impl SplitEditorElement {
         style: EditorStyle,
         cx: &mut Context<SplittableEditor>,
     ) -> Self {
-        let lhs = EditorElement::new(lhs, style.clone());
-        let rhs = EditorElement::new(rhs, style.clone());
+        let mut lhs = EditorElement::new(lhs, style.clone());
+        let mut rhs = EditorElement::new(rhs, style.clone());
+
+        lhs.set_in_split();
+        rhs.set_in_split();
 
         Self {
             editor: cx.entity(),
@@ -80,6 +84,8 @@ pub struct SplitEditorRequestLayoutState {
 pub struct SplitEditorPrepaintState {
     lhs: <EditorElement as Element>::PrepaintState,
     rhs: <EditorElement as Element>::PrepaintState,
+    lhs_bounds: Bounds<Pixels>,
+    rhs_bounds: Bounds<Pixels>,
 }
 
 impl IntoElement for SplitEditorElement {
@@ -124,7 +130,7 @@ impl Element for SplitEditorElement {
 
         let id = window.request_layout(style, [lhs_id, rhs_id], cx);
         let state = SplitEditorRequestLayoutState { lhs, rhs };
-        
+
         (id, state)
     }
 
@@ -165,7 +171,7 @@ impl Element for SplitEditorElement {
             cx,
         );
 
-        SplitEditorPrepaintState { lhs, rhs }
+        SplitEditorPrepaintState { lhs, rhs, lhs_bounds, rhs_bounds }
     }
 
     fn paint(
@@ -182,7 +188,7 @@ impl Element for SplitEditorElement {
         self.lhs.paint(
             id,
             inspector_id,
-            bounds,
+            prepaint.lhs_bounds,
             &mut request_layout.lhs,
             &mut prepaint.lhs,
             window,
@@ -191,7 +197,7 @@ impl Element for SplitEditorElement {
         self.rhs.paint(
             id,
             inspector_id,
-            bounds,
+            prepaint.rhs_bounds,
             &mut request_layout.rhs,
             &mut prepaint.rhs,
             window,
