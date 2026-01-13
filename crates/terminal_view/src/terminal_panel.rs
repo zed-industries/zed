@@ -2019,15 +2019,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/test-project",
-            serde_json::json!({
-                "file.txt": "content"
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [std::path::Path::new("/test-project")], cx).await;
+        let project = Project::test(fs, [], cx).await;
         let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
 
         let (window_handle, terminal_panel) = workspace
