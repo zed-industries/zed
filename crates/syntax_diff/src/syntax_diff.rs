@@ -101,10 +101,7 @@ fn collect_ranges(
     (lhs_ranges, rhs_ranges)
 }
 
-fn get_novel_ranges(
-    node: &SyntaxNode,
-    bounds: Option<&Range<usize>>,
-) -> ArrayVec<Range<usize>, 2> {
+fn get_novel_ranges(node: &SyntaxNode, bounds: Option<&Range<usize>>) -> ArrayVec<Range<usize>, 2> {
     let mut ranges = ArrayVec::new();
 
     if node.is_atom() {
@@ -112,9 +109,9 @@ fn get_novel_ranges(
             ranges.push(r);
         }
     } else {
-        if let Some(r) =
-            node.open_delimiter_range()
-                .and_then(|r| adjust_range_to_bounds(r, bounds))
+        if let Some(r) = node
+            .open_delimiter_range()
+            .and_then(|r| adjust_range_to_bounds(r, bounds))
         {
             ranges.push(r);
         }
