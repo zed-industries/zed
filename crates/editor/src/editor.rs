@@ -21070,6 +21070,15 @@ impl Editor {
             .map(|overlay| overlay.display_row)
     }
 
+    /// Sets whether the comments section is expanded in the diff review overlay.
+    /// This is primarily used for testing.
+    pub fn set_diff_review_comments_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        if let Some(overlay) = &mut self.diff_review_overlay {
+            overlay.comments_expanded = expanded;
+            cx.notify();
+        }
+    }
+
     /// Returns comments for a specific hunk, ordered by creation time.
     pub fn comments_for_hunk(&self, key: &DiffHunkKey) -> &[StoredReviewComment] {
         self.stored_review_comments

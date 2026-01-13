@@ -1436,6 +1436,121 @@ import { AiPaneTabContext } from 'context';
         update_baseline,
     )?;
 
+    // Test 6: Submit a comment to store it locally
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Submit the comment that was typed in test 5
+                    editor.submit_diff_review_comment(window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for comment to be stored
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 6: Overlay with one stored comment
+    let test6_result = run_visual_test(
+        "diff_review_one_comment",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 7: Add more comments to show multiple comments expanded
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Add second comment
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |pe, cx| {
+                            pe.insert("Second comment about imports", window, cx);
+                        });
+                    }
+                    editor.submit_diff_review_comment(window, cx);
+
+                    // Add third comment
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |pe, cx| {
+                            pe.insert("Third comment about naming conventions", window, cx);
+                        });
+                    }
+                    editor.submit_diff_review_comment(window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for comments to be stored
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 7: Overlay with multiple comments expanded
+    let test7_result = run_visual_test(
+        "diff_review_multiple_comments_expanded",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 8: Collapse the comments section
+    regular_window
+        .update(cx, |workspace, _window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Toggle collapse using the public method
+                    editor.set_diff_review_comments_expanded(false, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 8: Comments collapsed
+    let test8_result = run_visual_test(
+        "diff_review_comments_collapsed",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
     // Clean up: remove worktrees to stop background scanning
     workspace_window
         .update(cx, |workspace, _window, cx| {
@@ -1469,27 +1584,32 @@ import { AiPaneTabContext } from 'context';
     }
 
     // Return combined result
-    match (
+    let all_results = [
         &test1_result,
         &test2_result,
         &test3_result,
         &test4_result,
         &test5_result,
-    ) {
-        (
-            TestResult::Passed,
-            TestResult::Passed,
-            TestResult::Passed,
-            TestResult::Passed,
-            TestResult::Passed,
-        ) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _, _, _, _)
-        | (_, TestResult::BaselineUpdated(p), _, _, _)
-        | (_, _, TestResult::BaselineUpdated(p), _, _)
-        | (_, _, _, TestResult::BaselineUpdated(p), _)
-        | (_, _, _, _, TestResult::BaselineUpdated(p)) => {
-            Ok(TestResult::BaselineUpdated(p.clone()))
+        &test6_result,
+        &test7_result,
+        &test8_result,
+    ];
+
+    let all_passed = all_results.iter().all(|r| matches!(r, TestResult::Passed));
+    let baseline_updated = all_results.iter().find_map(|r| {
+        if let TestResult::BaselineUpdated(p) = r {
+            Some(p.clone())
+        } else {
+            None
         }
+    });
+
+    if all_passed {
+        Ok(TestResult::Passed)
+    } else if let Some(path) = baseline_updated {
+        Ok(TestResult::BaselineUpdated(path))
+    } else {
+        Ok(TestResult::Passed)
     }
 }
 
