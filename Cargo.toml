@@ -170,6 +170,7 @@ members = [
     "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
+    "crates/system_stats",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -398,6 +399,7 @@ supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
+system_stats = { path = "crates/system_stats" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }

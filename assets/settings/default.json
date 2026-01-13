@@ -1179,6 +1179,11 @@
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true,
+    // Position of the tab bar relative to the pane content.
+    // One of: ["top", "right"]
+    "position": "right",
+    // Default width of the side tab bar in pixels (only applies when position is "right").
+    "default_width": 200,
   },
   // Settings related to the editor's tabs
   "tabs": {

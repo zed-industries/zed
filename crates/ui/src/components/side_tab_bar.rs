@@ -93,6 +93,7 @@ impl RenderOnce for SideTabBar {
             // Scrollable tab list
             .child(
                 div()
+                    .id("side_tab_bar_scroll")
                     .flex_1()
                     .w_full()
                     .overflow_y_scroll()

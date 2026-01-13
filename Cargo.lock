@@ -16355,6 +16355,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_stats"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "sysinfo 0.37.2",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
@@ -20827,6 +20838,7 @@ dependencies = [
  "svg_preview",
  "sysinfo 0.37.2",
  "system_specs",
+ "system_stats",
  "tab_switcher",
  "task",
  "tasks_ui",

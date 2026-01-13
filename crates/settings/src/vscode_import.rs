@@ -646,6 +646,8 @@ impl VsCodeSettings {
             show_tab_bar_buttons: self
                 .read_str("workbench.editor.editorActionsLocation")
                 .and_then(|str| if str == "hidden" { Some(false) } else { None }),
+            position: None,
+            default_width: None,
         })
     }
 
@@ -656,6 +658,7 @@ impl VsCodeSettings {
             cursor_position_button: None,
             line_endings_button: None,
             active_encoding_button: None,
+            system_stats_button: None,
         })
     }
 

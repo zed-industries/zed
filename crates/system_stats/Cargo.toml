@@ -1,0 +1,20 @@
+[package]
+name = "system_stats"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/system_stats.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+settings.workspace = true
+sysinfo.workspace = true
+ui.workspace = true
+workspace.workspace = true

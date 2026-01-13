@@ -12,7 +12,7 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     utility_pane::UtilityPaneSlot,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarPosition, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -48,8 +48,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
-    IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
-    Tooltip, prelude::*, right_click_menu,
+    IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, SideTabBar, Tab, TabBar,
+    TabPosition, Tooltip, prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
@@ -400,6 +400,8 @@ pub struct Pane {
     use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
+    side_tab_bar_scroll_handle: ScrollHandle,
+    side_tab_bar_width: Option<Pixels>,
     /// This is set to true if a user scroll has occurred more recently than a system scroll
     /// We want to suppress certain system scrolls when the user has intentionally scrolled
     suppress_scroll: bool,
@@ -475,6 +477,17 @@ pub struct DraggedTab {
     pub is_active: bool,
 }
 
+#[derive(Clone)]
+pub struct DraggedSideTabBarResize {
+    pub pane: Entity<Pane>,
+}
+
+impl Render for DraggedSideTabBarResize {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
 impl EventEmitter<Event> for Pane {}
 
 pub enum Side {
@@ -540,6 +553,8 @@ impl Pane {
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
+            side_tab_bar_scroll_handle: ScrollHandle::new(),
+            side_tab_bar_width: None,
             suppress_scroll: false,
             drag_split_direction: None,
             workspace,
@@ -3436,6 +3451,447 @@ impl Pane {
             .into_any_element()
     }
 
+    fn render_side_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        let settings = TabBarSettings::get_global(cx);
+        let width = self.side_tab_bar_width.unwrap_or(settings.default_width);
+        let focus_handle = self.focus_handle.clone();
+
+        let tab_details = tab_details(&self.items, window, cx);
+        let tab_items: Vec<_> = self
+            .items
+            .iter()
+            .enumerate()
+            .zip(tab_details)
+            .map(|((ix, item), detail)| {
+                self.render_side_tab(ix, &**item, detail, &focus_handle, window, cx)
+            })
+            .collect();
+
+        // Header with + button
+        let new_button = PopoverMenu::new("side-tab-bar-new-menu")
+            .trigger_with_tooltip(
+                IconButton::new("plus", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                Tooltip::text("New..."),
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.new_item_context_menu_handle.clone())
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.action("New File", NewFile.boxed_clone())
+                        .action("Open File", ToggleFileFinder::default().boxed_clone())
+                        .separator()
+                        .action("New Terminal", NewTerminal.boxed_clone())
+                }))
+            });
+
+        SideTabBar::new("side_tab_bar")
+            .width(width)
+            .track_scroll(&self.side_tab_bar_scroll_handle)
+            .header_child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        Label::new("Open Editors")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(new_button),
+            )
+            .children(tab_items)
+            .into_any_element()
+    }
+
+    fn render_side_tab(
+        &self,
+        ix: usize,
+        item: &dyn ItemHandle,
+        detail: usize,
+        _focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement + use<> {
+        let is_active = ix == self.active_item_index;
+        let is_preview = self
+            .preview_item_id
+            .map(|id| id == item.item_id())
+            .unwrap_or(false);
+
+        let label = item.tab_content(
+            TabContentParams {
+                detail: Some(detail),
+                selected: is_active,
+                preview: is_preview,
+                deemphasized: !self.has_focus(window, cx),
+            },
+            window,
+            cx,
+        );
+
+        let item_id = item.item_id();
+        let indicator = render_item_indicator(item.boxed_clone(), cx);
+        let custom_bg_color = item.tab_background_color(cx);
+        let capability = item.capability(cx);
+        let dragged_tab = DraggedTab {
+            item: item.boxed_clone(),
+            pane: cx.entity(),
+            detail,
+            is_active,
+            ix,
+        };
+
+        let close_button = div()
+            .id(("close_side_tab", ix))
+            .invisible()
+            .group_hover("side_tab", |this| this.visible())
+            .child(
+                IconButton::new(("close", ix), IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener(move |pane, _, window, cx| {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                            .detach_and_log_err(cx);
+                    })),
+            );
+
+        let tab = h_flex()
+            .id(("side_tab", ix))
+            .group("side_tab")
+            .w_full()
+            .h(px(28.))
+            .px(DynamicSpacing::Base06.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .items_center()
+            .cursor_pointer()
+            .when(is_active, |this| {
+                this.bg(cx.theme().colors().tab_active_background)
+            })
+            .when(!is_active, |this| {
+                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            })
+            .when_some(custom_bg_color, |this, color| this.bg(color))
+            .when(is_preview, |this| this.italic())
+            .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
+                pane.activate_item(ix, true, true, window, cx)
+            }))
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |pane, _event, window, cx| {
+                    pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                        .detach_and_log_err(cx);
+                }),
+            )
+            .on_drag(dragged_tab, |tab, _, _, cx| cx.new(|_| tab.clone()))
+            .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
+                let mut styled_tab = tab.bg(cx.theme().colors().drop_target_background);
+                if ix < dragged_tab.ix {
+                    styled_tab = styled_tab.border_t_2().border_color(cx.theme().colors().drop_target_border);
+                } else if ix > dragged_tab.ix {
+                    styled_tab = styled_tab.border_b_2().border_color(cx.theme().colors().drop_target_border);
+                }
+                styled_tab
+            })
+            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                this.drag_split_direction = None;
+                this.handle_tab_drop(dragged_tab, ix, window, cx)
+            }))
+            .children(indicator)
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_x_hidden()
+                    .text_ellipsis()
+                    .child(label),
+            )
+            .child(close_button);
+
+        let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
+            .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
+            .flatten();
+
+        let total_items = self.items.len();
+        let has_multibuffer_items = self
+            .items
+            .iter()
+            .any(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer);
+        let has_items_to_left = ix > 0;
+        let has_items_to_right = ix < total_items - 1;
+        let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
+        let is_pinned = self.is_tab_pinned(ix);
+
+        let pane = cx.entity().downgrade();
+        let menu_context = item.item_focus_handle(cx);
+
+        right_click_menu(("side_tab_menu", ix))
+            .trigger(|_, _, _| tab)
+            .menu(move |window, cx| {
+                let pane = pane.clone();
+                let menu_context = menu_context.clone();
+                ContextMenu::build(window, cx, move |mut menu, window, cx| {
+                    let close_active_item_action = CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: true,
+                    };
+                    let close_inactive_items_action = CloseOtherItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
+                    let close_multibuffers_action = CloseMultibufferItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
+                    let close_items_to_the_left_action = CloseItemsToTheLeft {
+                        close_pinned: false,
+                    };
+                    let close_items_to_the_right_action = CloseItemsToTheRight {
+                        close_pinned: false,
+                    };
+                    let close_clean_items_action = CloseCleanItems {
+                        close_pinned: false,
+                    };
+                    let close_all_items_action = CloseAllItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
+
+                    if let Some(pane) = pane.upgrade() {
+                        menu = menu
+                            .entry(
+                                "Close",
+                                Some(Box::new(close_active_item_action)),
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                                        .detach_and_log_err(cx);
+                                }),
+                            )
+                            .item(ContextMenuItem::Entry(
+                                ContextMenuEntry::new("Close Others")
+                                    .action(Box::new(close_inactive_items_action.clone()))
+                                    .disabled(total_items == 1)
+                                    .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                        pane.close_other_items(
+                                            &close_inactive_items_action,
+                                            Some(item_id),
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    })),
+                            ))
+                            .extend(has_multibuffer_items.then(|| {
+                                ContextMenuItem::Entry(
+                                    ContextMenuEntry::new("Close Multibuffers")
+                                        .action(Box::new(close_multibuffers_action.clone()))
+                                        .handler(window.handler_for(
+                                            &pane,
+                                            move |pane, window, cx| {
+                                                pane.close_multibuffer_items(
+                                                    &close_multibuffers_action,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                            },
+                                        )),
+                                )
+                            }))
+                            .separator()
+                            .item(ContextMenuItem::Entry(
+                                ContextMenuEntry::new("Close Above")
+                                    .action(Box::new(close_items_to_the_left_action.clone()))
+                                    .disabled(!has_items_to_left)
+                                    .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                        pane.close_items_to_the_left_by_id(
+                                            Some(item_id),
+                                            &close_items_to_the_left_action,
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    })),
+                            ))
+                            .item(ContextMenuItem::Entry(
+                                ContextMenuEntry::new("Close Below")
+                                    .action(Box::new(close_items_to_the_right_action.clone()))
+                                    .disabled(!has_items_to_right)
+                                    .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                        pane.close_items_to_the_right_by_id(
+                                            Some(item_id),
+                                            &close_items_to_the_right_action,
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    })),
+                            ))
+                            .separator()
+                            .item(ContextMenuItem::Entry(
+                                ContextMenuEntry::new("Close Clean")
+                                    .action(Box::new(close_clean_items_action.clone()))
+                                    .disabled(!has_clean_items)
+                                    .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                        pane.close_clean_items(
+                                            &close_clean_items_action,
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx)
+                                    })),
+                            ))
+                            .entry(
+                                "Close All",
+                                Some(Box::new(close_all_items_action.clone())),
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_all_items(&close_all_items_action, window, cx)
+                                        .detach_and_log_err(cx)
+                                }),
+                            );
+
+                        let pin_tab_entries = |menu: ContextMenu| {
+                            menu.separator().map(|this| {
+                                if is_pinned {
+                                    this.entry(
+                                        "Unpin Tab",
+                                        Some(TogglePinTab.boxed_clone()),
+                                        window.handler_for(&pane, move |pane, window, cx| {
+                                            pane.unpin_tab_at(ix, window, cx);
+                                        }),
+                                    )
+                                } else {
+                                    this.entry(
+                                        "Pin Tab",
+                                        Some(TogglePinTab.boxed_clone()),
+                                        window.handler_for(&pane, move |pane, window, cx| {
+                                            pane.pin_tab_at(ix, window, cx);
+                                        }),
+                                    )
+                                }
+                            })
+                        };
+
+                        if capability != Capability::ReadOnly {
+                            let read_only_label = if capability.editable() {
+                                "Make File Read-Only"
+                            } else {
+                                "Make File Editable"
+                            };
+                            menu = menu.separator().entry(
+                                read_only_label,
+                                None,
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    if let Some(item) = pane.item_for_index(ix) {
+                                        item.toggle_read_only(window, cx);
+                                    }
+                                }),
+                            );
+                        }
+
+                        if let Some(entry) = single_entry_to_resolve {
+                            let project_path = pane
+                                .read(cx)
+                                .item_for_entry(entry, cx)
+                                .and_then(|item| item.project_path(cx));
+                            let worktree = project_path.as_ref().and_then(|project_path| {
+                                pane.read(cx)
+                                    .project
+                                    .upgrade()?
+                                    .read(cx)
+                                    .worktree_for_id(project_path.worktree_id, cx)
+                            });
+                            let has_relative_path = worktree.as_ref().is_some_and(|worktree| {
+                                worktree
+                                    .read(cx)
+                                    .root_entry()
+                                    .is_some_and(|entry| entry.is_dir())
+                            });
+
+                            let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
+                            let parent_abs_path = entry_abs_path
+                                .as_deref()
+                                .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                            let relative_path = project_path
+                                .map(|project_path| project_path.path)
+                                .filter(|_| has_relative_path);
+
+                            let visible_in_project_panel = relative_path.is_some()
+                                && worktree.is_some_and(|worktree| worktree.read(cx).is_visible());
+
+                            let entry_id = entry.to_proto();
+
+                            menu = menu
+                                .separator()
+                                .when_some(entry_abs_path, |menu, abs_path| {
+                                    menu.entry(
+                                        "Copy Path",
+                                        Some(Box::new(zed_actions::workspace::CopyPath)),
+                                        window.handler_for(&pane, move |_, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                abs_path.to_string_lossy().into_owned(),
+                                            ));
+                                        }),
+                                    )
+                                })
+                                .when_some(relative_path, |menu, relative_path| {
+                                    menu.entry(
+                                        "Copy Relative Path",
+                                        Some(Box::new(zed_actions::workspace::CopyRelativePath)),
+                                        window.handler_for(&pane, move |this, _, cx| {
+                                            let Some(project) = this.project.upgrade() else {
+                                                return;
+                                            };
+                                            let path_style = project
+                                                .update(cx, |project, cx| project.path_style(cx));
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                relative_path.display(path_style).to_string(),
+                                            ));
+                                        }),
+                                    )
+                                })
+                                .map(pin_tab_entries)
+                                .separator()
+                                .when(visible_in_project_panel, |menu| {
+                                    menu.entry(
+                                        "Reveal In Project Panel",
+                                        Some(Box::new(RevealInProjectPanel::default())),
+                                        window.handler_for(&pane, move |pane, _, cx| {
+                                            pane.project
+                                                .update(cx, |_, cx| {
+                                                    cx.emit(project::Event::RevealInProjectPanel(
+                                                        ProjectEntryId::from_proto(entry_id),
+                                                    ))
+                                                })
+                                                .ok();
+                                        }),
+                                    )
+                                })
+                                .when_some(parent_abs_path, |menu, parent_abs_path| {
+                                    menu.entry(
+                                        "Open in Terminal",
+                                        Some(Box::new(OpenInTerminal)),
+                                        window.handler_for(&pane, move |_, window, cx| {
+                                            window.dispatch_action(
+                                                OpenTerminal {
+                                                    working_directory: parent_abs_path.clone(),
+                                                }
+                                                .boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                    )
+                                });
+                        } else {
+                            menu = menu.map(pin_tab_entries);
+                        }
+                    };
+
+                    menu.context(menu_context)
+                })
+            })
+    }
+
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
             deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
@@ -3505,6 +3961,21 @@ impl Pane {
         if direction != self.drag_split_direction {
             self.drag_split_direction = direction;
         }
+    }
+
+    fn handle_side_tab_bar_resize(
+        &mut self,
+        event: &DragMoveEvent<DraggedSideTabBarResize>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Calculate width from mouse position to right edge of the pane
+        let new_width = event.bounds.right() - event.event.position.x;
+        let min_width = px(100.);
+        let max_width = event.bounds.size.width * 0.5;
+        let clamped_width = new_width.max(min_width).min(max_width);
+        self.side_tab_bar_width = Some(clamped_width);
+        cx.notify();
     }
 
     pub fn handle_tab_drop(
@@ -3978,6 +4449,9 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
+            .on_drag_move::<DraggedSideTabBarResize>(
+                cx.listener(Self::handle_side_tab_bar_resize),
+            )
             .on_action(cx.listener(|pane, split: &SplitLeft, window, cx| {
                 pane.split(SplitDirection::Left, split.mode, window, cx)
             }))
@@ -4114,13 +4588,28 @@ impl Render for Pane {
                     cx.propagate();
                 }
             }))
-            .when(self.active_item().is_some() && display_tab_bar, |pane| {
-                pane.child((self.render_tab_bar.clone())(self, window, cx))
+            .map(|pane_div| {
+                let tab_bar_position = TabBarSettings::get_global(cx).position;
+                let show_tab_bar = self.active_item().is_some() && display_tab_bar;
+
+                match tab_bar_position {
+                    TabBarPosition::Top => {
+                        if show_tab_bar {
+                            pane_div.child((self.render_tab_bar.clone())(self, window, cx))
+                        } else {
+                            pane_div
+                        }
+                    }
+                    TabBarPosition::Right => pane_div,
+                }
             })
             .child({
+                let tab_bar_position = TabBarSettings::get_global(cx).position;
+                let show_side_tab_bar =
+                    self.active_item().is_some() && display_tab_bar && tab_bar_position == TabBarPosition::Right;
                 let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
                 // main content
-                div()
+                let main_content = div()
                     .flex_1()
                     .relative()
                     .group("")
@@ -4217,7 +4706,31 @@ impl Render for Pane {
                                     }
                                 }
                             }),
-                    )
+                    );
+
+                if show_side_tab_bar {
+                    let resize_handle = div()
+                        .id("side-tab-bar-resize-handle")
+                        .w(px(6.))
+                        .h_full()
+                        .cursor_col_resize()
+                        .on_drag(
+                            DraggedSideTabBarResize { pane: cx.entity() },
+                            |drag, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.new(|_| drag.clone())
+                            },
+                        );
+
+                    h_flex()
+                        .size_full()
+                        .child(main_content)
+                        .child(resize_handle)
+                        .child(self.render_side_tab_bar(window, cx))
+                        .into_any_element()
+                } else {
+                    main_content.into_any_element()
+                }
             })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),

@@ -471,6 +471,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Whether to show system stats (CPU, RAM, network) in the status bar.
+    ///
+    /// Default: false
+    pub system_stats_button: Option<bool>,
 }
 
 #[derive(
