@@ -20856,6 +20856,24 @@ impl Editor {
             }))
     }
 
+    /// Calculates the appropriate block height for the diff review overlay.
+    /// Height is in lines: 2 for input row, 1 for header when comments exist,
+    /// and 2 lines per comment when expanded.
+    fn calculate_overlay_height(&self, hunk_key: &DiffHunkKey, comments_expanded: bool) -> u32 {
+        let comment_count = self.hunk_comment_count(hunk_key);
+        let base_height: u32 = 2; // Input row with avatar and buttons
+
+        if comment_count == 0 {
+            base_height
+        } else if comments_expanded {
+            // Header (1 line) + 2 lines per comment
+            base_height + 1 + (comment_count as u32 * 2)
+        } else {
+            // Just header when collapsed
+            base_height + 1
+        }
+    }
+
     pub fn show_diff_review_overlay(
         &mut self,
         display_row: DisplayRow,
@@ -20919,6 +20937,9 @@ impl Editor {
             })
         });
 
+        // Calculate initial height based on existing comments for this hunk
+        let initial_height = self.calculate_overlay_height(&hunk_key, true);
+
         // Create the overlay block
         let prompt_editor_for_render = prompt_editor.clone();
         let hunk_key_for_render = hunk_key.clone();
@@ -20926,7 +20947,7 @@ impl Editor {
         let block = BlockProperties {
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Below(anchor),
-            height: Some(8), // Height for the overlay with multiple comments
+            height: Some(initial_height),
             render: Arc::new(move |cx| {
                 Self::render_diff_review_overlay(
                     &prompt_editor_for_render,
@@ -20939,7 +20960,10 @@ impl Editor {
         };
 
         let block_ids = self.insert_blocks([block], None, cx);
-        let block_id = block_ids.into_iter().next().expect("inserted one block");
+        let Some(block_id) = block_ids.into_iter().next() else {
+            log::error!("Failed to insert diff review overlay block");
+            return;
+        };
 
         self.diff_review_overlay = Some(DiffReviewOverlay {
             display_row,
@@ -20965,6 +20989,76 @@ impl Editor {
             block_ids.insert(overlay.block_id);
             self.remove_blocks(block_ids, None, cx);
             cx.notify();
+        }
+    }
+
+    /// Refreshes the diff review overlay block to update its height based on current comment count.
+    fn refresh_diff_review_overlay_height(
+        &mut self,
+        hunk_key: &DiffHunkKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Extract all needed data from overlay first to avoid borrow conflicts
+        let (display_row, comments_expanded, old_block_id, prompt_editor) = {
+            let Some(overlay) = self.diff_review_overlay.as_ref() else {
+                return;
+            };
+
+            // Only refresh if the hunk key matches
+            if &overlay.hunk_key != hunk_key {
+                return;
+            }
+
+            (
+                overlay.display_row,
+                overlay.comments_expanded,
+                overlay.block_id,
+                overlay.prompt_editor.clone(),
+            )
+        };
+
+        // Calculate new height
+        let new_height = self.calculate_overlay_height(hunk_key, comments_expanded);
+
+        // Get the anchor for the block
+        let editor_snapshot = self.snapshot(window, cx);
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_point = editor_snapshot
+            .display_snapshot
+            .display_point_to_point(display_point, Bias::Left);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
+        let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
+
+        // Remove old block
+        let mut block_ids = HashSet::default();
+        block_ids.insert(old_block_id);
+        self.remove_blocks(block_ids, None, cx);
+
+        // Create new block with updated height
+        let hunk_key_for_render = hunk_key.clone();
+        let editor_handle = cx.entity().downgrade();
+        let block = BlockProperties {
+            style: BlockStyle::Sticky,
+            placement: BlockPlacement::Below(anchor),
+            height: Some(new_height),
+            render: Arc::new(move |cx| {
+                Self::render_diff_review_overlay(
+                    &prompt_editor,
+                    &hunk_key_for_render,
+                    &editor_handle,
+                    cx,
+                )
+            }),
+            priority: 0,
+        };
+
+        let block_ids = self.insert_blocks([block], None, cx);
+        if let Some(new_block_id) = block_ids.into_iter().next() {
+            if let Some(overlay) = self.diff_review_overlay.as_mut() {
+                overlay.block_id = new_block_id;
+            }
         }
     }
 
@@ -21018,7 +21112,7 @@ impl Editor {
 
         // Store the comment locally
         self.add_review_comment(
-            hunk_key,
+            hunk_key.clone(),
             comment_text,
             display_row,
             anchor_start..anchor_end,
@@ -21031,6 +21125,9 @@ impl Editor {
                 editor.clear(window, cx);
             });
         }
+
+        // Refresh the overlay to update the block height for the new comment
+        self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
 
         cx.notify();
     }
@@ -21160,11 +21257,14 @@ impl Editor {
     pub fn toggle_review_comments_expanded(
         &mut self,
         _: &ToggleReviewCommentsExpanded,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(overlay) = &mut self.diff_review_overlay {
             overlay.comments_expanded = !overlay.comments_expanded;
+            let hunk_key = overlay.hunk_key.clone();
+            // Refresh the overlay height since expanded state affects height
+            self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
             cx.notify();
         }
     }
@@ -21299,10 +21399,21 @@ impl Editor {
     pub fn delete_review_comment(
         &mut self,
         action: &DeleteReviewComment,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Get the hunk key before removing the comment
+        let hunk_key = self
+            .diff_review_overlay
+            .as_ref()
+            .map(|o| o.hunk_key.clone());
+
         self.remove_review_comment(action.id, cx);
+
+        // Refresh the overlay height after removing a comment
+        if let Some(hunk_key) = hunk_key {
+            self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
+        }
     }
 
     fn render_diff_review_overlay(

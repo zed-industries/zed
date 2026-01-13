@@ -1,4 +1,5 @@
 use crate::{
+    agent_panel::AgentType,
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::{BurnModeTooltip, ModelSelectorTooltip},
 };
@@ -1536,16 +1537,23 @@ impl TextThreadEditor {
             return;
         };
 
-        // Extract all stored comments from all hunks
-        let (all_comments, buffer): (
-            Vec<(DiffHunkKey, Vec<StoredReviewComment>)>,
-            Entity<MultiBuffer>,
-        ) = project_diff.update(cx, |project_diff, cx| {
-            let editor = project_diff.editor().read(cx).primary_editor().clone();
-            let comments = editor.update(cx, |editor, cx| editor.take_all_review_comments(cx));
-            let buffer = editor.read(cx).buffer().clone();
-            (comments, buffer)
+        // Get the buffer reference first (before taking comments)
+        let buffer = project_diff.update(cx, |project_diff, cx| {
+            project_diff
+                .editor()
+                .read(cx)
+                .primary_editor()
+                .read(cx)
+                .buffer()
+                .clone()
         });
+
+        // Extract all stored comments from all hunks
+        let all_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)> =
+            project_diff.update(cx, |project_diff, cx| {
+                let editor = project_diff.editor().read(cx).primary_editor().clone();
+                editor.update(cx, |editor, cx| editor.take_all_review_comments(cx))
+            });
 
         // Flatten: we have Vec<(DiffHunkKey, Vec<StoredReviewComment>)>
         // Convert to Vec<StoredReviewComment> for processing
@@ -1558,66 +1566,59 @@ impl TextThreadEditor {
             return;
         }
 
+        // Get or create the agent panel
+        let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+            log::warn!("No agent panel found when sending review");
+            return;
+        };
+
+        // Create a new thread if there isn't an active one (synchronous call)
+        let has_active_thread = panel.read(cx).active_thread_view().is_some();
+        if !has_active_thread {
+            panel.update(cx, |panel, cx| {
+                panel.new_agent_thread(AgentType::NativeAgent, window, cx);
+            });
+        }
+
         // Focus the agent panel
         workspace.focus_panel::<crate::AgentPanel>(window, cx);
 
-        // Defer to ensure panel is focused and ready
+        // Now insert the creases - use a single defer to ensure the panel is ready
         cx.defer_in(window, move |workspace, window, cx| {
             let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                log::warn!("No agent panel found");
+                log::warn!("Agent panel no longer available");
                 return;
             };
 
-            // Check if there's an active thread
-            let has_active_thread =
-                panel.update(cx, |panel, _cx| panel.active_thread_view().is_some());
+            panel.update(cx, |panel, cx| {
+                let Some(thread_view) = panel.active_thread_view().cloned() else {
+                    log::warn!("No active thread view available after creating thread");
+                    return;
+                };
 
-            if !has_active_thread {
-                // Create a new thread
-                window.dispatch_action(Box::new(crate::NewThread), cx);
-            }
+                // Build creases for all comments
+                let snapshot = buffer.read(cx).snapshot(cx);
+                let mut all_creases = Vec::new();
 
-            // Defer multiple times to ensure thread creation completes
-            cx.defer_in(window, move |_workspace, window, cx| {
-                cx.defer_in(window, move |_workspace, window, cx| {
-                    cx.defer_in(window, move |workspace, window, cx| {
-                        let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                            return;
-                        };
+                for comment in comments {
+                    let point_range = comment.anchor_range.start.to_point(&snapshot)
+                        ..comment.anchor_range.end.to_point(&snapshot);
 
-                        panel.update(cx, |panel, cx| {
-                            if let Some(thread_view) = panel.active_thread_view().cloned() {
-                                // Build creases for all comments
-                                let snapshot = buffer.read(cx).snapshot(cx);
-                                let mut all_creases = Vec::new();
+                    let mut creases =
+                        selections_creases(vec![point_range.clone()], snapshot.clone(), cx);
 
-                                for comment in comments {
-                                    let point_range = comment.anchor_range.start.to_point(&snapshot)
-                                        ..comment.anchor_range.end.to_point(&snapshot);
+                    // Prepend user's comment to the code
+                    for (code_text, crease_title) in &mut creases {
+                        *code_text = format!("{}\n\n{}", comment.comment, code_text);
+                        *crease_title = format!("Review: {}", crease_title);
+                    }
 
-                                    let mut creases = selections_creases(
-                                        vec![point_range.clone()],
-                                        snapshot.clone(),
-                                        cx,
-                                    );
+                    all_creases.extend(creases);
+                }
 
-                                    // Prepend user's comment to the code
-                                    for (code_text, crease_title) in &mut creases {
-                                        *code_text =
-                                            format!("{}\n\n{}", comment.comment, code_text);
-                                        *crease_title = format!("Review: {}", crease_title);
-                                    }
-
-                                    all_creases.extend(creases);
-                                }
-
-                                // Insert all creases into the message editor
-                                thread_view.update(cx, |thread_view, cx| {
-                                    thread_view.insert_code_crease(all_creases, window, cx);
-                                });
-                            }
-                        });
-                    });
+                // Insert all creases into the message editor
+                thread_view.update(cx, |thread_view, cx| {
+                    thread_view.insert_code_crease(all_creases, window, cx);
                 });
             });
         });
