@@ -38,7 +38,7 @@ pub enum Commands {
 pub fn run(command: Commands) -> anyhow::Result<()> {
     use anyhow::Context;
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
-    use unix::{ExecuteProxyError, execute_proxy, execute_run};
+    use unix::{execute_proxy, execute_run};
 
     match command {
         Commands::Run {
