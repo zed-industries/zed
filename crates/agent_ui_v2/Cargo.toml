@@ -38,6 +38,7 @@ prompt_store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+telemetry.workspace = true
 text.workspace = true
 time.workspace = true
 time_format.workspace = true

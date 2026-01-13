@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use debugger_panel::DebugPanel;
 use editor::{Editor, MultiBufferOffsetUtf16};
-use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
+use gpui::{Action, App, DispatchPhase, EntityInputHandler, Focusable, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use onboarding_modal::DebuggerOnboardingModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
@@ -119,6 +119,19 @@ pub fn init(cx: &mut App) {
         workspace
             .register_action(spawn_task_or_modal)
             .register_action(|workspace, _: &ToggleFocus, window, cx| {
+                let panel = workspace.panel::<DebugPanel>(cx);
+                let is_open = panel
+                    .as_ref()
+                    .map(|panel| panel.focus_handle(cx).contains_focused(window, cx))
+                    .unwrap_or(false);
+                let telemetry_action = if is_open { "unfocus" } else { "open" };
+                telemetry::event!(
+                    "Panel Button Clicked",
+                    name = "DebugPanel",
+                    toggle_state = !is_open,
+                    source = "keyboard",
+                    action = telemetry_action
+                );
                 workspace.toggle_panel_focus::<DebugPanel>(window, cx);
             })
             .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {

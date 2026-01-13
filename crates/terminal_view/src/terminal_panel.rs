@@ -59,6 +59,19 @@ pub fn init(cx: &mut App) {
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
+                    let panel = workspace.panel::<TerminalPanel>(cx);
+                    let is_open = panel
+                        .as_ref()
+                        .map(|panel| panel.focus_handle(cx).contains_focused(window, cx))
+                        .unwrap_or(false);
+                    let telemetry_action = if is_open { "unfocus" } else { "open" };
+                    telemetry::event!(
+                        "Panel Button Clicked",
+                        name = "TerminalPanel",
+                        toggle_state = !is_open,
+                        source = "keyboard",
+                        action = telemetry_action
+                    );
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
                 }
             });

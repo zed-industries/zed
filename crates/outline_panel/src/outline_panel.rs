@@ -666,6 +666,19 @@ struct SerializedOutlinePanel {
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+            let panel = workspace.panel::<OutlinePanel>(cx);
+            let is_open = panel
+                .as_ref()
+                .map(|panel| panel.focus_handle(cx).contains_focused(window, cx))
+                .unwrap_or(false);
+            let telemetry_action = if is_open { "unfocus" } else { "open" };
+            telemetry::event!(
+                "Panel Button Clicked",
+                name = "Outline Panel",
+                toggle_state = !is_open,
+                source = "keyboard",
+                action = telemetry_action
+            );
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
     })
