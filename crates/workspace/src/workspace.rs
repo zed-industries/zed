@@ -3172,6 +3172,18 @@ impl Workspace {
         }
 
         let dock = self.dock_at_position(dock_side);
+
+        if let Some(active_panel) = dock.read(cx).active_panel() {
+            let telemetry_action = if was_visible { "close" } else { "open" };
+            telemetry::event!(
+                "Panel Button Clicked",
+                name = active_panel.persistent_name(),
+                toggle_state = !was_visible,
+                source = "keyboard",
+                action = telemetry_action
+            );
+        }
+
         dock.update(cx, |dock, cx| {
             dock.set_open(!was_visible, window, cx);
 
@@ -3327,6 +3339,16 @@ impl Workspace {
             did_focus_panel = !panel.panel_focus_handle(cx).contains_focused(window, cx);
             did_focus_panel
         });
+
+        let telemetry_action = if did_focus_panel { "open" } else { "unfocus" };
+        telemetry::event!(
+            "Panel Button Clicked",
+            name = T::persistent_name(),
+            toggle_state = did_focus_panel,
+            source = "keyboard",
+            action = telemetry_action
+        );
+
         did_focus_panel
     }
 
