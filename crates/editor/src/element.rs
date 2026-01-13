@@ -189,10 +189,16 @@ struct RenderBlocksOutput {
     resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub(crate) enum SplitSide {
+    Left,
+    Right,
+}
+
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
-    is_in_split: bool,
+    is_in_split: Option<SplitSide>,
 }
 
 impl EditorElement {
@@ -202,12 +208,12 @@ impl EditorElement {
         Self {
             editor: editor.clone(),
             style,
-            is_in_split: false,
+            is_in_split: None,
         }
     }
 
-    pub fn set_in_split(&mut self) {
-        self.is_in_split = true;
+    pub fn set_split_side(&mut self, split_side: SplitSide) {
+        self.is_in_split = Some(split_side);
     }
 
     pub fn set_style(&mut self, style: EditorStyle) {
@@ -3883,7 +3889,7 @@ impl EditorElement {
         Some((element, final_size, row, x_offset))
     }
 
-    fn render_buffer_header(
+    pub(crate) fn render_buffer_header(
         &self,
         for_excerpt: &ExcerptInfo,
         is_folded: bool,
@@ -4256,7 +4262,7 @@ impl EditorElement {
             })
     }
 
-    fn render_blocks(
+    pub(crate) fn render_blocks(
         &self,
         rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
@@ -6458,7 +6464,7 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter && !self.is_in_split {
+        if show_git_gutter && self.is_in_split.is_none() {
             Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
@@ -7571,7 +7577,7 @@ impl EditorElement {
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
             dbg!(block.is_buffer_header);
-            if self.is_in_split && block.is_buffer_header {
+            if self.is_in_split.is_some() && block.is_buffer_header {
                 continue; // split editors paint their own unified headers
             }
 
@@ -7914,7 +7920,7 @@ fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
     })
 }
 
-fn header_jump_data(
+pub(crate) fn header_jump_data(
     editor_snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
@@ -10361,17 +10367,19 @@ impl Element for EditorElement {
                         });
                     }
 
-                    if !self.is_in_split {
+                    if self.is_in_split.is_none() {
                         window.with_element_namespace("blocks", |window| {
                             if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
                                 sticky_header.paint(window, cx)
                             }
                         });
                     }
+                    if self.is_in_split != Some(SplitSide::Left) {
+                        self.paint_scrollbars(layout, window, cx);
+                    }
 
                     self.paint_sticky_headers(layout, window, cx);
                     self.paint_minimap(layout, window, cx);
-                    self.paint_scrollbars(layout, window, cx);
                     self.paint_edit_prediction_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
                 });
@@ -10505,6 +10513,10 @@ struct StickyHeaderLine {
 impl EditorLayout {
     fn line_end_overshoot(&self) -> Pixels {
         0.15 * self.position_map.line_height
+    }
+
+    pub(crate) fn blocks(&self) -> &[BlockLayout] {
+        &self.blocks
     }
 }
 

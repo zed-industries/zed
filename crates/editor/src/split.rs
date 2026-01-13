@@ -187,6 +187,7 @@ impl SplittableEditor {
         if self.secondary.is_some() {
             return;
         }
+
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -206,6 +207,7 @@ impl SplittableEditor {
             );
             editor.number_deleted_lines = true;
             editor.set_delegate_expand_excerpts(true);
+            editor.set_show_vertical_scrollbar(false, cx);
             editor
         });
         let secondary_pane = cx.new(|cx| {

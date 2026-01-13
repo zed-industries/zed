@@ -1,10 +1,12 @@
 use gpui::{
-    App, Background, Bounds, ContentMask, Context, Corners, Edges, Element, ElementInputHandler, Entity, IntoElement, Length, PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla, px, relative, rgb, rgba
+    App, Background, Bounds, ContentMask, Context, Corners, Edges, Element, ElementInputHandler,
+    Entity, IntoElement, Length, PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla,
+    px, relative, rgb, rgba,
 };
 use multi_buffer::Anchor;
 use theme::ThemeColors;
 
-use crate::{Editor, EditorElement, EditorMode, EditorStyle, SplittableEditor};
+use crate::{Editor, EditorElement, EditorMode, EditorStyle, SplittableEditor, element::SplitSide};
 
 pub struct SplitEditorElement {
     editor: Entity<SplittableEditor>,
@@ -30,8 +32,8 @@ impl SplitEditorElement {
         let mut lhs = EditorElement::new(lhs, style.clone());
         let mut rhs = EditorElement::new(rhs, style.clone());
 
-        lhs.set_in_split();
-        rhs.set_in_split();
+        lhs.set_split_side(SplitSide::Left);
+        rhs.set_split_side(SplitSide::Right);
 
         Self {
             editor: cx.entity(),
