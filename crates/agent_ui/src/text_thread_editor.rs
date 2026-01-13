@@ -11,7 +11,9 @@ use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
     MultiBufferSnapshot, PendingDiffReview, RowExt, ToOffset as _, ToPoint as _,
-    actions::{MoveToEndOfLine, Newline, ShowCompletions, SubmitDiffReviewComment},
+    actions::{
+        MoveToEndOfLine, Newline, SendReviewToAgent, ShowCompletions, SubmitDiffReviewComment,
+    },
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
@@ -223,7 +225,8 @@ impl TextThreadEditor {
                     .register_action(TextThreadEditor::insert_selection)
                     .register_action(TextThreadEditor::copy_code)
                     .register_action(TextThreadEditor::handle_insert_dragged_files)
-                    .register_action(TextThreadEditor::handle_submit_diff_review_comment);
+                    .register_action(TextThreadEditor::handle_submit_diff_review_comment)
+                    .register_action(TextThreadEditor::handle_send_review_to_agent);
             },
         )
         .detach();
@@ -1615,6 +1618,114 @@ impl TextThreadEditor {
                                 );
                             } else {
                                 log::warn!("No active agent thread view in deferred callback 4");
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    /// Handles the SendReviewToAgent action from the ProjectDiff toolbar.
+    /// Collects ALL stored review comments from ALL hunks and sends them
+    /// to the Agent panel as creases.
+    pub fn handle_send_review_to_agent(
+        workspace: &mut Workspace,
+        _: &SendReviewToAgent,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        use editor::{DiffHunkKey, StoredReviewComment};
+        use git_ui::project_diff::ProjectDiff;
+
+        // Find the ProjectDiff item
+        let Some(project_diff) = workspace.items_of_type::<ProjectDiff>(cx).next() else {
+            log::warn!("No ProjectDiff found when sending review");
+            return;
+        };
+
+        // Extract all stored comments from all hunks
+        let (all_comments, buffer): (
+            Vec<(DiffHunkKey, Vec<StoredReviewComment>)>,
+            Entity<MultiBuffer>,
+        ) = project_diff.update(cx, |project_diff, cx| {
+            let editor = project_diff.editor().read(cx).primary_editor().clone();
+            let comments = editor.update(cx, |editor, cx| editor.take_all_review_comments(cx));
+            let buffer = editor.read(cx).buffer().clone();
+            (comments, buffer)
+        });
+
+        // Flatten: we have Vec<(DiffHunkKey, Vec<StoredReviewComment>)>
+        // Convert to Vec<StoredReviewComment> for processing
+        let comments: Vec<StoredReviewComment> = all_comments
+            .into_iter()
+            .flat_map(|(_, comments)| comments)
+            .collect();
+
+        if comments.is_empty() {
+            log::info!("No review comments to send");
+            return;
+        }
+
+        log::info!("Sending {} review comments to Agent", comments.len());
+
+        // Focus the agent panel
+        workspace.focus_panel::<crate::AgentPanel>(window, cx);
+
+        // Defer to ensure panel is focused and ready
+        cx.defer_in(window, move |workspace, window, cx| {
+            let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                log::warn!("No agent panel found");
+                return;
+            };
+
+            // Check if there's an active thread
+            let has_active_thread =
+                panel.update(cx, |panel, _cx| panel.active_thread_view().is_some());
+
+            if !has_active_thread {
+                // Create a new thread
+                window.dispatch_action(Box::new(crate::NewThread), cx);
+            }
+
+            // Defer multiple times to ensure thread creation completes
+            cx.defer_in(window, move |_workspace, window, cx| {
+                cx.defer_in(window, move |_workspace, window, cx| {
+                    cx.defer_in(window, move |workspace, window, cx| {
+                        let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                            return;
+                        };
+
+                        panel.update(cx, |panel, cx| {
+                            if let Some(thread_view) = panel.active_thread_view().cloned() {
+                                // Build creases for all comments
+                                let snapshot = buffer.read(cx).snapshot(cx);
+                                let mut all_creases = Vec::new();
+
+                                for comment in comments {
+                                    let point_range = comment.anchor_range.start.to_point(&snapshot)
+                                        ..comment.anchor_range.end.to_point(&snapshot);
+
+                                    let mut creases = selections_creases(
+                                        vec![point_range.clone()],
+                                        snapshot.clone(),
+                                        cx,
+                                    );
+
+                                    // Prepend user's comment to the code
+                                    for (code_text, crease_title) in &mut creases {
+                                        *code_text =
+                                            format!("{}\n\n{}", comment.comment, code_text);
+                                        *crease_title = format!("Review: {}", crease_title);
+                                    }
+
+                                    all_creases.extend(creases);
+                                }
+
+                                // Insert all creases into the message editor
+                                thread_view.update(cx, |thread_view, cx| {
+                                    thread_view.insert_code_crease(all_creases, window, cx);
+                                });
                             }
                         });
                     });

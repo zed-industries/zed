@@ -9,7 +9,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
-    actions::{GoToHunk, GoToPreviousHunk},
+    actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
@@ -451,6 +451,20 @@ impl ProjectDiff {
         } else {
             self.pending_scroll = Some(path_key);
         }
+    }
+
+    /// Returns the total count of review comments across all hunks/files.
+    pub fn total_review_comment_count(&self, cx: &App) -> usize {
+        self.editor
+            .read(cx)
+            .primary_editor()
+            .read(cx)
+            .total_review_comment_count()
+    }
+
+    /// Returns a reference to the splittable editor.
+    pub fn editor(&self) -> &Entity<SplittableEditor> {
+        &self.editor
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
@@ -1278,6 +1292,7 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count(cx);
 
         h_group_xl()
             .my_neg_1()
@@ -1419,6 +1434,25 @@ impl Render for ProjectDiffToolbar {
                             })),
                     ),
             )
+            // "Send Review to Agent" button (only shown when there are review comments)
+            .when(review_count > 0, |el| {
+                el.child(vertical_divider()).child(
+                    Button::new(
+                        "send-review",
+                        format!("Send Review to Agent ({})", review_count),
+                    )
+                    .icon(IconName::ZedAssistant)
+                    .icon_position(IconPosition::Start)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Send all review comments to the Agent panel",
+                        &SendReviewToAgent,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&SendReviewToAgent, window, cx)
+                    })),
+                )
+            })
     }
 }
 
