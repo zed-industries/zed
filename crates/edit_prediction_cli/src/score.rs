@@ -19,8 +19,7 @@ pub async fn run_scoring(
 ) -> anyhow::Result<()> {
     run_prediction(
         example,
-        Some(args.provider),
-        args.repetitions,
+        args,
         app_state,
         cx,
     )

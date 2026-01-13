@@ -5296,6 +5296,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sqlez_macros",
+ "strum 0.27.2",
  "tempfile",
  "terminal_view",
  "util",
@@ -21177,7 +21178,9 @@ dependencies = [
 name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
+ "strum 0.27.2",
 ]
 
 [[package]]

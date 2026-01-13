@@ -1,5 +1,5 @@
+use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
-use crate::{PredictionProvider, PromptFormat};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
@@ -78,7 +78,7 @@ pub struct ExampleBuffer {
 pub struct ExamplePrompt {
     pub input: String,
     pub expected_output: String,
-    pub format: PromptFormat,
+    pub provider: PredictionProvider,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

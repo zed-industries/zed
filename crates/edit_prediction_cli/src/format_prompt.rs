@@ -1,5 +1,5 @@
 use crate::{
-    PromptFormat,
+    FormatPromptArgs, PredictionProvider,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
     load_project::run_load_project,
@@ -16,7 +16,7 @@ use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
     example: &mut Example,
-    prompt_format: PromptFormat,
+    args: &FormatPromptArgs,
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
 ) -> Result<()> {
@@ -24,8 +24,8 @@ pub async fn run_format_prompt(
 
     let step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
 
-    match prompt_format {
-        PromptFormat::Teacher => {
+    match args.provider {
+        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
             step_progress.set_substatus("formatting teacher prompt");
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
@@ -36,10 +36,10 @@ pub async fn run_format_prompt(
                     .first()
                     .cloned()
                     .unwrap_or_default(),
-                format: prompt_format,
+                provider: args.provider,
             });
         }
-        PromptFormat::Zeta2 => {
+        PredictionProvider::Zeta2 => {
             step_progress.set_substatus("loading project");
             run_load_project(example, app_state, cx.clone()).await?;
 
@@ -76,7 +76,9 @@ pub async fn run_format_prompt(
                             .cursor_offset,
                     ))
                 })?;
-            let prompt = format_zeta_prompt(&input);
+            let zeta_version = args.version;
+
+            let prompt = format_zeta_prompt(&input, zeta_version);
             let expected_output = zeta2_output_for_patch(
                 &input,
                 &example
@@ -89,8 +91,11 @@ pub async fn run_format_prompt(
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
-                format: prompt_format,
+                provider: args.provider,
             });
+        }
+        _ => {
+            panic!("Cannot format prompt for {:?}", args.provider);
         }
     };
     Ok(())

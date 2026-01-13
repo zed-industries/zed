@@ -15,8 +15,8 @@ use release_channel::AppVersion;
 
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
+use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
 pub const MAX_EDITABLE_TOKENS: usize = 150;
@@ -32,6 +32,7 @@ pub fn request_prediction_with_zeta2(
         debug_tx,
         ..
     }: EditPredictionModelInput,
+    zeta_version: ZetaVersion,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer_snapshotted_at = Instant::now();
@@ -62,7 +63,7 @@ pub fn request_prediction_with_zeta2(
                 cursor_offset,
             );
 
-            let prompt = format_zeta_prompt(&prompt_input);
+            let prompt = format_zeta_prompt(&prompt_input, zeta_version);
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
