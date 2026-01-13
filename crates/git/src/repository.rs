@@ -21,7 +21,6 @@ use text::LineEnding;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
-use std::rc::Rc;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
