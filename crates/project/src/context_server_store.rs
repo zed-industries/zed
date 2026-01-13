@@ -14,7 +14,7 @@ use registry::ContextServerDescriptorRegistry;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use settings::{Settings as _, SettingsStore};
-use util::{ResultExt as _, TryFutureExt, debug_panic, rel_path::RelPath};
+use util::{ResultExt as _, debug_panic, rel_path::RelPath};
 
 use crate::{
     Project,
@@ -61,7 +61,7 @@ enum ContextServerState {
     Starting {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
-        _task: Task<Result<(), anyhow::Error>>,
+        _task: Task<()>,
     },
     Running {
         server: Arc<ContextServer>,
@@ -572,83 +572,12 @@ impl ContextServerStore {
             return;
         }
 
-        let remote_state = match &self.state {
-            ContextServerStoreState::Remote {
-                project_id,
-                upstream_client,
-            } if !local_only => Some((*project_id, upstream_client.clone())),
-            _ => None,
-        };
-
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
 
             async move |this, cx| {
-                let (server, configuration) =
-                    if let Some((project_id, upstream_client)) = remote_state {
-                        let root_dir = this.update(cx, |this, cx| {
-                            this.project.as_ref().and_then(|project| {
-                                project
-                                    .read_with(cx, |project, cx| {
-                                        project
-                                            .active_project_directory(cx)
-                                            .map(|p| p.display().to_string())
-                                    })
-                                    .ok()
-                                    .flatten()
-                            })
-                        })?;
-
-                        let response = upstream_client
-                            .update(cx, |client, _| {
-                                client
-                                    .proto_client()
-                                    .request(proto::GetContextServerCommand {
-                                        project_id,
-                                        server_id: id.0.to_string(),
-                                        root_dir: root_dir.clone(),
-                                    })
-                            })
-                            .await?;
-
-                        let remote_command = upstream_client.update(cx, |client, _| {
-                            client.build_command(
-                                Some(response.path),
-                                &response.args,
-                                &response.env.into_iter().collect(),
-                                root_dir,
-                                None,
-                            )
-                        })?;
-
-                        let command = ContextServerCommand {
-                            path: remote_command.program.into(),
-                            args: remote_command.args,
-                            env: Some(remote_command.env.into_iter().collect()),
-                            timeout: None,
-                        };
-
-                        let configuration = Arc::new(ContextServerConfiguration::Custom {
-                            command,
-                            local_only,
-                        });
-
-                        let server = this.update(cx, |this, cx| {
-                            this.create_context_server(
-                                id.clone(),
-                                configuration.clone(),
-                                Some(None),
-                                cx,
-                            )
-                        })??;
-
-                        (server, configuration)
-                    } else {
-                        (server, configuration)
-                    };
-
                 match server.clone().start(cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
@@ -681,8 +610,6 @@ impl ContextServerStore {
                         .log_err();
                     }
                 };
-
-                anyhow::Ok(())
             }
         });
 
@@ -710,74 +637,134 @@ impl ContextServerStore {
         Ok(())
     }
 
-    fn create_context_server(
-        &self,
+    async fn create_context_server(
+        this: WeakEntity<Self>,
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
-        working_directory: Option<Option<Arc<Path>>>,
-        cx: &mut Context<Self>,
-    ) -> Result<Arc<ContextServer>> {
-        let global_timeout =
-            Self::resolve_project_settings(&self.worktree_store, cx).context_server_timeout;
+        cx: &mut AsyncApp,
+    ) -> Result<(Arc<ContextServer>, Arc<ContextServerConfiguration>)> {
+        let local_only = configuration.local_only();
 
-        if let Some(factory) = self.context_server_factory.as_ref() {
-            return Ok(factory(id, configuration));
-        }
+        let (remote_state, is_remote_project) = this.update(cx, |this, _| {
+            let remote_state = match &this.state {
+                ContextServerStoreState::Remote {
+                    project_id,
+                    upstream_client,
+                } if !local_only => Some((*project_id, upstream_client.clone())),
+                _ => None,
+            };
+            (remote_state, this.is_remote_project())
+        })?;
 
-        match configuration.as_ref() {
-            ContextServerConfiguration::Http {
-                url,
-                headers,
-                timeout,
-            } => Ok(Arc::new(ContextServer::http(
-                id,
-                url,
-                headers.clone(),
-                cx.http_client(),
-                cx.background_executor().clone(),
-                Some(Duration::from_secs(
-                    timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                )),
-            )?)),
-            _ => {
-                let root_path = match working_directory {
-                    Some(dir) => dir,
-                    None => self
-                        .project
-                        .as_ref()
-                        .and_then(|project| {
-                            project
-                                .read_with(cx, |project, cx| project.active_project_directory(cx))
-                                .ok()
-                                .flatten()
-                        })
-                        .or_else(|| {
-                            self.worktree_store.read_with(cx, |store, cx| {
-                                store.visible_worktrees(cx).fold(None, |acc, item| {
-                                    if acc.is_none() {
-                                        item.read(cx).root_dir()
-                                    } else {
-                                        acc
-                                    }
-                                })
+        // For local-only servers on remote projects, use no working directory
+        // to avoid passing remote paths to a local process
+        let root_path: Option<Arc<Path>> = if local_only && is_remote_project {
+            None
+        } else {
+            this.update(cx, |this, cx| {
+                this.project
+                    .as_ref()
+                    .and_then(|project| {
+                        project
+                            .read_with(cx, |project, cx| project.active_project_directory(cx))
+                            .ok()
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        this.worktree_store.read_with(cx, |store, cx| {
+                            store.visible_worktrees(cx).fold(None, |acc, item| {
+                                if acc.is_none() {
+                                    item.read(cx).root_dir()
+                                } else {
+                                    acc
+                                }
                             })
-                        }),
-                };
+                        })
+                    })
+            })?
+        };
 
-                let mut command = configuration
-                    .command()
-                    .context("Missing command configuration for stdio context server")?
-                    .clone();
-                command.timeout = Some(
-                    command
-                        .timeout
-                        .unwrap_or(global_timeout)
-                        .min(MAX_TIMEOUT_SECS),
-                );
+        let configuration = if let Some((project_id, upstream_client)) = remote_state {
+            let root_dir = root_path.as_ref().map(|p| p.display().to_string());
 
-                Ok(Arc::new(ContextServer::stdio(id, command, root_path)))
+            let response = upstream_client
+                .update(cx, |client, _| {
+                    client
+                        .proto_client()
+                        .request(proto::GetContextServerCommand {
+                            project_id,
+                            server_id: id.0.to_string(),
+                            root_dir: root_dir.clone(),
+                        })
+                })
+                .await?;
+
+            let remote_command = upstream_client.update(cx, |client, _| {
+                client.build_command(
+                    Some(response.path),
+                    &response.args,
+                    &response.env.into_iter().collect(),
+                    root_dir,
+                    None,
+                )
+            })?;
+
+            let command = ContextServerCommand {
+                path: remote_command.program.into(),
+                args: remote_command.args,
+                env: Some(remote_command.env.into_iter().collect()),
+                timeout: None,
+            };
+
+            Arc::new(ContextServerConfiguration::Custom {
+                command,
+                local_only,
+            })
+        } else {
+            configuration
+        };
+
+        let server: Arc<ContextServer> = this.update(cx, |this, cx| {
+            let global_timeout =
+                Self::resolve_project_settings(&this.worktree_store, cx).context_server_timeout;
+
+            if let Some(factory) = this.context_server_factory.as_ref() {
+                return anyhow::Ok(factory(id.clone(), configuration.clone()));
             }
-        }
+
+            match configuration.as_ref() {
+                ContextServerConfiguration::Http {
+                    url,
+                    headers,
+                    timeout,
+                } => anyhow::Ok(Arc::new(ContextServer::http(
+                    id,
+                    url,
+                    headers.clone(),
+                    cx.http_client(),
+                    cx.background_executor().clone(),
+                    Some(Duration::from_secs(
+                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                    )),
+                )?)),
+                _ => {
+                    let mut command = configuration
+                        .command()
+                        .context("Missing command configuration for stdio context server")?
+                        .clone();
+                    command.timeout = Some(
+                        command
+                            .timeout
+                            .unwrap_or(global_timeout)
+                            .min(MAX_TIMEOUT_SECS),
+                    );
+
+                    anyhow::Ok(Arc::new(ContextServer::stdio(id, command, root_path)))
+                }
+            }
+        })??;
+
+        Ok((server, configuration))
     }
 
     async fn handle_get_context_server_command(
@@ -906,7 +893,7 @@ impl ContextServerStore {
         let mut servers_to_remove = HashSet::default();
         let mut servers_to_stop = HashSet::default();
 
-        this.update(cx, |this, cx| {
+        this.update(cx, |this, _cx| {
             for server_id in this.servers.keys() {
                 // All servers that are not in desired_servers should be removed from the store.
                 // This can happen if the user removed a server from the context server settings.
@@ -925,20 +912,7 @@ impl ContextServerStore {
                 let existing_config = state.as_ref().map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) || is_stopped {
                     let config = Arc::new(config);
-                    // For local-only servers on remote projects, use no working directory
-                    // to avoid passing remote paths to a local process
-                    let working_directory = if config.local_only() && this.is_remote_project() {
-                        Some(None)
-                    } else {
-                        None
-                    };
-                    let server = this.create_context_server(
-                        id.clone(),
-                        config.clone(),
-                        working_directory,
-                        cx,
-                    )?;
-                    servers_to_start.push((server, config));
+                    servers_to_start.push((id.clone(), config));
                     if this.servers.contains_key(&id) {
                         servers_to_stop.insert(id);
                     }
@@ -948,18 +922,25 @@ impl ContextServerStore {
             anyhow::Ok(())
         })??;
 
-        this.update(cx, |this, cx| {
+        this.update(cx, |this, inner_cx| {
             for id in servers_to_stop {
-                this.stop_server(&id, cx)?;
+                this.stop_server(&id, inner_cx)?;
             }
             for id in servers_to_remove {
-                this.remove_server(&id, cx)?;
-            }
-            for (server, config) in servers_to_start {
-                this.run_server(server, config, cx);
+                this.remove_server(&id, inner_cx)?;
             }
             anyhow::Ok(())
-        })?
+        })??;
+
+        for (id, config) in servers_to_start {
+            let (server, config) =
+                Self::create_context_server(this.clone(), id, config, cx).await?;
+            this.update(cx, |this, cx| {
+                this.run_server(server, config, cx);
+            })?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1635,19 +1616,18 @@ mod tests {
             )
         });
 
-        let result = store.update(cx, |store, cx| {
-            store.create_context_server(
-                ContextServerId("test-server".into()),
-                Arc::new(ContextServerConfiguration::Http {
-                    url: url::Url::parse("http://localhost:8080")
-                        .expect("Failed to parse test URL"),
-                    headers: Default::default(),
-                    timeout: None,
-                }),
-                None,
-                cx,
-            )
-        });
+        let mut async_cx = cx.to_async();
+        let result = ContextServerStore::create_context_server(
+            store.downgrade(),
+            ContextServerId("test-server".into()),
+            Arc::new(ContextServerConfiguration::Http {
+                url: url::Url::parse("http://localhost:8080").expect("Failed to parse test URL"),
+                headers: Default::default(),
+                timeout: None,
+            }),
+            &mut async_cx,
+        )
+        .await;
 
         assert!(
             result.is_ok(),
@@ -1694,19 +1674,18 @@ mod tests {
             )
         });
 
-        let result = store.update(cx, |store, cx| {
-            store.create_context_server(
-                ContextServerId("test-server".into()),
-                Arc::new(ContextServerConfiguration::Http {
-                    url: url::Url::parse("http://localhost:8080")
-                        .expect("Failed to parse test URL"),
-                    headers: Default::default(),
-                    timeout: Some(120),
-                }),
-                None,
-                cx,
-            )
-        });
+        let mut async_cx = cx.to_async();
+        let result = ContextServerStore::create_context_server(
+            store.downgrade(),
+            ContextServerId("test-server".into()),
+            Arc::new(ContextServerConfiguration::Http {
+                url: url::Url::parse("http://localhost:8080").expect("Failed to parse test URL"),
+                headers: Default::default(),
+                timeout: Some(120),
+            }),
+            &mut async_cx,
+        )
+        .await;
 
         assert!(
             result.is_ok(),
@@ -1728,22 +1707,22 @@ mod tests {
             )
         });
 
-        let result = store.update(cx, |store, cx| {
-            store.create_context_server(
-                ContextServerId("stdio-server".into()),
-                Arc::new(ContextServerConfiguration::Custom {
-                    command: ContextServerCommand {
-                        path: "/usr/bin/node".into(),
-                        args: vec!["server.js".into()],
-                        env: None,
-                        timeout: Some(180000),
-                    },
-                    local_only: false,
-                }),
-                None,
-                cx,
-            )
-        });
+        let mut async_cx = cx.to_async();
+        let result = ContextServerStore::create_context_server(
+            store.downgrade(),
+            ContextServerId("stdio-server".into()),
+            Arc::new(ContextServerConfiguration::Custom {
+                command: ContextServerCommand {
+                    path: "/usr/bin/node".into(),
+                    args: vec!["server.js".into()],
+                    env: None,
+                    timeout: Some(180000),
+                },
+                local_only: false,
+            }),
+            &mut async_cx,
+        )
+        .await;
 
         assert!(
             result.is_ok(),
