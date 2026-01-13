@@ -1398,6 +1398,18 @@ impl PlatformWindow for WaylandWindow {
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
     }
+
+    fn play_system_bell(&self) {
+        let state = self.borrow();
+        let surface = if state.surface_state.toplevel().is_some() {
+            Some(&state.surface)
+        } else {
+            None
+        };
+        if let Some(bell) = state.client.globals.system_bell.as_ref() {
+            bell.ring(surface);
+        }
+    }
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {

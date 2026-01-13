@@ -7461,6 +7461,7 @@ dependencies = [
  "num_cpus",
  "objc",
  "objc2",
+ "objc2-app-kit",
  "objc2-metal",
  "oo7",
  "open",
