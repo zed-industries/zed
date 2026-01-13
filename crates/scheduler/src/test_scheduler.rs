@@ -95,6 +95,8 @@ impl TestScheduler {
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
                 is_main_thread: true,
+                parking_timeout: Duration::from_secs(5),
+                parking_timeout_message: None,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
@@ -123,6 +125,14 @@ impl TestScheduler {
 
     pub fn parking_allowed(&self) -> bool {
         self.state.lock().allow_parking
+    }
+
+    /// Set the parking timeout duration and optional custom panic message.
+    /// This is intended for test use only.
+    pub fn allow_parking_for(&self, timeout: Duration, message: Option<String>) {
+        let mut state = self.state.lock();
+        state.parking_timeout = timeout;
+        state.parking_timeout_message = message;
     }
 
     pub fn is_main_thread(&self) -> bool {
@@ -370,14 +380,49 @@ impl TestScheduler {
 
     fn park(&self, deadline: Option<Instant>) -> bool {
         if self.state.lock().allow_parking {
-            if let Some(deadline) = deadline {
+            // Enforce a hard timeout to prevent tests from hanging indefinitely
+            let (hard_timeout, timeout_message) = {
+                let state = self.state.lock();
+                (state.parking_timeout, state.parking_timeout_message.clone())
+            };
+            let start = Instant::now();
+            let hard_deadline = start + hard_timeout;
+
+            // Use the earlier of the provided deadline or the hard timeout deadline
+            let effective_deadline = deadline
+                .map(|d| d.min(hard_deadline))
+                .unwrap_or(hard_deadline);
+
+            // Park in small intervals to allow checking both deadlines
+            const PARK_INTERVAL: Duration = Duration::from_millis(100);
+            loop {
                 let now = Instant::now();
-                let timeout = deadline.saturating_duration_since(now);
-                thread::park_timeout(timeout);
-                now.elapsed() < timeout
-            } else {
-                thread::park();
-                true
+                if now >= effective_deadline {
+                    // Check if we hit the hard timeout
+                    if now >= hard_deadline {
+                        if let Some(message) = timeout_message {
+                            panic!("{}", message);
+                        } else {
+                            panic!(
+                                "Test timed out after {} seconds while parking. \
+                                 This may indicate a deadlock or missing waker.",
+                                hard_timeout.as_secs()
+                            );
+                        }
+                    }
+                    // Hit the provided deadline
+                    return false;
+                }
+
+                let remaining = effective_deadline.saturating_duration_since(now);
+                let park_duration = remaining.min(PARK_INTERVAL);
+                thread::park_timeout(park_duration);
+
+                // Check if we were woken up (not just timed out)
+                // If there's work to do, the caller will find it
+                if now.elapsed() < park_duration {
+                    return true;
+                }
             }
         } else if deadline.is_some() {
             false
@@ -602,6 +647,8 @@ struct SchedulerState {
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
     is_main_thread: bool,
+    parking_timeout: Duration,
+    parking_timeout_message: Option<String>,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(

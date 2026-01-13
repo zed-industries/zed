@@ -357,10 +357,9 @@ impl ExtensionStore {
                     cx: &mut gpui::AsyncApp,
                 ) -> futures::future::Fuse<gpui::Task<()>> {
                     if use_real_time_debounce {
-                        cx.background_spawn(async move {
-                            gpui::Timer::after(RELOAD_DEBOUNCE_DURATION).await;
-                        })
-                        .fuse()
+                        cx.background_executor()
+                            .timer(RELOAD_DEBOUNCE_DURATION)
+                            .fuse()
                     } else {
                         cx.background_executor()
                             .timer(RELOAD_DEBOUNCE_DURATION)

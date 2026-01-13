@@ -290,7 +290,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "tempfile",
  "terminal",
@@ -3263,7 +3262,6 @@ dependencies = [
  "mistral",
  "serde",
  "serde_json",
- "smol",
  "text",
 ]
 
@@ -6122,7 +6120,6 @@ version = "0.1.0"
 dependencies = [
  "futures 0.3.31",
  "gpui",
- "smol",
 ]
 
 [[package]]

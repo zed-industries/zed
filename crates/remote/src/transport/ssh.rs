@@ -492,7 +492,8 @@ impl SshRemoteConnection {
         });
 
         let mut askpass =
-            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
+            askpass::AskPassSession::new(cx.background_executor().clone(), askpass_delegate)
+                .await?;
 
         delegate.set_status(Some("Connecting"), cx);
 
