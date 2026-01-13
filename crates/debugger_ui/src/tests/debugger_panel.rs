@@ -567,6 +567,7 @@ async fn test_handle_start_debugging_reverse_request(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
+    cx.executor().allow_parking();
     init_test(cx);
 
     let send_response = Arc::new(AtomicBool::new(false));
