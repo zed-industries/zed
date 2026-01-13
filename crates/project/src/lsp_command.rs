@@ -3510,7 +3510,7 @@ impl LspCommand for InlayHints {
 #[async_trait(?Send)]
 impl LspCommand for SemanticTokensFull {
     type Response = SemanticTokensResponse;
-    type LspRequest = lsp_semantic_tokens::SemanticTokensFullRequest;
+    type LspRequest = lsp::SemanticTokensFullRequest;
     type ProtoRequest = proto::SemanticTokens;
 
     fn display_name(&self) -> &str {
@@ -3556,20 +3556,18 @@ impl LspCommand for SemanticTokensFull {
 
     async fn response_from_lsp(
         self,
-        message: Option<lsp_semantic_tokens::SemanticTokensFullResult>,
+        message: Option<lsp::SemanticTokensResult>,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
         _: AsyncApp,
     ) -> anyhow::Result<SemanticTokensResponse> {
         match message {
-            Some(lsp_semantic_tokens::SemanticTokensFullResult::Tokens(tokens)) => {
-                Ok(SemanticTokensResponse::Full {
-                    data: tokens.data,
-                    result_id: tokens.result_id.map(SharedString::new),
-                })
-            }
-            Some(lsp_semantic_tokens::SemanticTokensFullResult::Partial(_)) => {
+            Some(lsp::SemanticTokensResult::Tokens(tokens)) => Ok(SemanticTokensResponse::Full {
+                data: tokens.data,
+                result_id: tokens.result_id.map(SharedString::new),
+            }),
+            Some(lsp::SemanticTokensResult::Partial(_)) => {
                 anyhow::bail!(
                     "Unexpected semantic tokens response with partial result for inlay hints"
                 )
@@ -3663,7 +3661,7 @@ impl LspCommand for SemanticTokensFull {
 #[async_trait(?Send)]
 impl LspCommand for SemanticTokensDelta {
     type Response = SemanticTokensResponse;
-    type LspRequest = lsp_semantic_tokens::SemanticTokensFullDeltaRequest;
+    type LspRequest = lsp::SemanticTokensFullDeltaRequest;
     type ProtoRequest = proto::SemanticTokens;
 
     fn display_name(&self) -> &str {
@@ -3710,20 +3708,20 @@ impl LspCommand for SemanticTokensDelta {
 
     async fn response_from_lsp(
         self,
-        message: Option<lsp_semantic_tokens::SemanticTokensFullDeltaResult>,
+        message: Option<lsp::SemanticTokensFullDeltaResult>,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
         _: AsyncApp,
     ) -> anyhow::Result<SemanticTokensResponse> {
         match message {
-            Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::Tokens(tokens)) => {
+            Some(lsp::SemanticTokensFullDeltaResult::Tokens(tokens)) => {
                 Ok(SemanticTokensResponse::Full {
                     data: tokens.data,
                     result_id: tokens.result_id.map(SharedString::new),
                 })
             }
-            Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
+            Some(lsp::SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
                 Ok(SemanticTokensResponse::Delta {
                     edits: delta
                         .edits
@@ -3737,9 +3735,7 @@ impl LspCommand for SemanticTokensDelta {
                     result_id: delta.result_id.map(SharedString::new),
                 })
             }
-            Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::PartialTokensDelta {
-                ..
-            }) => {
+            Some(lsp::SemanticTokensFullDeltaResult::PartialTokensDelta { .. }) => {
                 anyhow::bail!(
                     "Unexpected semantic tokens response with partial result for inlay hints"
                 )
@@ -4871,79 +4867,6 @@ fn process_full_diagnostics_report(
                 registration_id,
             });
         }
-    }
-}
-
-// TODO kb upstream to lsp-types Zed's form
-// Copy of the semantic tokens types, except using `Vec<u32>` instead
-// of `Vec<SemanticToken>`. This is so that servers can send a delta
-// that only modifies part of a token.
-mod lsp_semantic_tokens {
-    use serde::{Deserialize, Serialize};
-
-    pub enum SemanticTokensFullRequest {}
-
-    impl lsp::request::Request for SemanticTokensFullRequest {
-        type Params = lsp::SemanticTokensParams;
-        type Result = Option<SemanticTokensFullResult>;
-        const METHOD: &'static str = "textDocument/semanticTokens/full";
-    }
-
-    pub enum SemanticTokensFullDeltaRequest {}
-
-    impl lsp::request::Request for SemanticTokensFullDeltaRequest {
-        type Params = lsp::SemanticTokensDeltaParams;
-        type Result = Option<SemanticTokensFullDeltaResult>;
-        const METHOD: &'static str = "textDocument/semanticTokens/full/delta";
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    #[serde(untagged)]
-    pub enum SemanticTokensFullResult {
-        Tokens(SemanticTokens),
-        Partial(SemanticTokensPartialResult),
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    #[serde(untagged)]
-    pub enum SemanticTokensFullDeltaResult {
-        Tokens(SemanticTokens),
-        TokensDelta(SemanticTokensDelta),
-        PartialTokensDelta { edits: Vec<SemanticTokensEdit> },
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct SemanticTokens {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub result_id: Option<String>,
-        pub data: Vec<u32>,
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct SemanticTokensDelta {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub result_id: Option<String>,
-        pub edits: Vec<SemanticTokensEdit>,
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct SemanticTokensPartialResult {
-        pub data: Vec<u32>,
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Default, serde::Deserialize, serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct SemanticTokensEdit {
-        pub start: u32,
-        pub delete_count: u32,
-
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub data: Option<Vec<u32>>,
     }
 }
 

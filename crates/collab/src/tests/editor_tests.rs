@@ -4720,13 +4720,13 @@ async fn test_mutual_editor_semantic_token_cache_update(
                                     AtomicUsize::load(&edits_made_2, atomic::Ordering::Acquire);
                                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                                     lsp::SemanticTokens {
-                                        data: vec![lsp::SemanticToken {
-                                            delta_line: 0,
-                                            delta_start: 3,
-                                            length: edits_made as u32 + 4,
-                                            token_type: 0,
-                                            token_modifiers_bitset: 0,
-                                        }],
+                                        data: vec![
+                                            0,                     // delta_line
+                                            3,                     // delta_start
+                                            edits_made as u32 + 4, // length
+                                            0,                     // token_type
+                                            0,                     // token_modifiers_bitset
+                                        ],
                                         result_id: None,
                                     },
                                 )))
@@ -4995,13 +4995,13 @@ async fn test_semantic_token_refresh_is_forwarded(
                 let (delta_start, length) = if other_tokens { (0, 2) } else { (3, 4) };
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
+                        data: vec![
+                            0, // delta_line
                             delta_start,
                             length,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: None,
                     },
                 )))

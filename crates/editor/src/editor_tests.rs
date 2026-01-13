@@ -17295,13 +17295,13 @@ async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
             async move {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 3,
-                            length: 4,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            3, // delta_start
+                            4, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         // The server isn't capable of deltas, so even though we sent back
                         // a result ID, the client shouldn't request a delta.
                         result_id: Some("a".into()),
@@ -17371,13 +17371,13 @@ async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
             async move {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 3,
-                            length: 4,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            3, // delta_start
+                            4, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: None, // Sending back `None` forces the client to not use deltas.
                     },
                 )))
@@ -17451,13 +17451,13 @@ async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
             async move {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 3,
-                            length: 4,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            3, // delta_start
+                            4, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: Some("a".into()),
                     },
                 )))
@@ -17656,13 +17656,13 @@ async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
                         // highlight 'a' as a property
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 0,
-                            length: 1,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            0, // delta_start
+                            1, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: Some("a".into()),
                     },
                 )))
@@ -17676,13 +17676,13 @@ async fn lsp_semantic_tokens_multiserver_full(cx: &mut TestAppContext) {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
                         // highlight '3' as a literal
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 4,
-                            length: 1,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            4, // delta_start
+                            1, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: Some("a".into()),
                     },
                 )))
@@ -17923,13 +17923,13 @@ async fn lsp_semantic_tokens_multibuffer_part(cx: &mut TestAppContext) {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
                         // highlight 'a' as a property
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 0,
-                            length: 1,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            0, // delta_start
+                            1, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: Some("a".into()),
                     },
                 )))
@@ -18108,13 +18108,13 @@ async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                     lsp::SemanticTokens {
                         // highlight 'a' as a property
-                        data: vec![lsp::SemanticToken {
-                            delta_line: 0,
-                            delta_start: 0,
-                            length: 1,
-                            token_type: 0,
-                            token_modifiers_bitset: 0,
-                        }],
+                        data: vec![
+                            0, // delta_line
+                            0, // delta_start
+                            1, // length
+                            0, // token_type
+                            0, // token_modifiers_bitset
+                        ],
                         result_id: Some("a".into()),
                     },
                 )))
