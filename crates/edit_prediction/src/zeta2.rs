@@ -125,9 +125,17 @@ pub fn request_prediction_with_zeta2(
                 output_text = output_text.replace(CURSOR_MARKER, "");
             }
 
-            let old_text = snapshot
+            let mut old_text = snapshot
                 .text_for_range(editable_offset_range.clone())
                 .collect::<String>();
+
+            if !output_text.is_empty() && !output_text.ends_with('\n') {
+                output_text.push('\n');
+            }
+            if !old_text.is_empty() && !old_text.ends_with('\n') {
+                old_text.push('\n');
+            }
+
             let edits: Vec<_> = language::text_diff(&old_text, &output_text)
                 .into_iter()
                 .map(|(range, text)| {
