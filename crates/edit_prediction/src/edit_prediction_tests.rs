@@ -1,11 +1,14 @@
 use super::*;
-use crate::{udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
+use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
 use client::{UserStore, test::FakeServer};
 use clock::{FakeSystemClock, ReplicaId};
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
+    predict_edits_v3::{
+        RawCompletionChoice, RawCompletionRequest, RawCompletionResponse, RawCompletionUsage,
+    },
 };
 use futures::{
     AsyncReadExt, StreamExt,
@@ -16,9 +19,8 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Point, ToOffset as _};
+use language::Point;
 use lsp::LanguageServerId;
-use open_ai::Usage;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
@@ -360,7 +362,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         ep_store.edit_history_for_project(&project, cx)
     });
     assert_eq!(events.len(), 1);
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
     assert_eq!(
         diff.as_str(),
         indoc! {"
@@ -377,7 +379,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         ep_store.edit_history_for_project_with_pause_split_last_event(&project, cx)
     });
     assert_eq!(events.len(), 2);
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
     assert_eq!(
         diff.as_str(),
         indoc! {"
@@ -389,7 +391,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         "}
     );
 
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].as_ref();
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].event.as_ref();
     assert_eq!(
         diff.as_str(),
         indoc! {"
@@ -400,6 +402,196 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
              Bye
         "}
     );
+}
+
+#[gpui::test]
+async fn test_event_grouping_line_span_coalescing(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Create a file with 30 lines to test line-based coalescing
+    let content = (1..=30)
+        .map(|i| format!("Line {}\n", i))
+        .collect::<String>();
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": content
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First edit: multi-line edit spanning rows 10-12 (replacing lines 11-13)
+    buffer.update(cx, |buffer, cx| {
+        let start = Point::new(10, 0).to_offset(buffer);
+        let end = Point::new(13, 0).to_offset(buffer);
+        buffer.edit(vec![(start..end, "Middle A\nMiddle B\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -8,9 +8,8 @@
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+             Line 15
+             Line 16
+        "},
+        "After first edit"
+    );
+
+    // Second edit: insert ABOVE the first edit's range (row 5, within 8 lines of row 10)
+    // This tests that coalescing considers the START of the existing range
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(5, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Above\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,14 +3,14 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+             Line 15
+             Line 16
+        "},
+        "After inserting above (should coalesce)"
+    );
+
+    // Third edit: insert BELOW the first edit's range (row 14 in current buffer, within 8 lines of row 12)
+    // This tests that coalescing considers the END of the existing range
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(14, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Below\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,15 +3,16 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+            +Below
+             Line 15
+             Line 16
+             Line 17
+        "},
+        "After inserting below (should coalesce)"
+    );
+
+    // Fourth edit: insert FAR BELOW (row 25, beyond 8 lines from the current range end ~row 15)
+    // This should NOT coalesce - creates a new event
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(25, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Far below\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,15 +3,16 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+            +Below
+             Line 15
+             Line 16
+             Line 17
+
+            ---
+            @@ -23,6 +23,7 @@
+             Line 22
+             Line 23
+             Line 24
+            +Far below
+             Line 25
+             Line 26
+             Line 27
+        "},
+        "After inserting far below (should NOT coalesce)"
+    );
+}
+
+fn render_events(events: &[StoredEvent]) -> String {
+    events
+        .iter()
+        .map(|e| {
+            let zeta_prompt::Event::BufferChange { diff, .. } = e.event.as_ref();
+            diff.as_str()
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n")
 }
 
 #[gpui::test]
@@ -1135,37 +1327,28 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 // }
 
 // Generate a model response that would apply the given diff to the active file.
-fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Response {
-    let prompt = match &request.messages[0] {
-        open_ai::RequestMessage::User {
-            content: open_ai::MessageContent::Plain(content),
-        } => content,
-        _ => panic!("unexpected request {request:?}"),
-    };
+fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawCompletionResponse {
+    let prompt = &request.prompt;
 
-    let open = "<editable_region>\n";
-    let close = "</editable_region>";
+    let current_marker = "<|fim_middle|>current\n";
+    let updated_marker = "<|fim_middle|>updated\n";
     let cursor = "<|user_cursor|>";
 
-    let start_ix = open.len() + prompt.find(open).unwrap();
-    let end_ix = start_ix + &prompt[start_ix..].find(close).unwrap();
+    let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
+    let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
     let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
-    open_ai::Response {
+    RawCompletionResponse {
         id: Uuid::new_v4().to_string(),
-        object: "response".into(),
+        object: "text_completion".into(),
         created: 0,
         model: "model".into(),
-        choices: vec![open_ai::Choice {
-            index: 0,
-            message: open_ai::RequestMessage::Assistant {
-                content: Some(open_ai::MessageContent::Plain(new_excerpt)),
-                tool_calls: vec![],
-            },
+        choices: vec![RawCompletionChoice {
+            text: new_excerpt,
             finish_reason: None,
         }],
-        usage: Usage {
+        usage: RawCompletionUsage {
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -1173,23 +1356,13 @@ fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Re
     }
 }
 
-fn prompt_from_request(request: &open_ai::Request) -> &str {
-    assert_eq!(request.messages.len(), 1);
-    let open_ai::RequestMessage::User {
-        content: open_ai::MessageContent::Plain(content),
-        ..
-    } = &request.messages[0]
-    else {
-        panic!(
-            "Request does not have single user message of type Plain. {:#?}",
-            request
-        );
-    };
-    content
+fn prompt_from_request(request: &RawCompletionRequest) -> &str {
+    &request.prompt
 }
 
 struct RequestChannels {
-    predict: mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
+    predict:
+        mpsc::UnboundedReceiver<(RawCompletionRequest, oneshot::Sender<RawCompletionResponse>)>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
 }
 
@@ -2079,6 +2252,74 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
     assert!(
         predict_called.load(std::sync::atomic::Ordering::SeqCst),
         "With custom URL, predict endpoint should be called even without authentication"
+    );
+}
+
+#[gpui::test]
+fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            indoc! {"
+                zero
+                one
+                two
+                three
+                four
+                five
+                six
+                seven
+                eight
+                nine
+                ten
+                eleven
+                twelve
+                thirteen
+                fourteen
+                fifteen
+                sixteen
+                seventeen
+                eighteen
+                nineteen
+                twenty
+                twenty-one
+                twenty-two
+                twenty-three
+                twenty-four
+            "},
+            cx,
+        )
+    });
+
+    let old_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    buffer.update(cx, |buffer, cx| {
+        let point = Point::new(12, 0);
+        buffer.edit([(point..point, "SECOND INSERTION\n")], None, cx);
+        let point = Point::new(8, 0);
+        buffer.edit([(point..point, "FIRST INSERTION\n")], None, cx);
+    });
+
+    let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let diff = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
+
+    assert_eq!(
+        diff,
+        indoc! {"
+            @@ -6,10 +6,12 @@
+             five
+             six
+             seven
+            +FIRST INSERTION
+             eight
+             nine
+             ten
+             eleven
+            +SECOND INSERTION
+             twelve
+             thirteen
+             fourteen
+            "}
     );
 }
 

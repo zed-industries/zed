@@ -1,6 +1,7 @@
 use crate::AgentTool;
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -67,7 +68,12 @@ impl AgentTool for OpenTool {
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
         let authorize = event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx);
         cx.background_spawn(async move {
-            authorize.await?;
+            futures::select! {
+                result = authorize.fuse() => result?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Open cancelled by user");
+                }
+            }
 
             match abs_path {
                 Some(path) => open::that(path),

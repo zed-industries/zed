@@ -15,9 +15,6 @@ pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
 impl MetalAtlas {
     pub(crate) fn new(device: Device) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
-            // Shared memory can be used only if CPU and GPU share the same memory space.
-            // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
-            unified_memory: device.has_unified_memory(),
             device: AssertSend(device),
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
@@ -32,7 +29,6 @@ impl MetalAtlas {
 
 struct MetalAtlasState {
     device: AssertSend<Device>,
-    unified_memory: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
@@ -70,6 +66,7 @@ impl PlatformAtlas for MetalAtlas {
         let textures = match id.kind {
             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+            AtlasTextureKind::Subpixel => unreachable!(),
         };
 
         let Some(texture_slot) = textures
@@ -103,6 +100,7 @@ impl MetalAtlasState {
             let textures = match texture_kind {
                 AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
                 AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+                AtlasTextureKind::Subpixel => unreachable!(),
             };
 
             if let Some(tile) = textures
@@ -147,19 +145,16 @@ impl MetalAtlasState {
                 pixel_format = metal::MTLPixelFormat::BGRA8Unorm;
                 usage = metal::MTLTextureUsage::ShaderRead;
             }
+            AtlasTextureKind::Subpixel => unreachable!(),
         }
         texture_descriptor.set_pixel_format(pixel_format);
         texture_descriptor.set_usage(usage);
-        texture_descriptor.set_storage_mode(if self.unified_memory {
-            metal::MTLStorageMode::Shared
-        } else {
-            metal::MTLStorageMode::Managed
-        });
         let metal_texture = self.device.new_texture(&texture_descriptor);
 
         let texture_list = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+            AtlasTextureKind::Subpixel => unreachable!(),
         };
 
         let index = texture_list.free_list.pop();
@@ -190,6 +185,7 @@ impl MetalAtlasState {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
+            crate::AtlasTextureKind::Subpixel => unreachable!(),
         };
         textures[id.index as usize].as_ref().unwrap()
     }

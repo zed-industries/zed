@@ -1,4 +1,4 @@
-use agent::HistoryStore;
+use agent::ThreadStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
@@ -8,7 +8,6 @@ use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlagAppExt, InlineAssistantUseToolFeatureFlag};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -20,6 +19,7 @@ use parking_lot::Mutex;
 use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
+use std::cell::RefCell;
 use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
@@ -40,7 +40,9 @@ use crate::completion_provider::{
 use crate::mention_set::paste_images_as_context;
 use crate::mention_set::{MentionSet, crease_for_mention};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
+use crate::{
+    CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext,
+};
 
 actions!(inline_assistant, [ThumbsUpResult, ThumbsDownResult]);
 
@@ -59,7 +61,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -148,7 +150,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             .into_any_element();
 
         v_flex()
-            .key_context("PromptEditor")
+            .key_context("InlineAssistant")
             .capture_action(cx.listener(Self::paste))
             .block_mouse_except_scroll()
             .size_full()
@@ -162,10 +164,6 @@ impl<T: 'static> Render for PromptEditor<T> {
             .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
-                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                        this.model_selector
-                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                    }))
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
@@ -174,6 +172,15 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .on_action(cx.listener(Self::thumbs_down))
                     .capture_action(cx.listener(Self::cycle_prev))
                     .capture_action(cx.listener(Self::cycle_next))
+                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                        this.model_selector
+                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                    }))
+                    .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                        this.model_selector.update(cx, |model_selector, cx| {
+                            model_selector.cycle_favorite_models(window, cx);
+                        });
+                    }))
                     .child(
                         WithRemSize::new(ui_font_size)
                             .h_full()
@@ -325,7 +332,8 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.history_store.clone(),
+                Some(self.thread_store.clone()),
+                Rc::new(RefCell::new(None)),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -357,7 +365,7 @@ impl<T: 'static> PromptEditor<T> {
             creases = insert_message_creases(&mut editor, &existing_creases, window, cx);
 
             if focus {
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
             }
             editor
         });
@@ -826,7 +834,6 @@ impl<T: 'static> PromptEditor<T> {
                             .into_any_element(),
                     ]
                 } else {
-                    let show_rating_buttons = cx.has_flag::<InlineAssistantUseToolFeatureFlag>();
                     let rated = matches!(self.session_state.completion, CompletionState::Rated);
 
                     let accept = IconButton::new("accept", IconName::Check)
@@ -842,31 +849,72 @@ impl<T: 'static> PromptEditor<T> {
 
                     let mut buttons = Vec::new();
 
-                    if show_rating_buttons {
-                        buttons.push(
-                            IconButton::new("thumbs-down", IconName::ThumbsDown)
-                                .icon_color(if rated { Color::Muted } else { Color::Default })
-                                .shape(IconButtonShape::Square)
-                                .disabled(rated)
-                                .tooltip(Tooltip::text("Bad result"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.thumbs_down(&ThumbsDownResult, window, cx);
-                                }))
-                                .into_any_element(),
-                        );
-
-                        buttons.push(
-                            IconButton::new("thumbs-up", IconName::ThumbsUp)
-                                .icon_color(if rated { Color::Muted } else { Color::Default })
-                                .shape(IconButtonShape::Square)
-                                .disabled(rated)
-                                .tooltip(Tooltip::text("Good result"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.thumbs_up(&ThumbsUpResult, window, cx);
-                                }))
-                                .into_any_element(),
-                        );
-                    }
+                    buttons.push(
+                        h_flex()
+                            .pl_1()
+                            .gap_1()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                IconButton::new("thumbs-up", IconName::ThumbsUp)
+                                    .shape(IconButtonShape::Square)
+                                    .map(|this| {
+                                        if rated {
+                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
+                                                move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Good Result",
+                                                        None,
+                                                        "You already rated this result",
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
+                                                Tooltip::for_action(
+                                                    "Good Result",
+                                                    &ThumbsUpResult,
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.thumbs_up(&ThumbsUpResult, window, cx);
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("thumbs-down", IconName::ThumbsDown)
+                                    .shape(IconButtonShape::Square)
+                                    .map(|this| {
+                                        if rated {
+                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
+                                                move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Bad Result",
+                                                        None,
+                                                        "You already rated this result",
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
+                                                Tooltip::for_action(
+                                                    "Bad Result",
+                                                    &ThumbsDownResult,
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.thumbs_down(&ThumbsDownResult, window, cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
 
                     buttons.push(accept);
 
@@ -927,10 +975,21 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let focus_handle = self.editor.focus_handle(cx);
+
         IconButton::new("cancel", IconName::Close)
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
-            .tooltip(Tooltip::text("Close Assistant"))
+            .tooltip({
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Close Assistant",
+                        &editor::actions::Cancel,
+                        &focus_handle,
+                        cx,
+                    )
+                }
+            })
             .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
             .into_any_element()
     }
@@ -1044,7 +1103,6 @@ impl<T: 'static> PromptEditor<T> {
         let colors = cx.theme().colors();
 
         div()
-            .key_context("InlineAssistEditor")
             .size_full()
             .p_2()
             .pl_1()
@@ -1153,7 +1211,7 @@ impl PromptEditor<BufferCodegen> {
         codegen: Entity<BufferCodegen>,
         session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1193,15 +1251,15 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
 
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+        let mention_set = cx
+            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1311,7 +1369,7 @@ impl PromptEditor<TerminalCodegen> {
         codegen: Entity<TerminalCodegen>,
         session_id: Uuid,
         fs: Arc<dyn Fs>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1346,15 +1404,15 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
 
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+        let mention_set = cx
+            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            history_store,
+            thread_store,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {

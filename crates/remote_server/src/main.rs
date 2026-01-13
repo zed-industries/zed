@@ -1,5 +1,3 @@
-#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
-
 use clap::Parser;
 use remote_server::Commands;
 use std::path::PathBuf;
@@ -22,12 +20,6 @@ struct Cli {
     printenv: bool,
 }
 
-#[cfg(windows)]
-fn main() {
-    unimplemented!()
-}
-
-#[cfg(not(windows))]
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -46,8 +38,18 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    #[cfg(not(windows))]
     if let Some(command) = cli.command {
         remote_server::run(command)
+    } else {
+        eprintln!("usage: remote <run|proxy|version>");
+        std::process::exit(1);
+    }
+
+    #[cfg(windows)]
+    if let Some(_) = cli.command {
+        eprintln!("run is not supported on Windows");
+        std::process::exit(2);
     } else {
         eprintln!("usage: remote <run|proxy|version>");
         std::process::exit(1);

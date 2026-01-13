@@ -11,6 +11,8 @@ use cocoa::{
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 
 use core_foundation::base::TCFType;
 use core_video::{
@@ -50,9 +52,9 @@ pub unsafe fn new_renderer(
     _native_window: *mut c_void,
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
-    _transparent: bool,
+    transparent: bool,
 ) -> Renderer {
-    MetalRenderer::new()
+    MetalRenderer::new(transparent)
 }
 
 pub(crate) struct InstanceBufferPool {
@@ -126,23 +128,15 @@ impl InstanceBufferPool {
         device: &metal::Device,
         unified_memory: bool,
     ) -> [metal::Buffer; MAXIMUM_DRAWABLE_COUNT] {
-        let options = if unified_memory {
-            MTLResourceOptions::StorageModeShared
-                            // Buffers are write only which can benefit from the combined cache
-                            // https://developer.apple.com/documentation/metal/mtlresourceoptions/cpucachemodewritecombined
-                            | MTLResourceOptions::CPUCacheModeWriteCombined
-        } else {
-            MTLResourceOptions::StorageModeManaged
-        };
-
-        std::array::from_fn(|_| device.new_buffer(size as u64, options))
+        std::array::from_fn(|_| {
+            device.new_buffer(size as u64, MTLResourceOptions::StorageModeManaged)
+        })
     }
 }
 
 pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
-    unified_memory: bool,
     presents_with_transaction: bool,
     command_queue: CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
@@ -171,7 +165,7 @@ pub struct PathRasterizationVertex {
 }
 
 impl MetalRenderer {
-    pub fn new() -> Self {
+    pub fn new(transparent: bool) -> Self {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
@@ -195,8 +189,13 @@ impl MetalRenderer {
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        layer.set_opaque(false);
-        layer.set_maximum_drawable_count(MAXIMUM_DRAWABLE_COUNT as NSUInteger);
+        // Support direct-to-display rendering if the window is not transparent
+        // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
+        layer.set_opaque(!transparent);
+        layer.set_maximum_drawable_count(MAXIMUM_DRAWABLE_COUNT as NSUInteger3);
+        // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
+        #[cfg(any(test, feature = "test-support"))]
+        layer.set_framebuffer_only(false);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -222,10 +221,6 @@ impl MetalRenderer {
             output
         }
 
-        // Shared memory can be used only if CPU and GPU share the same memory space.
-        // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
-        let unified_memory = device.has_unified_memory();
-
         let unit_vertices = [
             to_float2_bits(point(0., 0.)),
             to_float2_bits(point(1., 0.)),
@@ -237,12 +232,7 @@ impl MetalRenderer {
         let unit_vertices = device.new_buffer_with_data(
             unit_vertices.as_ptr() as *const c_void,
             mem::size_of_val(&unit_vertices) as u64,
-            if unified_memory {
-                MTLResourceOptions::StorageModeShared
-                    | MTLResourceOptions::CPUCacheModeWriteCombined
-            } else {
-                MTLResourceOptions::StorageModeManaged
-            },
+            MTLResourceOptions::StorageModeManaged,
         );
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
@@ -321,7 +311,6 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
-            unified_memory,
             command_queue,
             paths_rasterization_pipeline_state,
             path_sprites_pipeline_state,
@@ -391,23 +380,14 @@ impl MetalRenderer {
         texture_descriptor.set_width(size.width.0 as u64);
         texture_descriptor.set_height(size.height.0 as u64);
         texture_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
-        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
         texture_descriptor
             .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
         self.path_intermediate_texture = Some(self.device.new_texture(&texture_descriptor));
 
         if self.path_sample_count > 1 {
-            // https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
-            // Rendering MSAA textures are done in a single pass, so we can use memory-less storage on Apple Silicon
-            let storage_mode = if self.unified_memory {
-                metal::MTLStorageMode::Memoryless
-            } else {
-                metal::MTLStorageMode::Private
-            };
-
             let mut msaa_descriptor = texture_descriptor;
             msaa_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-            msaa_descriptor.set_storage_mode(storage_mode);
+            msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
             msaa_descriptor.set_sample_count(self.path_sample_count as _);
             self.path_intermediate_msaa_texture = Some(self.device.new_texture(&msaa_descriptor));
         } else {
@@ -415,8 +395,8 @@ impl MetalRenderer {
         }
     }
 
-    pub fn update_transparency(&self, _transparent: bool) {
-        // todo(mac)?
+    pub fn update_transparency(&self, transparent: bool) {
+        self.layer.set_opaque(!transparent);
     }
 
     pub fn destroy(&self) {
@@ -482,6 +462,97 @@ impl MetalRenderer {
                             break;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Renders the scene to a texture and returns the pixel data as an RGBA image.
+    /// This does not present the frame to screen - useful for visual testing
+    /// where we want to capture what would be rendered without displaying it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn render_to_image(&mut self, scene: &Scene) -> Result<RgbaImage> {
+        let layer = self.layer.clone();
+        let viewport_size = layer.drawable_size();
+        let viewport_size: Size<DevicePixels> = size(
+            (viewport_size.width.ceil() as i32).into(),
+            (viewport_size.height.ceil() as i32).into(),
+        );
+        let drawable = layer
+            .next_drawable()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
+
+        loop {
+            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+
+            let command_buffer =
+                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
+
+            match command_buffer {
+                Ok(command_buffer) => {
+                    let instance_buffer_pool = self.instance_buffer_pool.clone();
+                    let instance_buffer = Cell::new(Some(instance_buffer));
+                    let block = ConcreteBlock::new(move |_| {
+                        if let Some(instance_buffer) = instance_buffer.take() {
+                            instance_buffer_pool.lock().release(instance_buffer);
+                        }
+                    });
+                    let block = block.copy();
+                    command_buffer.add_completed_handler(&block);
+
+                    // Commit and wait for completion without presenting
+                    command_buffer.commit();
+                    command_buffer.wait_until_completed();
+
+                    // Read pixels from the texture
+                    let texture = drawable.texture();
+                    let width = texture.width() as u32;
+                    let height = texture.height() as u32;
+                    let bytes_per_row = width as usize * 4;
+                    let buffer_size = height as usize * bytes_per_row;
+
+                    let mut pixels = vec![0u8; buffer_size];
+
+                    let region = metal::MTLRegion {
+                        origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+                        size: metal::MTLSize {
+                            width: width as u64,
+                            height: height as u64,
+                            depth: 1,
+                        },
+                    };
+
+                    texture.get_bytes(
+                        pixels.as_mut_ptr() as *mut std::ffi::c_void,
+                        bytes_per_row as u64,
+                        region,
+                        0,
+                    );
+
+                    // Convert BGRA to RGBA (swap B and R channels)
+                    for chunk in pixels.chunks_exact_mut(4) {
+                        chunk.swap(0, 2);
+                    }
+
+                    return RgbaImage::from_raw(width, height, pixels).ok_or_else(|| {
+                        anyhow::anyhow!("Failed to create RgbaImage from pixel data")
+                    });
+                }
+                Err(err) => {
+                    log::error!(
+                        "failed to render: {}. retrying with larger instance buffer size",
+                        err
+                    );
+                    let mut instance_buffer_pool = self.instance_buffer_pool.lock();
+                    let buffer_size = instance_buffer_pool.buffer_size;
+                    if buffer_size >= 256 * 1024 * 1024 {
+                        anyhow::bail!("instance buffer size grew too large: {}", buffer_size);
+                    }
+                    instance_buffer_pool.reset(buffer_size * 2);
+                    log::info!(
+                        "increased instance buffer size to {}",
+                        instance_buffer_pool.buffer_size
+                    );
                 }
             }
         }
@@ -593,6 +664,7 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             };
             if !ok {
                 command_encoder.end_encoding();
@@ -611,14 +683,10 @@ impl MetalRenderer {
 
         command_encoder.end_encoding();
 
-        if !self.unified_memory {
-            // Sync the instance buffer to the GPU
-            instance_buffer.metal_buffer.did_modify_range(NSRange {
-                location: 0,
-                length: instance_offset as NSUInteger,
-            });
-        }
-
+        instance_buffer.metal_buffer.did_modify_range(NSRange {
+            location: 0,
+            length: instance_offset as NSUInteger,
+        });
         Ok(command_buffer.to_owned())
     }
 

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
@@ -283,7 +283,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
             let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
                 vec![(cursor_position..cursor_position, completion_text.into())].into();
             let edit_preview = buffer
-                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
                 .await;
 
             this.update(cx, |this, cx| {
@@ -298,16 +298,6 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
 
             Ok(())
         }));
-    }
-
-    fn cycle(
-        &mut self,
-        _buffer: Entity<Buffer>,
-        _cursor_position: Anchor,
-        _direction: Direction,
-        _cx: &mut Context<Self>,
-    ) {
-        // Codestral doesn't support multiple completions, so cycling does nothing
     }
 
     fn accept(&mut self, _cx: &mut Context<Self>) {

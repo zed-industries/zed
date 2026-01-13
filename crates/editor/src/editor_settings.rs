@@ -4,9 +4,10 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
-    GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
-    ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode,
+    DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode, MinimapThumb,
+    MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics,
+    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
@@ -57,6 +58,7 @@ pub struct EditorSettings {
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
+    pub completion_detail_alignment: CompletionDetailAlignment,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -215,7 +217,8 @@ impl Settings for EditorSettings {
             },
             scrollbar: Scrollbar {
                 show: scrollbar.show.map(Into::into).unwrap(),
-                git_diff: scrollbar.git_diff.unwrap(),
+                git_diff: scrollbar.git_diff.unwrap()
+                    && content.git.unwrap().enabled.unwrap().is_git_diff_enabled(),
                 selected_text: scrollbar.selected_text.unwrap(),
                 selected_symbol: scrollbar.selected_symbol.unwrap(),
                 search_results: scrollbar.search_results.unwrap(),
@@ -285,6 +288,7 @@ impl Settings for EditorSettings {
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
+            completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
         }
     }
 }

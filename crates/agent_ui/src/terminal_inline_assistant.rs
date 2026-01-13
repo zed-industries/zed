@@ -5,7 +5,7 @@ use crate::{
     },
     terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 
@@ -61,7 +61,7 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -127,7 +127,7 @@ impl TerminalInlineAssistant {
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, cx| {
                 this.editor.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.select_all(&SelectAll, window, cx);
                 });
             });
@@ -292,7 +292,7 @@ impl TerminalInlineAssistant {
                 .terminal
                 .update(cx, |this, cx| {
                     this.clear_block_below_cursor(cx);
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                 })
                 .log_err();
 
@@ -369,7 +369,7 @@ impl TerminalInlineAssistant {
             .terminal
             .update(cx, |this, cx| {
                 this.clear_block_below_cursor(cx);
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             })
             .is_ok()
     }

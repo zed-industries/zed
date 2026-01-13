@@ -43,6 +43,7 @@ pub struct LayoutState {
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
     cursor: Option<CursorLayout>,
+    ime_cursor_bounds: Option<Bounds<Pixels>>,
     background_color: Hsla,
     dimensions: TerminalBounds,
     mode: TermMode,
@@ -151,7 +152,14 @@ impl BatchedTextRun {
                 std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
             )
-            .paint(pos, dimensions.line_height, window, cx);
+            .paint(
+                pos,
+                dimensions.line_height,
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
     }
 }
 
@@ -367,16 +375,13 @@ impl TerminalElement {
                     let col = cell.point.column.0 as i32;
 
                     // Try to extend the last region if it's on the same line with the same color
-                    if let Some(last_region) = background_regions.last_mut() {
-                        if last_region.color == color
-                            && last_region.start_line == alac_line
-                            && last_region.end_line == alac_line
-                            && last_region.end_col + 1 == col
-                        {
-                            last_region.end_col = col;
-                        } else {
-                            background_regions.push(BackgroundRegion::new(alac_line, col, color));
-                        }
+                    if let Some(last_region) = background_regions.last_mut()
+                        && last_region.color == color
+                        && last_region.start_line == alac_line
+                        && last_region.end_line == alac_line
+                        && last_region.end_col + 1 == col
+                    {
+                        last_region.end_col = col;
                     } else {
                         background_regions.push(BackgroundRegion::new(alac_line, col, color));
                     }
@@ -632,7 +637,7 @@ impl TerminalElement {
     ) -> impl Fn(&E, &mut Window, &mut App) {
         move |event, window, cx| {
             if steal_focus {
-                window.focus(&focus_handle);
+                window.focus(&focus_handle, cx);
             } else if !focus_handle.is_focused(window) {
                 return;
             }
@@ -661,7 +666,7 @@ impl TerminalElement {
             let terminal_view = terminal_view.clone();
 
             move |e, window, cx| {
-                window.focus(&focus);
+                window.focus(&focus, cx);
 
                 let scroll_top = terminal_view.read(cx).scroll_top;
                 terminal.update(cx, |terminal, cx| {
@@ -1058,90 +1063,122 @@ impl Element for TerminalElement {
                 // then have that representation be converted to the appropriate highlight data structure
 
                 let content_mode = self.terminal_view.read(cx).content_mode(window, cx);
-                let (rects, batched_text_runs) = match content_mode {
-                    ContentMode::Scrollable => {
-                        // In scrollable mode, the terminal already provides cells
-                        // that are correctly positioned for the current viewport
-                        // based on its display_offset. We don't need additional filtering.
-                        TerminalElement::layout_grid(
-                            cells.iter().cloned(),
-                            0,
-                            &text_style,
-                            last_hovered_word.as_ref().map(|last_hovered_word| {
-                                (link_style, &last_hovered_word.word_match)
-                            }),
-                            minimum_contrast,
-                            cx,
-                        )
-                    }
-                    ContentMode::Inline { .. } => {
-                        let intersection = window.content_mask().bounds.intersect(&bounds);
-                        let start_row = (intersection.top() - bounds.top()) / line_height_px;
-                        let end_row = start_row + intersection.size.height / line_height_px;
-                        let line_range = (start_row as i32)..=(end_row as i32);
 
-                        TerminalElement::layout_grid(
-                            cells
-                                .iter()
-                                .skip_while(|i| &i.point.line < line_range.start())
-                                .take_while(|i| &i.point.line <= line_range.end())
-                                .cloned(),
-                            *line_range.start(),
-                            &text_style,
-                            last_hovered_word.as_ref().map(|last_hovered_word| {
-                                (link_style, &last_hovered_word.word_match)
-                            }),
-                            minimum_contrast,
-                            cx,
-                        )
-                    }
+                // Calculate the intersection of the terminal's bounds with the current
+                // content mask (the visible viewport after all parent clipping).
+                // This allows us to only render cells that are actually visible, which is
+                // critical for performance when terminals are inside scrollable containers
+                // like the Agent Panel thread view.
+                //
+                // This optimization is analogous to the editor optimization in PR #45077
+                // which fixed performance issues with large AutoHeight editors inside Lists.
+                let visible_bounds = window.content_mask().bounds;
+                let intersection = visible_bounds.intersect(&bounds);
+
+                // If the terminal is entirely outside the viewport, skip all cell processing.
+                // This handles the case where the terminal has been scrolled past (above or
+                // below the viewport), similar to the editor fix in PR #45077 where start_row
+                // could exceed max_row when the editor was positioned above the viewport.
+                let (rects, batched_text_runs) = if intersection.size.height <= px(0.)
+                    || intersection.size.width <= px(0.)
+                {
+                    (Vec::new(), Vec::new())
+                } else if intersection == bounds {
+                    // Fast path: terminal fully visible, no clipping needed.
+                    // Avoid grouping/allocation overhead by streaming cells directly.
+                    TerminalElement::layout_grid(
+                        cells.iter().cloned(),
+                        0,
+                        &text_style,
+                        last_hovered_word
+                            .as_ref()
+                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                        minimum_contrast,
+                        cx,
+                    )
+                } else {
+                    // Calculate which screen rows are visible based on pixel positions.
+                    // This works for both Scrollable and Inline modes because we filter
+                    // by screen position (enumerated line group index), not by the cell's
+                    // internal line number (which can be negative in Scrollable mode for
+                    // scrollback history).
+                    let rows_above_viewport =
+                        ((intersection.top() - bounds.top()).max(px(0.)) / line_height_px) as usize;
+                    let visible_row_count =
+                        (intersection.size.height / line_height_px).ceil() as usize + 1;
+
+                    TerminalElement::layout_grid(
+                        // Group cells by line and filter to only the visible screen rows.
+                        // skip() and take() work on enumerated line groups (screen position),
+                        // making this work regardless of the actual cell.point.line values.
+                        cells
+                            .iter()
+                            .chunk_by(|c| c.point.line)
+                            .into_iter()
+                            .skip(rows_above_viewport)
+                            .take(visible_row_count)
+                            .flat_map(|(_, line_cells)| line_cells)
+                            .cloned(),
+                        rows_above_viewport as i32,
+                        &text_style,
+                        last_hovered_word
+                            .as_ref()
+                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                        minimum_contrast,
+                        cx,
+                    )
                 };
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
+                let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+                let cursor_text = {
+                    let str_trxt = cursor_char.to_string();
+                    let len = str_trxt.len();
+                    window.text_system().shape_line(
+                        str_trxt.into(),
+                        text_style.font_size.to_pixels(window.rem_size()),
+                        &[TextRun {
+                            len,
+                            font: text_style.font(),
+                            color: theme.colors().terminal_ansi_background,
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                };
+
+                let ime_cursor_bounds =
+                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                        |(cursor_position, block_width)| Bounds {
+                            origin: cursor_position,
+                            size: size(block_width, dimensions.line_height),
+                        },
+                    );
+
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
                 } else {
-                    let cursor_point = DisplayCursor::from(cursor.point, display_offset);
-                    let cursor_text = {
-                        let str_trxt = cursor_char.to_string();
-                        let len = str_trxt.len();
-                        window.text_system().shape_line(
-                            str_trxt.into(),
-                            text_style.font_size.to_pixels(window.rem_size()),
-                            &[TextRun {
-                                len,
-                                font: text_style.font(),
-                                color: theme.colors().terminal_ansi_background,
-                                ..Default::default()
-                            }],
-                            None,
-                        )
-                    };
-
                     let focused = self.focused;
-                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                        move |(cursor_position, block_width)| {
-                            let (shape, text) = match cursor.shape {
-                                AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
-                                AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
-                                AlacCursorShape::Underline => (CursorShape::Underline, None),
-                                AlacCursorShape::Beam => (CursorShape::Bar, None),
-                                AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
-                                //This case is handled in the if wrapping the whole cursor layout
-                                AlacCursorShape::Hidden => unreachable!(),
-                            };
+                    ime_cursor_bounds.map(move |bounds| {
+                        let (shape, text) = match cursor.shape {
+                            AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
+                            AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                            AlacCursorShape::Underline => (CursorShape::Underline, None),
+                            AlacCursorShape::Beam => (CursorShape::Bar, None),
+                            AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
+                            AlacCursorShape::Hidden => unreachable!(),
+                        };
 
-                            CursorLayout::new(
-                                cursor_position,
-                                block_width,
-                                dimensions.line_height,
-                                theme.players().local().cursor,
-                                shape,
-                                text,
-                            )
-                        },
-                    )
+                        CursorLayout::new(
+                            bounds.origin,
+                            bounds.size.width,
+                            bounds.size.height,
+                            theme.players().local().cursor,
+                            shape,
+                            text,
+                        )
+                    })
                 };
 
                 let block_below_cursor_element = if let Some(block) = &self.block_below_cursor {
@@ -1180,6 +1217,7 @@ impl Element for TerminalElement {
                     hitbox,
                     batched_text_runs,
                     cursor,
+                    ime_cursor_bounds,
                     background_color,
                     dimensions,
                     rects,
@@ -1222,10 +1260,7 @@ impl Element for TerminalElement {
             let terminal_input_handler = TerminalInputHandler {
                 terminal: self.terminal.clone(),
                 terminal_view: self.terminal_view.clone(),
-                cursor_bounds: layout
-                    .cursor
-                    .as_ref()
-                    .map(|cursor| cursor.bounding_rect(origin)),
+                cursor_bounds: layout.ime_cursor_bounds.map(|bounds| bounds + origin),
                 workspace: self.workspace.clone(),
             };
 
@@ -1305,8 +1340,8 @@ impl Element for TerminalElement {
 
                     if let Some(text_to_mark) = &marked_text_cloned
                         && !text_to_mark.is_empty()
-                            && let Some(cursor_layout) = &original_cursor {
-                                let ime_position = cursor_layout.bounding_rect(origin).origin;
+                            && let Some(ime_bounds) = layout.ime_cursor_bounds {
+                                let ime_position = (ime_bounds + origin).origin;
                                 let mut ime_style = layout.base_text_style.clone();
                                 ime_style.underline = Some(UnderlineStyle {
                                     color: Some(ime_style.color),
@@ -1326,8 +1361,22 @@ impl Element for TerminalElement {
                                     }],
                                     None
                                 );
-                                shaped_line
-                                    .paint(ime_position, layout.dimensions.line_height, window, cx)
+
+                                // Paint background to cover terminal text behind marked text
+                                let ime_background_bounds = Bounds::new(
+                                    ime_position,
+                                    size(shaped_line.width, layout.dimensions.line_height),
+                                );
+                                window.paint_quad(fill(ime_background_bounds, layout.background_color));
+
+                                shaped_line.paint(
+                                    ime_position,
+                                    layout.dimensions.line_height,
+                                    gpui::TextAlign::Left,
+                                    None,
+                                    window,
+                                    cx,
+                                )
                                     .log_err();
                             }
 
@@ -2045,5 +2094,249 @@ mod tests {
 
         let merged2 = merge_background_regions(regions2);
         assert_eq!(merged2.len(), 3);
+    }
+
+    #[test]
+    fn test_screen_position_filtering_with_positive_lines() {
+        // Test the unified screen-position-based filtering approach.
+        // This works for both Scrollable and Inline modes because we filter
+        // by enumerated line group index, not by cell.point.line values.
+        use itertools::Itertools;
+        use terminal::IndexedCell;
+        use terminal::alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use terminal::alacritty_terminal::term::cell::Cell;
+
+        // Create mock cells for lines 0-23 (typical terminal with 24 visible lines)
+        let mut cells = Vec::new();
+        for line in 0..24i32 {
+            for col in 0..3i32 {
+                cells.push(IndexedCell {
+                    point: AlacPoint::new(Line(line), Column(col as usize)),
+                    cell: Cell::default(),
+                });
+            }
+        }
+
+        // Scenario: Terminal partially scrolled above viewport
+        // First 5 lines (0-4) are clipped, lines 5-15 should be visible
+        let rows_above_viewport = 5usize;
+        let visible_row_count = 11usize;
+
+        // Apply the same filtering logic as in the render code
+        let filtered: Vec<_> = cells
+            .iter()
+            .chunk_by(|c| c.point.line)
+            .into_iter()
+            .skip(rows_above_viewport)
+            .take(visible_row_count)
+            .flat_map(|(_, line_cells)| line_cells)
+            .collect();
+
+        // Should have lines 5-15 (11 lines * 3 cells each = 33 cells)
+        assert_eq!(filtered.len(), 11 * 3, "Should have 33 cells for 11 lines");
+
+        // First filtered cell should be line 5
+        assert_eq!(
+            filtered.first().unwrap().point.line,
+            Line(5),
+            "First cell should be on line 5"
+        );
+
+        // Last filtered cell should be line 15
+        assert_eq!(
+            filtered.last().unwrap().point.line,
+            Line(15),
+            "Last cell should be on line 15"
+        );
+    }
+
+    #[test]
+    fn test_screen_position_filtering_with_negative_lines() {
+        // This is the key test! In Scrollable mode, cells have NEGATIVE line numbers
+        // for scrollback history. The screen-position filtering approach works because
+        // we filter by enumerated line group index, not by cell.point.line values.
+        use itertools::Itertools;
+        use terminal::IndexedCell;
+        use terminal::alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use terminal::alacritty_terminal::term::cell::Cell;
+
+        // Simulate cells from a scrolled terminal with scrollback
+        // These have negative line numbers representing scrollback history
+        let mut scrollback_cells = Vec::new();
+        for line in -588i32..=-578i32 {
+            for col in 0..80i32 {
+                scrollback_cells.push(IndexedCell {
+                    point: AlacPoint::new(Line(line), Column(col as usize)),
+                    cell: Cell::default(),
+                });
+            }
+        }
+
+        // Scenario: First 3 screen rows clipped, show next 5 rows
+        let rows_above_viewport = 3usize;
+        let visible_row_count = 5usize;
+
+        // Apply the same filtering logic as in the render code
+        let filtered: Vec<_> = scrollback_cells
+            .iter()
+            .chunk_by(|c| c.point.line)
+            .into_iter()
+            .skip(rows_above_viewport)
+            .take(visible_row_count)
+            .flat_map(|(_, line_cells)| line_cells)
+            .collect();
+
+        // Should have 5 lines * 80 cells = 400 cells
+        assert_eq!(filtered.len(), 5 * 80, "Should have 400 cells for 5 lines");
+
+        // First filtered cell should be line -585 (skipped 3 lines from -588)
+        assert_eq!(
+            filtered.first().unwrap().point.line,
+            Line(-585),
+            "First cell should be on line -585"
+        );
+
+        // Last filtered cell should be line -581 (5 lines: -585, -584, -583, -582, -581)
+        assert_eq!(
+            filtered.last().unwrap().point.line,
+            Line(-581),
+            "Last cell should be on line -581"
+        );
+    }
+
+    #[test]
+    fn test_screen_position_filtering_skip_all() {
+        // Test what happens when we skip more rows than exist
+        use itertools::Itertools;
+        use terminal::IndexedCell;
+        use terminal::alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use terminal::alacritty_terminal::term::cell::Cell;
+
+        let mut cells = Vec::new();
+        for line in 0..10i32 {
+            cells.push(IndexedCell {
+                point: AlacPoint::new(Line(line), Column(0)),
+                cell: Cell::default(),
+            });
+        }
+
+        // Skip more rows than exist
+        let rows_above_viewport = 100usize;
+        let visible_row_count = 5usize;
+
+        let filtered: Vec<_> = cells
+            .iter()
+            .chunk_by(|c| c.point.line)
+            .into_iter()
+            .skip(rows_above_viewport)
+            .take(visible_row_count)
+            .flat_map(|(_, line_cells)| line_cells)
+            .collect();
+
+        assert_eq!(
+            filtered.len(),
+            0,
+            "Should have no cells when all are skipped"
+        );
+    }
+
+    #[test]
+    fn test_layout_grid_positioning_math() {
+        // Test the math that layout_grid uses for positioning.
+        // When we skip N rows, we pass N as start_line_offset to layout_grid,
+        // which positions the first visible line at screen row N.
+
+        // Scenario: Terminal at y=-100px, line_height=20px
+        // First 5 screen rows are above viewport (clipped)
+        // So we skip 5 rows and pass offset=5 to layout_grid
+
+        let terminal_origin_y = -100.0f32;
+        let line_height = 20.0f32;
+        let rows_skipped = 5;
+
+        // The first visible line (at offset 5) renders at:
+        // y = terminal_origin + offset * line_height = -100 + 5*20 = 0
+        let first_visible_y = terminal_origin_y + rows_skipped as f32 * line_height;
+        assert_eq!(
+            first_visible_y, 0.0,
+            "First visible line should be at viewport top (y=0)"
+        );
+
+        // The 6th visible line (at offset 10) renders at:
+        let sixth_visible_y = terminal_origin_y + (rows_skipped + 5) as f32 * line_height;
+        assert_eq!(
+            sixth_visible_y, 100.0,
+            "6th visible line should be at y=100"
+        );
+    }
+
+    #[test]
+    fn test_unified_filtering_works_for_both_modes() {
+        // This test proves that the unified screen-position filtering approach
+        // works for BOTH positive line numbers (Inline mode) and negative line
+        // numbers (Scrollable mode with scrollback).
+        //
+        // The key insight: we filter by enumerated line group index (screen position),
+        // not by cell.point.line values. This makes the filtering agnostic to the
+        // actual line numbers in the cells.
+        use itertools::Itertools;
+        use terminal::IndexedCell;
+        use terminal::alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use terminal::alacritty_terminal::term::cell::Cell;
+
+        // Test with positive line numbers (Inline mode style)
+        let positive_cells: Vec<_> = (0..10i32)
+            .flat_map(|line| {
+                (0..3i32).map(move |col| IndexedCell {
+                    point: AlacPoint::new(Line(line), Column(col as usize)),
+                    cell: Cell::default(),
+                })
+            })
+            .collect();
+
+        // Test with negative line numbers (Scrollable mode with scrollback)
+        let negative_cells: Vec<_> = (-10i32..0i32)
+            .flat_map(|line| {
+                (0..3i32).map(move |col| IndexedCell {
+                    point: AlacPoint::new(Line(line), Column(col as usize)),
+                    cell: Cell::default(),
+                })
+            })
+            .collect();
+
+        let rows_to_skip = 3usize;
+        let rows_to_take = 4usize;
+
+        // Filter positive cells
+        let positive_filtered: Vec<_> = positive_cells
+            .iter()
+            .chunk_by(|c| c.point.line)
+            .into_iter()
+            .skip(rows_to_skip)
+            .take(rows_to_take)
+            .flat_map(|(_, cells)| cells)
+            .collect();
+
+        // Filter negative cells
+        let negative_filtered: Vec<_> = negative_cells
+            .iter()
+            .chunk_by(|c| c.point.line)
+            .into_iter()
+            .skip(rows_to_skip)
+            .take(rows_to_take)
+            .flat_map(|(_, cells)| cells)
+            .collect();
+
+        // Both should have same count: 4 lines * 3 cells = 12
+        assert_eq!(positive_filtered.len(), 12);
+        assert_eq!(negative_filtered.len(), 12);
+
+        // Positive: lines 3, 4, 5, 6
+        assert_eq!(positive_filtered.first().unwrap().point.line, Line(3));
+        assert_eq!(positive_filtered.last().unwrap().point.line, Line(6));
+
+        // Negative: lines -7, -6, -5, -4
+        assert_eq!(negative_filtered.first().unwrap().point.line, Line(-7));
+        assert_eq!(negative_filtered.last().unwrap().point.line, Line(-4));
     }
 }

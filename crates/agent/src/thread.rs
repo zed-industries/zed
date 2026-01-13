@@ -2,10 +2,12 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -56,6 +58,27 @@ use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
+pub const MAX_SUBAGENT_DEPTH: u8 = 4;
+pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
+
+/// Context passed to a subagent thread for lifecycle management
+#[derive(Clone)]
+pub struct SubagentContext {
+    /// ID of the parent thread
+    pub parent_thread_id: acp::SessionId,
+
+    /// ID of the tool call that spawned this subagent
+    pub tool_use_id: LanguageModelToolUseId,
+
+    /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
+    pub depth: u8,
+
+    /// Prompt to send when subagent completes successfully
+    pub summary_prompt: String,
+
+    /// Prompt to send when context is running low (≤25% remaining)
+    pub context_low_prompt: String,
+}
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -107,7 +130,13 @@ impl Message {
 
     pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
         match self {
-            Message::User(message) => vec![message.to_request()],
+            Message::User(message) => {
+                if message.content.is_empty() {
+                    vec![]
+                } else {
+                    vec![message.to_request()]
+                }
+            }
             Message::Agent(message) => message.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
@@ -531,6 +560,7 @@ pub trait TerminalHandle {
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
     fn kill(&self, cx: &AsyncApp) -> Result<()>;
+    fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
 }
 
 pub trait ThreadEnvironment {
@@ -615,6 +645,12 @@ pub struct Thread {
     pub(crate) action_log: Entity<ActionLog>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
+    /// True if this thread was imported from a shared thread and can be synced.
+    imported: bool,
+    /// If this is a subagent thread, contains context about the parent
+    subagent_context: Option<SubagentContext>,
+    /// Weak references to running subagent threads for cancellation propagation
+    running_subagents: Vec<WeakEntity<Thread>>,
 }
 
 impl Thread {
@@ -671,11 +707,67 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            imported: false,
+            subagent_context: None,
+            running_subagents: Vec::new(),
+        }
+    }
+
+    pub fn new_subagent(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Arc<dyn LanguageModel>,
+        subagent_context: SubagentContext,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
+        let (prompt_capabilities_tx, prompt_capabilities_rx) =
+            watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+        Self {
+            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
+            prompt_id: PromptId::new(),
+            updated_at: Utc::now(),
+            title: None,
+            pending_title_generation: None,
+            pending_summary_generation: None,
+            summary: None,
+            messages: Vec::new(),
+            user_store: project.read(cx).user_store(),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
+            running_turn: None,
+            pending_message: None,
+            tools: BTreeMap::default(),
+            tool_use_limit_reached: false,
+            request_token_usage: HashMap::default(),
+            cumulative_token_usage: TokenUsage::default(),
+            initial_project_snapshot: Task::ready(None).shared(),
+            context_server_registry,
+            profile_id,
+            project_context,
+            templates,
+            model: Some(model),
+            summarization_model: None,
+            prompt_capabilities_tx,
+            prompt_capabilities_rx,
+            project,
+            action_log,
+            file_read_times: HashMap::default(),
+            imported: false,
+            subagent_context: Some(subagent_context),
+            running_subagents: Vec::new(),
         }
     }
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    /// Returns true if this thread was imported from a shared thread.
+    pub fn is_imported(&self) -> bool {
+        self.imported
     }
 
     pub fn replay(
@@ -758,10 +850,13 @@ impl Thread {
             .as_ref()
             .and_then(|result| result.output.clone());
         if let Some(output) = output.clone() {
+            // For replay, we use a dummy cancellation receiver since the tool already completed
+            let (_cancellation_tx, cancellation_rx) = watch::channel(false);
             let tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
+                cancellation_rx,
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
@@ -859,6 +954,9 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
+            imported: db_thread.imported,
+            subagent_context: None,
+            running_subagents: Vec::new(),
         }
     }
 
@@ -878,6 +976,7 @@ impl Thread {
             }),
             completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
+            imported: self.imported,
         };
 
         cx.background_spawn(async move {
@@ -962,7 +1061,6 @@ impl Thread {
         cx.notify()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1002,9 +1100,24 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
+        self.add_tool(SaveFileTool::new(self.project.clone()));
+        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+
+        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
+            let tool_names = self.registered_tool_names();
+            self.add_tool(SubagentTool::new(
+                cx.weak_entity(),
+                self.project.clone(),
+                self.project_context.clone(),
+                self.context_server_registry.clone(),
+                self.templates.clone(),
+                self.depth(),
+                tool_names,
+            ));
+        }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1013,6 +1126,10 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
+    }
+
+    pub fn restrict_tools(&mut self, allowed: &collections::HashSet<SharedString>) {
+        self.tools.retain(|name, _| allowed.contains(name));
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -1032,11 +1149,27 @@ impl Thread {
         }
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(running_turn) = self.running_turn.take() {
-            running_turn.cancel();
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        for subagent in self.running_subagents.drain(..) {
+            if let Some(subagent) = subagent.upgrade() {
+                subagent.update(cx, |thread, cx| thread.cancel(cx)).detach();
+            }
         }
-        self.flush_pending_message(cx);
+
+        let Some(running_turn) = self.running_turn.take() else {
+            self.flush_pending_message(cx);
+            return Task::ready(());
+        };
+
+        let turn_task = running_turn.cancel();
+
+        cx.spawn(async move |this, cx| {
+            turn_task.await;
+            this.update(cx, |this, cx| {
+                this.flush_pending_message(cx);
+            })
+            .ok();
+        })
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -1051,7 +1184,10 @@ impl Thread {
     }
 
     pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
-        self.cancel(cx);
+        self.cancel(cx).detach();
+        // Clear pending message since cancel will try to flush it asynchronously,
+        // and we don't want that content to be added after we truncate
+        self.pending_message.take();
         let Some(position) = self.messages.iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
@@ -1083,7 +1219,30 @@ impl Thread {
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
             used_tokens: usage.total_tokens(),
+            output_tokens: usage.output_tokens,
         })
+    }
+
+    /// Get the total input token count as of the message before the given message.
+    ///
+    /// Returns `None` if:
+    /// - `target_id` is the first message (no previous message)
+    /// - The previous message hasn't received a response yet (no usage data)
+    /// - `target_id` is not found in the messages
+    pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
+        let mut previous_user_message_id: Option<&UserMessageId> = None;
+
+        for message in &self.messages {
+            if let Message::User(user_msg) = message {
+                if &user_msg.id == target_id {
+                    let prev_id = previous_user_message_id?;
+                    let usage = self.request_token_usage.get(prev_id)?;
+                    return Some(usage.input_tokens);
+                }
+                previous_user_message_id = Some(&user_msg.id);
+            }
+        }
+        None
     }
 
     /// Look up the active profile and resolve its preferred model if one is configured.
@@ -1138,11 +1297,6 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let model = self.model().context("No language model configured")?;
-
-        log::info!("Thread::send called with model: {}", model.name().0);
-        self.advance_prompt_id();
-
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
@@ -1150,8 +1304,57 @@ impl Thread {
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
+        self.send_existing(cx)
+    }
+
+    pub fn send_existing(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let model = self.model().context("No language model configured")?;
+
+        log::info!("Thread::send called with model: {}", model.name().0);
+        self.advance_prompt_id();
+
         log::debug!("Total messages in thread: {}", self.messages.len());
         self.run_turn(cx)
+    }
+
+    pub fn push_acp_user_block(
+        &mut self,
+        id: UserMessageId,
+        blocks: impl IntoIterator<Item = acp::ContentBlock>,
+        path_style: PathStyle,
+        cx: &mut Context<Self>,
+    ) {
+        let content = blocks
+            .into_iter()
+            .map(|block| UserMessageContent::from_content_block(block, path_style))
+            .collect::<Vec<_>>();
+        self.messages
+            .push(Message::User(UserMessage { id, content }));
+        cx.notify();
+    }
+
+    pub fn push_acp_agent_block(&mut self, block: acp::ContentBlock, cx: &mut Context<Self>) {
+        let text = match block {
+            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Image(_) => "[image]".to_string(),
+            acp::ContentBlock::Audio(_) => "[audio]".to_string(),
+            acp::ContentBlock::ResourceLink(resource_link) => resource_link.uri,
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => resource.uri,
+                acp::EmbeddedResourceResource::BlobResourceContents(resource) => resource.uri,
+                _ => "[resource]".to_string(),
+            },
+            _ => "[unknown]".to_string(),
+        };
+
+        self.messages.push(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text)],
+            ..Default::default()
+        }));
+        cx.notify();
     }
 
     #[cfg(feature = "eval")]
@@ -1166,7 +1369,11 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.cancel(cx);
+        // Flush the old pending message synchronously before cancelling,
+        // to avoid a race where the detached cancel task might flush the NEW
+        // turn's pending message instead of the old one.
+        self.flush_pending_message(cx);
+        self.cancel(cx).detach();
 
         let model = self.model.clone().context("No language model configured")?;
         let profile = AgentSettings::get_global(cx)
@@ -1178,13 +1385,31 @@ impl Thread {
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
         self.clear_summary();
+        let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
+            cancellation_tx,
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result = Self::run_turn_internal(&this, model, &event_stream, cx).await;
+                let turn_result = Self::run_turn_internal(
+                    &this,
+                    model,
+                    &event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await;
+
+                // Check if we were cancelled - if so, cancel() already took running_turn
+                // and we shouldn't touch it (it might be a NEW turn now)
+                let was_cancelled = *cancellation_rx.borrow();
+                if was_cancelled {
+                    log::debug!("Turn was cancelled, skipping cleanup");
+                    return;
+                }
+
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
                 match turn_result {
@@ -1219,6 +1444,7 @@ impl Thread {
         this: &WeakEntity<Self>,
         model: Arc<dyn LanguageModel>,
         event_stream: &ThreadEventStream,
+        mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut attempt = 0;
@@ -1243,12 +1469,32 @@ impl Thread {
                 Err(err) => (stream::empty().boxed(), Some(err)),
             };
             let mut tool_results = FuturesUnordered::new();
-            while let Some(event) = events.next().await {
+            let mut cancelled = false;
+            loop {
+                // Race between getting the next event and cancellation
+                let event = futures::select! {
+                    event = events.next().fuse() => event,
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            cancelled = true;
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let Some(event) = event else {
+                    break;
+                };
                 log::trace!("Received completion event: {:?}", event);
                 match event {
                     Ok(event) => {
                         tool_results.extend(this.update(cx, |this, cx| {
-                            this.handle_completion_event(event, event_stream, cx)
+                            this.handle_completion_event(
+                                event,
+                                event_stream,
+                                cancellation_rx.clone(),
+                                cx,
+                            )
                         })??);
                     }
                     Err(err) => {
@@ -1285,6 +1531,11 @@ impl Thread {
                     this.generate_title(cx);
                 }
             })?;
+
+            if cancelled {
+                log::debug!("Turn cancelled by user, exiting");
+                return Ok(());
+            }
 
             if let Some(error) = error {
                 attempt += 1;
@@ -1376,6 +1627,7 @@ impl Thread {
         &mut self,
         event: LanguageModelCompletionEvent,
         event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Result<Option<Task<LanguageModelToolResult>>> {
         log::trace!("Handling streamed completion event: {:?}", event);
@@ -1404,7 +1656,7 @@ impl Thread {
                 }
             }
             ToolUse(tool_use) => {
-                return Ok(self.handle_tool_use_event(tool_use, event_stream, cx));
+                return Ok(self.handle_tool_use_event(tool_use, event_stream, cancellation_rx, cx));
             }
             ToolUseJsonParseError {
                 id,
@@ -1507,6 +1759,7 @@ impl Thread {
         &mut self,
         tool_use: LanguageModelToolUse,
         event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
         cx.notify();
@@ -1571,8 +1824,12 @@ impl Thread {
         };
 
         let fs = self.project.read(cx).fs().clone();
-        let tool_event_stream =
-            ToolCallEventStream::new(tool_use.id.clone(), event_stream.clone(), Some(fs));
+        let tool_event_stream = ToolCallEventStream::new(
+            tool_use.id.clone(),
+            event_stream.clone(),
+            Some(fs),
+            cancellation_rx,
+        );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
@@ -1650,6 +1907,10 @@ impl Thread {
         self.pending_summary_generation.is_some()
     }
 
+    pub fn is_generating_title(&self) -> bool {
+        self.pending_title_generation.is_some()
+    }
+
     pub fn summary(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<SharedString>>> {
         if let Some(summary) = self.summary.as_ref() {
             return Task::ready(Some(summary.clone())).shared();
@@ -1717,7 +1978,7 @@ impl Thread {
         task
     }
 
-    fn generate_title(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_title(&mut self, cx: &mut Context<Self>) {
         let Some(model) = self.summarization_model.clone() else {
             return;
         };
@@ -1966,6 +2227,88 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.running_turn
+            .as_ref()
+            .is_some_and(|turn| turn.tools.contains_key(name))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_registered_tool(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
+    pub fn registered_tool_names(&self) -> Vec<SharedString> {
+        self.tools.keys().cloned().collect()
+    }
+
+    pub fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
+        self.running_subagents.push(subagent);
+    }
+
+    pub fn unregister_running_subagent(&mut self, subagent: &WeakEntity<Thread>) {
+        self.running_subagents
+            .retain(|s| s.entity_id() != subagent.entity_id());
+    }
+
+    pub fn running_subagent_count(&self) -> usize {
+        self.running_subagents
+            .iter()
+            .filter(|s| s.upgrade().is_some())
+            .count()
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        self.subagent_context.is_some()
+    }
+
+    pub fn depth(&self) -> u8 {
+        self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
+    }
+
+    pub fn is_turn_complete(&self) -> bool {
+        self.running_turn.is_none()
+    }
+
+    pub fn submit_user_message(
+        &mut self,
+        content: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let content = content.into();
+        self.messages.push(Message::User(UserMessage {
+            id: UserMessageId::new(),
+            content: vec![UserMessageContent::Text(content)],
+        }));
+        cx.notify();
+        self.send_existing(cx)
+    }
+
+    pub fn interrupt_for_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let context = self
+            .subagent_context
+            .as_ref()
+            .context("Not a subagent thread")?;
+        let prompt = context.context_low_prompt.clone();
+        self.cancel(cx).detach();
+        self.submit_user_message(prompt, cx)
+    }
+
+    pub fn request_final_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let context = self
+            .subagent_context
+            .as_ref()
+            .context("Not a subagent thread")?;
+        let prompt = context.summary_prompt.clone();
+        self.submit_user_message(prompt, cx)
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -2144,12 +2487,17 @@ struct RunningTurn {
     event_stream: ThreadEventStream,
     /// The tools that were enabled for this turn.
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    /// Sender to signal tool cancellation. When cancel is called, this is
+    /// set to true so all tools can detect user-initiated cancellation.
+    cancellation_tx: watch::Sender<bool>,
 }
 
 impl RunningTurn {
-    fn cancel(self) {
+    fn cancel(mut self) -> Task<()> {
         log::debug!("Cancelling in progress turn");
+        self.cancellation_tx.send(true).ok();
         self.event_stream.send_canceled();
+        self._task
     }
 }
 
@@ -2295,7 +2643,7 @@ where
         cx.spawn(async move |cx| {
             let input = serde_json::from_value(input)?;
             let output = cx
-                .update(|cx| self.0.clone().run(input, event_stream, cx))?
+                .update(|cx| self.0.clone().run(input, event_stream, cx))
                 .await?;
             let raw_output = serde_json::to_value(&output)?;
             Ok(AgentToolOutput {
@@ -2369,10 +2717,7 @@ impl ThreadEventStream {
         acp::ToolCall::new(id.to_string(), title)
             .kind(kind)
             .raw_input(input)
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                tool_name.into(),
-            )]))
+            .meta(acp_thread::meta_with_tool_name(tool_name))
     }
 
     fn update_tool_call_fields(
@@ -2411,14 +2756,21 @@ pub struct ToolCallEventStream {
     tool_use_id: LanguageModelToolUseId,
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
+    cancellation_rx: watch::Receiver<bool>,
 }
 
 impl ToolCallEventStream {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
+        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
 
-        let stream = ToolCallEventStream::new("test_id".into(), ThreadEventStream(events_tx), None);
+        let stream = ToolCallEventStream::new(
+            "test_id".into(),
+            ThreadEventStream(events_tx),
+            None,
+            cancellation_rx,
+        );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
     }
@@ -2427,12 +2779,42 @@ impl ToolCallEventStream {
         tool_use_id: LanguageModelToolUseId,
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
+        cancellation_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
             tool_use_id,
             stream,
             fs,
+            cancellation_rx,
         }
+    }
+
+    /// Returns a future that resolves when the user cancels the tool call.
+    /// Tools should select on this alongside their main work to detect user cancellation.
+    pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + '_ {
+        let mut rx = self.cancellation_rx.clone();
+        async move {
+            loop {
+                if *rx.borrow() {
+                    return;
+                }
+                if rx.changed().await.is_err() {
+                    // Sender dropped, will never be cancelled
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    }
+
+    /// Returns true if the user has cancelled this tool call.
+    /// This is useful for checking cancellation state after an operation completes,
+    /// to determine if the completion was due to user cancellation.
+    pub fn was_cancelled_by_user(&self) -> bool {
+        *self.cancellation_rx.clone().borrow()
+    }
+
+    pub fn tool_use_id(&self) -> &LanguageModelToolUseId {
+        &self.tool_use_id
     }
 
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
@@ -2453,11 +2835,32 @@ impl ToolCallEventStream {
             .ok();
     }
 
+    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateSubagentThread {
+                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
+                    thread,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
     pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));
         }
 
+        self.authorize_required(title, cx)
+    }
+
+    /// Like `authorize`, but always prompts for confirmation regardless of
+    /// the `always_allow_tool_actions` setting. Use this when tool-specific
+    /// permission rules (like `always_confirm` patterns) have already determined
+    /// that confirmation is required.
+    pub fn authorize_required(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
             .0
@@ -2499,7 +2902,7 @@ impl ToolCallEventStream {
                                 .get_or_insert_default()
                                 .set_always_allow_tool_actions(true);
                         });
-                    })?;
+                    });
                 }
 
                 Ok(())
@@ -2659,7 +3062,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        // TODO: make this optional?
-        size: gpui::Size::new(0.into(), 0.into()),
+        size: None,
     }
 }

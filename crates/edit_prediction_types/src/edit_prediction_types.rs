@@ -4,6 +4,15 @@ use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::{Anchor, Buffer, OffsetRangeExt};
 
+/// The display mode used when showing an edit prediction to the user.
+/// Used for metrics tracking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuggestionDisplayType {
+    GhostText,
+    DiffPopover,
+    Jump,
+}
+
 // TODO: Find a better home for `Direction`.
 //
 // This should live in an ancestor crate of `editor` and `edit_prediction`,
@@ -95,16 +104,9 @@ pub trait EditPredictionDelegate: 'static + Sized {
         debounce: bool,
         cx: &mut Context<Self>,
     );
-    fn cycle(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut Context<Self>,
-    );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
-    fn did_show(&mut self, _cx: &mut Context<Self>) {}
+    fn did_show(&mut self, _display_type: SuggestionDisplayType, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -136,14 +138,7 @@ pub trait EditPredictionDelegateHandle {
         debounce: bool,
         cx: &mut App,
     );
-    fn cycle(
-        &self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut App,
-    );
-    fn did_show(&self, cx: &mut App);
+    fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
     fn accept(&self, cx: &mut App);
     fn discard(&self, cx: &mut App);
     fn suggest(
@@ -215,18 +210,6 @@ where
         })
     }
 
-    fn cycle(
-        &self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut App,
-    ) {
-        self.update(cx, |this, cx| {
-            this.cycle(buffer, cursor_position, direction, cx)
-        })
-    }
-
     fn accept(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.accept(cx))
     }
@@ -235,8 +218,8 @@ where
         self.update(cx, |this, cx| this.discard(cx))
     }
 
-    fn did_show(&self, cx: &mut App) {
-        self.update(cx, |this, cx| this.did_show(cx))
+    fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App) {
+        self.update(cx, |this, cx| this.did_show(display_type, cx))
     }
 
     fn suggest(

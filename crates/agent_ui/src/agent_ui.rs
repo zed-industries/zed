@@ -7,6 +7,7 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -17,6 +18,7 @@ mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
+mod text_thread_history;
 mod ui;
 
 use std::rc::Rc;
@@ -61,12 +63,12 @@ actions!(
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
-        /// Deletes the recently opened thread from history.
-        DeleteRecentlyOpenThread,
         /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
+        /// Cycles through favorited models in the ACP model selector.
+        CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
         /// Removes all thread history.
@@ -121,6 +123,12 @@ actions!(
         ContinueWithBurnMode,
         /// Toggles burn mode for faster responses.
         ToggleBurnMode,
+        /// Queues a message to be sent when generation completes.
+        QueueMessage,
+        /// Sends the next queued message immediately.
+        SendNextQueuedMessage,
+        /// Clears all messages from the queue.
+        ClearMessageQueue,
     ]
 );
 
@@ -161,13 +169,13 @@ impl ExternalAgent {
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
-        history: Entity<agent::HistoryStore>,
+        thread_store: Entity<agent::ThreadStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
-            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
+            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
@@ -345,7 +353,8 @@ fn init_language_model_settings(cx: &mut App) {
         |_, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+            | language_model::Event::RemovedProvider(_)
+            | language_model::Event::ProvidersChanged => {
                 update_active_language_model_from_settings(cx);
             }
             _ => {}
@@ -457,6 +466,7 @@ mod tests {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
+            favorite_models: vec![],
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
@@ -471,6 +481,8 @@ mod tests {
             expand_terminal_card: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            tool_permissions: Default::default(),
+            show_turn_stats: false,
         };
 
         cx.update(|cx| {
