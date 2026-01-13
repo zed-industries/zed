@@ -6442,6 +6442,16 @@ fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
 
 #[inline]
 fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
+    if a.id == NEW_ENTRY_ID || b.id == NEW_ENTRY_ID {
+        if a.path.parent() == b.path.parent() {
+            match (a.id == NEW_ENTRY_ID, b.id == NEW_ENTRY_ID) {
+                (true, false) => return cmp::Ordering::Less,
+                (false, true) => return cmp::Ordering::Greater,
+                _ => {}
+            };
+        }
+    }
+
     match mode {
         settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b),
         settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b),
