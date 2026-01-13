@@ -218,7 +218,7 @@ impl TeacherPrompt {
         }
 
         let mut prompt = String::new();
-        for file in context.files.as_ref() {
+        for file in context.files.iter() {
             let path_str = file.path.to_string_lossy();
             writeln!(&mut prompt, "`````{path_str}").ok();
             let mut prev_row = 0;

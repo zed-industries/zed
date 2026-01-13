@@ -189,7 +189,7 @@ pub fn request_prediction_with_zeta2(
 
 pub fn zeta2_prompt_input(
     snapshot: &language::BufferSnapshot,
-    related_files: Arc<[zeta_prompt::RelatedFile]>,
+    related_files: Vec<zeta_prompt::RelatedFile>,
     events: Vec<Arc<zeta_prompt::Event>>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
@@ -203,6 +203,12 @@ pub fn zeta2_prompt_input(
             MAX_EDITABLE_TOKENS,
             MAX_CONTEXT_TOKENS,
         );
+
+    let related_files = crate::filter_redundant_excerpts(
+        related_files,
+        excerpt_path.as_ref(),
+        context_range.start.row..context_range.end.row,
+    );
 
     let context_start_offset = context_range.start.to_offset(snapshot);
     let editable_offset_range = editable_range.to_offset(snapshot);

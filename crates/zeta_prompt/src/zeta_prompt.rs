@@ -13,7 +13,7 @@ pub struct ZetaPromptInput {
     pub editable_range_in_excerpt: Range<usize>,
     pub cursor_offset_in_excerpt: usize,
     pub events: Vec<Arc<Event>>,
-    pub related_files: Arc<[RelatedFile]>,
+    pub related_files: Vec<RelatedFile>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,7 +66,7 @@ pub struct RelatedFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
-    pub text: String,
+    pub text: Arc<str>,
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput) -> String {
