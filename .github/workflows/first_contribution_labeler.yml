@@ -37,12 +37,14 @@ jobs:
             }
 
             // Check if this is a first-time contributor.
-            // These two values are mutually exclusive, so we need to check both:
-            // - FIRST_TIME_CONTRIBUTOR: has contributed to other repos, but not this one
-            // - FIRST_TIMER: has never contributed to any public repository on GitHub
+            // We use inverted logic here due to a suspected GitHub bug where first-time contributors
+            // get 'NONE' instead of 'FIRST_TIME_CONTRIBUTOR' or 'FIRST_TIMER'.
+            // https://github.com/orgs/community/discussions/78038
+            // This will break if GitHub ever adds new associations.
             const association = pr.author_association;
+            const knownAssociations = ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER', 'MANNEQUIN'];
 
-            if (association !== 'FIRST_TIME_CONTRIBUTOR' && association !== 'FIRST_TIMER') {
+            if (knownAssociations.includes(association)) {
               console.log(`Author ${author} has association '${association}', not a first-time contributor`);
               return;
             }

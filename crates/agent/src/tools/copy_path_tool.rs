@@ -1,11 +1,15 @@
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 use agent_client_protocol::ToolKind;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -79,6 +83,31 @@ impl AgentTool for CopyPathTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let settings = AgentSettings::get_global(cx);
+
+        let source_decision =
+            decide_permission_from_settings(Self::name(), &input.source_path, settings);
+        if let ToolPermissionDecision::Deny(reason) = source_decision {
+            return Task::ready(Err(anyhow!("{}", reason)));
+        }
+
+        let dest_decision =
+            decide_permission_from_settings(Self::name(), &input.destination_path, settings);
+        if let ToolPermissionDecision::Deny(reason) = dest_decision {
+            return Task::ready(Err(anyhow!("{}", reason)));
+        }
+
+        let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
+            || matches!(dest_decision, ToolPermissionDecision::Confirm);
+
+        let authorize = if needs_confirmation {
+            let src = MarkdownInlineCode(&input.source_path);
+            let dest = MarkdownInlineCode(&input.destination_path);
+            Some(event_stream.authorize(format!("Copy {src} to {dest}"), cx))
+        } else {
+            None
+        };
+
         let copy_task = self.project.update(cx, |project, cx| {
             match project
                 .find_project_path(&input.source_path, cx)
@@ -99,6 +128,10 @@ impl AgentTool for CopyPathTool {
         });
 
         cx.background_spawn(async move {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
             let result = futures::select! {
                 result = copy_task.fuse() => result,
                 _ = event_stream.cancelled_by_user().fuse() => {

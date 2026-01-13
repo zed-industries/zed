@@ -28,6 +28,10 @@ pub struct ToolPermissionsFeatureFlag;
 
 impl FeatureFlag for ToolPermissionsFeatureFlag {
     const NAME: &'static str = "tool-permissions";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub struct AgentSharingFeatureFlag;
@@ -40,6 +44,16 @@ pub struct SubagentsFeatureFlag;
 
 impl FeatureFlag for SubagentsFeatureFlag {
     const NAME: &'static str = "subagents";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+pub struct DiffReviewFeatureFlag;
+
+impl FeatureFlag for DiffReviewFeatureFlag {
+    const NAME: &'static str = "diff-review";
 
     fn enabled_for_staff() -> bool {
         false

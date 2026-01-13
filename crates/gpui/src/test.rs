@@ -27,6 +27,7 @@
 //! ```
 use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
 use futures::StreamExt as _;
+use rand::prelude::*;
 use smol::channel;
 use std::{
     env,
@@ -53,7 +54,7 @@ pub fn run_test(
                 eprintln!("seed = {seed}");
             }
             let result = panic::catch_unwind(|| {
-                let dispatcher = TestDispatcher::new(seed);
+                let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(seed));
                 test_fn(dispatcher, seed);
             });
 

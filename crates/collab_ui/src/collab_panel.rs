@@ -488,7 +488,6 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
-        let fg_executor = cx.foreground_executor();
         let executor = cx.background_executor().clone();
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
@@ -518,7 +517,7 @@ impl CollabPanel {
                     self.match_candidates.clear();
                     self.match_candidates
                         .push(StringMatchCandidate::new(0, &user.github_login));
-                    let matches = fg_executor.block_on(match_strings(
+                    let matches = executor.block(match_strings(
                         &self.match_candidates,
                         &query,
                         true,
@@ -562,7 +561,7 @@ impl CollabPanel {
                             &participant.user.github_login,
                         )
                     }));
-                let mut matches = fg_executor.block_on(match_strings(
+                let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -614,7 +613,7 @@ impl CollabPanel {
                             StringMatchCandidate::new(id, &participant.github_login)
                         },
                     ));
-                let matches = fg_executor.block_on(match_strings(
+                let matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -649,7 +648,7 @@ impl CollabPanel {
                 .ordered_channels()
                 .map(|(_, chan)| chan)
                 .collect::<Vec<_>>();
-            let matches = fg_executor.block_on(match_strings(
+            let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -751,7 +750,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
             );
-            let matches = fg_executor.block_on(match_strings(
+            let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -787,7 +786,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
             );
-            let matches = fg_executor.block_on(match_strings(
+            let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -812,7 +811,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
             );
-            let matches = fg_executor.block_on(match_strings(
+            let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -846,14 +845,14 @@ impl CollabPanel {
                     .map(|(ix, contact)| StringMatchCandidate::new(ix, &contact.user.github_login)),
             );
 
-            let matches = fg_executor.block_on(match_strings(
+            let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
                 true,
                 usize::MAX,
                 &Default::default(),
-                executor,
+                executor.clone(),
             ));
 
             let (online_contacts, offline_contacts) = matches

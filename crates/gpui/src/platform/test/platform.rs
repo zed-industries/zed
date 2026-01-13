@@ -139,6 +139,7 @@ impl TestPlatform {
             .new_path
             .pop_front()
             .expect("no pending new path prompt");
+        self.background_executor().set_waiting_hint(None);
         tx.send(Ok(select_path(&path))).ok();
     }
 
@@ -150,6 +151,7 @@ impl TestPlatform {
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
+        self.background_executor().set_waiting_hint(None);
         let Some(ix) = prompt.answers.iter().position(|a| a == response) else {
             panic!(
                 "PROMPT: {}\n{:?}\n{:?}\nCannot respond with {}",
@@ -184,6 +186,8 @@ impl TestPlatform {
     ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
         let answers: Vec<String> = answers.iter().map(|s| s.label().to_string()).collect();
+        self.background_executor()
+            .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts
             .borrow_mut()
             .multiple_choice
@@ -348,6 +352,8 @@ impl Platform for TestPlatform {
         _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
+        self.background_executor()
+            .set_waiting_hint(Some(format!("PROMPT FOR PATH: {:?}", directory)));
         self.prompts
             .borrow_mut()
             .new_path

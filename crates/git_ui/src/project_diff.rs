@@ -182,6 +182,37 @@ impl ProjectDiff {
         }
     }
 
+    pub fn deploy_at_project_path(
+        workspace: &mut Workspace,
+        project_path: ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git Diff Opened", source = "Agent Panel");
+        let existing = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
+        let project_diff = if let Some(existing) = existing {
+            workspace.activate_item(&existing, true, true, window, cx);
+            existing
+        } else {
+            let workspace_handle = cx.entity();
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            workspace.add_item_to_active_pane(
+                Box::new(project_diff.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            project_diff
+        };
+        project_diff.update(cx, |project_diff, cx| {
+            project_diff.move_to_project_path(&project_path, window, cx);
+        });
+    }
+
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.primary_editor().update(cx, |editor, cx| {
@@ -258,6 +289,7 @@ impl ProjectDiff {
                 .primary_editor()
                 .update(cx, |editor, cx| {
                     editor.disable_diagnostics(cx);
+                    editor.set_show_diff_review_button(true, cx);
 
                     match branch_diff.read(cx).diff_base() {
                         DiffBase::Head => {
@@ -353,6 +385,31 @@ impl ProjectDiff {
         let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
+        self.move_to_path(path_key, window, cx)
+    }
+
+    pub fn move_to_project_path(
+        &mut self,
+        project_path: &ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(git_repo) = self.branch_diff.read(cx).repo() else {
+            return;
+        };
+        let Some(repo_path) = git_repo
+            .read(cx)
+            .project_path_to_repo_path(project_path, cx)
+        else {
+            return;
+        };
+        let status = git_repo
+            .read(cx)
+            .status_for_path(&repo_path)
+            .map(|entry| entry.status)
+            .unwrap_or(FileStatus::Untracked);
+        let sort_prefix = sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
         self.move_to_path(path_key, window, cx)
     }
 

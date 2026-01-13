@@ -63,6 +63,9 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
+
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;

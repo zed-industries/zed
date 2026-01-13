@@ -32,9 +32,9 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId, FocusHandle,
-    InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window, util::FluentBuilder,
-    window::with_element_arena,
+    App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ELEMENT_ARENA, ElementId,
+    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
+    util::FluentBuilder,
 };
 use derive_more::{Deref, DerefMut};
 use std::{
@@ -579,7 +579,8 @@ impl AnyElement {
         E: 'static + Element,
         E::RequestLayoutState: Any,
     {
-        let element = with_element_arena(|arena| arena.alloc(|| Drawable::new(element)))
+        let element = ELEMENT_ARENA
+            .with_borrow_mut(|arena| arena.alloc(|| Drawable::new(element)))
             .map(|element| element as &mut dyn ElementObject);
         AnyElement(element)
     }

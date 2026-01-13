@@ -9,7 +9,7 @@ use crate::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
 };
-use acp_thread::MentionUri;
+use acp_thread::{AgentSessionInfo, AgentSessionList, MentionUri};
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
@@ -44,6 +44,7 @@ pub struct MessageEditor {
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     agent_name: SharedString,
+    thread_store: Option<Entity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -69,11 +70,10 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
     fn supported_modes(&self, cx: &App) -> Vec<PromptContextType> {
         let mut supported = vec![PromptContextType::File, PromptContextType::Symbol];
         if self.read(cx).prompt_capabilities.borrow().embedded_context {
-            supported.extend(&[
-                PromptContextType::Thread,
-                PromptContextType::Fetch,
-                PromptContextType::Rules,
-            ]);
+            if self.read(cx).thread_store.is_some() {
+                supported.push(PromptContextType::Thread);
+            }
+            supported.extend(&[PromptContextType::Fetch, PromptContextType::Rules]);
         }
         supported
     }
@@ -100,7 +100,8 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        history_store: Entity<ThreadStore>,
+        thread_store: Option<Entity<ThreadStore>>,
+        session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -152,12 +153,13 @@ impl MessageEditor {
             editor
         });
         let mention_set =
-            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
+            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             cx.entity(),
             editor.downgrade(),
             mention_set.clone(),
-            history_store.clone(),
+            thread_store.clone(),
+            session_list,
             prompt_store.clone(),
             workspace.clone(),
         ));
@@ -215,6 +217,7 @@ impl MessageEditor {
             prompt_capabilities,
             available_commands,
             agent_name,
+            thread_store,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
@@ -269,16 +272,24 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: agent::DbThreadMetadata,
+        thread: AgentSessionInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread_store.is_none() {
+            return;
+        }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+        let thread_title = thread
+            .title
+            .clone()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| SharedString::new_static("New Thread"));
         let uri = MentionUri::Thread {
-            id: thread.id.clone(),
-            name: thread.title.to_string(),
+            id: thread.session_id,
+            name: thread_title.to_string(),
         };
         let content = format!("{}\n", uri.as_link());
 
@@ -299,7 +310,7 @@ impl MessageEditor {
         self.mention_set
             .update(cx, |mention_set, cx| {
                 mention_set.confirm_mention_completion(
-                    thread.title,
+                    thread_title,
                     start,
                     content_len,
                     uri,
@@ -1061,7 +1072,7 @@ impl Addon for MessageEditorAddon {
 mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
-    use acp_thread::MentionUri;
+    use acp_thread::{AgentSessionInfo, MentionUri};
     use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
     use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
@@ -1083,6 +1094,7 @@ mod tests {
         message_editor::{Mention, MessageEditor},
         thread_view::tests::init_test,
     };
+    use crate::completion_provider::{PromptCompletionProviderDelegate, PromptContextType};
 
     #[gpui::test]
     async fn test_at_mention_removal(cx: &mut TestAppContext) {
@@ -1095,14 +1107,16 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = None;
+        let session_list = Rc::new(RefCell::new(None));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -1199,7 +1213,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = None;
+        let session_list = Rc::new(RefCell::new(None));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
@@ -1212,7 +1227,8 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle.clone(),
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -1355,7 +1371,8 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(*window, cx);
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = None;
+        let session_list = Rc::new(RefCell::new(None));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -1372,7 +1389,8 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle,
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -1584,7 +1602,8 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let session_list = Rc::new(RefCell::new(None));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1593,7 +1612,8 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle,
                     project.downgrade(),
-                    history_store.clone(),
+                    Some(thread_store),
+                    session_list.clone(),
                     None,
                     prompt_capabilities.clone(),
                     Default::default(),
@@ -2076,14 +2096,16 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+        let session_list = Rc::new(RefCell::new(None));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
                 let editor = MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2173,13 +2195,16 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+        let session_list = Rc::new(RefCell::new(None));
 
         // Create a thread metadata to insert as summary
-        let thread_metadata = agent::DbThreadMetadata {
-            id: acp::SessionId::new("thread-123"),
-            title: "Previous Conversation".into(),
-            updated_at: chrono::Utc::now(),
+        let thread_metadata = AgentSessionInfo {
+            session_id: acp::SessionId::new("thread-123"),
+            cwd: None,
+            title: Some("Previous Conversation".into()),
+            updated_at: Some(chrono::Utc::now()),
+            meta: None,
         };
 
         let message_editor = cx.update(|window, cx| {
@@ -2187,7 +2212,8 @@ mod tests {
                 let mut editor = MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2207,10 +2233,11 @@ mod tests {
 
         // Construct expected values for verification
         let expected_uri = MentionUri::Thread {
-            id: thread_metadata.id.clone(),
-            name: thread_metadata.title.to_string(),
+            id: thread_metadata.session_id.clone(),
+            name: thread_metadata.title.as_ref().unwrap().to_string(),
         };
-        let expected_link = format!("[@{}]({})", thread_metadata.title, expected_uri.to_uri());
+        let expected_title = thread_metadata.title.as_ref().unwrap();
+        let expected_link = format!("[@{}]({})", expected_title, expected_uri.to_uri());
 
         message_editor.read_with(cx, |editor, cx| {
             let text = editor.text(cx);
@@ -2237,6 +2264,171 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_insert_thread_summary_skipped_for_external_agents(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(LanguageModelRegistry::test);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = None;
+        let session_list = Rc::new(RefCell::new(None));
+
+        let thread_metadata = AgentSessionInfo {
+            session_id: acp::SessionId::new("thread-123"),
+            cwd: None,
+            title: Some("Previous Conversation".into()),
+            updated_at: Some(chrono::Utc::now()),
+            meta: None,
+        };
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let mut editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    thread_store.clone(),
+                    session_list.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                editor.insert_thread_summary(thread_metadata, window, cx);
+                editor
+            })
+        });
+
+        message_editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.text(cx).is_empty(),
+                "Expected thread summary to be skipped for external agents"
+            );
+            assert!(
+                editor.mention_set().read(cx).mentions().is_empty(),
+                "Expected no mentions when thread summary is skipped"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_mode_hidden_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = None;
+        let session_list = Rc::new(RefCell::new(None));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    thread_store.clone(),
+                    session_list.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        message_editor.update(cx, |editor, _cx| {
+            editor
+                .prompt_capabilities
+                .replace(acp::PromptCapabilities::new().embedded_context(true));
+        });
+
+        let supported_modes = {
+            let app = cx.app.borrow();
+            message_editor.supported_modes(&app)
+        };
+
+        assert!(
+            !supported_modes.contains(&PromptContextType::Thread),
+            "Expected thread mode to be hidden when thread mentions are disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_thread_mode_visible_when_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+        let session_list = Rc::new(RefCell::new(None));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    thread_store.clone(),
+                    session_list.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        message_editor.update(cx, |editor, _cx| {
+            editor
+                .prompt_capabilities
+                .replace(acp::PromptCapabilities::new().embedded_context(true));
+        });
+
+        let supported_modes = {
+            let app = cx.app.borrow();
+            message_editor.supported_modes(&app)
+        };
+
+        assert!(
+            supported_modes.contains(&PromptContextType::Thread),
+            "Expected thread mode to be visible when enabled"
+        );
+    }
+
+    #[gpui::test]
     async fn test_whitespace_trimming(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2248,14 +2440,16 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+        let session_list = Rc::new(RefCell::new(None));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2309,7 +2503,8 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+        let session_list = Rc::new(RefCell::new(None));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2317,7 +2512,8 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle,
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2463,7 +2659,8 @@ mod tests {
             });
         });
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+        let session_list = Rc::new(RefCell::new(None));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
@@ -2474,7 +2671,8 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle,
                     project.downgrade(),
-                    history_store.clone(),
+                    thread_store.clone(),
+                    session_list.clone(),
                     None,
                     Default::default(),
                     Default::default(),

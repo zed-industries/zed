@@ -1361,4 +1361,12 @@
       "ctrl-shift-i": "branch_picker::FilterRemotes",
     },
   },
+  {
+    "context": "GitPicker",
+    "bindings": {
+      "alt-1": "git_picker::ActivateBranchesTab",
+      "alt-2": "git_picker::ActivateWorktreesTab",
+      "alt-3": "git_picker::ActivateStashTab",
+    },
+  },
 ]

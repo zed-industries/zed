@@ -2102,9 +2102,9 @@ pub mod test {
             cx.set_global(inline_assistant);
         });
 
-        let foreground_executor = cx.foreground_executor().clone();
-        let project =
-            foreground_executor.block_test(async { Project::test(fs.clone(), [], cx).await });
+        let project = cx
+            .executor()
+            .block_test(async { Project::test(fs.clone(), [], cx).await });
 
         // Create workspace with window
         let (workspace, cx) = cx.add_window_view(|window, cx| {
@@ -2162,7 +2162,8 @@ pub mod test {
 
         test(cx);
 
-        let assist_id = foreground_executor
+        let assist_id = cx
+            .executor()
             .block_test(async { completion_rx.next().await })
             .unwrap()
             .unwrap();
@@ -2205,6 +2206,7 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use gpui::TestAppContext;
     use language_model::{LanguageModelRegistry, SelectedModel};
+    use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
@@ -2306,7 +2308,7 @@ pub mod evals {
         let prompt = prompt.into();
 
         eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
-            let dispatcher = gpui::TestDispatcher::new(rand::random());
+            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
             let mut cx = TestAppContext::build(dispatcher, None);
             cx.skip_drawing();
 

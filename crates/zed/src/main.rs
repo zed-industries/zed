@@ -529,9 +529,9 @@ fn main() {
         debugger_tools::init(cx);
         client::init(&client, cx);
 
-        let system_id = cx.foreground_executor().block_on(system_id).ok();
-        let installation_id = cx.foreground_executor().block_on(installation_id).ok();
-        let session = cx.foreground_executor().block_on(session);
+        let system_id = cx.background_executor().block(system_id).ok();
+        let installation_id = cx.background_executor().block(installation_id).ok();
+        let session = cx.background_executor().block(session);
 
         let telemetry = client.telemetry();
         telemetry.start(
@@ -877,10 +877,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         })
                         .await?;
 
-                    let thread_metadata = agent::DbThreadMetadata {
-                        id: session_id,
-                        title: format!("🔗 {}", response.title).into(),
-                        updated_at: chrono::Utc::now(),
+                    let thread_metadata = acp_thread::AgentSessionInfo {
+                        session_id,
+                        cwd: None,
+                        title: Some(format!("🔗 {}", response.title).into()),
+                        updated_at: Some(chrono::Utc::now()),
+                        meta: None,
                     };
 
                     workspace.update(cx, |workspace, window, cx| {
@@ -1551,7 +1553,7 @@ fn load_embedded_fonts(cx: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     let executor = cx.background_executor();
 
-    cx.foreground_executor().block_on(executor.scoped(|scope| {
+    executor.block(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;

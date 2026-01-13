@@ -1,13 +1,18 @@
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
+use util::markdown::MarkdownInlineCode;
 
 /// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -71,6 +76,20 @@ impl AgentTool for DeletePathTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let path = input.path;
+
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &path, settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                Some(event_stream.authorize(format!("Delete {}", MarkdownInlineCode(&path)), cx))
+            }
+        };
+
         let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path} because that path isn't in this project."
@@ -113,6 +132,10 @@ impl AgentTool for DeletePathTool {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
             loop {
                 let path_result = futures::select! {
                     path = paths_rx.next().fuse() => path,

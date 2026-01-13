@@ -18,6 +18,7 @@ test-support = ["agent/test-support"]
 
 [dependencies]
 agent.workspace = true
+acp_thread.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
@@ -30,6 +31,7 @@ feature_flags.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+log.workspace = true
 menu.workspace = true
 project.workspace = true
 prompt_store.workspace = true

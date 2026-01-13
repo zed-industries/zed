@@ -63,6 +63,8 @@ extend-exclude = [
 
 [default]
 extend-ignore-re = [
+    # PNG is a file format, not a typo
+    "PNG",
     'cl\[ist]',
     '\[lan\]guage',
     '"ba"',

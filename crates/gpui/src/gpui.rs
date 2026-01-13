@@ -20,8 +20,6 @@ pub mod colors;
 mod element;
 mod elements;
 mod executor;
-mod platform_scheduler;
-pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod global;
 mod input;

@@ -42,9 +42,7 @@ impl<T> PriorityQueueState<T> {
 
         let mut queues = self.queues.lock();
         match priority {
-            Priority::RealtimeAudio => unreachable!(
-                "Realtime audio priority runs on a dedicated thread and is never queued"
-            ),
+            Priority::Realtime(_) => unreachable!(),
             Priority::High => queues.high_priority.push_back(item),
             Priority::Medium => queues.medium_priority.push_back(item),
             Priority::Low => queues.low_priority.push_back(item),
@@ -221,29 +219,29 @@ impl<T> PriorityQueueReceiver<T> {
             self.state.recv()?
         };
 
-        let high = P::High.weight() * !queues.high_priority.is_empty() as u32;
-        let medium = P::Medium.weight() * !queues.medium_priority.is_empty() as u32;
-        let low = P::Low.weight() * !queues.low_priority.is_empty() as u32;
+        let high = P::High.probability() * !queues.high_priority.is_empty() as u32;
+        let medium = P::Medium.probability() * !queues.medium_priority.is_empty() as u32;
+        let low = P::Low.probability() * !queues.low_priority.is_empty() as u32;
         let mut mass = high + medium + low; //%
 
         if !queues.high_priority.is_empty() {
-            let flip = self.rand.random_ratio(P::High.weight(), mass);
+            let flip = self.rand.random_ratio(P::High.probability(), mass);
             if flip {
                 return Ok(queues.high_priority.pop_front());
             }
-            mass -= P::High.weight();
+            mass -= P::High.probability();
         }
 
         if !queues.medium_priority.is_empty() {
-            let flip = self.rand.random_ratio(P::Medium.weight(), mass);
+            let flip = self.rand.random_ratio(P::Medium.probability(), mass);
             if flip {
                 return Ok(queues.medium_priority.pop_front());
             }
-            mass -= P::Medium.weight();
+            mass -= P::Medium.probability();
         }
 
         if !queues.low_priority.is_empty() {
-            let flip = self.rand.random_ratio(P::Low.weight(), mass);
+            let flip = self.rand.random_ratio(P::Low.probability(), mass);
             if flip {
                 return Ok(queues.low_priority.pop_front());
             }

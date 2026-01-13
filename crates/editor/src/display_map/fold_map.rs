@@ -1168,7 +1168,7 @@ pub struct Fold {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FoldRange(Range<Anchor>);
+pub struct FoldRange(pub(crate) Range<Anchor>);
 
 impl Deref for FoldRange {
     type Target = Range<Anchor>;
