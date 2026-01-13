@@ -1,15 +1,15 @@
+use dev_container::DevContainerFeature;
 use dev_container::TemplateOptions;
-use regex::Regex;
+use dev_container::get_features;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
-use workspace::item::SaveOptions;
+use std::sync::Arc;
+use ui::SwitchField;
+use ui::ToggleState;
 
-use ::dev_container::{DevContainerTemplate, get_template_text, get_templates};
-use editor::Editor;
+use ::dev_container::{DevContainerTemplate, get_templates};
 use gpui::{
     Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
     WeakEntity,
@@ -17,9 +17,7 @@ use gpui::{
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
-use smallvec::SmallVec;
 use smol::fs;
-use snippet::{Snippet, TabStop};
 use ui::{
     AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
     InteractiveElement, IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable,
@@ -27,7 +25,7 @@ use ui::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
-use workspace::{Item, ModalView, Workspace, with_active_or_new_workspace};
+use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
 use crate::remote_connections::Connection;
 
@@ -38,6 +36,12 @@ struct DevContainerUp {
     container_id: String,
     _remote_user: String,
     remote_workspace_folder: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DevContainerApply {
+    files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +404,15 @@ pub struct TemplateEntry {
     entry: NavigableEntry,
     options_selected: HashMap<String, String>,
     next_option: Option<TemplateOptionSelection>,
+    features: Vec<FeatureEntry>,
+    features_selected: HashMap<String, DevContainerFeature>,
+}
+
+#[derive(Clone)]
+pub struct FeatureEntry {
+    feature: DevContainerFeature,
+    toggle_state: ToggleState,
+    entry: NavigableEntry,
 }
 
 #[derive(Clone)]
@@ -423,11 +436,28 @@ impl Debug for TemplateEntry {
     }
 }
 
+impl Eq for FeatureEntry {}
+impl PartialEq for FeatureEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.feature.id == other.feature.id
+    }
+}
+
+impl Debug for FeatureEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FeatureEntry")
+            .field("feature", &self.feature)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevContainerState {
     Initial,
     QueryingTemplates,
     TemplateQueryReturned(Result<Vec<TemplateEntry>, String>), // TODO, it's either a successful query manifest or an error
+    QueryingFeatures(TemplateEntry),
+    FeaturesQueryReturned(TemplateEntry),
     UserOptionsSpecifying(TemplateEntry),
     ConfirmingWriteDevContainer,
 }
@@ -439,6 +469,9 @@ pub enum DevContainerMessage {
     TemplateSelected(TemplateEntry),
     TemplateOptionsSpecified(TemplateEntry),
     TemplateOptionsCompleted(TemplateEntry),
+    FeaturesRetrieved(Vec<DevContainerFeature>),
+    FeaturesSelecting(FeatureEntry),
+    FeaturesSelected(TemplateEntry),
     GoBack,
 }
 
@@ -647,6 +680,102 @@ impl DevContainerModal {
         view.render(window, cx).into_any_element()
     }
 
+    fn render_features_query_returned(
+        &self,
+        template_entry: TemplateEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut view = Navigable::new(
+            div()
+                .child(
+                    div()
+                        .track_focus(&self.focus_handle)
+                        .child(
+                            ModalHeader::new().child(
+                                Headline::new("Selected additional features")
+                                    .size(HeadlineSize::XSmall),
+                            ),
+                        ),
+                )
+                .child(ListSeparator)
+                .children(template_entry.features.iter().map(|feature_entry| {
+                    SwitchField::new(
+                        feature_entry.feature.id.clone(),
+                        Some(feature_entry.feature.name.clone()),
+                        None,
+                        feature_entry.toggle_state,
+                        {
+                            let _template = template_entry.clone();
+                            let feature = feature_entry.clone();
+                            let feature = feature.clone();
+                            cx.listener(move |this, state: &ToggleState, window, cx| {
+                                let mut feature = feature.clone();
+                                feature.toggle_state = state.clone();
+                                this.accept_message(
+                                    DevContainerMessage::FeaturesSelecting(feature),
+                                    window,
+                                    cx,
+                                );
+                            })
+                        },
+                    )
+                }))
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.search_navigable_entry.focus_handle) // TODO
+                        .on_action({
+                            let template_entry = template_entry.clone();
+                            cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                this.accept_message(
+                                    DevContainerMessage::FeaturesSelected(template_entry.clone()),
+                                    window,
+                                    cx,
+                                );
+                            })
+                        })
+                        .child(
+                            ListItem::new("li-goback")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.search_navigable_entry
+                                        .focus_handle
+                                        .contains_focused(window, cx),
+                                )
+                                .child(Label::new("Confirm")),
+                        ),
+                )
+                .child(
+                    div()
+                        .track_focus(&self.back_entry.focus_handle)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(DevContainerMessage::GoBack, window, cx);
+                        }))
+                        .child(
+                            ListItem::new("li-goback")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.back_entry.focus_handle.contains_focused(window, cx),
+                                )
+                                .child(Label::new("Go Back")),
+                        ),
+                )
+                .into_any_element(),
+        );
+
+        for feature in template_entry.features {
+            view = view.entry(feature.entry.clone());
+        }
+        view = view.entry(self.search_navigable_entry.clone());
+        view = view.entry(self.back_entry.clone());
+        view.render(window, cx).into_any_element()
+    }
+
     fn render_querying_templates(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         Navigable::new(
             div()
@@ -669,6 +798,54 @@ impl DevContainerModal {
                                     .with_rotate_animation(2),
                             )
                             .child(Label::new("Querying template registry...")),
+                    ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.back_entry.focus_handle)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(DevContainerMessage::GoBack, window, cx);
+                        }))
+                        .child(
+                            ListItem::new("li-goback")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.back_entry.focus_handle.contains_focused(window, cx),
+                                )
+                                .child(Label::new("Go Back")),
+                        ),
+                )
+                .into_any_element(),
+        )
+        .entry(self.back_entry.clone())
+        .render(window, cx)
+        .into_any_element()
+    }
+    fn render_querying_features(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        Navigable::new(
+            div()
+                .child(
+                    div().track_focus(&self.focus_handle).child(
+                        ModalHeader::new().child(
+                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                        ),
+                    ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div().child(
+                        ListItem::new("li-querying")
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(
+                                Icon::new(IconName::ArrowCircle)
+                                    .color(Color::Muted)
+                                    .with_rotate_animation(2),
+                            )
+                            .child(Label::new("Querying features...")),
                     ),
                 )
                 .child(ListSeparator)
@@ -720,6 +897,10 @@ impl StatefulModal for DevContainerModal {
             DevContainerState::UserOptionsSpecifying(template_entry) => {
                 self.render_user_options_specifying(template_entry, window, cx)
             }
+            DevContainerState::QueryingFeatures(_) => self.render_querying_features(window, cx),
+            DevContainerState::FeaturesQueryReturned(template_entry) => {
+                self.render_features_query_returned(template_entry, window, cx)
+            }
             _ => div().into_any_element(),
         }
     }
@@ -761,6 +942,8 @@ impl StatefulModal for DevContainerModal {
                             entry: NavigableEntry::focusable(cx),
                             options_selected: HashMap::new(),
                             next_option: None,
+                            features: Vec::new(),
+                            features_selected: HashMap::new(),
                         })
                         .collect())))
                 } else {
@@ -829,9 +1012,58 @@ impl StatefulModal for DevContainerModal {
 
                 Some(DevContainerState::UserOptionsSpecifying(template_entry))
             }
-            // Create the files here
             DevContainerMessage::TemplateOptionsCompleted(template_entry) => {
+                cx.spawn_in(window, async move |this, cx| {
+                    let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                    let Some(features) = get_features(client).await.log_err() else {
+                        return;
+                    };
+                    let message = DevContainerMessage::FeaturesRetrieved(features.features);
+                    this.update_in(cx, |this, window, cx| {
+                        this.accept_message(message, window, cx);
+                    })
+                    .log_err();
+                })
+                .detach();
+                Some(DevContainerState::QueryingFeatures(template_entry))
+            }
+            DevContainerMessage::FeaturesRetrieved(features) => {
+                if let DevContainerState::QueryingFeatures(mut template_entry) = self.state.clone()
+                {
+                    template_entry.features = features
+                        .iter()
+                        .map(|feature| FeatureEntry {
+                            feature: feature.clone(),
+                            toggle_state: ToggleState::Unselected,
+                            entry: NavigableEntry::focusable(cx),
+                        })
+                        .collect();
+                    Some(DevContainerState::FeaturesQueryReturned(template_entry))
+                } else {
+                    None
+                }
+            }
+            DevContainerMessage::FeaturesSelecting(feature_entry) => {
+                if let DevContainerState::FeaturesQueryReturned(mut template_entry) =
+                    self.state.clone()
+                {
+                    for feature in &mut template_entry.features {
+                        if feature == &feature_entry {
+                            *feature = feature_entry.clone();
+                            template_entry.features_selected.insert(
+                                feature_entry.feature.name.clone(),
+                                feature_entry.feature.clone(),
+                            );
+                        }
+                    }
+                    Some(DevContainerState::FeaturesQueryReturned(template_entry))
+                } else {
+                    None
+                }
+            }
+            DevContainerMessage::FeaturesSelected(template_entry) => {
                 let workspace = self.workspace.upgrade().expect("TODO");
+
                 workspace.update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
 
@@ -842,50 +1074,39 @@ impl StatefulModal for DevContainerModal {
 
                     if let Some(worktree) = worktree {
                         let tree_id = worktree.read(cx).id();
+                        let root_path = worktree.read(cx).abs_path();
                         cx.spawn_in(window, async move |workspace, cx| {
-                            let client = cx.update(|_, cx| cx.http_client()).unwrap();
-                            let files = get_template_text(client, &template_entry.template)
-                                .await
-                                .expect("TODO");
+                            let node_runtime = workspace
+                                .read_with(cx, |workspace, _| {
+                                    workspace.app_state().node_runtime.clone()
+                                })
+                                .unwrap();
+                            let (path_to_devcontainer_cli, found_in_path) =
+                                ensure_devcontainer_cli(&node_runtime).await.unwrap();
+                            let files = apply_dev_container_template(
+                                template_entry,
+                                &path_to_devcontainer_cli,
+                                found_in_path,
+                                node_runtime,
+                                root_path,
+                            )
+                            .await
+                            .unwrap();
 
-                            for (file_name, file_text) in files {
-                                let path = RelPath::unix(".devcontainer/")
-                                    .unwrap()
-                                    .join(RelPath::unix(&file_name).unwrap());
-                                let Ok(open_task) =
-                                    workspace.update_in(cx, |workspace, window, cx| {
+                            if files
+                                .files
+                                .contains(&".devcontainer/devcontainer.json".to_string())
+                            {
+                                workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        let path = RelPath::unix(".devcontainer/devcontainer.json")
+                                            .unwrap();
                                         workspace.open_path((tree_id, path), None, true, window, cx)
                                     })
-                                else {
-                                    // TODO
-                                    continue;
-                                };
-
-                                let snippet = expand_template_text(&template_entry, file_text);
-
-                                if let Ok(item) = open_task.await {
-                                    if let Some(editor) = item.downcast::<Editor>() {
-                                        editor
-                                            .update_in(cx, |editor, window, cx| {
-                                                editor.clear(window, cx);
-                                                editor.insert(&snippet, window, cx);
-                                                if let Some(project) = editor.project() {
-                                                    editor
-                                                        .save(
-                                                            SaveOptions {
-                                                                format: true,
-                                                                autosave: false,
-                                                            },
-                                                            project.clone(),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx);
-                                                }
-                                            })
-                                            .log_err();
-                                    };
-                                }
+                                    // TODO handle this better
+                                    .unwrap()
+                                    .await
+                                    .unwrap();
                             }
                         })
                         .detach();
@@ -954,114 +1175,100 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     }
 }
 
-fn expand_template_text(template_entry: &TemplateEntry, template_text: String) -> String {
-    let mut new_text = template_text.clone();
-    static TEMPLATE_OPTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\$\{templateOption:([^\}]+)\}").expect("Failed to create REGEX")
-    });
+async fn apply_dev_container_template(
+    template: TemplateEntry,
+    path_to_cli: &PathBuf,
+    found_in_path: bool,
+    node_runtime: NodeRuntime,
+    path: Arc<Path>,
+) -> Result<DevContainerApply, DevContainerError> {
+    let Ok(node_runtime_path) = node_runtime.binary_path().await else {
+        log::error!("Unable to find node runtime path");
+        return Err(DevContainerError::NodeRuntimeNotAvailable);
+    };
 
-    let replacements = TEMPLATE_OPTION_REGEX
-        .captures_iter(&template_text)
-        .filter(|c| c.get(1).is_some())
-        .map(|c| {
-            let full_match = c.get_match();
-            let option_name = c.get(1).unwrap().as_str();
-            let Some(option_value) = template_entry.options_selected.get(option_name) else {
-                return (full_match.as_str(), full_match.as_str());
-            };
-            (option_value.as_str(), full_match.as_str())
-        })
-        .collect::<Vec<_>>();
-    for (replacement, to_replace) in replacements {
-        new_text = new_text.replace(to_replace, replacement);
+    let mut command = if found_in_path {
+        util::command::new_smol_command(path_to_cli.display().to_string())
+    } else {
+        let mut command =
+            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
+        command.arg(path_to_cli.display().to_string());
+        command
+    };
+
+    command.arg("templates");
+    command.arg("apply");
+    command.arg("--workspace-folder");
+    command.arg(path.display().to_string());
+    command.arg("--template-id");
+    command.arg(format!(
+        "ghcr.io/devcontainers/templates/{}",
+        template.template.id
+    )); // TODO
+    command.arg("--template-args");
+    command.arg(template_args_to_json(template.options_selected));
+    command.arg("--features");
+    command.arg(template_features_to_json(template.features_selected));
+    log::debug!("Running full devcontainer apply command: {:?}", command);
+
+    match command.output().await {
+        Ok(output) => {
+            if output.status.success() {
+                let raw = String::from_utf8_lossy(&output.stdout);
+                serde_json::from_str::<DevContainerApply>(&raw).map_err(|e| {
+                    log::error!(
+                        "Unable to parse response from 'devcontainer up' command, error: {:?}",
+                        e
+                    );
+                    DevContainerError::DevContainerParseFailed
+                })
+            } else {
+                let message = format!(
+                    "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                log::error!("{}", &message);
+                Err(DevContainerError::DevContainerUpFailed(message))
+            }
+        }
+        Err(e) => {
+            let message = format!("Error running devcontainer up: {:?}", e);
+            log::error!("{}", &message);
+            Err(DevContainerError::DevContainerUpFailed(message))
+        }
     }
-    new_text
 }
 
-// Note that it looks like we will have to support Dockerfile and all other files in the .devcontainer directory
-// Ok, we can re-use a bunch of this logic, but unfortunately we'll need to move towards that form-based UI because of the potential for multiple files in the .devcontainer directory.
-// Next step will be to actually grab those files from the server and add them to the project. Then we can look at template expansion for each of them with this code.
-fn build_snippet_from_template(template: DevContainerTemplate, template_text: String) -> Snippet {
-    static TEMPLATE_OPTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\$\{templateOption:([^\}]+)\}").expect("Failed to create REGEX")
-    });
+fn template_features_to_json(features_selected: HashMap<String, DevContainerFeature>) -> String {
+    let things = features_selected
+        .iter()
+        .map(|(_, v)| {
+            let mut map = HashMap::new();
+            map.insert(
+                "id",
+                format!(
+                    "ghcr.io/devcontainers/features/{}:{}",
+                    v.id,
+                    v.major_version()
+                ),
+            );
+            map
+        }) // TODO
+        .collect::<Vec<HashMap<&str, String>>>();
+    serde_json::to_string(&things).unwrap()
+}
 
-    let mut tabstops = TEMPLATE_OPTION_REGEX
-        .captures_iter(&template_text)
-        .filter(|c| c.get(1).is_some())
-        .map(|c| {
-            let full_match = c.get_match();
-            let option_name_match = c.get(1).expect("Filter");
-            let options = template.options.clone().and_then(|options| {
-                // let thing = option_name_match.as_str();
-                // dbg!(&thing);
-                // dbg!(&c.get(1));
-                let Some(value) = options.get(option_name_match.as_str()) else {
-                    return None;
-                };
-
-                let mut options = vec![value.default.clone()];
-
-                if value.option_type == "boolean" {
-                    if value.default == "false" {
-                        options = vec![String::from("false"), String::from("true")];
-                    } else {
-                        options = vec![String::from("true"), String::from("false")];
-                    }
-                } else if value.enum_values.is_some() {
-                    options.append(
-                        &mut value
-                            .enum_values
-                            .clone()
-                            .expect("")
-                            .into_iter()
-                            .filter(|p| p != &value.default)
-                            .collect(),
-                    );
-                } else if value.proposals.is_some() {
-                    options.append(
-                        &mut value
-                            .proposals
-                            .clone()
-                            .expect("")
-                            .into_iter()
-                            .filter(|p| p != &value.default)
-                            .collect(),
-                    );
-                }
-
-                Some(options)
-            });
-            let mut vec: SmallVec<[Range<isize>; 2]> = SmallVec::new();
-            vec.push(full_match.start() as isize..full_match.end() as isize);
-            TabStop {
-                ranges: vec,
-                choices: options.clone(),
-            }
-        })
-        .collect::<Vec<TabStop>>();
-
-    let mut final_range: SmallVec<[Range<isize>; 2]> = SmallVec::new();
-    final_range.push(template_text.len() as isize..template_text.len() as isize);
-    tabstops.push(TabStop {
-        ranges: final_range,
-        choices: None,
-    });
-
-    Snippet {
-        text: template_text,
-        tabstops: tabstops,
-    }
+fn template_args_to_json(option_selected: HashMap<String, String>) -> String {
+    // TODO this should probably be inlined, I'm wrong
+    serde_json::to_string(&option_selected).unwrap()
 }
 
 #[cfg(test)]
 mod test {
 
-    use std::collections::HashMap;
-
-    use dev_container::{DevContainerTemplate, TemplateOptions};
-
-    use crate::dev_container::{DevContainerUp, build_snippet_from_template};
+    use crate::dev_container::DevContainerUp;
 
     #[test]
     fn should_parse_from_devcontainer_json() {
@@ -1074,344 +1281,5 @@ mod test {
         );
         assert_eq!(up._remote_user, "vscode");
         assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
-    }
-
-    /// Build snippet tests
-    #[test]
-    fn should_parse_template_text_and_add_string_tabstops() {
-        let string_template_text =
-            "mcr.microsoft.com/devcontainers/base:alpine-${templateOption:imageVariant}"
-                .to_string();
-
-        let boolean_template_text =
-            "Some value which has a boolean, and its value is: ${templateOption:boolValue}"
-                .to_string();
-
-        let template_with_string_proposals = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "test".to_string(),
-            options: Some(HashMap::from([(
-                "imageVariant".to_string(),
-                TemplateOptions {
-                    option_type: "string".to_string(),
-                    description: "description".to_string(),
-                    proposals: Some(vec!["proposal1".to_string(), "proposal2".to_string()]),
-                    enum_values: None,
-                    default: "proposal1".to_string(),
-                },
-            )])),
-        };
-
-        let snippet = build_snippet_from_template(
-            template_with_string_proposals,
-            string_template_text.clone(),
-        );
-
-        assert_eq!(snippet.text, string_template_text);
-        assert_eq!(snippet.tabstops.len(), 2);
-        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
-        assert_eq!(
-            snippet.tabstops[1].ranges[0],
-            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec!["proposal1".to_string(), "proposal2".to_string()])
-        );
-
-        let template_with_string_enums = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "test".to_string(),
-            options: Some(HashMap::from([(
-                "imageVariant".to_string(),
-                TemplateOptions {
-                    option_type: "string".to_string(),
-                    description: "desc".to_string(),
-                    default: "option1".to_string(),
-                    proposals: None,
-                    enum_values: Some(vec!["option1".to_string(), "option2".to_string()]),
-                },
-            )])),
-        };
-
-        let snippet =
-            build_snippet_from_template(template_with_string_enums, string_template_text.clone());
-
-        assert_eq!(snippet.text, string_template_text);
-        assert_eq!(snippet.tabstops.len(), 2);
-        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
-        assert_eq!(
-            snippet.tabstops[1].ranges[0],
-            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec!["option1".to_string(), "option2".to_string()])
-        );
-
-        let template_with_boolean = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "Test Template".to_string(),
-            options: Some(HashMap::from([(
-                "boolValue".to_string(),
-                TemplateOptions {
-                    option_type: "boolean".to_string(),
-                    description: "desc".to_string(),
-                    default: "true".to_string(),
-                    proposals: None,
-                    enum_values: None,
-                },
-            )])),
-        };
-
-        let snippet =
-            build_snippet_from_template(template_with_boolean, boolean_template_text.clone());
-
-        assert_eq!(snippet.text, boolean_template_text);
-        assert_eq!(snippet.tabstops.len(), 2);
-        assert_eq!(snippet.tabstops[0].ranges[0], 50..77);
-        assert_eq!(
-            snippet.tabstops[1].ranges[0],
-            (boolean_template_text.len() - 1) as isize..(boolean_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec!["true".to_string(), "false".to_string()])
-        );
-
-        let template_with_boolean_default_false = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "Test Template".to_string(),
-            options: Some(HashMap::from([(
-                "boolValue".to_string(),
-                TemplateOptions {
-                    option_type: "boolean".to_string(),
-                    description: "desc".to_string(),
-                    default: "false".to_string(),
-                    proposals: None,
-                    enum_values: None,
-                },
-            )])),
-        };
-
-        let snippet = build_snippet_from_template(
-            template_with_boolean_default_false,
-            boolean_template_text.clone(),
-        );
-
-        assert_eq!(snippet.text, boolean_template_text);
-        assert_eq!(snippet.tabstops.len(), 2);
-        assert_eq!(snippet.tabstops[0].ranges[0], 50..77);
-        assert_eq!(
-            snippet.tabstops[1].ranges[0],
-            (boolean_template_text.len() - 1) as isize..(boolean_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec!["false".to_string(), "true".to_string()])
-        );
-
-        let template_with_string_proposals_out_of_order = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "test".to_string(),
-            options: Some(HashMap::from([(
-                "imageVariant".to_string(),
-                TemplateOptions {
-                    option_type: "string".to_string(),
-                    description: "description".to_string(),
-                    proposals: Some(vec![
-                        "proposal1".to_string(),
-                        "proposal2".to_string(),
-                        "proposal3".to_string(),
-                    ]),
-                    enum_values: None,
-                    default: "proposal2".to_string(),
-                },
-            )])),
-        };
-
-        let snippet = build_snippet_from_template(
-            template_with_string_proposals_out_of_order,
-            string_template_text.clone(),
-        );
-
-        assert_eq!(snippet.text, string_template_text);
-        assert_eq!(snippet.tabstops.len(), 2);
-        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
-        assert_eq!(
-            snippet.tabstops[1].ranges[0],
-            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec![
-                "proposal2".to_string(),
-                "proposal1".to_string(),
-                "proposal3".to_string()
-            ])
-        );
-
-        let template_with_string_enums_out_of_order = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "test".to_string(),
-            options: Some(HashMap::from([(
-                "imageVariant".to_string(),
-                TemplateOptions {
-                    option_type: "string".to_string(),
-                    description: "description".to_string(),
-                    enum_values: Some(vec![
-                        "enum1".to_string(),
-                        "enum2".to_string(),
-                        "enum3".to_string(),
-                    ]),
-                    proposals: None,
-                    default: "enum2".to_string(),
-                },
-            )])),
-        };
-
-        let snippet = build_snippet_from_template(
-            template_with_string_enums_out_of_order,
-            string_template_text.clone(),
-        );
-
-        assert_eq!(snippet.text, string_template_text);
-        assert_eq!(snippet.tabstops.len(), 2);
-        assert_eq!(snippet.tabstops[0].ranges[0], 44..74);
-        assert_eq!(
-            snippet.tabstops[1].ranges[0],
-            (string_template_text.len() - 1) as isize..(string_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec![
-                "enum2".to_string(),
-                "enum1".to_string(),
-                "enum3".to_string()
-            ])
-        );
-
-        let multi_value_template_text = "
-            // For format details, see https://aka.ms/devcontainer.json. For config options, see the
-            // README at: https://github.com/devcontainers/templates/tree/main/src/docker-in-docker
-            {
-	\"name\": \"Docker in Docker\",
-	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	\"image\": \"mcr.microsoft.com/devcontainers/base:bullseye\",
-
-	\"features\": {
-		\"ghcr.io/devcontainers/features/docker-in-docker:2\": {
-			\"version\": \"${templateOption:dockerVersion}\",
-			\"enableNonRootDocker\": \"${templateOption:enableNonRootDocker}\",
-			\"moby\": \"${templateOption:moby}\",
-			\"installZsh\": \"${templateOption:installZsh}\",
-			\"upgradePackages\": \"${templateOption:upgradePackages}\"
-		}
-	}
-
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// \"forwardPorts\": [],
-
-	// Use 'postCreateCommand' to run commands after the container is created.
-	// \"postCreateCommand\": \"docker --version\",
-
-	// Configure tool-specific properties.
-	// \"customizations\": {},
-
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// \"remoteUser\": \"root\"
-            }
-            ";
-
-        let multi_value_template = DevContainerTemplate {
-            id: "test".to_string(),
-            name: "Test Template".to_string(),
-            options: Some(HashMap::from([
-                ("installZsh".to_string(), TemplateOptions {
-                    option_type: "boolean".to_string(),
-                    description: "Install ZSH!?".to_string(),
-                    default: "true".to_string(),
-                    proposals: None,
-                    enum_values: None,
-                }),
-                ("upgradePackages".to_string(), TemplateOptions {
-                    option_type: "boolean".to_string(),
-                    description: "Upgrade OS packages?".to_string(),
-                    default: "false".to_string(),
-                    proposals: None,
-                    enum_values: None,
-                }),
-                ("dockerVersion".to_string(), TemplateOptions {
-                    option_type: "string".to_string(),
-                    description: "elect or enter a Docker/Moby CLI version. (Availability can vary by OS version.)".to_string(),
-                    default: "latest".to_string(),
-                    proposals: Some(vec!["latest".to_string(), "none".to_string(), "20.10".to_string()]),
-                    enum_values: None,
-                }),
-                ("moby".to_string(), TemplateOptions {
-                    option_type: "boolean".to_string(),
-                    description: "Install OSS Moby build instead of Docker CE".to_string(),
-                    proposals: None,
-                    enum_values: None,
-                    default: "true".to_string(),
-                }),
-                ("enableNonRootDocker".to_string(), TemplateOptions {
-                    option_type: "boolean".to_string(),
-                    description: "Enable non-root user to access Docker in container?".to_string(),
-                    proposals: None,
-                    enum_values: None,
-                    default: "true".to_string(),
-                })
-            ]))
-        };
-
-        let snippet = build_snippet_from_template(
-            multi_value_template,
-            multi_value_template_text.to_string(),
-        );
-
-        assert_eq!(snippet.text, multi_value_template_text);
-        assert_eq!(snippet.tabstops.len(), 6);
-        assert_eq!(snippet.tabstops[0].ranges[0], 491..522);
-        assert_eq!(snippet.tabstops[1].ranges[0], 552..589);
-        assert_eq!(snippet.tabstops[2].ranges[0], 604..626);
-        assert_eq!(snippet.tabstops[3].ranges[0], 647..675);
-        assert_eq!(snippet.tabstops[4].ranges[0], 701..734);
-        assert_eq!(
-            snippet.tabstops[5].ranges[0],
-            (multi_value_template_text.len() - 1) as isize
-                ..(multi_value_template_text.len() - 1) as isize
-        );
-
-        assert_eq!(
-            snippet.tabstops[0].choices,
-            Some(vec![
-                "latest".to_string(),
-                "none".to_string(),
-                "20.10".to_string()
-            ])
-        );
-        assert_eq!(
-            snippet.tabstops[1].choices,
-            Some(vec!["true".to_string(), "false".to_string()])
-        );
-        assert_eq!(
-            snippet.tabstops[2].choices,
-            Some(vec!["true".to_string(), "false".to_string()])
-        );
-        assert_eq!(
-            snippet.tabstops[3].choices,
-            Some(vec!["true".to_string(), "false".to_string()])
-        );
-        assert_eq!(
-            snippet.tabstops[4].choices,
-            Some(vec!["false".to_string(), "true".to_string()])
-        );
     }
 }

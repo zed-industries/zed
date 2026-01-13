@@ -4,8 +4,6 @@ use futures::AsyncReadExt;
 use http::Request;
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
-use smol::fs::File;
-use util::command::new_smol_command;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +19,10 @@ fn devcontainer_templates_repository() -> &'static str {
     "devcontainers/templates"
 }
 
+fn devcontainer_features_repository() -> &'static str {
+    "devcontainers/features"
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManifestLayer {
@@ -31,11 +33,33 @@ pub struct ManifestLayer {
 pub struct TemplateOptions {
     #[serde(rename = "type")]
     pub option_type: String,
-    pub description: String,
+    pub description: Option<String>,
     pub proposals: Option<Vec<String>>,
     #[serde(rename = "enum")]
     pub enum_values: Option<Vec<String>>,
+    // Different repositories surface "default: 'true'" or "default: true",
+    // so we need to be flexible in deserializing
+    #[serde(deserialize_with = "deserialize_string_or_bool")]
     pub default: String,
+}
+
+fn deserialize_string_or_bool<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrBool {
+        String(String),
+        Bool(bool),
+    }
+
+    match StringOrBool::deserialize(deserializer)? {
+        StringOrBool::String(s) => Ok(s),
+        StringOrBool::Bool(b) => Ok(b.to_string()),
+    }
 }
 
 impl TemplateOptions {
@@ -63,9 +87,25 @@ impl TemplateOptions {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DockerManifestsResponse {
-    schema_version: u32,
-    media_type: String,
     layers: Vec<ManifestLayer>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DevContainerFeature {
+    pub id: String,
+    pub version: String,
+    pub name: String,
+    pub options: Option<HashMap<String, TemplateOptions>>,
+}
+
+impl DevContainerFeature {
+    pub fn major_version(&self) -> String {
+        let Some(mv) = self.version.get(..1) else {
+            return "".to_string();
+        };
+        mv.to_string()
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -76,26 +116,17 @@ pub struct DevContainerTemplate {
     pub options: Option<HashMap<String, TemplateOptions>>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevContainerFeaturesResponse {
+    pub features: Vec<DevContainerFeature>,
+}
+
 // https://ghcr.io/v2/devcontainers/templates/blobs/sha256:035e9c9fd9bd61f6d3965fa4bf11f3ddfd2490a8cf324f152c13cc3724d67d09
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DevContainerTemplatesResponse {
     pub templates: Vec<DevContainerTemplate>,
-}
-
-pub async fn get_template_text(
-    client: Arc<dyn HttpClient>,
-    template: &DevContainerTemplate,
-) -> Result<HashMap<String, String>, String> {
-    let id = template.id.clone();
-    let token = get_ghcr_token(&client).await?;
-    let manifest = get_latest_manifest_for_id(&id, &token.token, &client).await?;
-
-    let file_contents =
-        get_devcontainer_template_files(&id, &token.token, &manifest.layers[0].digest, &client)
-            .await?;
-
-    Ok(file_contents)
 }
 
 pub async fn get_templates(
@@ -105,6 +136,15 @@ pub async fn get_templates(
     let manifest = get_latest_manifest(&token.token, &client).await?;
 
     get_devcontainer_templates(&token.token, &manifest.layers[0].digest, &client).await
+}
+
+pub async fn get_features(
+    client: Arc<dyn HttpClient>,
+) -> Result<DevContainerFeaturesResponse, String> {
+    let token = get_ghcr_token(&client).await?;
+    let manifest = get_latest_feature_manifest(&token.token, &client).await?;
+
+    get_devcontainer_features(&token.token, &manifest.layers[0].digest, &client).await
 }
 
 // Once we get the list of templates, and select the ID, we need to
@@ -122,16 +162,14 @@ pub async fn get_ghcr_token(client: &Arc<dyn HttpClient>) -> Result<GithubTokenR
     get_deserialized_response("", &url, client).await
 }
 
-pub async fn get_latest_manifest_for_id(
-    id: &str,
+pub async fn get_latest_feature_manifest(
     token: &str,
     client: &Arc<dyn HttpClient>,
 ) -> Result<DockerManifestsResponse, String> {
     let url = format!(
-        "{}/v2/{}/{}/manifests/latest",
+        "{}/v2/{}/manifests/latest",
         ghcr_url(),
-        devcontainer_templates_repository(),
-        id
+        devcontainer_features_repository()
     );
     dbg!(&url, token);
     get_deserialized_response(token, &url, client).await
@@ -150,77 +188,18 @@ pub async fn get_latest_manifest(
     get_deserialized_response(token, &url, client).await
 }
 
-pub async fn get_devcontainer_template_files(
-    id: &str,
+pub async fn get_devcontainer_features(
     token: &str,
     blob_digest: &str,
     client: &Arc<dyn HttpClient>,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<DevContainerFeaturesResponse, String> {
     let url = format!(
-        "{}/v2/{}/{}/blobs/{}",
+        "{}/v2/{}/blobs/{}",
         ghcr_url(),
-        devcontainer_templates_repository(),
-        id,
+        devcontainer_features_repository(),
         blob_digest
     );
-    dbg!(&url, token);
-    let request = Request::get(url)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Accept", "application/vnd.oci.image.manifest.v1+json")
-        .body(AsyncBody::default())
-        .unwrap();
-    // client.send(request).await.unwrap();
-
-    // Need to organize this code better
-    let temp_dir = tempfile::Builder::new().tempdir().unwrap();
-    let target_path = temp_dir.path().join("downloadme.tar");
-    let mut target_file = File::create(&target_path).await.unwrap();
-    let extracted = temp_dir.path().join("extracted");
-    std::fs::create_dir(&extracted).unwrap();
-    let Ok(mut response) = client.send(request).await else {
-        return Err("Failed get reponse - TODO fix error handling".to_string());
-    };
-
-    smol::io::copy(response.body_mut(), &mut target_file)
-        .await
-        .unwrap();
-
-    let command_output = new_smol_command("tar")
-        .arg("-xvf")
-        .arg(&target_path)
-        .arg("-C")
-        .arg(&extracted)
-        .output()
-        .await
-        .unwrap();
-
-    dbg!(&command_output);
-
-    let extracted_location = &extracted.join(".devcontainer/devcontainer.json");
-
-    dbg!(&extracted_location);
-
-    let files = match std::fs::read_dir(&extracted.join(".devcontainer")) {
-        Ok(files) => files,
-        Err(e) => {
-            println!("Error reading directory: {}", e);
-            return Err("didn't read files".to_string());
-        }
-    };
-
-    let mut file_contents: HashMap<String, String> = HashMap::new();
-    for file in files {
-        let Ok(file) = file else {
-            continue;
-        };
-
-        file_contents.insert(
-            file.file_name().into_string().unwrap(),
-            std::fs::read_to_string(file.path()).unwrap(),
-        );
-    }
-
-    Ok(file_contents)
+    get_deserialized_response(token, &url, client).await
 }
 
 pub async fn get_devcontainer_templates(
@@ -369,11 +348,7 @@ mod tests {
         let response = get_latest_manifest("", &client).await;
         assert!(response.is_ok());
         let response = response.unwrap();
-        assert_eq!(response.schema_version, 2);
-        assert_eq!(
-            response.media_type,
-            "application/vnd.oci.image.manifest.v1+json"
-        );
+
         assert_eq!(response.layers.len(), 1);
         assert_eq!(
             response.layers[0].digest,
