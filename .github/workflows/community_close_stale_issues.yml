@@ -32,9 +32,42 @@ jobs:
           days-before-stale: 60
           days-before-close: 14
           only-issue-types: "Bug,Crash"
-          operations-per-run: ${{ inputs.operations-per-run || 1000 }}
+          operations-per-run: ${{ inputs.operations-per-run || 2000 }}
           ascending: true
           enable-statistics: true
           debug-only: ${{ inputs.debug-only }}
           stale-issue-label: "stale"
           exempt-issue-labels: "never stale"
+
+  stale-needs-info:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@997185467fa4f803885201cee163a9f38240193d # v10
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: >
+            Hi. According to the labels on this issue, we've requested additional information on this bug report
+            but haven't heard back yet. So the bot is checking in on that.
+            If we still don't hear from you (or someone else) in a few weeks, the bot will close the issue
+            as inactionable for the time being.
+          close-issue-message: >
+            Closing this issue for now due to lack of information to go on from.
+            If you're experiencing this problem still/again/also,
+            please leave a comment and we'll reopen it. It would be really helpful if you could include:
+
+            - Your Zed version (from `zed: about` in the command palette)
+            - Your system specs (OS, GPU)
+            - Any other relevant details (steps to reproduce, error messages, logs, etc.)
+
+            Thanks!
+          days-before-stale: 7
+          days-before-close: 21
+          only-labels: "state:needs info"
+          only-issue-types: "Bug,Crash"
+          operations-per-run: ${{ inputs.operations-per-run || 1000 }}
+          ascending: true
+          enable-statistics: true
+          debug-only: ${{ inputs.debug-only }}
+          stale-issue-label: "stale"
+          exempt-issue-labels: "never stale,state:needs triage,state:reproducible,state:needs research,state:needs repro,state:claimed by community"
