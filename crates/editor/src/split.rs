@@ -75,6 +75,9 @@ where
     for (buffer, buffer_offset_range, source_excerpt_id) in
         source_snapshot.range_to_buffer_ranges(start_point..end_point)
     {
+        if buffer_offset_range.is_empty() && start_point != end_point {
+            continue;
+        }
         if let Some(translation) = convert_excerpt_rows(
             excerpt_map,
             source_snapshot,
@@ -3198,7 +3201,15 @@ mod tests {
             editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
         cx.run_until_parked();
         let secondary_content =
-            editor_content_with_blocks_and_width(&secondary_editor, px(200.0), &mut cx);
+            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
+
+        cx.run_until_parked();
+
+        let primary_content =
+            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
+        cx.run_until_parked();
+        let secondary_content =
+            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
 
         assert_eq!(
             primary_content,
@@ -3208,6 +3219,7 @@ mod tests {
             aaaa bbbb\x20
             cccc dddd\x20
             eeee ffff
+            § <no file>
             § -----
             aaaa bbbb\x20
             cccc dddd\x20
@@ -3219,13 +3231,14 @@ mod tests {
             "
             § <no file>
             § -----
-            aaaa bbbb\x20
-            cccc dddd\x20
-            eeee ffff
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer
+            § <no file>
             § -----
-            aaaa bbbb\x20
-            cccc dddd\x20
-            eeee ffff"
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer"
                 .unindent()
         );
     }
