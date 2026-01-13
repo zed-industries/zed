@@ -1,4 +1,4 @@
-use lsp::VersionedTextDocumentIdentifier;
+use lsp::{Uri, VersionedTextDocumentIdentifier};
 use serde::{Deserialize, Serialize};
 
 pub enum CheckStatus {}
@@ -178,4 +178,29 @@ impl lsp::request::Request for NextEditSuggestions {
     type Result = NextEditSuggestionsResult;
 
     const METHOD: &'static str = "textDocument/copilotInlineEdit";
+}
+
+pub(crate) struct DidFocus;
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct DidFocusParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) uri: Option<Uri>,
+}
+
+impl lsp::notification::Notification for DidFocus {
+    type Params = DidFocusParams;
+    const METHOD: &'static str = "textDocument/didFocus";
+}
+
+pub(crate) struct DidShowInlineEdit;
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct DidShowInlineEditParams {
+    pub(crate) item: serde_json::Value,
+}
+
+impl lsp::notification::Notification for DidShowInlineEdit {
+    type Params = DidShowInlineEditParams;
+    const METHOD: &'static str = "textDocument/didShowInlineEdit";
 }

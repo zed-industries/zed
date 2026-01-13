@@ -1,4 +1,7 @@
-use crate::{Copilot, CopilotEditPrediction};
+use crate::{
+    Copilot, CopilotEditPrediction,
+    request::{DidShowInlineEdit, DidShowInlineEditParams},
+};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
 use gpui::{App, Context, Entity, Task};
@@ -137,7 +140,17 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         )];
         let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)
             .filter(|edits| !edits.is_empty())?;
-
+        self.copilot.update(cx, |this, _| {
+            if let Ok(server) = this.server.as_authenticated()
+                && let Some(item) = completion.command.as_ref()
+            {
+                _ = server
+                    .lsp
+                    .notify::<DidShowInlineEdit>(DidShowInlineEditParams {
+                        item: serde_json::json!({"command": {"arguments": item.arguments}}),
+                    });
+            }
+        });
         Some(EditPrediction::Local {
             id: None,
             edits,

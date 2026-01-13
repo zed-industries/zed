@@ -787,13 +787,14 @@ impl EditPredictionStore {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Copilot>> {
         let state = self.get_or_init_project(project, cx);
+        let _project = project.clone();
         let project = project.read(cx);
 
         let node = project.node_runtime().cloned();
         if let Some(node) = node {
             let next_id = project.languages().next_language_server_id();
             let fs = project.fs().clone();
-            let copilot = cx.new(|cx| Copilot::new(next_id, fs, node, cx));
+            let copilot = cx.new(|cx| Copilot::new(_project, next_id, fs, node, cx));
             state.copilot = Some(copilot.clone());
             Some(copilot)
         } else {

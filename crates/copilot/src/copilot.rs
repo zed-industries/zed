@@ -1,7 +1,7 @@
 mod copilot_edit_prediction_delegate;
 pub mod request;
 
-use crate::request::NextEditSuggestions;
+use crate::request::{DidFocus, DidFocusParams, NextEditSuggestions};
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -20,7 +20,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
-use project::DisableAiSettings;
+use project::{DisableAiSettings, Project};
 use request::DidChangeStatus;
 use semver::Version;
 use serde_json::json;
@@ -247,7 +247,7 @@ pub struct Copilot {
     server: CopilotServer,
     buffers: HashSet<WeakEntity<Buffer>>,
     server_id: LanguageServerId,
-    _subscription: gpui::Subscription,
+    _subscriptions: [gpui::Subscription; 2],
 }
 
 pub enum Event {
@@ -282,18 +282,36 @@ impl Copilot {
     }
 
     pub fn new(
+        project: Entity<Project>,
         new_server_id: LanguageServerId,
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
+        let send_focus_notification =
+            cx.subscribe(&project, |this, project, e: &project::Event, cx| {
+                if let project::Event::ActiveEntryChanged(new_entry) = e
+                    && let Ok(running) = this.server.as_authenticated()
+                {
+                    let uri = new_entry
+                        .and_then(|id| project.read(cx).path_for_entry(id, cx))
+                        .and_then(|entry| project.read(cx).absolute_path(&entry, cx))
+                        .and_then(|abs_path| lsp::Uri::from_file_path(abs_path).ok());
+
+                    _ = running.lsp.notify::<DidFocus>(DidFocusParams { uri });
+                }
+            });
+        let _subscriptions = [
+            cx.on_app_quit(Self::shutdown_language_server),
+            send_focus_notification,
+        ];
         let mut this = Self {
             server_id: new_server_id,
             fs,
             node_runtime,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
-            _subscription: cx.on_app_quit(Self::shutdown_language_server),
+            _subscriptions,
         };
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| {
