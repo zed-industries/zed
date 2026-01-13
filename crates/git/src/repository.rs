@@ -2647,12 +2647,13 @@ async fn run_commit_data_reader(
 
     while let Ok(request) = request_rx.recv().await {
         let result = async {
-            stdin.write_all(request.sha.as_bytes()).await?;
+            stdin.write_all(request.sha.to_string().as_bytes()).await?;
             stdin.write_all(b"\n").await?;
             stdin.flush().await?;
 
-            let mut header_line = String::new();
-            stdout.read_line(&mut header_line).await?;
+            let mut header_bytes = Vec::new();
+            stdout.read_until(b'\n', &mut header_bytes).await?;
+            let header_line = String::from_utf8_lossy(&header_bytes);
 
             let parts: Vec<&str> = header_line.trim().split(' ').collect();
             if parts.len() < 3 {

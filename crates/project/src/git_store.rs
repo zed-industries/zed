@@ -294,12 +294,8 @@ struct GraphCommitDataHandler {
 
 enum GraphCommitHandlerState {
     Starting,
-    Idle(GraphCommitDataHandler),
+    Open(GraphCommitDataHandler),
     Closed,
-}
-
-impl GraphCommitHandlerState {
-    fn open(&mut self) {}
 }
 
 pub struct Repository {
@@ -4260,17 +4256,23 @@ impl Repository {
             .clone()
     }
 
-    pub fn commit_data(&mut self, sha: Oid, cx: &mut App) -> &CommitDataState {
+    pub fn commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
         if !self.commit_data.contains_key(&sha) {
             match &self.graph_commit_data_handler {
-                GraphCommitHandlerState::Idle(handler) => {
+                GraphCommitHandlerState::Open(handler) => {
                     // don't want to send in an async env
-                    // todo! don't block main thread ahhhh
-                    if handler.commit_data_request.send_blocking(sha).is_ok() {
+                    // todo! don't block main thread
+                    if handler
+                        .commit_data_request
+                        .send_blocking(sha.clone())
+                        .is_ok()
+                    {
                         self.commit_data.insert(sha, CommitDataState::Loading);
                     }
                 }
-                GraphCommitHandlerState::Closed => self.graph_commit_data_handler.open(),
+                GraphCommitHandlerState::Closed => {
+                    self.open_graph_commit_data_handler(cx);
+                }
                 GraphCommitHandlerState::Starting => {}
             }
         }
@@ -4278,6 +4280,90 @@ impl Repository {
         self.commit_data
             .get(&sha)
             .unwrap_or(&CommitDataState::Loading)
+    }
+
+    fn open_graph_commit_data_handler(&mut self, cx: &mut Context<Self>) {
+        self.graph_commit_data_handler = GraphCommitHandlerState::Starting;
+
+        let state = self.repository_state.clone();
+        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
+        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+
+        let foreground_task = cx.spawn(async move |this, cx| {
+            while let Ok((sha, commit_data)) = result_rx.recv().await {
+                let result = this.update(cx, |this, cx| {
+                    this.commit_data
+                        .insert(sha, CommitDataState::Loaded(Arc::new(commit_data)));
+                    cx.notify();
+                });
+                if result.is_err() {
+                    break;
+                }
+            }
+
+            this.update(cx, |this, _cx| {
+                this.graph_commit_data_handler = GraphCommitHandlerState::Closed;
+            })
+            .ok();
+        });
+
+        let request_tx_for_handler = request_tx.clone();
+
+        cx.background_spawn(async move {
+            let backend = match state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
+                Ok(RepositoryState::Remote(_)) => {
+                    log::error!("commit_data_reader not supported for remote repositories");
+                    return;
+                }
+                Err(error) => {
+                    log::error!("failed to get repository state: {error}");
+                    return;
+                }
+            };
+
+            let reader = match backend.commit_data_reader() {
+                Ok(reader) => reader,
+                Err(error) => {
+                    log::error!("failed to create commit data reader: {error:?}");
+                    return;
+                }
+            };
+
+            loop {
+                let timeout = smol::Timer::after(std::time::Duration::from_secs(10));
+
+                futures::select_biased! {
+                    sha = futures::FutureExt::fuse(request_rx.recv()) => {
+                        let Ok(sha) = sha else {
+                            break;
+                        };
+
+                        match reader.read(sha.clone()).await {
+                            Ok(commit_data) => {
+                                if result_tx.send((sha, commit_data)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("failed to read commit data for {sha}: {error:?}");
+                            }
+                        }
+                    }
+                    _ = futures::FutureExt::fuse(timeout) => {
+                        break;
+                    }
+                }
+            }
+
+            drop(result_tx);
+        })
+        .detach();
+
+        self.graph_commit_data_handler = GraphCommitHandlerState::Open(GraphCommitDataHandler {
+            _task: foreground_task,
+            commit_data_request: request_tx_for_handler,
+        });
     }
 
     // todo! remove this functionality from repository

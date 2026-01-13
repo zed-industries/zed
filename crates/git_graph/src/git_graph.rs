@@ -193,6 +193,7 @@ impl GitGraph {
                 if let CommitDataState::Loaded(data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
+                    // todo! format the timestamp
                 } else {
                     subject = "Loading...".into();
                     author_name = "".into();
