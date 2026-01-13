@@ -32,7 +32,7 @@ use crate::{
     scroll::{
         ActiveScrollbarState, Autoscroll, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState,
         scroll_amount::ScrollAmount,
-    },
+    }, split_element::CheckerboardElement,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
@@ -3820,7 +3820,8 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .debug_bg_magenta()
+                .child(CheckerboardElement::default())
+                .border(px(1.))
                 .into_any(),
         };
 

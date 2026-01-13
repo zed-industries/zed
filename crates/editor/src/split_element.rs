@@ -1,7 +1,8 @@
 use gpui::{
-    App, Background, Bounds, Context, Corners, Edges, Element, ElementInputHandler, Entity, IntoElement, Length, PaintQuad, Pixels, Point, Size, Style, hsla, px, relative, rgb
+    App, Background, Bounds, ContentMask, Context, Corners, Edges, Element, ElementInputHandler, Entity, IntoElement, Length, PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla, px, relative, rgb, rgba
 };
 use multi_buffer::Anchor;
+use theme::ThemeColors;
 
 use crate::{Editor, EditorElement, EditorMode, EditorStyle, SplittableEditor};
 
@@ -17,7 +18,7 @@ pub struct SplitEditorElement {
 const BEFORE_FIRST_PREPAINT: Pixels = px(-1.0);
 
 // todo! extra large so it's more obvious when debugging
-const SEPARATOR_WIDTH: Pixels = px(50.0);
+const SEPARATOR_WIDTH: Pixels = px(1.0);
 
 impl SplitEditorElement {
     pub fn new(
@@ -170,7 +171,12 @@ impl Element for SplitEditorElement {
             cx,
         );
 
-        SplitEditorPrepaintState { lhs, rhs, lhs_bounds, rhs_bounds }
+        SplitEditorPrepaintState {
+            lhs,
+            rhs,
+            lhs_bounds,
+            rhs_bounds,
+        }
     }
 
     fn paint(
@@ -204,7 +210,7 @@ impl Element for SplitEditorElement {
         );
 
         window.paint_quad(PaintQuad {
-            background: Background::from(rgb(0x0000FF)),
+            background: Background::from(Colors::for_appearance(window).text),
             border_color: hsla(0.0, 0.0, 0.0, 0.0),
             border_style: gpui::BorderStyle::Solid,
             border_widths: gpui::Edges::default(),
@@ -220,5 +226,117 @@ impl Element for SplitEditorElement {
             },
             corner_radii: Corners::default(),
         });
+    }
+}
+
+pub struct CheckerboardElement {
+    width: Pixels,
+    height: Pixels,
+    light: Rgba,
+    dark: Rgba,
+}
+
+impl Default for CheckerboardElement {
+    fn default() -> Self {
+        Self {
+            width: px(10.),
+            height: px(10.),
+            light: rgba(0xFFFFFF10),
+            dark: rgba(0x00000000),
+        }
+    }
+}
+
+impl IntoElement for CheckerboardElement {
+    type Element = Self;
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for CheckerboardElement {
+    type RequestLayoutState = ();
+
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut ui::Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+
+        let id = window.request_layout(style, [], cx);
+        (id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut ui::Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut ui::Window,
+        cx: &mut App,
+    ) {
+        // number of squares in each dimension (including partial)
+        let columns = (bounds.size.width / self.width).ceil() as u32;
+        let rows = (bounds.size.height / self.height).ceil() as u32;
+
+        for i in 0..columns {
+            for j in 0..rows {
+                let color = if (i + j) % 2 == 0 {
+                    self.light
+                } else {
+                    self.dark
+                };
+
+                let x = bounds.origin.x + (self.width * i as f32);
+                let y = bounds.origin.y + (self.height * j as f32);
+
+                let max_width = bounds.origin.x + bounds.size.width - x;
+                let max_height = bounds.origin.y + bounds.size.height - y;
+
+                let square_bounds = Bounds {
+                    origin: Point { x, y },
+                    size: Size {
+                        width: std::cmp::min(self.width, max_width),
+                        height: std::cmp::min(self.height, max_height),
+                    },
+                };
+                window.paint_quad(gpui::PaintQuad {
+                    bounds: square_bounds,
+                    background: color.into(),
+                    border_color: hsla(0.0, 0.0, 0.0, 0.0),
+                    border_style: gpui::BorderStyle::Solid,
+                    border_widths: Edges::default(),
+                    corner_radii: Corners::default(),
+                });
+            }
+        }
     }
 }
