@@ -13525,7 +13525,7 @@ impl Editor {
                 let mut metadata = clipboard_string.metadata_json::<Vec<ClipboardSelection>>();
 
                 if entries.len() == 1 && self.mode.is_single_line() {
-                    let replaced = text.replace("\r\n", "").replace('\n', "").replace('\r', "");
+                    let replaced = text.replace(['\n', '\r'], "");
 
                     if replaced != text {
                         text = replaced;
