@@ -1216,33 +1216,31 @@ impl SecondaryEditor {
 
 #[cfg(test)]
 mod tests {
+    use buffer_diff::BufferDiff;
     use fs::FakeFs;
-    use gpui::AppContext as _;
-    use language::Capability;
+    use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use language::language_settings::SoftWrap;
+    use language::{Buffer, Capability};
     use multi_buffer::{MultiBuffer, PathKey};
     use pretty_assertions::assert_eq;
     use project::Project;
     use rand::rngs::StdRng;
     use settings::SettingsStore;
-    use ui::VisualContext as _;
+    use ui::{VisualContext as _, px};
     use workspace::Workspace;
 
     use crate::SplittableEditor;
+    use crate::test::editor_content_with_blocks_and_width;
 
-    fn init_test(cx: &mut gpui::TestAppContext) {
+    async fn init_test(
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<SplittableEditor>, &mut VisualTestContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
-    }
-
-    #[gpui::test(iterations = 100)]
-    async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
-        use rand::prelude::*;
-
-        init_test(cx);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -1252,11 +1250,115 @@ mod tests {
             multibuffer
         });
         let editor = cx.new_window_entity(|window, cx| {
-            let mut editor =
-                SplittableEditor::new_unsplit(primary_multibuffer, project, workspace, window, cx);
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
             editor.split(&Default::default(), window, cx);
+            editor.primary_editor.update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            });
+            editor
+                .secondary
+                .as_ref()
+                .unwrap()
+                .editor
+                .update(cx, |editor, cx| {
+                    editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                });
             editor
         });
+        (editor, cx)
+    }
+
+    fn buffer_with_diff(
+        base_text: &str,
+        current_text: &str,
+        cx: &mut VisualTestContext,
+    ) -> (Entity<Buffer>, Entity<BufferDiff>) {
+        let buffer = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+        (buffer, diff)
+    }
+
+    fn assert_split_content(
+        editor: &Entity<SplittableEditor>,
+        expected_primary: String,
+        expected_secondary: String,
+        cx: &mut VisualTestContext,
+    ) {
+        assert_split_content_with_widths(
+            editor,
+            px(3000.0),
+            px(3000.0),
+            expected_primary,
+            expected_secondary,
+            cx,
+        );
+    }
+
+    fn assert_split_content_with_widths(
+        editor: &Entity<SplittableEditor>,
+        primary_width: Pixels,
+        secondary_width: Pixels,
+        expected_primary: String,
+        expected_secondary: String,
+        cx: &mut VisualTestContext,
+    ) {
+        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
+            let secondary = editor
+                .secondary
+                .as_ref()
+                .expect("should have secondary editor");
+            (editor.primary_editor.clone(), secondary.editor.clone())
+        });
+
+        // First pass: update wrap state for both editors
+        let _ = editor_content_with_blocks_and_width(&primary_editor, primary_width, cx);
+        cx.run_until_parked();
+        let _ = editor_content_with_blocks_and_width(&secondary_editor, secondary_width, cx);
+        cx.run_until_parked();
+
+        // Second pass: get actual content and assert
+        let primary_content =
+            editor_content_with_blocks_and_width(&primary_editor, primary_width, cx);
+        let secondary_content =
+            editor_content_with_blocks_and_width(&secondary_editor, secondary_width, cx);
+
+        assert_eq!(primary_content, expected_primary);
+        assert_eq!(secondary_content, expected_secondary);
+    }
+
+    #[gpui::test(iterations = 100)]
+    async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+        use rand::prelude::*;
+
+        let (editor, cx) = init_test(cx).await;
+        // cx.update(|cx| {
+        //     let store = SettingsStore::test(cx);
+        //     cx.set_global(store);
+        //     theme::init(theme::LoadThemes::JustBase, cx);
+        //     crate::init(cx);
+        // });
+        // let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        // let (workspace, cx) =
+        //     cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        // let primary_multibuffer = cx.new(|cx| {
+        //     let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        //     multibuffer.set_all_diff_hunks_expanded(cx);
+        //     multibuffer
+        // });
+        // let editor = cx.new_window_entity(|window, cx| {
+        //     let mut editor =
+        //         SplittableEditor::new_unsplit(primary_multibuffer, project, workspace, window, cx);
+        //     editor.split(&Default::default(), window, cx);
+        //     editor
+        // });
 
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1354,18 +1456,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_split_editor_block_alignment(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text = "
             aaa
@@ -1384,35 +1478,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        // Add excerpts covering the whole buffer
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -1423,19 +1494,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1445,47 +1505,7 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
-            "
-           § <no file>
-           § -----
-           aaa
-           bbb
-           ccc
-           ddd
-           eee
-           fff"
-            .unindent()
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(3, 0)..Point::new(3, 3), "FFF")], None, cx);
-        });
-
-        cx.run_until_parked();
-
-        // Check state after edit
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
-            "
-            § <no file>
-            § -----
-            aaa
-            § spacer
-            § spacer
-            ddd
-            eee
-            FFF"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1495,7 +1515,39 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(3, 0)..Point::new(3, 3), "FFF")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            ddd
+            eee
+            FFF"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff"
+            .unindent(),
+            &mut cx,
         );
 
         // Recalculate diff to include the new lines in the diff
@@ -1506,11 +1558,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1520,10 +1569,7 @@ mod tests {
             ddd
             eee
             FFF"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1533,7 +1579,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
@@ -1541,18 +1588,10 @@ mod tests {
     async fn test_split_editor_block_alignment_after_deleting_unmodified_line(
         cx: &mut gpui::TestAppContext,
     ) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         // Start with base text and current text that are identical
         // This means no diff hunks initially
@@ -1565,37 +1604,13 @@ mod tests {
             fff
         "
         .unindent();
-        let current_text = base_text.clone();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        // Add excerpts covering the whole buffer
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &base_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -1606,20 +1621,9 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
         // Initial state: both sides should be identical with no spacers
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1629,10 +1633,7 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1642,7 +1643,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         // Delete an unmodified line (delete "ccc" which is row 2, 0-indexed)
@@ -1652,17 +1654,9 @@ mod tests {
 
         cx.run_until_parked();
 
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        cx.update(|_window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.debug_print(cx);
-            });
-        });
-
-        assert_eq!(
-            primary_content,
+        // Secondary should still show "ccc" because diff hasn't been recalculated yet
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1672,11 +1666,7 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
-        );
-        // Secondary should still show "ccc" because diff hasn't been recalculated yet
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1686,7 +1676,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         // Now recalculate the diff - this should mark "ccc" as deleted in the diff
@@ -1699,13 +1690,8 @@ mod tests {
 
         // After diff recalculation: the primary should show a spacer for the deleted "ccc" line
         // and the secondary should still show "ccc"
-        // BUG: The secondary erroneously removes its spacer after diff recalculation,
-        // causing misalignment
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1715,10 +1701,7 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1728,7 +1711,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
@@ -1737,18 +1721,10 @@ mod tests {
     async fn test_split_editor_block_alignment_after_undoing_deleted_unmodified_line(
         cx: &mut gpui::TestAppContext,
     ) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         // Start with a diff where some lines are already deleted from base.
         // This creates an initial state with spacers on the primary (RHS) side.
@@ -1770,34 +1746,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -1808,20 +1762,9 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
         // Initial state: primary (RHS) has spacers for deleted "bbb" and "ccc"
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1831,10 +1774,7 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1844,7 +1784,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         // Delete an unmodified line ("eee" at row 2 in current text)
@@ -1855,11 +1796,8 @@ mod tests {
         cx.run_until_parked();
 
         // After deletion: primary has an additional spacer for deleted "eee"
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1869,10 +1807,7 @@ mod tests {
             ddd
             § spacer
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1882,7 +1817,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         // Recalculate the diff to reflect the deletion.
@@ -1895,11 +1831,8 @@ mod tests {
         cx.run_until_parked();
 
         // After diff recalculation: diff now includes "eee" as a deleted hunk
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1909,10 +1842,7 @@ mod tests {
             ddd
             § spacer
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1922,7 +1852,8 @@ mod tests {
             ddd
             eee
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         buffer.update(cx, |buffer, cx| {
@@ -1931,17 +1862,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        cx.update(|_window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.debug_print(cx);
-            });
-        });
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -1952,10 +1874,7 @@ mod tests {
             § spacer
             xxx
             fff"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -1966,7 +1885,8 @@ mod tests {
             eee
             § spacer
             fff"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
@@ -1975,18 +1895,10 @@ mod tests {
     async fn test_split_editor_block_alignment_after_deleting_added_line(
         cx: &mut gpui::TestAppContext,
     ) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         // Base text has 4 lines
         let base_text = "
@@ -2009,35 +1921,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        // Add excerpts covering the whole buffer
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -2048,23 +1937,12 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
         // Initial state:
         // Primary (RHS) shows current text: aaa, NEW1, NEW2, ccc, ddd
         // Secondary (LHS) shows base text: aaa, bbb, ccc, ddd
         // Since 1 line (bbb) was replaced with 2 lines (NEW1, NEW2), secondary needs 1 spacer
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2073,10 +1951,7 @@ mod tests {
             NEW2
             ccc
             ddd"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2085,14 +1960,9 @@ mod tests {
             § spacer
             ccc
             ddd"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
-
-        cx.update(|_window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.debug_print(cx);
-            });
-        });
 
         // Delete the second added line ("NEW2" at row 2 in current text)
         buffer.update(cx, |buffer, cx| {
@@ -2105,17 +1975,8 @@ mod tests {
         // Primary now shows "aaa", "NEW1", "ccc", "ddd" (4 lines)
         // Secondary still shows "aaa", "bbb", "ccc", "ddd" (4 lines)
         // Since primary and secondary now have equal lines, secondary spacer should be removed
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        cx.update(|_window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.debug_print(cx);
-            });
-        });
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2123,10 +1984,7 @@ mod tests {
             NEW1
             ccc
             ddd"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2134,7 +1992,8 @@ mod tests {
             bbb
             ccc
             ddd"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         // Recalculate the diff to reflect the deletion
@@ -2147,11 +2006,8 @@ mod tests {
 
         // After diff recalculation: should still be aligned
         // Both sides now have equal content lines in the hunk (bbb vs NEW1)
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2159,10 +2015,7 @@ mod tests {
             NEW1
             ccc
             ddd"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2170,25 +2023,18 @@ mod tests {
             bbb
             ccc
             ddd"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     #[ignore]
     async fn test_split_editor_newline_insertion_at_line_boundary(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text = "
             aaa
@@ -2198,36 +2044,13 @@ mod tests {
             ddd
         "
         .unindent();
-        let current_text = base_text.clone();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &base_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -2238,14 +2061,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
         // Insert a newline at the start of the existing blank line (row 2)
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "\n")], None, cx);
@@ -2253,20 +2068,10 @@ mod tests {
 
         cx.run_until_parked();
 
-        eprintln!("=== State after inserting newline (before diff recalculation) ===");
-        cx.update(|_window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.debug_print(cx);
-            });
-        });
-
         // Before diff recalculation: the primary has an extra blank line,
         // and the secondary should have one spacer to compensate
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2276,10 +2081,7 @@ mod tests {
 
             ccc
             ddd"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2289,7 +2091,8 @@ mod tests {
 
             ccc
             ddd"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         // Recalculate diff
@@ -2300,21 +2103,11 @@ mod tests {
 
         cx.run_until_parked();
 
-        eprintln!("=== State after diff recalculation ===");
-        cx.update(|_window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.debug_print(cx);
-            });
-        });
-
         // After diff recalculation: the state should remain aligned.
         // The new blank line is now recognized as an addition by the diff,
         // but the spacer arrangement should stay the same.
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2324,10 +2117,7 @@ mod tests {
 
             ccc
             ddd"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2337,26 +2127,19 @@ mod tests {
 
             ccc
             ddd"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     #[ignore]
     async fn test_split_editor_revert_deletion_hunk(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
         use git::Restore;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text = "
             aaa
@@ -2373,34 +2156,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -2411,19 +2172,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2432,10 +2182,7 @@ mod tests {
             § spacer
             ddd
             eee"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2444,9 +2191,11 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
+        let primary_editor = editor.update(cx, |editor, _cx| editor.primary_editor.clone());
         cx.update_window_entity(&primary_editor, |editor, window, cx| {
             editor.change_selections(crate::SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
@@ -2456,11 +2205,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2469,10 +2215,7 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2481,7 +2224,8 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
 
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
@@ -2491,11 +2235,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2504,10 +2245,7 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2516,7 +2254,8 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
@@ -2524,18 +2263,10 @@ mod tests {
     async fn test_split_editor_delete_added_lines_from_balanced_hunk(
         cx: &mut gpui::TestAppContext,
     ) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text = "
             aaa
@@ -2557,34 +2288,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -2594,14 +2303,6 @@ mod tests {
         });
 
         cx.run_until_parked();
-
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
 
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(4, 0)..Point::new(5, 0), "")], None, cx);
@@ -2626,11 +2327,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2640,10 +2338,7 @@ mod tests {
             § spacer
             § spacer
             zzz"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2653,24 +2348,17 @@ mod tests {
             old3
             old4
             zzz"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     async fn test_split_editor_deletion_at_beginning(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text = "
             aaa
@@ -2687,34 +2375,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -2725,19 +2391,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2746,10 +2401,7 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2758,24 +2410,17 @@ mod tests {
             ccc
             ddd
             eee"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     async fn test_split_editor_deletion_at_end(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text1 = "
             aaa
@@ -2797,50 +2442,23 @@ mod tests {
             yyy
         "
         .unindent();
-        let current_text2 = base_text2.clone();
 
-        let buffer1 = cx.new(|cx| Buffer::local(current_text1.clone(), cx));
-        let diff1 = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text1, &buffer1.read(cx).text_snapshot(), cx)
-        });
-
-        let buffer2 = cx.new(|cx| Buffer::local(current_text2.clone(), cx));
-        let diff2 = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text2, &buffer2.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path1 = cx.update(|_, cx| PathKey::for_buffer(&buffer1, cx));
-        let path2 = cx.update(|_, cx| PathKey::for_buffer(&buffer2, cx));
+        let (buffer1, diff1) = buffer_with_diff(&base_text1, &current_text1, &mut cx);
+        let (buffer2, diff2) = buffer_with_diff(&base_text2, &base_text2, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path1 = PathKey::for_buffer(&buffer1, cx);
             editor.set_excerpts_for_path(
-                path1.clone(),
+                path1,
                 buffer1.clone(),
                 vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
                 0,
                 diff1.clone(),
                 cx,
             );
+            let path2 = PathKey::for_buffer(&buffer2, cx);
             editor.set_excerpts_for_path(
-                path2.clone(),
+                path2,
                 buffer2.clone(),
                 vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
                 1,
@@ -2851,19 +2469,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2877,10 +2484,7 @@ mod tests {
             § -----
             xxx
             yyy"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -2894,25 +2498,18 @@ mod tests {
             § -----
             xxx
             yyy"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     #[ignore]
     async fn test_split_editor_deletion_at_excerpt_boundary(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
         use rope::Point;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let base_text = "
             aaa
@@ -2931,34 +2528,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![
                     Point::new(0, 0)..Point::new(3, 0),
@@ -2972,19 +2547,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        let primary_content = editor_content_with_blocks(&primary_editor, &mut cx);
-        let secondary_content = editor_content_with_blocks(&secondary_editor, &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content(
+            &editor,
             "
             § <no file>
             § -----
@@ -2995,10 +2559,7 @@ mod tests {
             § spacer
             § -----
             zzz"
-            .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+            .unindent(),
             "
             § <no file>
             § -----
@@ -3009,57 +2570,27 @@ mod tests {
             deleted2
             § -----
             zzz"
-            .unindent()
+            .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     async fn test_split_editor_soft_wrap_spacers(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
-        use language::language_settings::SoftWrap;
         use rope::Point;
-        use ui::px;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks_and_width;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let text = "aaaa bbbb cccc dddd eeee ffff\n";
 
-        let buffer = cx.new(|cx| Buffer::local(text.to_string(), cx));
-        let diff = cx
-            .new(|cx| BufferDiff::new_with_base_text(&text, &buffer.read(cx).text_snapshot(), cx));
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(text, text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             let end = Point::new(0, 29);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..end],
                 0,
@@ -3068,111 +2599,56 @@ mod tests {
             );
         });
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        primary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-        secondary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-
         cx.run_until_parked();
 
-        let primary_content =
-            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
-        cx.run_until_parked();
-        let secondary_content =
-            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content_with_widths(
+            &editor,
+            px(200.0),
+            px(400.0),
             "
             § <no file>
             § -----
             aaaa bbbb\x20
             cccc dddd\x20
             eeee ffff"
-                .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+                .unindent(),
             "
             § <no file>
             § -----
             aaaa bbbb cccc dddd eeee ffff
             § spacer
             § spacer"
-                .unindent()
+                .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     async fn test_split_editor_soft_wrap_spacers_two_excerpts(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
-        use language::language_settings::SoftWrap;
         use rope::Point;
-        use ui::px;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks_and_width;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         let text = "aaaa bbbb cccc dddd eeee ffff";
 
-        let buffer1 = cx.new(|cx| Buffer::local(text.to_string(), cx));
-        let diff1 = cx
-            .new(|cx| BufferDiff::new_with_base_text(&text, &buffer1.read(cx).text_snapshot(), cx));
-
-        let buffer2 = cx.new(|cx| Buffer::local(text.to_string(), cx));
-        let diff2 = cx
-            .new(|cx| BufferDiff::new_with_base_text(&text, &buffer2.read(cx).text_snapshot(), cx));
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path1 = cx.update(|_, cx| PathKey::for_buffer(&buffer1, cx));
-        let path2 = cx.update(|_, cx| PathKey::for_buffer(&buffer2, cx));
+        let (buffer1, diff1) = buffer_with_diff(text, text, &mut cx);
+        let (buffer2, diff2) = buffer_with_diff(text, text, &mut cx);
 
         editor.update(cx, |editor, cx| {
             let end = Point::new(0, text.len() as u32);
+            let path1 = PathKey::for_buffer(&buffer1, cx);
             editor.set_excerpts_for_path(
-                path1.clone(),
+                path1,
                 buffer1.clone(),
                 vec![Point::new(0, 0)..end],
                 0,
                 diff1.clone(),
                 cx,
             );
+            let path2 = PathKey::for_buffer(&buffer2, cx);
             editor.set_excerpts_for_path(
-                path2.clone(),
+                path2,
                 buffer2.clone(),
                 vec![Point::new(0, 0)..end],
                 0,
@@ -3183,39 +2659,10 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        primary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-        secondary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-
-        cx.run_until_parked();
-
-        let primary_content =
-            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
-        cx.run_until_parked();
-        let secondary_content =
-            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
-
-        cx.run_until_parked();
-
-        let primary_content =
-            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
-        cx.run_until_parked();
-        let secondary_content =
-            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
-
-        assert_eq!(
-            primary_content,
+        assert_split_content_with_widths(
+            &editor,
+            px(200.0),
+            px(400.0),
             "
             § <no file>
             § -----
@@ -3227,10 +2674,7 @@ mod tests {
             aaaa bbbb\x20
             cccc dddd\x20
             eeee ffff"
-                .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+                .unindent(),
             "
             § <no file>
             § -----
@@ -3242,26 +2686,17 @@ mod tests {
             aaaa bbbb cccc dddd eeee ffff
             § spacer
             § spacer"
-                .unindent()
+                .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     async fn test_soft_wrap_before_modification_hunk(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
-        use language::language_settings::SoftWrap;
         use rope::Point;
-        use ui::px;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks_and_width;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         // Base text has a long line followed by lines that get modified
         let base_text = "
@@ -3278,34 +2713,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -3316,43 +2729,13 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        primary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-        secondary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-
-        cx.run_until_parked();
-
         // Primary (RHS) at narrow width wraps the long line into 3 rows
         // Secondary (LHS) at wide width shows the long line on 1 row
         // Spacers are inserted before the hunk on secondary to account for wrap differences
-
-        // First pass: update wrap state for both editors at their respective widths
-        let _ = editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
-        cx.run_until_parked();
-        let _ = editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
-        cx.run_until_parked();
-
-        // Second pass: get actual content with companion snapshots now reflecting correct wrap state
-        let primary_content =
-            editor_content_with_blocks_and_width(&primary_editor, px(200.0), &mut cx);
-        let secondary_content =
-            editor_content_with_blocks_and_width(&secondary_editor, px(400.0), &mut cx);
-
-        // Primary (RHS, narrow): long line wraps to 3 rows, then the added line in the hunk
-        // Secondary (LHS, wide): long line on 1 row, spacers, then the deleted lines in the hunk
-        assert_eq!(
-            primary_content,
+        assert_split_content_with_widths(
+            &editor,
+            px(200.0),
+            px(400.0),
             "
             § <no file>
             § -----
@@ -3361,10 +2744,7 @@ mod tests {
             eeee ffff
             new line
             § spacer"
-                .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+                .unindent(),
             "
             § <no file>
             § -----
@@ -3373,26 +2753,17 @@ mod tests {
             § spacer
             old line one
             old line two"
-                .unindent()
+                .unindent(),
+            &mut cx,
         );
     }
 
     #[gpui::test]
     async fn test_soft_wrap_before_deletion_hunk(cx: &mut gpui::TestAppContext) {
-        use buffer_diff::BufferDiff;
-        use language::Buffer;
-        use language::language_settings::SoftWrap;
         use rope::Point;
-        use ui::px;
         use unindent::Unindent as _;
 
-        use crate::test::editor_content_with_blocks_and_width;
-
-        init_test(cx);
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (workspace, mut cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (editor, mut cx) = init_test(cx).await;
 
         // Base text has a long line followed by additional lines that get deleted, then more content
         let base_text = "
@@ -3410,34 +2781,12 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.new(|cx| Buffer::local(current_text.clone(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
-
-        let primary_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer
-        });
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
-                primary_multibuffer.clone(),
-                project.clone(),
-                workspace,
-                window,
-                cx,
-            );
-            editor.split(&Default::default(), window, cx);
-            editor
-        });
-
-        let path = cx.update(|_, cx| PathKey::for_buffer(&buffer, cx));
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
             editor.set_excerpts_for_path(
-                path.clone(),
+                path,
                 buffer.clone(),
                 vec![Point::new(0, 0)..buffer.read(cx).max_point()],
                 0,
@@ -3448,43 +2797,13 @@ mod tests {
 
         cx.run_until_parked();
 
-        let (primary_editor, secondary_editor) = editor.update(cx, |editor, _cx| {
-            let secondary = editor
-                .secondary
-                .as_ref()
-                .expect("should have secondary editor");
-            (editor.primary_editor.clone(), secondary.editor.clone())
-        });
-
-        primary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-        secondary_editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-        });
-
-        cx.run_until_parked();
-
         // Primary (RHS) at wide width shows the long line on 1 row
         // Secondary (LHS) at narrow width wraps the long line into 3 rows
         // Spacers are inserted before the hunk on primary to account for wrap differences
-
-        // First pass: update wrap state for both editors at their respective widths
-        let _ = editor_content_with_blocks_and_width(&primary_editor, px(400.0), &mut cx);
-        cx.run_until_parked();
-        let _ = editor_content_with_blocks_and_width(&secondary_editor, px(200.0), &mut cx);
-        cx.run_until_parked();
-
-        // Second pass: get actual content with companion snapshots now reflecting correct wrap state
-        let primary_content =
-            editor_content_with_blocks_and_width(&primary_editor, px(400.0), &mut cx);
-        let secondary_content =
-            editor_content_with_blocks_and_width(&secondary_editor, px(200.0), &mut cx);
-
-        // Primary (RHS, wide): long line on 1 row, spacers for wrap difference + deleted lines, then content after
-        // Secondary (LHS, narrow): long line wraps to 3 rows, then deleted lines (which also wrap), then content after
-        assert_eq!(
-            primary_content,
+        assert_split_content_with_widths(
+            &editor,
+            px(400.0),
+            px(200.0),
             "
             § <no file>
             § -----
@@ -3496,10 +2815,7 @@ mod tests {
             § spacer
             § spacer
             after"
-                .unindent()
-        );
-        assert_eq!(
-            secondary_content,
+                .unindent(),
             "
             § <no file>
             § -----
@@ -3511,7 +2827,8 @@ mod tests {
             deleted\x20
             line two
             after"
-                .unindent()
+                .unindent(),
+            &mut cx,
         );
     }
 }
