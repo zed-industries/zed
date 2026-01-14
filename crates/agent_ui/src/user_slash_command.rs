@@ -113,28 +113,49 @@ pub fn load_project_commands(worktree_root: &Path) -> CommandLoadResult {
 }
 
 /// Loads all commands (both project and user) for given worktree roots.
-/// Project commands take precedence over user commands with the same name.
+/// If multiple commands have the same name, an error is reported for the ambiguity.
 /// Returns both successfully loaded commands and any errors encountered.
 pub fn load_all_commands(worktree_roots: &[PathBuf]) -> CommandLoadResult {
     let mut result = CommandLoadResult::default();
-    let mut seen_names = std::collections::HashSet::new();
+    let mut seen_commands: std::collections::HashMap<String, PathBuf> =
+        std::collections::HashMap::new();
 
-    // Load project commands first (they take precedence)
+    // Load project commands first
     for root in worktree_roots {
         let project_result = load_project_commands(root);
         result.errors.extend(project_result.errors);
         for cmd in project_result.commands {
-            if seen_names.insert(cmd.name.to_string()) {
+            if let Some(existing_path) = seen_commands.get(&*cmd.name) {
+                result.errors.push(CommandLoadError {
+                    path: cmd.path.clone(),
+                    message: format!(
+                        "Command '{}' is ambiguous: also defined at {}",
+                        cmd.name,
+                        existing_path.display()
+                    ),
+                });
+            } else {
+                seen_commands.insert(cmd.name.to_string(), cmd.path.clone());
                 result.commands.push(cmd);
             }
         }
     }
 
-    // Load user commands (skip if name already exists from project)
+    // Load user commands
     let user_result = load_user_commands();
     result.errors.extend(user_result.errors);
     for cmd in user_result.commands {
-        if seen_names.insert(cmd.name.to_string()) {
+        if let Some(existing_path) = seen_commands.get(&*cmd.name) {
+            result.errors.push(CommandLoadError {
+                path: cmd.path.clone(),
+                message: format!(
+                    "Command '{}' is ambiguous: also defined at {}",
+                    cmd.name,
+                    existing_path.display()
+                ),
+            });
+        } else {
+            seen_commands.insert(cmd.name.to_string(), cmd.path.clone());
             result.commands.push(cmd);
         }
     }
@@ -1165,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_all_commands_precedence() {
+    fn test_load_all_commands_no_duplicates() {
         let temp_dir = tempfile::tempdir().unwrap();
         let project_root = temp_dir.path().join("project");
         std::fs::create_dir_all(&project_root).unwrap();
@@ -1190,6 +1211,32 @@ mod tests {
         for cmd in &result.commands {
             assert_eq!(cmd.scope, CommandScope::Project);
         }
+    }
+
+    #[test]
+    fn test_load_all_commands_duplicate_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create two project roots with the same command name
+        let project1 = temp_dir.path().join("project1");
+        let project2 = temp_dir.path().join("project2");
+
+        let commands1 = project1.join(".zed").join("commands");
+        let commands2 = project2.join(".zed").join("commands");
+
+        std::fs::create_dir_all(&commands1).unwrap();
+        std::fs::create_dir_all(&commands2).unwrap();
+
+        std::fs::write(commands1.join("deploy.md"), "Deploy from project1").unwrap();
+        std::fs::write(commands2.join("deploy.md"), "Deploy from project2").unwrap();
+
+        let result = super::load_all_commands(&[project1, project2]);
+
+        // Should have one command loaded and one error for the duplicate
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].message.contains("ambiguous"));
+        assert!(result.errors[0].message.contains("deploy"));
     }
 
     #[test]

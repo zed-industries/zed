@@ -20,6 +20,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
+use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -66,6 +67,7 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
+use crate::user_slash_command::CommandLoadError;
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
     ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
@@ -281,6 +283,8 @@ pub struct AcpThreadView {
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
+    command_load_errors: Vec<CommandLoadError>,
+    command_load_errors_dismissed: bool,
     token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
@@ -424,6 +428,19 @@ impl AcpThreadView {
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
 
+        // Load user-defined slash commands and capture any errors for display
+        let command_load_errors = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            let worktree_roots: Vec<std::path::PathBuf> = project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect();
+            let load_result = crate::user_slash_command::load_all_commands(&worktree_roots);
+            load_result.errors
+        } else {
+            Vec::new()
+        };
+
         Self {
             agent: agent.clone(),
             agent_server_store,
@@ -450,6 +467,8 @@ impl AcpThreadView {
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
+            command_load_errors,
+            command_load_errors_dismissed: false,
             token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
@@ -6023,6 +6042,47 @@ impl AcpThreadView {
             )
     }
 
+    fn render_command_load_errors(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.command_load_errors_dismissed || self.command_load_errors.is_empty() {
+            return None;
+        }
+
+        let error_count = self.command_load_errors.len();
+        let title = if error_count == 1 {
+            "Failed to load slash command".to_string()
+        } else {
+            format!("Failed to load {} slash commands", error_count)
+        };
+
+        let description = self
+            .command_load_errors
+            .iter()
+            .map(|error| format!("• {}: {}", error.path.display(), error.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Some(
+            Callout::new()
+                .severity(Severity::Warning)
+                .icon(IconName::Warning)
+                .title(title)
+                .description(description)
+                .dismiss_action(
+                    IconButton::new("dismiss-command-errors", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clear_command_load_errors(cx);
+                        })),
+                ),
+        )
+    }
+
+    fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
+        self.command_load_errors_dismissed = true;
+        cx.notify();
+    }
+
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
@@ -6578,6 +6638,7 @@ impl Render for AcpThreadView {
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })
+            .children(self.render_command_load_errors(cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
