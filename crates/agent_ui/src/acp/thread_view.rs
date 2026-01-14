@@ -3127,7 +3127,8 @@ impl AcpThreadView {
             .mr_5()
             .map(|this| {
                 if is_terminal_tool {
-                    this.child(self.render_terminal_command_preview(tool_call, cx))
+                    let label_source = tool_call.label.read(cx).source();
+                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
                 } else {
                     this.child(
                         h_flex()
@@ -3794,15 +3795,18 @@ impl AcpThreadView {
     /// on the number of lines in `command_source`.
     fn render_collapsible_command(
         &self,
+        is_preview: bool,
         command_source: &str,
         tool_call_id: &acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
         let expand_button_bg = self.tool_card_header_bg(cx);
         let expanded = self.expanded_terminal_commands.contains(tool_call_id);
+
         let lines: Vec<&str> = command_source.lines().collect();
         let line_count = lines.len();
         let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
+
         let show_expand_button = extra_lines > 0;
 
         let max_lines = if expanded || !show_expand_button {
@@ -3814,12 +3818,23 @@ impl AcpThreadView {
         let display_lines = lines.into_iter().take(max_lines);
 
         v_flex()
+            .bg(self.tool_card_header_bg(cx))
             .child(
                 v_flex()
-                    .px_1p5()
-                    .pb_1p5()
-                    .text_buffer(cx)
-                    .text_size(TextSize::Small.rems(cx))
+                    .p_1p5()
+                    .when(is_preview, |this| {
+                        this.pt_1().child(
+                            // Wrapping this label on a container with 24px height to avoid
+                            // layout shift when it changes from being a preview label
+                            // to the actual path where the command will run in
+                            h_flex().h_6().child(
+                                Label::new("Run Command")
+                                    .buffer_font(cx)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                    })
                     .children(display_lines.map(|line| {
                         let text: SharedString = if line.is_empty() {
                             " ".into()
@@ -3827,7 +3842,7 @@ impl AcpThreadView {
                             line.to_string().into()
                         };
 
-                        div().child(text)
+                        Label::new(text).buffer_font(cx).size(LabelSize::Small)
                     })),
             )
             .when(show_expand_button, |this| {
@@ -3839,20 +3854,18 @@ impl AcpThreadView {
 
                 this.child(
                     h_flex()
-                        .id(ElementId::Name(
-                            format!("expand-command-btn-{}", tool_call_id).into(),
-                        ))
+                        .id(format!("expand-command-btn-{}", tool_call_id))
                         .cursor_pointer()
+                        .when(!expanded, |s| s.absolute().bottom_0())
+                        .when(expanded, |s| s.mt_1())
                         .w_full()
-                        .min_h(rems(1.5))
-                        .py_0p5()
+                        .h_6()
                         .gap_1()
                         .justify_center()
-                        .items_center()
                         .border_t_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(expand_button_bg.opacity(0.95))
                         .hover(|s| s.bg(cx.theme().colors().element_hover))
-                        .bg(expand_button_bg)
                         .when(!expanded, |this| {
                             let label = match extra_lines {
                                 1 => "1 more line".to_string(),
@@ -3861,7 +3874,11 @@ impl AcpThreadView {
 
                             this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
                         })
-                        .child(Icon::new(expand_icon).size(IconSize::Small))
+                        .child(
+                            Icon::new(expand_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .on_click(cx.listener({
                             let tool_call_id = tool_call_id.clone();
                             move |this, _event, _window, cx| {
@@ -3875,24 +3892,6 @@ impl AcpThreadView {
                         })),
                 )
             })
-    }
-
-    fn render_terminal_command_preview(&self, tool_call: &ToolCall, cx: &Context<Self>) -> Div {
-        let header_bg = self.tool_card_header_bg(cx);
-        let label_source = tool_call.label.read(cx).source();
-
-        v_flex()
-            .relative()
-            .bg(header_bg)
-            .child(
-                v_flex().pt_1p5().px_1p5().gap_0p5().text_ui_sm(cx).child(
-                    Label::new("Run Command")
-                        .buffer_font(cx)
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
-                ),
-            )
-            .child(self.render_collapsible_command(&label_source, &tool_call.id, cx))
     }
 
     fn render_terminal_tool_call(
@@ -3955,12 +3954,15 @@ impl AcpThreadView {
             .and_then(|s| s.strip_suffix("\n```"))
             .unwrap_or(&command_source);
 
-        let command_element = self.render_collapsible_command(command_content, &tool_call.id, cx);
+        let command_element =
+            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
+            .px_1p5()
+            .pt_1()
             .flex_none()
             .gap_1()
             .justify_between()
@@ -4118,7 +4120,7 @@ impl AcpThreadView {
                     .group(&header_group)
                     .bg(header_bg)
                     .text_xs()
-                    .child(div().pt_1p5().pr_1p5().pl_2().child(header))
+                    .child(header)
                     .child(command_element),
             )
             .when(is_expanded && terminal_view.is_some(), |this| {
