@@ -10,6 +10,10 @@ use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::LSP_SETTINGS_SCHEMA_URL_PREFIX;
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
+const SCHEMA_URI_PREFIX: &str = "zed://schemas/";
+
+// Bundled from https://github.com/SchemaStore/schemastore at compile time.
+// These are snapshots that ship with Zed - they don't update at runtime.
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("schemas/package.json");
 
@@ -41,6 +45,14 @@ static KEYMAP_SCHEMA: LazyLock<String> = LazyLock::new(|| {
 static ACTION_SCHEMA_CACHE: LazyLock<RwLock<HashMap<String, String>>> =
     LazyLock::new(|| RwLock::new(HashMap::default()));
 
+// Runtime cache for dynamic schemas that depend on runtime state:
+// - "settings": depends on installed fonts, themes, languages, LSP adapters (extensions can add these)
+// - "settings/lsp/*": depends on LSP adapter initialization options
+// - "debug_tasks": depends on DAP adapters (extensions can add these)
+// Cache is invalidated via notify_schema_changed() when extensions or DAP registry change.
+static DYNAMIC_SCHEMA_CACHE: LazyLock<RwLock<HashMap<String, String>>> =
+    LazyLock::new(|| RwLock::new(HashMap::default()));
+
 pub fn init(cx: &mut App) {
     cx.set_global(SchemaStore::default());
     project::lsp_store::json_language_server_ext::register_schema_handler(
@@ -55,7 +67,7 @@ pub fn init(cx: &mut App) {
     .detach();
 
     if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
-        cx.subscribe(&extension_events, |_, evt, cx| {
+        cx.subscribe(&extension_events, move |_, evt, cx| {
             match evt {
                 extension::Event::ExtensionInstalled(_)
                 | extension::Event::ExtensionUninstalled(_)
@@ -63,15 +75,15 @@ pub fn init(cx: &mut App) {
                 extension::Event::ExtensionsInstalledChanged => {}
             }
             cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-                schema_store.notify_schema_changed("zed://schemas/settings", cx);
+                schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}settings"), cx);
             });
         })
         .detach();
     }
 
-    cx.observe_global::<dap::DapRegistry>(|cx| {
+    cx.observe_global::<dap::DapRegistry>(move |cx| {
         cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-            schema_store.notify_schema_changed("zed://schemas/debug_tasks", cx);
+            schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}debug_tasks"), cx);
         });
     })
     .detach();
@@ -86,6 +98,9 @@ impl gpui::Global for SchemaStore {}
 
 impl SchemaStore {
     fn notify_schema_changed(&mut self, uri: &str, cx: &mut App) {
+        // Invalidate cache for this URI so it will be regenerated on next request
+        DYNAMIC_SCHEMA_CACHE.write().remove(uri);
+
         let uri = uri.to_string();
         self.lsp_stores.retain(|lsp_store| {
             let Some(lsp_store) = lsp_store.upgrade() else {
@@ -101,43 +116,91 @@ impl SchemaStore {
     }
 }
 
+/// Handle a schema request from the JSON language server.
+/// Returns a Task that resolves to the JSON schema as a string.
 pub fn handle_schema_request(
     lsp_store: Entity<LspStore>,
     uri: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<String>> {
-    let path = match uri.strip_prefix("zed://schemas/") {
+    let path = match uri.strip_prefix(SCHEMA_URI_PREFIX) {
         Some(path) => path,
-        None => return Task::ready(Err(anyhow::anyhow!("Invalid URI: {}", uri))),
+        None => return Task::ready(Err(anyhow::anyhow!("Invalid schema URI: {}", uri))),
     };
 
+    // Try to get a cached/static schema without spawning foreground work
+    if let Some(json) = resolve_static_schema(path) {
+        return Task::ready(Ok(json));
+    }
+
+    // Check runtime cache for dynamic schemas
+    if let Some(cached) = DYNAMIC_SCHEMA_CACHE.read().get(&uri).cloned() {
+        return Task::ready(Ok(cached));
+    }
+
+    // Cache miss for dynamic schema - need to generate on foreground thread
+    let path = path.to_string();
+    let uri_clone = uri.clone();
+    cx.spawn(async move |cx| {
+        let schema = resolve_dynamic_schema(lsp_store, &path, cx).await?;
+        let json = serde_json::to_string(&schema).context("Failed to serialize schema")?;
+
+        // Store in cache for future requests
+        DYNAMIC_SCHEMA_CACHE.write().insert(uri_clone, json.clone());
+
+        Ok(json)
+    })
+}
+
+/// Try to get a static schema as a JSON string, without any async work.
+/// Returns None if this is a dynamic schema that requires runtime data.
+fn resolve_static_schema(path: &str) -> Option<String> {
     let (schema_name, rest) = path.split_once('/').unzip();
     let schema_name = schema_name.unwrap_or(path);
 
     match schema_name {
-        "tsconfig" => return Task::ready(Ok(TSCONFIG_SCHEMA.to_string())),
-        "package_json" => return Task::ready(Ok(PACKAGE_JSON_SCHEMA.to_string())),
-        "tasks" => return Task::ready(Ok(TASKS_SCHEMA.clone())),
-        "snippets" => return Task::ready(Ok(SNIPPETS_SCHEMA.clone())),
-        "jsonc" => return Task::ready(Ok(JSONC_SCHEMA.clone())),
-        "keymap" => return Task::ready(Ok(KEYMAP_SCHEMA.clone())),
+        // Bundled from SchemaStore at compile time via include_str!. These are snapshots
+        // that ship with Zed and don't update at runtime (would need a Zed update).
+        "tsconfig" => Some(TSCONFIG_SCHEMA.to_string()),
+        "package_json" => Some(PACKAGE_JSON_SCHEMA.to_string()),
+
+        // Derived from Rust types via schemars - the schema is determined by the type
+        // definition which is fixed at compile time.
+        "tasks" => Some(TASKS_SCHEMA.clone()),
+        "snippets" => Some(SNIPPETS_SCHEMA.clone()),
+        "jsonc" => Some(JSONC_SCHEMA.clone()),
+
+        // Actions are registered at compile/link time via the `inventory` crate.
+        // Extensions cannot register new actions, so this is effectively static.
+        "keymap" => Some(KEYMAP_SCHEMA.clone()),
+
+        // Derived from gpui::StyleRefinement Rust type - fixed at compile time.
         "zed_inspector_style" => {
             #[cfg(debug_assertions)]
-            return Task::ready(Ok(INSPECTOR_STYLE_SCHEMA.clone()));
+            {
+                Some(INSPECTOR_STYLE_SCHEMA.clone())
+            }
             #[cfg(not(debug_assertions))]
-            return Task::ready(Ok(serde_json::to_string(
-                &schemars::json_schema!(true).to_value(),
-            )
-            .expect("true schema should serialize")));
+            {
+                Some(
+                    serde_json::to_string(&schemars::json_schema!(true).to_value())
+                        .expect("true schema should serialize"),
+                )
+            }
         }
+
+        // Individual action schemas - also static since actions are registered at
+        // compile/link time via `inventory`. Cached after first generation.
         "action" => {
             let normalized_action_name = match rest {
                 Some(name) => name,
-                None => return Task::ready(Err(anyhow::anyhow!("No action name provided"))),
+                None => return None,
             };
             let action_name = denormalize_action_name(normalized_action_name);
+
+            // Check cache first
             if let Some(cached) = ACTION_SCHEMA_CACHE.read().get(&action_name).cloned() {
-                return Task::ready(Ok(cached));
+                return Some(cached);
             }
 
             let mut generator = settings::KeymapFile::action_schema_generator();
@@ -151,34 +214,33 @@ pub fn handle_schema_request(
             ACTION_SCHEMA_CACHE
                 .write()
                 .insert(action_name, json.clone());
-            return Task::ready(Ok(json));
+            Some(json)
         }
-        _ => {}
-    }
 
-    let schema_name = schema_name.to_string();
-    let rest = rest.map(|s| s.to_string());
-    cx.spawn(async move |cx| {
-        let schema = resolve_dynamic_schema(lsp_store, &schema_name, rest.as_deref(), cx).await?;
-        serde_json::to_string(&schema).context("Failed to serialize schema")
-    })
+        // Dynamic schemas - return None to indicate async resolution is needed
+        _ => None,
+    }
 }
 
+/// Resolve a dynamic schema that depends on runtime state.
 async fn resolve_dynamic_schema(
     lsp_store: Entity<LspStore>,
-    schema_name: &str,
-    rest: Option<&str>,
+    path: &str,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
-    let languages = lsp_store.read_with(cx, |store, _| store.languages.clone());
+    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone());
+    let (schema_name, rest) = path.split_once('/').unzip();
+    let schema_name = schema_name.unwrap_or(path);
+
     let schema = match schema_name {
         "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
             let lsp_name = rest
                 .and_then(|r| {
                     r.strip_prefix(
                         LSP_SETTINGS_SCHEMA_URL_PREFIX
-                            .strip_prefix("zed://schemas/settings/")
-                            .unwrap(),
+                            .strip_prefix(SCHEMA_URI_PREFIX)
+                            .and_then(|s| s.strip_prefix("settings/"))
+                            .unwrap_or("lsp/"),
                     )
                 })
                 .context("Invalid LSP schema path")?;
@@ -266,7 +328,7 @@ async fn resolve_dynamic_schema(
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
         _ => {
-            anyhow::bail!("Unrecognized builtin JSON schema: {schema_name}");
+            anyhow::bail!("Unrecognized schema: {schema_name}");
         }
     };
     Ok(schema)
@@ -299,25 +361,25 @@ pub fn all_schema_file_associations(
                 schema_file_match(paths::settings_file()),
                 paths::local_settings_file_relative_path()
             ],
-            "url": "zed://schemas/settings",
+            "url": format!("{SCHEMA_URI_PREFIX}settings"),
         },
         {
             "fileMatch": [schema_file_match(paths::keymap_file())],
-            "url": "zed://schemas/keymap",
+            "url": format!("{SCHEMA_URI_PREFIX}keymap"),
         },
         {
             "fileMatch": [
                 schema_file_match(paths::tasks_file()),
                 paths::local_tasks_file_relative_path()
             ],
-            "url": "zed://schemas/tasks",
+            "url": format!("{SCHEMA_URI_PREFIX}tasks"),
         },
         {
             "fileMatch": [
                 schema_file_match(paths::debug_scenarios_file()),
                 paths::local_debug_file_relative_path()
             ],
-            "url": "zed://schemas/debug_tasks",
+            "url": format!("{SCHEMA_URI_PREFIX}debug_tasks"),
         },
         {
             "fileMatch": [
@@ -327,19 +389,19 @@ pub fn all_schema_file_associations(
                         .as_path()
                 )
             ],
-            "url": "zed://schemas/snippets",
+            "url": format!("{SCHEMA_URI_PREFIX}snippets"),
         },
         {
             "fileMatch": ["tsconfig.json"],
-            "url": "zed://schemas/tsconfig"
+            "url": format!("{SCHEMA_URI_PREFIX}tsconfig")
         },
         {
             "fileMatch": ["package.json"],
-            "url": "zed://schemas/package_json"
+            "url": format!("{SCHEMA_URI_PREFIX}package_json")
         },
         {
             "fileMatch": &jsonc_globs,
-            "url": "zed://schemas/jsonc"
+            "url": format!("{SCHEMA_URI_PREFIX}jsonc")
         },
     ]);
 
@@ -352,21 +414,21 @@ pub fn all_schema_file_associations(
                 "fileMatch": [
                     "zed-inspector-style.json"
                 ],
-                "url": "zed://schemas/zed_inspector_style"
+                "url": format!("{SCHEMA_URI_PREFIX}zed_inspector_style")
             }));
     }
 
-    file_associations.as_array_mut().unwrap().extend(
-        // ?PERF: use all_action_schemas() and don't include action schemas with no arguments
-        cx.all_action_names().into_iter().map(|&name| {
+    file_associations
+        .as_array_mut()
+        .unwrap()
+        .extend(cx.all_action_names().into_iter().map(|&name| {
             let normalized_name = normalize_action_name(name);
             let file_name = normalized_action_name_to_file_name(normalized_name.clone());
             serde_json::json!({
                 "fileMatch": [file_name],
-                "url": format!("zed://schemas/action/{normalized_name}")
+                "url": format!("{}action/{normalized_name}", SCHEMA_URI_PREFIX)
             })
-        }),
-    );
+        }));
 
     file_associations
 }
