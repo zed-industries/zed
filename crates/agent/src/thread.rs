@@ -1628,6 +1628,15 @@ impl Thread {
         };
 
         if attempt > max_attempts {
+            telemetry::event!(
+                "Agent Thread Retries Exhausted",
+                thread_id = self.id.to_string(),
+                prompt_id = self.prompt_id.to_string(),
+                model = model.telemetry_id(),
+                model_provider = model.provider_id().to_string(),
+                error_message = error.to_string(),
+                max_attempts
+            );
             return Err(anyhow!(error));
         }
 
