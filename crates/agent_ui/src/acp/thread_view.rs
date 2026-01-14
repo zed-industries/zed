@@ -3209,6 +3209,8 @@ impl AcpThreadView {
                                                                 .size(IconSize::Small),
                                                         ),
                                                 )
+                                            } else if is_cancelled_edit {
+                                                this
                                             } else {
                                                 this.child(
                                                     Icon::new(IconName::Close)
