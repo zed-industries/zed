@@ -143,7 +143,7 @@ impl OAuthClient {
 
         let code_verifier = generate_code_verifier();
         let code_challenge =
-            base64::engine::general_purpose::URL_SAFE.encode(Sha256::digest(&code_verifier));
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(&code_verifier));
 
         let mut url = Url::parse(&auth_endpoint.to_string())?;
 
