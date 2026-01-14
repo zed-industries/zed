@@ -12,8 +12,8 @@ mod tool_permissions;
 mod tools;
 
 use agent_skills::{
-    Skill, SkillLoadError, SkillSource, global_skills_dir, load_skills_from_directory,
-    project_skills_relative_path,
+    SKILL_FILE_NAME, Skill, SkillLoadError, SkillSource, global_skills_dir,
+    load_skills_from_directory, project_skills_relative_path,
 };
 use context_server::ContextServerId;
 pub use db::*;
@@ -51,6 +51,7 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 use util::ResultExt;
 use util::rel_path::RelPath;
 
@@ -238,6 +239,7 @@ pub struct NativeAgent {
     skills: Arc<Vec<Skill>>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
+    _watch_global_skills: Task<()>,
     context_server_registry: Entity<ContextServerRegistry>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
@@ -298,8 +300,19 @@ impl NativeAgent {
                 project_context: cx.new(|_| project_context),
                 skills: Arc::new(skills),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
-                _maintain_project_context: cx.spawn(async move |this, cx| {
-                    Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
+                _maintain_project_context: cx.spawn({
+                    let this = cx.weak_entity();
+                    async move |_, cx| {
+                        Self::maintain_project_context(this, project_context_needs_refresh_rx, cx)
+                            .await
+                    }
+                }),
+                _watch_global_skills: cx.spawn({
+                    let this = cx.weak_entity();
+                    let fs = fs.clone();
+                    async move |_, cx| {
+                        Self::watch_global_skills_directory(this, fs, cx).await;
+                    }
                 }),
                 context_server_registry,
                 templates,
@@ -378,6 +391,41 @@ impl NativeAgent {
 
     pub fn models(&self) -> &LanguageModels {
         &self.models
+    }
+
+    async fn watch_global_skills_directory(
+        this: WeakEntity<Self>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) {
+        let skills_dir = global_skills_dir();
+
+        // If the skills directory doesn't exist yet, don't watch
+        if !fs.is_dir(skills_dir).await {
+            return;
+        }
+
+        let (mut events, _watcher) = fs.watch(skills_dir, Duration::from_millis(500)).await;
+
+        while let Some(changed_paths) = events.next().await {
+            // Check if any skill files changed
+            let skill_changed = changed_paths.iter().any(|event| {
+                event
+                    .path
+                    .file_name()
+                    .map(|name| name == SKILL_FILE_NAME)
+                    .unwrap_or(false)
+                    || event.path.ends_with(SKILL_FILE_NAME)
+            });
+
+            if skill_changed {
+                let Ok(()) = this.update(cx, |this, _cx| {
+                    this.project_context_needs_refresh.send(()).ok();
+                }) else {
+                    break;
+                };
+            }
+        }
     }
 
     async fn maintain_project_context(
@@ -635,11 +683,19 @@ impl NativeAgent {
                 self.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
-                if items.iter().any(|(path, _, _)| {
+                let rules_changed = items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
                         .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
-                }) {
+                });
+
+                let skills_changed = items.iter().any(|(path, _, _)| {
+                    let path_str = path.as_ref().as_unix_str();
+                    path_str.contains(project_skills_relative_path())
+                        && path_str.ends_with(SKILL_FILE_NAME)
+                });
+
+                if rules_changed || skills_changed {
                     self.project_context_needs_refresh.send(()).ok();
                 }
             }
