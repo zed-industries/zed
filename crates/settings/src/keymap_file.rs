@@ -479,8 +479,6 @@ impl KeymapFile {
         )
     }
 
-    /// Generate JSON schema for all registered actions without requiring App context.
-    /// This works because actions are registered at compile/link time via inventory.
     pub fn generate_json_schema_from_inventory() -> Value {
         let mut generator = Self::action_schema_generator();
 
@@ -501,7 +499,7 @@ impl KeymapFile {
             }
             for &alias in action_data.deprecated_aliases {
                 deprecations.insert(alias, action_data.name);
-                // Also add the alias as an action
+
                 let alias_schema = (action_data.json_schema)(&mut generator);
                 action_schemas.push((alias, alias_schema));
             }
@@ -516,8 +514,6 @@ impl KeymapFile {
         )
     }
 
-    /// Get the JSON schema for a single action by name, without requiring App context.
-    /// Returns None if the action doesn't exist or has no schema.
     pub fn get_action_schema_by_name(action_name: &str) -> Option<schemars::Schema> {
         let mut generator = Self::action_schema_generator();
 
@@ -525,7 +521,6 @@ impl KeymapFile {
             if action_data.name == action_name {
                 return (action_data.json_schema)(&mut generator);
             }
-            // Also check deprecated aliases
             for &alias in action_data.deprecated_aliases {
                 if alias == action_name {
                     return (action_data.json_schema)(&mut generator);
