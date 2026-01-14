@@ -36,7 +36,6 @@ pub struct TestScheduler {
     rng: Arc<Mutex<StdRng>>,
     state: Arc<Mutex<SchedulerState>>,
     thread: Thread,
-    unparked: AtomicBool,
 }
 
 impl TestScheduler {
@@ -99,10 +98,10 @@ impl TestScheduler {
                 non_determinism_error: None,
                 finished: false,
                 parking_allowed_once: false,
+                unparked: false,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
-            unparked: AtomicBool::new(false),
         }
     }
 
@@ -425,8 +424,11 @@ impl TestScheduler {
                     return true;
                 }
 
-                // Check if we were woken up by a different thread
-                if self.unparked.swap(false, SeqCst) {
+                // Check if we were woken up by a different thread.
+                // We use a flag because timing-based detection is unreliable:
+                // OS scheduling delays can cause elapsed >= park_duration even when
+                // we were woken early by unpark().
+                if std::mem::take(&mut self.state.lock().unparked) {
                     return true;
                 }
             }
@@ -570,8 +572,8 @@ impl Scheduler for TestScheduler {
                 runnable,
             },
         );
+        state.unparked = true;
         drop(state);
-        self.unparked.store(true, SeqCst);
         self.thread.unpark();
     }
 
@@ -595,8 +597,8 @@ impl Scheduler for TestScheduler {
                 runnable,
             },
         );
+        state.unparked = true;
         drop(state);
-        self.unparked.store(true, SeqCst);
         self.thread.unpark();
     }
 
@@ -689,6 +691,7 @@ struct SchedulerState {
     non_determinism_error: Option<(String, Backtrace)>,
     parking_allowed_once: bool,
     finished: bool,
+    unparked: bool,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
@@ -746,9 +749,12 @@ impl TracingWaker {
     fn wake_by_ref(&self) {
         assert_correct_thread(&self.thread, &self.state);
 
+        let mut state = self.state.lock();
         if let Some(id) = self.id {
-            self.state.lock().pending_traces.remove(&id);
+            state.pending_traces.remove(&id);
         }
+        state.unparked = true;
+        drop(state);
         self.awoken.store(true, SeqCst);
         self.thread.unpark();
     }
