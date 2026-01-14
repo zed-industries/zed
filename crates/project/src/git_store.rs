@@ -696,6 +696,15 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         cx.spawn(async move |this, cx| {
+            // TODO: this is not the right place to await the parsing of the buffer
+            // this is necessary otherwise syntax diff cannot be computed when the buffer
+            // doesn't have a tree yet
+            //
+            // - Should we do it only when syntax diff is enabled?
+            // - Where should we place it? Should BufferDiff directly work with the main buffer instead of snapshots?
+            // - What other places do need it
+            buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+
             let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
             let language_registry = buffer.update(cx, |buffer, _| buffer.language_registry());
             let content = match oid {
