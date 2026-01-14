@@ -8859,7 +8859,7 @@ pub(crate) mod tests {
             editor.set_text("Message 2", window, cx);
         });
         thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.send(window, cx);
+            thread_view.interrupt_and_send(window, cx);
         });
 
         cx.update(|_, cx| {
