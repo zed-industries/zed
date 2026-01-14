@@ -576,6 +576,7 @@ impl VsCodeSettings {
                     k.clone().into(),
                     ContextServerSettingsContent::Stdio {
                         enabled: true,
+                        remote: false,
                         command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()
                             .map(|cmd| ContextServerCommand {
