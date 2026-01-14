@@ -6787,6 +6787,18 @@ impl AcpThreadView {
         });
     }
 
+    /// Inserts code snippets as creases into the message editor.
+    pub(crate) fn insert_code_crease(
+        &self,
+        creases: Vec<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_code_creases(creases, window, cx);
+        });
+    }
+
     fn render_thread_retry_status_callout(
         &self,
         _window: &mut Window,
