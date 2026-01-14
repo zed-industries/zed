@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
@@ -7,11 +8,14 @@ use gpui::{
 };
 use menu;
 use project::{Project, Worktree, git_store::Repository};
+use recent_projects::{RecentProjectEntry, get_recent_projects};
 use settings::WorktreeId;
-use ui::{ContextMenu, Tooltip, prelude::*};
-use workspace::Workspace;
+use ui::{ContextMenu, ContextMenuEntry, Divider, DocumentationSide, Tooltip, prelude::*};
+use workspace::{CloseIntent, Workspace};
 
 actions!(project_dropdown, [RemoveSelectedFolder]);
+
+const RECENT_PROJECTS_INLINE_LIMIT: usize = 5;
 
 struct ProjectEntry {
     worktree_id: WorktreeId,
@@ -25,6 +29,7 @@ pub struct ProjectDropdown {
     workspace: WeakEntity<Workspace>,
     worktree_ids: Rc<RefCell<Vec<WorktreeId>>>,
     menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
+    _recent_projects: Rc<RefCell<Vec<RecentProjectEntry>>>,
     _subscription: Subscription,
 }
 
@@ -38,13 +43,16 @@ impl ProjectDropdown {
     ) -> Self {
         let menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>> = Rc::new(RefCell::new(None));
         let worktree_ids: Rc<RefCell<Vec<WorktreeId>>> = Rc::new(RefCell::new(Vec::new()));
+        let recent_projects: Rc<RefCell<Vec<RecentProjectEntry>>> =
+            Rc::new(RefCell::new(Vec::new()));
 
         let menu = Self::build_menu(
-            project,
+            project.clone(),
             workspace.clone(),
             initial_active_worktree_id,
             menu_shell.clone(),
             worktree_ids.clone(),
+            recent_projects.clone(),
             window,
             cx,
         );
@@ -55,11 +63,41 @@ impl ProjectDropdown {
             cx.emit(DismissEvent);
         });
 
+        let recent_projects_for_fetch = recent_projects.clone();
+        let menu_shell_for_fetch = menu_shell.clone();
+        let workspace_for_fetch = workspace.clone();
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let current_workspace_id = cx
+                .update(|_, cx| {
+                    workspace_for_fetch
+                        .upgrade()
+                        .and_then(|ws| ws.read(cx).database_id())
+                })
+                .ok()
+                .flatten();
+
+            let projects = get_recent_projects(current_workspace_id, None).await;
+
+            cx.update(|window, cx| {
+                *recent_projects_for_fetch.borrow_mut() = projects;
+
+                if let Some(menu_entity) = menu_shell_for_fetch.borrow().clone() {
+                    menu_entity.update(cx, |menu, cx| {
+                        menu.rebuild(window, cx);
+                    });
+                }
+            })
+            .ok()
+        })
+        .detach();
+
         Self {
             menu,
             workspace,
             worktree_ids,
             menu_shell,
+            _recent_projects: recent_projects,
             _subscription,
         }
     }
@@ -70,10 +108,11 @@ impl ProjectDropdown {
         initial_active_worktree_id: Option<WorktreeId>,
         menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
         worktree_ids: Rc<RefCell<Vec<WorktreeId>>>,
+        recent_projects: Rc<RefCell<Vec<RecentProjectEntry>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
+        ContextMenu::build_persistent(window, cx, move |menu, window, cx| {
             let active_worktree_id = if menu_shell.borrow().is_some() {
                 workspace
                     .upgrade()
@@ -174,19 +213,171 @@ impl ProjectDropdown {
                 );
             }
 
-            menu.separator()
-                .action(
-                    "Add Folder to Workspace",
-                    workspace::AddFolderToProject.boxed_clone(),
-                )
-                .action(
-                    "Open Recent Projects",
-                    zed_actions::OpenRecent {
-                        create_new_window: false,
-                    }
-                    .boxed_clone(),
-                )
+            menu = menu.separator();
+
+            let recent = recent_projects.borrow();
+
+            if !recent.is_empty() {
+                menu = menu.header("Recent Projects");
+
+                let enter_hint = window.keystroke_text_for(&menu::Confirm);
+                let cmd_enter_hint = window.keystroke_text_for(&menu::SecondaryConfirm);
+
+                let inline_count = recent.len().min(RECENT_PROJECTS_INLINE_LIMIT);
+
+                for entry in recent.iter().take(inline_count) {
+                    menu = Self::add_recent_project_entry(
+                        menu,
+                        entry.clone(),
+                        workspace.clone(),
+                        &enter_hint,
+                        &cmd_enter_hint,
+                    );
+                }
+
+                if recent.len() > RECENT_PROJECTS_INLINE_LIMIT {
+                    let remaining_projects: Vec<RecentProjectEntry> = recent
+                        .iter()
+                        .skip(RECENT_PROJECTS_INLINE_LIMIT)
+                        .cloned()
+                        .collect();
+                    let workspace_for_submenu = workspace.clone();
+
+                    menu = menu.submenu("View More…", move |submenu, window, _cx| {
+                        let enter_hint = window.keystroke_text_for(&menu::Confirm);
+                        let cmd_enter_hint = window.keystroke_text_for(&menu::SecondaryConfirm);
+
+                        let mut submenu = submenu;
+                        for entry in &remaining_projects {
+                            submenu = Self::add_recent_project_entry(
+                                submenu,
+                                entry.clone(),
+                                workspace_for_submenu.clone(),
+                                &enter_hint,
+                                &cmd_enter_hint,
+                            );
+                        }
+                        submenu
+                    });
+                }
+
+                menu = menu.separator();
+            }
+            drop(recent);
+
+            menu.action(
+                "Add Folder to Workspace",
+                workspace::AddFolderToProject.boxed_clone(),
+            )
         })
+    }
+
+    fn add_recent_project_entry(
+        menu: ContextMenu,
+        entry: RecentProjectEntry,
+        workspace: WeakEntity<Workspace>,
+        enter_hint: &str,
+        cmd_enter_hint: &str,
+    ) -> ContextMenu {
+        let name = entry.name.clone();
+        let full_path = entry.full_path.clone();
+        let paths = entry.paths.clone();
+        let workspace_for_click = workspace.clone();
+
+        let enter_hint = enter_hint.to_string();
+        let cmd_enter_hint = cmd_enter_hint.to_string();
+
+        let paths_for_secondary = paths.clone();
+        let workspace_for_secondary = workspace.clone();
+
+        let menu_entry = ContextMenuEntry::new(name)
+            .handler(move |window, cx| {
+                let create_new_window_w_modifier = window.modifiers().platform;
+
+                Self::open_recent_project(
+                    workspace_for_click.clone(),
+                    paths.clone(),
+                    create_new_window_w_modifier,
+                    window,
+                    cx,
+                );
+                window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+            })
+            .secondary_handler(move |window, cx| {
+                Self::open_recent_project(
+                    workspace_for_secondary.clone(),
+                    paths_for_secondary.clone(),
+                    true,
+                    window,
+                    cx,
+                );
+                window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+            })
+            .documentation_aside(DocumentationSide::Right, move |cx| {
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(full_path.clone()).size(LabelSize::Small))
+                    .child(
+                        h_flex()
+                            .pt_1()
+                            .gap_1()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new(format!("{} reuses this window", enter_hint))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Divider::vertical())
+                            .child(
+                                Label::new(format!("{} opens a new one", cmd_enter_hint))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .into_any_element()
+            });
+
+        menu.item(menu_entry)
+    }
+
+    fn open_recent_project(
+        workspace: WeakEntity<Workspace>,
+        paths: Vec<PathBuf>,
+        create_new_window: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            if create_new_window {
+                workspace.open_workspace_for_paths(false, paths, window, cx)
+            } else {
+                cx.spawn_in(window, {
+                    let paths = paths.clone();
+                    async move |workspace, cx| {
+                        let continue_replacing = workspace
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+                            })?
+                            .await?;
+                        if continue_replacing {
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    workspace.open_workspace_for_paths(true, paths, window, cx)
+                                })?
+                                .await
+                        } else {
+                            Ok(())
+                        }
+                    }
+                })
+            }
+            .detach_and_log_err(cx);
+        });
     }
 
     /// Get all projects sorted alphabetically with their branch info.
