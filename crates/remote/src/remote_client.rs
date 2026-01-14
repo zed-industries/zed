@@ -20,7 +20,7 @@ use futures::{
         mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    future::{BoxFuture, Shared},
+    future::{BoxFuture, Shared, WeakShared},
     select, select_biased,
 };
 use gpui::{
@@ -1131,7 +1131,7 @@ impl RemoteClient {
 }
 
 enum ConnectionPoolEntry {
-    Connecting(Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
+    Connecting(WeakShared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
     Connected(Weak<dyn RemoteConnection>),
 }
 
@@ -1152,21 +1152,30 @@ impl ConnectionPool {
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
-                delegate.set_status(
-                    Some("Waiting for existing connection attempt"),
-                    &mut cx.to_async(),
-                );
-                return task.clone();
+                if let Some(task) = task.upgrade() {
+                    log::debug!("Connecting task is still alive");
+                    cx.spawn(async move |cx| {
+                        delegate.set_status(Some("Waiting for existing connection attempt"), cx)
+                    })
+                    .detach();
+                    return task;
+                }
+                log::debug!("Connecting task is dead, removing it and restarting a connection");
+                self.connections.remove(&opts);
             }
             Some(ConnectionPoolEntry::Connected(remote)) => {
                 if let Some(remote) = remote.upgrade()
                     && !remote.has_been_killed()
                 {
+                    log::debug!("Connection is still alive");
                     return Task::ready(Ok(remote)).shared();
                 }
+                log::debug!("Connection is dead, removing it and restarting a connection");
                 self.connections.remove(&opts);
             }
-            None => {}
+            None => {
+                log::debug!("No existing connection found, starting a new one");
+            }
         }
 
         let task = cx
@@ -1224,9 +1233,10 @@ impl ConnectionPool {
                 }
             })
             .shared();
-
-        self.connections
-            .insert(opts.clone(), ConnectionPoolEntry::Connecting(task.clone()));
+        if let Some(task) = task.downgrade() {
+            self.connections
+                .insert(opts.clone(), ConnectionPoolEntry::Connecting(task));
+        }
         task
     }
 }
