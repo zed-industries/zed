@@ -7613,6 +7613,25 @@ if is_entire_line {
 }
 
 #[gpui::test]
+async fn test_copy_trim_line_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «    a
+            bˇ»
+    "});
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
+    cx.update_editor(|editor, window, cx| editor.copy_and_trim(&CopyAndTrim, window, cx));
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("a\nb\n".to_string())
+    );
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -11901,6 +11920,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
+    cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
     {
@@ -11930,6 +11950,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
                 )
             })
             .unwrap();
+        cx.executor().start_waiting();
         save.await;
 
         assert_eq!(
@@ -11970,6 +11991,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             })
             .unwrap();
         cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+        cx.executor().start_waiting();
         save.await;
         assert_eq!(
             editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12015,6 +12037,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
                 )
             })
             .unwrap();
+        cx.executor().start_waiting();
         save.await;
     }
 }
@@ -12081,6 +12104,7 @@ async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
                 )
             })
             .unwrap();
+        cx.executor().start_waiting();
         save.await;
         assert!(!cx.read(|cx| editor.is_dirty(cx)));
     }
@@ -12249,6 +12273,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
     cx.executor().run_until_parked();
 
+    cx.executor().start_waiting();
     let save = multi_buffer_editor
         .update_in(cx, |editor, window, cx| {
             editor.save(
@@ -12510,6 +12535,7 @@ async fn setup_range_format_test(
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
 
+    cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
     (project, editor, cx, fake_server)
@@ -12551,6 +12577,7 @@ async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
         })
         .next()
         .await;
+    cx.executor().start_waiting();
     save.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12593,6 +12620,7 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+    cx.executor().start_waiting();
     save.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12624,6 +12652,7 @@ async fn test_range_format_not_called_for_clean_buffer(cx: &mut TestAppContext) 
             panic!("Should not be invoked");
         })
         .next();
+    cx.executor().start_waiting();
     save.await;
     cx.run_until_parked();
 }
@@ -12730,6 +12759,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
 
+    cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
     let format = editor
@@ -12757,6 +12787,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         })
         .next()
         .await;
+    cx.executor().start_waiting();
     format.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12789,6 +12820,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+    cx.executor().start_waiting();
     format.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12842,6 +12874,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|window, cx| {
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
+
+    cx.executor().start_waiting();
 
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
@@ -12944,6 +12978,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
         }
     });
 
+    cx.executor().start_waiting();
     editor
         .update_in(cx, |editor, window, cx| {
             editor.perform_format(
@@ -13111,6 +13146,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         )
     });
 
+    cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
     let format = editor
@@ -13156,6 +13192,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         })
         .next()
         .await;
+    cx.executor().start_waiting();
     format.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -13191,6 +13228,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.executor().advance_clock(super::CODE_ACTION_TIMEOUT);
+    cx.executor().start_waiting();
     format.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -13243,7 +13281,9 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
 
     // Wait for both format requests to complete
     cx.executor().advance_clock(Duration::from_millis(200));
+    cx.executor().start_waiting();
     format_1.await.unwrap();
+    cx.executor().start_waiting();
     format_2.await.unwrap();
 
     // The formatting edits only happens once.
@@ -14763,7 +14803,6 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     });
 
     let fake_server = fake_servers.next().await.unwrap();
-    cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -15133,7 +15172,6 @@ async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let _fake_server = fake_servers.next().await.unwrap();
-    cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
         cx.focus_self(window);
@@ -15869,7 +15907,6 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let fake_server = fake_servers.next().await.unwrap();
-    cx.run_until_parked();
 
     let multiline_label = "StickyHeaderExcerpt {\n            excerpt,\n            next_excerpt_controls_present,\n            next_buffer_row,\n        }: StickyHeaderExcerpt<'_>,";
     let multiline_label_2 = "a\nb\nc\n";
@@ -18243,6 +18280,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
 
+    cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
     fake_server.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
@@ -25440,7 +25478,6 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    cx.run_until_parked();
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("<ad></ad>", window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
@@ -30359,6 +30396,478 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
         assert!(
             editor.show_diff_review_button(),
             "show_diff_review_button should be true"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_move_to_start_end_of_larger_syntax_node_single_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        fn main() {
+            let x = foo(1, 2);
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test case 1: Move to end of syntax nodes
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 16)..DisplayPoint::new(DisplayRow(1), 16)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(ˇ1, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1ˇ, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2)ˇ;
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);ˇ
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);
+                }ˇ
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 2: Move to start of syntax nodes
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 20)..DisplayPoint::new(DisplayRow(1), 20)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2ˇ);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = fooˇ(1, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = ˇfoo(1, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    ˇlet x = foo(1, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() ˇ{
+                    let x = foo(1, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                ˇfn main() {
+                    let x = foo(1, 2);
+                }
+            "#},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_move_to_start_end_of_larger_syntax_node_two_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        fn main() {
+            let x = foo(1, 2);
+            let y = bar(3, 4);
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test case 1: Move to end of syntax nodes with two cursors
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 20)..DisplayPoint::new(DisplayRow(1), 20),
+                DisplayPoint::new(DisplayRow(2), 20)..DisplayPoint::new(DisplayRow(2), 20),
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2ˇ);
+                    let y = bar(3, 4ˇ);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2)ˇ;
+                    let y = bar(3, 4)ˇ;
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);ˇ
+                    let y = bar(3, 4);ˇ
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 2: Move to start of syntax nodes with two cursors
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 19)..DisplayPoint::new(DisplayRow(1), 19),
+                DisplayPoint::new(DisplayRow(2), 19)..DisplayPoint::new(DisplayRow(2), 19),
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, ˇ2);
+                    let y = bar(3, ˇ4);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = fooˇ(1, 2);
+                    let y = barˇ(3, 4);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = ˇfoo(1, 2);
+                    let y = ˇbar(3, 4);
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    ˇlet x = foo(1, 2);
+                    ˇlet y = bar(3, 4);
+                }
+            "#},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_move_to_start_end_of_larger_syntax_node_with_selections_and_strings(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        fn main() {
+            let x = foo(1, 2);
+            let msg = "hello world";
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test case 1: With existing selection, move_to_end keeps selection
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 12)..DisplayPoint::new(DisplayRow(1), 21)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = «foo(1, 2)ˇ»;
+                    let msg = "hello world";
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = «foo(1, 2)ˇ»;
+                    let msg = "hello world";
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 2: Move to end within a string
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 15)..DisplayPoint::new(DisplayRow(2), 15)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);
+                    let msg = "ˇhello world";
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);
+                    let msg = "hello worldˇ";
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 3: Move to start within a string
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 21)..DisplayPoint::new(DisplayRow(2), 21)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);
+                    let msg = "hello ˇworld";
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x = foo(1, 2);
+                    let msg = "ˇhello world";
+                }
+            "#},
+            cx,
         );
     });
 }

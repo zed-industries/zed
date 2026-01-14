@@ -1,12 +1,20 @@
 use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{
+    any::Any,
+    error::Error,
+    fmt,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 use ui::{App, IconName};
 use uuid::Uuid;
 
@@ -94,6 +102,10 @@ pub trait AgentConnection {
         None
     }
 
+    fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -150,6 +162,79 @@ pub trait AgentSessionConfigOptions {
     /// Optional for agents that don't update their config options dynamically.
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
         None
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentSessionListRequest {
+    pub cwd: Option<PathBuf>,
+    pub cursor: Option<String>,
+    pub meta: Option<acp::Meta>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentSessionListResponse {
+    pub sessions: Vec<AgentSessionInfo>,
+    pub next_cursor: Option<String>,
+    pub meta: Option<acp::Meta>,
+}
+
+impl AgentSessionListResponse {
+    pub fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+        Self {
+            sessions,
+            next_cursor: None,
+            meta: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentSessionInfo {
+    pub session_id: acp::SessionId,
+    pub cwd: Option<PathBuf>,
+    pub title: Option<SharedString>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub meta: Option<acp::Meta>,
+}
+
+impl AgentSessionInfo {
+    pub fn new(session_id: impl Into<acp::SessionId>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            cwd: None,
+            title: None,
+            updated_at: None,
+            meta: None,
+        }
+    }
+}
+
+pub trait AgentSessionList {
+    fn list_sessions(
+        &self,
+        request: AgentSessionListRequest,
+        cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>>;
+
+    fn delete_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn delete_sessions(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        None
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+}
+
+impl dyn AgentSessionList {
+    pub fn downcast<T: 'static + AgentSessionList + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
     }
 }
 

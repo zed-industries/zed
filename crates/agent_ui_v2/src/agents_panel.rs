@@ -1,4 +1,7 @@
-use agent::{DbThreadMetadata, ThreadStore};
+use acp_thread::AgentSessionInfo;
+use agent::{NativeAgentServer, ThreadStore};
+use agent_client_protocol as acp;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
@@ -61,6 +64,7 @@ pub struct AgentsPanel {
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
+    pending_restore: Option<SerializedAgentThreadPane>,
     pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -121,11 +125,45 @@ impl AgentsPanel {
         let focus_handle = cx.focus_handle();
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx.new(|cx| AcpThreadHistory::new(thread_store.clone(), window, cx));
+        let history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
+
+        let history_handle = history.clone();
+        let connect_project = project.clone();
+        let connect_thread_store = thread_store.clone();
+        let connect_fs = fs.clone();
+        cx.spawn(async move |_, cx| {
+            let connect_task = cx.update(|cx| {
+                let delegate = AgentServerDelegate::new(
+                    connect_project.read(cx).agent_server_store().clone(),
+                    connect_project.clone(),
+                    None,
+                    None,
+                );
+                let server = NativeAgentServer::new(connect_fs, connect_thread_store);
+                server.connect(None, delegate, cx)
+            });
+            let connection = match connect_task.await {
+                Ok((connection, _)) => connection,
+                Err(error) => {
+                    log::error!("Failed to connect native agent for history: {error:#}");
+                    return;
+                }
+            };
+
+            cx.update(|cx| {
+                if let Some(session_list) = connection.session_list(cx) {
+                    history_handle.update(cx, |history, cx| {
+                        history.set_session_list(Some(session_list), cx);
+                    });
+                }
+            });
+        })
+        .detach();
 
         let this = cx.weak_entity();
         let subscriptions = vec![
             cx.subscribe_in(&history, window, Self::handle_history_event),
+            cx.observe_in(&history, window, Self::handle_history_updated),
             cx.on_flags_ready(move |_, cx| {
                 this.update(cx, |_, cx| {
                     cx.notify();
@@ -144,6 +182,7 @@ impl AgentsPanel {
             prompt_store,
             fs,
             width: None,
+            pending_restore: None,
             pending_serialization: Task::ready(None),
             _subscriptions: subscriptions,
         }
@@ -159,15 +198,9 @@ impl AgentsPanel {
             return;
         };
 
-        let entry = self
-            .thread_store
-            .read(cx)
-            .entries()
-            .find(|e| match thread_id {
-                SerializedHistoryEntryId::AcpThread(id) => e.id.to_string() == *id,
-            });
-
-        if let Some(entry) = entry {
+        let SerializedHistoryEntryId::AcpThread(id) = thread_id;
+        let session_id = acp::SessionId::new(id.clone());
+        if let Some(entry) = self.history.read(cx).session_for_id(&session_id) {
             self.open_thread(
                 entry,
                 serialized_pane.expanded,
@@ -175,6 +208,8 @@ impl AgentsPanel {
                 window,
                 cx,
             );
+        } else {
+            self.pending_restore = Some(serialized_pane);
         }
     }
 
@@ -203,6 +238,15 @@ impl AgentsPanel {
         cx.notify();
     }
 
+    fn handle_history_updated(
+        &mut self,
+        _history: Entity<AcpThreadHistory>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.maybe_restore_pending(window, cx);
+    }
+
     fn handle_history_event(
         &mut self,
         _history: &Entity<AcpThreadHistory>,
@@ -217,15 +261,40 @@ impl AgentsPanel {
         }
     }
 
+    fn maybe_restore_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.agent_thread_pane.is_some() {
+            self.pending_restore = None;
+            return;
+        }
+
+        let Some(pending) = self.pending_restore.as_ref() else {
+            return;
+        };
+        let Some(thread_id) = &pending.thread_id else {
+            self.pending_restore = None;
+            return;
+        };
+
+        let SerializedHistoryEntryId::AcpThread(id) = thread_id;
+        let session_id = acp::SessionId::new(id.clone());
+        let Some(entry) = self.history.read(cx).session_for_id(&session_id) else {
+            return;
+        };
+
+        let pending = self.pending_restore.take().expect("pending restore");
+        self.open_thread(entry, pending.expanded, pending.width, window, cx);
+    }
+
     fn open_thread(
         &mut self,
-        entry: DbThreadMetadata,
+        entry: AgentSessionInfo,
         expanded: bool,
         width: Option<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_id = entry.id.clone();
+        let entry_id = entry.session_id.clone();
+        self.pending_restore = None;
 
         if let Some(existing_pane) = &self.agent_thread_pane {
             if existing_pane.read(cx).thread_id() == Some(entry_id) {
