@@ -79,10 +79,9 @@ use crate::{
     ToggleBurnMode, ToggleProfileSelector,
 };
 
-/// Maximum number of lines to show for a collapsed terminal command preview.
 const MAX_COLLAPSED_LINES: usize = 3;
-const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
-const TOKEN_THRESHOLD: u64 = 1;
+const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
+const TOKEN_THRESHOLD: u64 = 250;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -6058,46 +6057,118 @@ impl AcpThreadView {
             .is_some_and(|model| model.provider_id() == language_model::ZED_CLOUD_PROVIDER_ID)
     }
 
+    fn supports_split_token_display(&self, cx: &App) -> bool {
+        self.as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .is_some_and(|model| model.supports_split_token_display())
+    }
+
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
         let thread = self.thread()?.read(cx);
         let usage = thread.token_usage()?;
         let is_generating = thread.status() != ThreadStatus::Idle;
+        let show_split = self.supports_split_token_display(cx);
 
-        let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
-        let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+        let separator_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.5));
+        let token_label = |text: String, animation_id: &'static str| {
+            Label::new(text)
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .map(|label| {
+                    if is_generating {
+                        label
+                            .with_animation(
+                                animation_id,
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any()
+                    } else {
+                        label.into_any_element()
+                    }
+                })
+        };
 
-        Some(
-            h_flex()
-                .flex_shrink_0()
-                .gap_0p5()
-                .mr_1p5()
-                .child(
-                    Label::new(used)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .map(|label| {
-                            if is_generating {
-                                label
-                                    .with_animation(
-                                        "used-tokens-label",
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.3, 0.8)),
-                                        |label, delta| label.alpha(delta),
-                                    )
-                                    .into_any()
-                            } else {
-                                label.into_any_element()
-                            }
-                        }),
-                )
-                .child(
-                    Label::new("/")
-                        .size(LabelSize::Small)
-                        .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.5))),
-                )
-                .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
-        )
+        if show_split {
+            let max_output_tokens = self
+                .as_native_thread(cx)
+                .and_then(|thread| thread.read(cx).model())
+                .and_then(|model| model.max_output_tokens())
+                .unwrap_or(0);
+
+            let input = crate::text_thread_editor::humanize_token_count(usage.input_tokens);
+            let input_max = crate::text_thread_editor::humanize_token_count(
+                usage.max_tokens.saturating_sub(max_output_tokens),
+            );
+            let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
+            let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
+
+            Some(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .mr_1p5()
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::ArrowUp)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(token_label(input, "input-tokens-label"))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(
+                                Label::new(input_max)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::ArrowDown)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(token_label(output, "output-tokens-label"))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(
+                                Label::new(output_max)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
+        } else {
+            let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
+            let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+
+            Some(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_0p5()
+                    .mr_1p5()
+                    .child(token_label(used, "used-tokens-label"))
+                    .child(
+                        Label::new("/")
+                            .size(LabelSize::Small)
+                            .color(separator_color),
+                    )
+                    .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
+            )
+        }
     }
 
     fn toggle_burn_mode(
