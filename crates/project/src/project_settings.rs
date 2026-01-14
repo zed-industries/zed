@@ -131,10 +131,9 @@ pub enum ContextServerSettings {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-        /// If true, always run this server on the local machine, even for
-        /// remote (SSH) projects.
+        /// If true, run this server on the remote server when using remote development.
         #[serde(default)]
-        local_only: bool,
+        remote: bool,
         #[serde(flatten)]
         command: ContextServerCommand,
     },
@@ -154,10 +153,9 @@ pub enum ContextServerSettings {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-        /// If true, always run this server on the local machine, even for
-        /// remote (SSH) projects.
+        /// If true, run this server on the remote server when using remote development.
         #[serde(default)]
-        local_only: bool,
+        remote: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
@@ -171,20 +169,20 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
         match value {
             settings::ContextServerSettingsContent::Stdio {
                 enabled,
-                local_only,
+                remote,
                 command,
             } => ContextServerSettings::Stdio {
                 enabled,
-                local_only,
+                remote,
                 command,
             },
             settings::ContextServerSettingsContent::Extension {
                 enabled,
-                local_only,
+                remote,
                 settings,
             } => ContextServerSettings::Extension {
                 enabled,
-                local_only,
+                remote,
                 settings,
             },
             settings::ContextServerSettingsContent::Http {
@@ -206,20 +204,20 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
         match self {
             ContextServerSettings::Stdio {
                 enabled,
-                local_only,
+                remote,
                 command,
             } => settings::ContextServerSettingsContent::Stdio {
                 enabled,
-                local_only,
+                remote,
                 command,
             },
             ContextServerSettings::Extension {
                 enabled,
-                local_only,
+                remote,
                 settings,
             } => settings::ContextServerSettingsContent::Extension {
                 enabled,
-                local_only,
+                remote,
                 settings,
             },
             ContextServerSettings::Http {
@@ -241,7 +239,7 @@ impl ContextServerSettings {
     pub fn default_extension() -> Self {
         Self::Extension {
             enabled: true,
-            local_only: true,
+            remote: false,
             settings: serde_json::json!({}),
         }
     }

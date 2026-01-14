@@ -227,18 +227,13 @@ pub enum ContextServerSettingsContent {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-
-        /// If true (the default), always run this server on the local machine,
-        /// even for remote (SSH) projects. This is the safe default for servers
-        /// that may require local authentication, show UI, or access local-only
-        /// resources.
+        /// Whether to run the context server on the remote server when using remote development.
         ///
-        /// If false, the server runs on the remote machine for remote projects.
-        /// Use this for servers that need to access remote-only resources like
-        /// databases or internal APIs.
-        #[serde(default = "default_true")]
-        local_only: bool,
-
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
         #[serde(flatten)]
         command: ContextServerCommand,
     },
@@ -258,16 +253,13 @@ pub enum ContextServerSettingsContent {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-        /// If true (the default), always run this server on the local machine,
-        /// even for remote (SSH) projects. This is the safe default for servers
-        /// that may require local authentication, show UI, or access local-only
-        /// resources.
+        /// Whether to run the context server on the remote server when using remote development.
         ///
-        /// If false, the server runs on the remote machine for remote projects.
-        /// Use this for servers that need to access remote-only resources like
-        /// databases or internal APIs.
-        #[serde(default = "default_true")]
-        local_only: bool,
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
@@ -293,14 +285,6 @@ impl ContextServerSettingsContent {
                 enabled: remote_enabled,
                 ..
             } => *remote_enabled = enabled,
-        }
-    }
-
-    pub fn local_only(&self) -> bool {
-        match self {
-            ContextServerSettingsContent::Stdio { local_only, .. } => *local_only,
-            ContextServerSettingsContent::Extension { local_only, .. } => *local_only,
-            ContextServerSettingsContent::Http { .. } => false,
         }
     }
 }

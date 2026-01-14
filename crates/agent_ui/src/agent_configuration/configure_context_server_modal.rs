@@ -182,7 +182,7 @@ impl ConfigurationSource {
                             id,
                             ContextServerSettings::Stdio {
                                 enabled: true,
-                                local_only: false,
+                                remote: false,
                                 command,
                             },
                         )
@@ -210,7 +210,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
-                        local_only: false,
+                        remote: false,
                         settings,
                     },
                 ))

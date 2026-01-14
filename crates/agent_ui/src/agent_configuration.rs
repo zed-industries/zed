@@ -920,7 +920,7 @@ impl AgentConfiguration {
                                                     .or_insert_with(|| {
                                                         settings::ContextServerSettingsContent::Extension {
                                                             enabled: is_enabled,
-                                                            local_only: false,
+                                                            remote: false,
                                                             settings: serde_json::json!({}),
                                                         }
                                                     })
