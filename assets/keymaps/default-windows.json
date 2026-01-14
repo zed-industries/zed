@@ -204,8 +204,8 @@
     "bindings": {
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
+      "shift-alt-y": "agent::KeepAll",
+      "shift-alt-z": "agent::RejectAll",
       "ctrl-shift-r": "agent::OpenAgentDiff",
     },
   },
@@ -215,8 +215,8 @@
     "bindings": {
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
+      "shift-alt-y": "agent::KeepAll",
+      "shift-alt-z": "agent::RejectAll",
     },
   },
   {
@@ -307,8 +307,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-r": "agent::OpenAgentDiff",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
+      "shift-alt-y": "agent::KeepAll",
+      "shift-alt-z": "agent::RejectAll",
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-shift-enter": "agent::QueueMessage",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
@@ -560,6 +560,7 @@
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "shift-alt-b": "branches::OpenRecent",
+      "ctrl-alt-p": "workspace::SwitchProject",
       "shift-alt-enter": "toast::RunAction",
       "ctrl-shift-`": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
@@ -1359,6 +1360,29 @@
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
       "ctrl-shift-i": "branch_picker::FilterRemotes",
+    },
+  },
+  {
+    "context": "RunModal",
+    "bindings": {
+      "alt-1": "new_process_modal::ActivateTaskTab",
+      "alt-2": "new_process_modal::ActivateDebugTab",
+      "alt-3": "new_process_modal::ActivateAttachTab",
+      "alt-4": "new_process_modal::ActivateLaunchTab",
+    },
+  },
+  {
+    "context": "GitPicker",
+    "bindings": {
+      "alt-1": "git_picker::ActivateBranchesTab",
+      "alt-2": "git_picker::ActivateWorktreesTab",
+      "alt-3": "git_picker::ActivateStashTab",
+    },
+  },
+  {
+    "context": "MultiProjectDropdown",
+    "bindings": {
+      "shift-backspace": "project_dropdown::RemoveSelectedFolder",
     },
   },
 ]

@@ -153,11 +153,9 @@ impl EditPredictionContextView {
         run.finished_at = Some(info.timestamp);
         run.metadata = info.metadata;
 
-        let related_files = self
-            .store
-            .read(cx)
-            .context_for_project_with_buffers(&self.project, cx)
-            .map_or(Vec::new(), |files| files.collect());
+        let related_files = self.store.update(cx, |store, cx| {
+            store.context_for_project_with_buffers(&self.project, cx)
+        });
 
         let editor = run.editor.clone();
         let multibuffer = run.editor.read(cx).buffer().clone();

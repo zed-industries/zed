@@ -131,6 +131,22 @@ impl Diff {
         }
     }
 
+    /// Returns the original text before any edits were applied.
+    pub fn base_text(&self) -> &Arc<str> {
+        match self {
+            Self::Pending(PendingDiff { base_text, .. }) => base_text,
+            Self::Finalized(FinalizedDiff { base_text, .. }) => base_text,
+        }
+    }
+
+    /// Returns the buffer being edited (for pending diffs) or the snapshot buffer (for finalized diffs).
+    pub fn buffer(&self) -> &Entity<Buffer> {
+        match self {
+            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer,
+            Self::Finalized(FinalizedDiff { new_buffer, .. }) => new_buffer,
+        }
+    }
+
     pub fn multibuffer(&self) -> &Entity<MultiBuffer> {
         match self {
             Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,

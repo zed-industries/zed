@@ -603,6 +603,7 @@ fn main() {
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
+        zed::remote_debug::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
@@ -877,10 +878,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         })
                         .await?;
 
-                    let thread_metadata = agent::DbThreadMetadata {
-                        id: session_id,
-                        title: format!("🔗 {}", response.title).into(),
-                        updated_at: chrono::Utc::now(),
+                    let thread_metadata = acp_thread::AgentSessionInfo {
+                        session_id,
+                        cwd: None,
+                        title: Some(format!("🔗 {}", response.title).into()),
+                        updated_at: Some(chrono::Utc::now()),
+                        meta: None,
                     };
 
                     workspace.update(cx, |workspace, window, cx| {

@@ -2488,8 +2488,9 @@ mod tests {
     use collections::HashMap;
     use gpui::{
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-        Point, TestAppContext, bounds, point, size, smol_timeout,
+        Point, TestAppContext, bounds, point, size,
     };
+    use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::ThreadRng};
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
@@ -2697,7 +2698,7 @@ mod tests {
         });
 
         let mut all_events = vec![first_event];
-        while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
+        while let Ok(new_event) = event_rx.recv().await {
             all_events.push(new_event.clone());
             if new_event == Event::CloseTerminal {
                 break;
@@ -2743,11 +2744,14 @@ mod tests {
             .unwrap();
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
-        cx.update(|cx| {
-            cx.subscribe(&terminal, move |_, e, _| {
-                event_tx.send_blocking(e.clone()).unwrap();
-            })
+        let all_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        cx.update({
+            let all_events = all_events.clone();
+            |cx| {
+                cx.subscribe(&terminal, move |_, e, _| {
+                    all_events.lock().push(e.clone());
+                })
+            }
         })
         .detach();
         let completion_check_task = cx.background_spawn(async move {
@@ -2766,21 +2770,16 @@ mod tests {
             }
         });
 
-        let mut all_events = Vec::new();
-        while let Ok(Ok(new_event)) =
-            smol_timeout(Duration::from_millis(500), event_rx.recv()).await
-        {
-            all_events.push(new_event.clone());
-        }
+        completion_check_task.await;
+        cx.executor().timer(Duration::from_millis(500)).await;
 
         assert!(
             !all_events
+                .lock()
                 .iter()
                 .any(|event| event == &Event::CloseTerminal),
             "Wrong shell command should update the title but not should not close the terminal to show the error message, but got events: {all_events:?}",
         );
-
-        completion_check_task.await;
     }
 
     #[test]
@@ -3107,7 +3106,9 @@ mod tests {
             build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
 
         // Wait a bit for the echo to execute and produce output
-        smol::Timer::after(Duration::from_millis(200)).await;
+        cx.background_executor
+            .timer(Duration::from_millis(200))
+            .await;
 
         // Kill the active task
         terminal.update(cx, |term, _cx| {
@@ -3115,14 +3116,14 @@ mod tests {
         });
 
         // wait_for_completed_task should complete within a reasonable time (not hang)
-        let completion_result = smol_timeout(Duration::from_secs(5), completion_rx.recv()).await;
+        let completion_result = completion_rx.recv().await;
         assert!(
             completion_result.is_ok(),
             "wait_for_completed_task should complete after kill_active_task, but it timed out"
         );
 
         // The exit status should indicate the process was killed (not a clean exit)
-        let exit_status = completion_result.unwrap().unwrap();
+        let exit_status = completion_result.unwrap();
         assert!(
             exit_status.is_some(),
             "Should have received an exit status after killing"
@@ -3145,9 +3146,9 @@ mod tests {
         let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
 
         // Wait for the command to complete naturally
-        let exit_status = smol_timeout(Duration::from_secs(5), completion_rx.recv())
+        let exit_status = completion_rx
+            .recv()
             .await
-            .expect("Command should complete")
             .expect("Should receive exit status");
         assert_eq!(exit_status, Some(ExitStatus::default()));
 
