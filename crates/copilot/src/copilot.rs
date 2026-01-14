@@ -1,12 +1,15 @@
 mod copilot_edit_prediction_delegate;
 pub mod request;
 
-use crate::request::{DidFocus, DidFocusParams, NextEditSuggestions};
+use crate::request::{
+    DidFocus, DidFocusParams, FormattingOptions, InlineCompletionContext,
+    InlineCompletionTriggerKind, InlineCompletions, NextEditSuggestions,
+};
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
+use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared, select_biased};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
     WeakEntity, actions,
@@ -262,13 +265,21 @@ struct GlobalCopilot(Entity<Copilot>);
 
 impl Global for GlobalCopilot {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompletionSource {
+    NextEditSuggestion,
+    InlineCompletion,
+}
+
 /// Copilot's NextEditSuggestion response, with coordinates converted to Anchors.
-struct CopilotEditPrediction {
-    buffer: Entity<Buffer>,
-    range: Range<Anchor>,
-    text: String,
-    command: Option<lsp::Command>,
-    snapshot: BufferSnapshot,
+#[derive(Clone)]
+pub(crate) struct CopilotEditPrediction {
+    pub(crate) buffer: Entity<Buffer>,
+    pub(crate) range: Range<Anchor>,
+    pub(crate) text: String,
+    pub(crate) command: Option<lsp::Command>,
+    pub(crate) snapshot: BufferSnapshot,
+    pub(crate) source: CompletionSource,
 }
 
 impl Copilot {
@@ -907,39 +918,127 @@ impl Copilot {
             .registered_buffers
             .get_mut(&buffer.entity_id())
             .unwrap();
-        let snapshot = registered_buffer.report_changes(buffer, cx);
+        let pending_snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
+        let snapshot = buffer.snapshot();
+        let settings = snapshot.settings_at(0, cx);
+        let tab_size = settings.tab_size.get();
+        let hard_tabs = settings.hard_tabs;
+        drop(settings);
 
         cx.background_spawn(async move {
-            let (version, snapshot) = snapshot.await?;
-            let result = lsp
+            let (version, snapshot) = pending_snapshot.await?;
+            let lsp_position = point_to_lsp(position);
+
+            let nes_request = lsp
                 .request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
-                    text_document: lsp::VersionedTextDocumentIdentifier { uri, version },
-                    position: point_to_lsp(position),
+                    text_document: lsp::VersionedTextDocumentIdentifier {
+                        uri: uri.clone(),
+                        version,
+                    },
+                    position: lsp_position,
                 })
-                .await
-                .into_response()
-                .context("copilot: get completions")?;
-            let completions = result
-                .edits
-                .into_iter()
-                .map(|completion| {
-                    let start = snapshot
-                        .clip_point_utf16(point_from_lsp(completion.range.start), Bias::Left);
-                    let end =
-                        snapshot.clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
-                    CopilotEditPrediction {
-                        buffer: buffer_entity.clone(),
-                        range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                        text: completion.text,
-                        command: completion.command,
-                        snapshot: snapshot.clone(),
+                .fuse();
+
+            let inline_request = lsp
+                .request::<InlineCompletions>(request::InlineCompletionsParams {
+                    text_document: lsp::VersionedTextDocumentIdentifier {
+                        uri: uri.clone(),
+                        version,
+                    },
+                    position: lsp_position,
+                    context: InlineCompletionContext {
+                        trigger_kind: InlineCompletionTriggerKind::Automatic,
+                    },
+                    formatting_options: Some(FormattingOptions {
+                        tab_size,
+                        insert_spaces: !hard_tabs,
+                    }),
+                })
+                .fuse();
+
+            futures::pin_mut!(nes_request, inline_request);
+
+            let convert_nes =
+                |result: request::NextEditSuggestionsResult| -> Vec<CopilotEditPrediction> {
+                    result
+                        .edits
+                        .into_iter()
+                        .map(|completion| {
+                            let start = snapshot.clip_point_utf16(
+                                point_from_lsp(completion.range.start),
+                                Bias::Left,
+                            );
+                            let end = snapshot
+                                .clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
+                            CopilotEditPrediction {
+                                buffer: buffer_entity.clone(),
+                                range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                text: completion.text,
+                                command: completion.command,
+                                snapshot: snapshot.clone(),
+                                source: CompletionSource::NextEditSuggestion,
+                            }
+                        })
+                        .collect()
+                };
+
+            let convert_inline =
+                |result: request::InlineCompletionsResult| -> Vec<CopilotEditPrediction> {
+                    result
+                        .items
+                        .into_iter()
+                        .map(|item| {
+                            let start = snapshot
+                                .clip_point_utf16(point_from_lsp(item.range.start), Bias::Left);
+                            let end = snapshot
+                                .clip_point_utf16(point_from_lsp(item.range.end), Bias::Left);
+                            CopilotEditPrediction {
+                                buffer: buffer_entity.clone(),
+                                range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                text: item.insert_text,
+                                command: item.command,
+                                snapshot: snapshot.clone(),
+                                source: CompletionSource::InlineCompletion,
+                            }
+                        })
+                        .collect()
+                };
+
+            let mut nes_result: Option<Vec<CopilotEditPrediction>> = None;
+            let mut inline_result: Option<Vec<CopilotEditPrediction>> = None;
+
+            loop {
+                select_biased! {
+                    nes = nes_request => {
+                        let completions = nes.into_response().ok().map(convert_nes).unwrap_or_default();
+                        if !completions.is_empty() {
+                            return Ok(completions);
+                        }
+                        nes_result = Some(completions);
                     }
-                })
-                .collect();
-            anyhow::Ok(completions)
+                    inline = inline_request => {
+                        let completions = inline.into_response().ok().map(convert_inline).unwrap_or_default();
+                        if !completions.is_empty() && nes_result.is_some() {
+                            return Ok(completions);
+                        }
+                        inline_result = Some(completions);
+                    }
+                    complete => break,
+                }
+
+                if let (Some(nes), Some(inline)) = (&nes_result, &inline_result) {
+                    return if !nes.is_empty() {
+                        Ok(nes.clone())
+                    } else {
+                        Ok(inline.clone())
+                    };
+                }
+            }
+
+            Ok(nes_result.or(inline_result).unwrap_or_default())
         })
     }
 

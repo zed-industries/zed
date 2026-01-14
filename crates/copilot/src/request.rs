@@ -204,3 +204,96 @@ impl lsp::notification::Notification for DidShowInlineEdit {
     type Params = DidShowInlineEditParams;
     const METHOD: &'static str = "textDocument/didShowInlineEdit";
 }
+
+// Inline Completions (non-NES) - textDocument/inlineCompletion
+
+pub enum InlineCompletions {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineCompletionsParams {
+    pub text_document: VersionedTextDocumentIdentifier,
+    pub position: lsp::Position,
+    pub context: InlineCompletionContext,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formatting_options: Option<FormattingOptions>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineCompletionContext {
+    pub trigger_kind: InlineCompletionTriggerKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InlineCompletionTriggerKind {
+    Invoked = 1,
+    Automatic = 2,
+}
+
+impl Serialize for InlineCompletionTriggerKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> Deserialize<'de> for InlineCompletionTriggerKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u8::deserialize(deserializer)?;
+        match value {
+            1 => Ok(InlineCompletionTriggerKind::Invoked),
+            2 => Ok(InlineCompletionTriggerKind::Automatic),
+            _ => Err(serde::de::Error::custom("invalid trigger kind")),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormattingOptions {
+    pub tab_size: u32,
+    pub insert_spaces: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineCompletionsResult {
+    pub items: Vec<InlineCompletionItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineCompletionItem {
+    pub insert_text: String,
+    pub range: lsp::Range,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<lsp::Command>,
+}
+
+impl lsp::request::Request for InlineCompletions {
+    type Params = InlineCompletionsParams;
+    type Result = InlineCompletionsResult;
+
+    const METHOD: &'static str = "textDocument/inlineCompletion";
+}
+
+// Telemetry notifications for inline completions
+
+pub(crate) struct DidShowCompletion;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DidShowCompletionParams {
+    pub(crate) item: InlineCompletionItem,
+}
+
+impl lsp::notification::Notification for DidShowCompletion {
+    type Params = DidShowCompletionParams;
+    const METHOD: &'static str = "textDocument/didShowCompletion";
+}
