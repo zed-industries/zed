@@ -417,6 +417,7 @@ impl Copilot {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
         use fs::FakeFs;
+        use gpui::Subscription;
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
@@ -432,6 +433,7 @@ impl Copilot {
             &mut cx.to_async(),
         );
         let node_runtime = NodeRuntime::unavailable();
+        let send_focus_notification = Subscription::new(|| {});
         let this = cx.new(|cx| Self {
             server_id: LanguageServerId(0),
             fs: FakeFs::new(cx.background_executor().clone()),
@@ -441,7 +443,10 @@ impl Copilot {
                 sign_in_status: SignInStatus::Authorized,
                 registered_buffers: Default::default(),
             }),
-            _subscription: cx.on_app_quit(Self::shutdown_language_server),
+            _subscriptions: [
+                send_focus_notification,
+                cx.on_app_quit(Self::shutdown_language_server),
+            ],
             buffers: Default::default(),
         });
         (this, fake_server)
