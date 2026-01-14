@@ -3,7 +3,8 @@ use crate::{
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, SkillTool, SubagentTool, SystemPromptTemplate, Template,
-    Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    Templates, TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -43,7 +44,7 @@ use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings, update_settings_file};
+use settings::{LanguageModelSelection, Settings, ToolPermissionMode, update_settings_file};
 use smol::stream::StreamExt;
 use std::{
     collections::BTreeMap,
@@ -594,11 +595,81 @@ pub struct NewTerminal {
     pub response: oneshot::Sender<Result<Entity<acp_thread::Terminal>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolPermissionContext {
+    pub tool_name: String,
+    pub input_value: String,
+}
+
+impl ToolPermissionContext {
+    pub fn new(tool_name: impl Into<String>, input_value: impl Into<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            input_value: input_value.into(),
+        }
+    }
+
+    /// Builds the permission options for this tool context.
+    ///
+    /// This is the canonical source for permission option generation.
+    /// Tests should use this function rather than manually constructing options.
+    pub fn build_permission_options(&self) -> Vec<acp::PermissionOption> {
+        use crate::pattern_extraction::*;
+
+        let tool_name = &self.tool_name;
+        let input_value = &self.input_value;
+
+        let (pattern, pattern_display) = match tool_name.as_str() {
+            "terminal" => (
+                extract_terminal_pattern(input_value),
+                extract_terminal_pattern_display(input_value),
+            ),
+            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+                extract_path_pattern(input_value),
+                extract_path_pattern_display(input_value),
+            ),
+            "fetch" => (
+                extract_url_pattern(input_value),
+                extract_url_pattern_display(input_value),
+            ),
+            _ => (None, None),
+        };
+
+        let mut options = vec![acp::PermissionOption::new(
+            acp::PermissionOptionId::new(format!("always:{}", tool_name)),
+            format!("Always for {}", tool_name.replace('_', " ")),
+            acp::PermissionOptionKind::AllowAlways,
+        )];
+
+        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+            let button_text = match tool_name.as_str() {
+                "terminal" => format!("Always for `{}` commands", display),
+                "fetch" => format!("Always for `{}`", display),
+                _ => format!("Always for `{}`", display),
+            };
+            options.push(acp::PermissionOption::new(
+                acp::PermissionOptionId::new(format!("always_pattern:{}:{}", tool_name, pattern)),
+                button_text,
+                acp::PermissionOptionKind::AllowAlways,
+            ));
+        }
+
+        options.push(acp::PermissionOption::new(
+            acp::PermissionOptionId::new("once"),
+            "Only this time",
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+
+        options
+    }
+}
+
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
     pub options: Vec<acp::PermissionOption>,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
+    pub context: Option<ToolPermissionContext>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2902,19 +2973,32 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
+    /// Authorize a third-party tool (e.g., MCP tool from a context server).
+    ///
+    /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
+    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    ///
+    /// Shows 3 buttons:
+    /// - "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
+    /// - "Allow" → approve once
+    /// - "Deny" → reject once
+    pub fn authorize_third_party_tool(
+        &self,
+        title: impl Into<String>,
+        tool_id: String,
+        display_name: String,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+
+        let decision = decide_permission_from_settings(&tool_id, "", &settings);
+
+        match decision {
+            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Deny(reason) => return Task::ready(Err(anyhow!(reason))),
+            ToolPermissionDecision::Confirm => {}
         }
 
-        self.authorize_required(title, cx)
-    }
-
-    /// Like `authorize`, but always prompts for confirmation regardless of
-    /// the `always_allow_tool_actions` setting. Use this when tool-specific
-    /// permission rules (like `always_confirm` patterns) have already determined
-    /// that confirmation is required.
-    pub fn authorize_required(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
             .0
@@ -2926,13 +3010,13 @@ impl ToolCallEventStream {
                     ),
                     options: vec![
                         acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("always_allow"),
-                            "Always Allow",
+                            acp::PermissionOptionId::new(format!("always_allow_mcp:{}", tool_id)),
+                            format!("Always allow {} MCP tool", display_name),
                             acp::PermissionOptionKind::AllowAlways,
                         ),
                         acp::PermissionOption::new(
                             acp::PermissionOptionId::new("allow"),
-                            "Allow",
+                            "Allow once",
                             acp::PermissionOptionKind::AllowOnce,
                         ),
                         acp::PermissionOption::new(
@@ -2942,27 +3026,146 @@ impl ToolCallEventStream {
                         ),
                     ],
                     response: response_tx,
+                    context: None,
                 },
             )))
             .ok();
+
         let fs = self.fs.clone();
-        cx.spawn(async move |cx| match response_rx.await?.0.as_ref() {
-            "always_allow" => {
+        cx.spawn(async move |cx| {
+            let response_str = response_rx.await?.0.to_string();
+
+            if response_str == format!("always_allow_mcp:{}", tool_id) {
                 if let Some(fs) = fs.clone() {
                     cx.update(|cx| {
-                        update_settings_file(fs, cx, |settings, _| {
+                        update_settings_file(fs, cx, move |settings, _| {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_always_allow_tool_actions(true);
+                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
                         });
                     });
                 }
-
-                Ok(())
+                return Ok(());
             }
-            "allow" => Ok(()),
-            _ => Err(anyhow!("Permission to run tool denied by user")),
+
+            if response_str == "allow" {
+                return Ok(());
+            }
+
+            Err(anyhow!("Permission to run tool denied by user"))
+        })
+    }
+
+    pub fn authorize(
+        &self,
+        title: impl Into<String>,
+        context: ToolPermissionContext,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        use settings::ToolPermissionMode;
+
+        let options = context.build_permission_options();
+
+        let (response_tx, response_rx) = oneshot::channel();
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                ToolCallAuthorization {
+                    tool_call: acp::ToolCallUpdate::new(
+                        self.tool_use_id.to_string(),
+                        acp::ToolCallUpdateFields::new().title(title.into()),
+                    ),
+                    options,
+                    response: response_tx,
+                    context: Some(context),
+                },
+            )))
+            .ok();
+
+        let fs = self.fs.clone();
+        cx.spawn(async move |cx| {
+            let response_str = response_rx.await?.0.to_string();
+
+            // Handle "always allow tool" - e.g., "always_allow:terminal"
+            if let Some(tool) = response_str.strip_prefix("always_allow:") {
+                if let Some(fs) = fs.clone() {
+                    let tool = tool.to_string();
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
+                        });
+                    });
+                }
+                return Ok(());
+            }
+
+            // Handle "always deny tool" - e.g., "always_deny:terminal"
+            if let Some(tool) = response_str.strip_prefix("always_deny:") {
+                if let Some(fs) = fs.clone() {
+                    let tool = tool.to_string();
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
+                        });
+                    });
+                }
+                return Err(anyhow!("Permission to run tool denied by user"));
+            }
+
+            // Handle "always allow pattern" - e.g., "always_allow_pattern:terminal:^cargo\s"
+            if response_str.starts_with("always_allow_pattern:") {
+                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
+                if parts.len() == 3 {
+                    let pattern_tool_name = parts[1].to_string();
+                    let pattern = parts[2].to_string();
+                    if let Some(fs) = fs.clone() {
+                        cx.update(|cx| {
+                            update_settings_file(fs, cx, move |settings, _| {
+                                settings
+                                    .agent
+                                    .get_or_insert_default()
+                                    .add_tool_allow_pattern(&pattern_tool_name, pattern);
+                            });
+                        });
+                    }
+                }
+                return Ok(());
+            }
+
+            // Handle "always deny pattern" - e.g., "always_deny_pattern:terminal:^cargo\s"
+            if response_str.starts_with("always_deny_pattern:") {
+                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
+                if parts.len() == 3 {
+                    let pattern_tool_name = parts[1].to_string();
+                    let pattern = parts[2].to_string();
+                    if let Some(fs) = fs.clone() {
+                        cx.update(|cx| {
+                            update_settings_file(fs, cx, move |settings, _| {
+                                settings
+                                    .agent
+                                    .get_or_insert_default()
+                                    .add_tool_deny_pattern(&pattern_tool_name, pattern);
+                            });
+                        });
+                    }
+                }
+                return Err(anyhow!("Permission to run tool denied by user"));
+            }
+
+            // Handle simple "allow" (allow once)
+            if response_str == "allow" {
+                return Ok(());
+            }
+
+            // Handle simple "deny" (deny once)
+            Err(anyhow!("Permission to run tool denied by user"))
         })
     }
 }
