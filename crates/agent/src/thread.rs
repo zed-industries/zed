@@ -725,6 +725,7 @@ impl Thread {
         templates: Arc<Templates>,
         model: Arc<dyn LanguageModel>,
         subagent_context: SubagentContext,
+        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -744,7 +745,7 @@ impl Thread {
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
-            tools: BTreeMap::default(),
+            tools: parent_tools,
             tool_use_limit_reached: false,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
@@ -1122,7 +1123,7 @@ impl Thread {
         }
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let tool_names = self.registered_tool_names();
+            let parent_tools = self.tools.clone();
             self.add_tool(SubagentTool::new(
                 cx.weak_entity(),
                 self.project.clone(),
@@ -1131,7 +1132,7 @@ impl Thread {
                 self.context_server_registry.clone(),
                 self.templates.clone(),
                 self.depth(),
-                tool_names,
+                parent_tools,
             ));
         }
     }
@@ -2799,8 +2800,14 @@ pub struct ToolCallEventStream {
 impl ToolCallEventStream {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
+        let (stream, receiver, _cancellation_tx) = Self::test_with_cancellation();
+        (stream, receiver)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_with_cancellation() -> (Self, ToolCallEventStreamReceiver, watch::Sender<bool>) {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
-        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
+        let (cancellation_tx, cancellation_rx) = watch::channel(false);
 
         let stream = ToolCallEventStream::new(
             "test_id".into(),
@@ -2809,7 +2816,17 @@ impl ToolCallEventStream {
             cancellation_rx,
         );
 
-        (stream, ToolCallEventStreamReceiver(events_rx))
+        (
+            stream,
+            ToolCallEventStreamReceiver(events_rx),
+            cancellation_tx,
+        )
+    }
+
+    /// Signal cancellation for this event stream. Only available in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn signal_cancellation_with_sender(cancellation_tx: &mut watch::Sender<bool>) {
+        cancellation_tx.send(true).ok();
     }
 
     fn new(
