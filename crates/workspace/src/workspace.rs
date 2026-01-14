@@ -43,12 +43,14 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
-    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
-    WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Action, AnyDrag, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
+    Context, CursorStyle, Decorations, DispatchPhase, DragMoveEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke,
+    ManagedView, MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, ResizeEdge, SharedString, Size, Stateful, Subscription,
+    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowHandle, WindowId, WindowKind, WindowOptions, actions, canvas, point,
+    px, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -120,7 +122,7 @@ use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{Window, prelude::*};
+use ui::{Tab, Window, prelude::*};
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -147,6 +149,40 @@ use crate::{
     security_modal::SecurityModal,
     utility_pane::{DraggedUtilityPane, UtilityPaneFrame, UtilityPaneSlot, UtilityPaneState},
 };
+
+pub struct DragPreviewPopup {
+    pub label: SharedString,
+    pub is_active: bool,
+}
+
+impl Render for DragPreviewPopup {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+        Tab::new("drag-preview")
+            .toggle_state(self.is_active)
+            .child(
+                Label::new(self.label.clone())
+                    .single_line()
+                    .color(if self.is_active {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    }),
+            )
+            .render(window, cx)
+            .font(ui_font)
+    }
+}
+
+#[derive(Default)]
+pub struct CrossWindowDragPreview {
+    pub popup_window: Option<gpui::AnyWindowHandle>,
+    pub source_window_id: Option<WindowId>,
+    pub last_position: Option<Point<Pixels>>,
+    pub stored_drag: Option<AnyDrag>,
+}
+
+impl Global for CrossWindowDragPreview {}
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -2807,6 +2843,109 @@ impl Workspace {
             .await?;
             Ok(())
         })
+    }
+
+    pub fn open_dragged_tab_in_new_window(
+        dragged_tab: &DraggedTab,
+        screen_position: Point<Pixels>,
+        source_window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let app_state = match AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            Some(state) => state,
+            None => return false,
+        };
+
+        let item = dragged_tab.item.boxed_clone();
+        let item_id = item.item_id();
+        let source_pane = dragged_tab.pane.clone();
+
+        let source_workspace = source_pane.read(cx).workspace.clone();
+        let project = match source_workspace.upgrade() {
+            Some(ws) => ws.read(cx).project().clone(),
+            None => return false,
+        };
+
+        let source_window_id = source_window.window_handle().window_id();
+
+        let workspace_windows: Vec<WindowHandle<Workspace>> = cx
+            .windows()
+            .into_iter()
+            .filter_map(|window| window.downcast::<Workspace>())
+            .filter(|workspace_handle| workspace_handle.window_id() != source_window_id)
+            .collect();
+
+        let mut target_workspace = None;
+        for workspace_handle in workspace_windows {
+            let is_within_bounds = workspace_handle
+                .update(cx, |_, window, _| {
+                    let bounds = window.bounds();
+                    screen_position.x >= bounds.origin.x
+                        && screen_position.x <= bounds.origin.x + bounds.size.width
+                        && screen_position.y >= bounds.origin.y
+                        && screen_position.y <= bounds.origin.y + bounds.size.height
+                })
+                .unwrap_or(false);
+
+            if is_within_bounds {
+                target_workspace = Some(workspace_handle);
+                break;
+            }
+        }
+
+        source_pane.update(cx, |pane, cx| {
+            pane.remove_item(item_id, false, true, source_window, cx);
+        });
+
+        if let Some(target_workspace) = target_workspace {
+            target_workspace
+                .update(cx, |workspace, window, cx| {
+                    let pane = workspace.active_pane().clone();
+                    pane.update(cx, |pane, cx| {
+                        pane.add_item(item, true, true, None, window, cx);
+                    });
+                    window.activate_window();
+                })
+                .ok();
+            return true;
+        }
+
+        let window_size = Size {
+            width: px(800.),
+            height: px(600.),
+        };
+        let window_origin = Point {
+            x: screen_position.x - window_size.width / 2.0,
+            y: screen_position.y - px(20.),
+        };
+
+        let window_bounds = Bounds {
+            origin: window_origin,
+            size: window_size,
+        };
+
+        let mut options = (app_state.build_window_options)(None, cx);
+        options.window_bounds = Some(WindowBounds::Windowed(window_bounds));
+
+        let new_window = cx.open_window(options, move |window, cx| {
+            cx.new(|cx| Workspace::new(None, project, app_state, window, cx))
+        });
+
+        let Ok(new_window) = new_window else {
+            return false;
+        };
+
+        new_window
+            .update(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().clone();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item, true, true, None, window, cx);
+                });
+                window.activate_window();
+            })
+            .ok();
+
+        true
     }
 
     #[allow(clippy::type_complexity)]
@@ -7060,7 +7199,224 @@ impl Render for Workspace {
                                                 }
                                             })
                                         },
-                                        |_, _, _, _| {},
+                                        |_, _, window, _cx| {
+                                            let viewport_size = window.viewport_size();
+                                            let window_bounds = window.bounds();
+                                            let window_id = window.window_handle().window_id();
+
+                                            window.on_mouse_event(
+                                                move |event: &MouseMoveEvent,
+                                                      phase,
+                                                      _window,
+                                                      cx| {
+                                                    if phase != DispatchPhase::Capture {
+                                                        return;
+                                                    }
+
+                                                    let drag_info: Option<(SharedString, bool, Point<Pixels>)> =
+                                                        cx.active_drag_value::<DraggedTab>().and_then(|dragged_tab| {
+                                                            cx.active_drag_cursor_offset().map(|cursor_offset| {
+                                                                let label = dragged_tab.item.tab_content_text(dragged_tab.detail, cx);
+                                                                let is_active = dragged_tab.is_active;
+                                                                (label, is_active, cursor_offset)
+                                                            })
+                                                        });
+
+                                                    let stored_drag_info: Option<(SharedString, bool, Point<Pixels>)> =
+                                                        cx.try_global::<CrossWindowDragPreview>()
+                                                            .and_then(|preview| preview.stored_drag.as_ref())
+                                                            .and_then(|drag| {
+                                                                drag.value.downcast_ref::<DraggedTab>().map(|dragged_tab| {
+                                                                    let label = dragged_tab.item.tab_content_text(dragged_tab.detail, cx);
+                                                                    let is_active = dragged_tab.is_active;
+                                                                    (label, is_active, drag.cursor_offset)
+                                                                })
+                                                            });
+
+                                                    let Some((label, is_active, cursor_offset)) = drag_info.or(stored_drag_info) else {
+                                                        if let Some(preview) = cx.try_global::<CrossWindowDragPreview>() {
+                                                            if let Some(popup) = preview.popup_window {
+                                                                popup.update(cx, |_, window, _| {
+                                                                    window.remove_window();
+                                                                }).ok();
+                                                            }
+                                                        }
+                                                        if cx.try_global::<CrossWindowDragPreview>().is_some() {
+                                                            let preview = cx.global_mut::<CrossWindowDragPreview>();
+                                                            preview.popup_window = None;
+                                                            preview.source_window_id = None;
+                                                            preview.last_position = None;
+                                                            preview.stored_drag = None;
+                                                        }
+                                                        return;
+                                                    };
+
+                                                    let pos = event.position;
+                                                    let is_outside = pos.x < px(0.)
+                                                        || pos.y < px(0.)
+                                                        || pos.x > viewport_size.width
+                                                        || pos.y > viewport_size.height;
+
+                                                    if is_outside {
+                                                        let screen_position = Point {
+                                                            x: window_bounds.origin.x + pos.x,
+                                                            y: window_bounds.origin.y + pos.y,
+                                                        };
+
+                                                        if cx.try_global::<CrossWindowDragPreview>().is_none() {
+                                                            cx.set_global(CrossWindowDragPreview::default());
+                                                        }
+
+                                                        let taken_drag = cx.take_active_drag();
+                                                        if let Some(drag) = taken_drag {
+                                                            let preview = cx.global_mut::<CrossWindowDragPreview>();
+                                                            preview.stored_drag = Some(drag);
+                                                        }
+
+                                                        let popup_origin = Point {
+                                                            x: screen_position.x - cursor_offset.x,
+                                                            y: screen_position.y - cursor_offset.y,
+                                                        };
+
+                                                        let preview = cx.global::<CrossWindowDragPreview>();
+                                                        let has_popup = preview.popup_window.is_some();
+                                                        let is_same_source = preview.source_window_id == Some(window_id);
+                                                        let popup_handle = preview.popup_window;
+
+                                                        if has_popup && is_same_source {
+                                                            if let Some(popup) = popup_handle {
+                                                                popup.update(cx, |_, window, _| {
+                                                                    window.set_position(popup_origin);
+                                                                }).ok();
+                                                            }
+                                                            let preview = cx.global_mut::<CrossWindowDragPreview>();
+                                                            preview.last_position = Some(screen_position);
+                                                        } else {
+                                                            if let Some(popup) = popup_handle {
+                                                                popup.update(cx, |_, window, _| {
+                                                                    window.remove_window();
+                                                                }).ok();
+                                                            }
+
+                                                            let estimated_width = px(label.len() as f32 * 8.0 + 60.0).max(px(80.));
+                                                            let tab_height = px(32.);
+                                                            let popup_bounds = Bounds {
+                                                                origin: popup_origin,
+                                                                size: size(estimated_width, tab_height),
+                                                            };
+
+                                                            let popup_result = cx.open_window(
+                                                                WindowOptions {
+                                                                    window_bounds: Some(WindowBounds::Windowed(popup_bounds)),
+                                                                    titlebar: None,
+                                                                    focus: false,
+                                                                    show: true,
+                                                                    kind: WindowKind::PopUp,
+                                                                    is_movable: false,
+                                                                    is_resizable: false,
+                                                                    window_background: WindowBackgroundAppearance::Transparent,
+                                                                    window_decorations: Some(WindowDecorations::Client),
+                                                                    ..Default::default()
+                                                                },
+                                                                move |_, cx| {
+                                                                    cx.new(|_| DragPreviewPopup { label, is_active })
+                                                                },
+                                                            );
+
+                                                            if let Ok(popup) = popup_result {
+                                                                let preview = cx.global_mut::<CrossWindowDragPreview>();
+                                                                preview.popup_window = Some(popup.into());
+                                                                preview.source_window_id = Some(window_id);
+                                                                preview.last_position = Some(screen_position);
+                                                            }
+                                                        }
+                                                    } else {
+                                                        if cx.try_global::<CrossWindowDragPreview>().is_some() {
+                                                            let preview = cx.global::<CrossWindowDragPreview>();
+                                                            if preview.source_window_id == Some(window_id) {
+                                                                if let Some(popup) = preview.popup_window {
+                                                                    popup.update(cx, |_, window, _| {
+                                                                        window.remove_window();
+                                                                    }).ok();
+                                                                }
+                                                                let preview = cx.global_mut::<CrossWindowDragPreview>();
+                                                                let stored = preview.stored_drag.take();
+                                                                preview.popup_window = None;
+                                                                preview.source_window_id = None;
+                                                                preview.last_position = None;
+                                                                if let Some(drag) = stored {
+                                                                    cx.restore_active_drag(drag);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                            );
+
+                                            window.on_mouse_event(
+                                                move |event: &MouseUpEvent,
+                                                      phase,
+                                                      window,
+                                                      cx| {
+                                                    if phase != DispatchPhase::Capture {
+                                                        return;
+                                                    }
+
+                                                    let stored_drag = cx.try_global::<CrossWindowDragPreview>()
+                                                        .and_then(|preview| preview.stored_drag.as_ref())
+                                                        .and_then(|drag| drag.value.downcast_ref::<DraggedTab>())
+                                                        .cloned();
+
+                                                    if let Some(preview) = cx.try_global::<CrossWindowDragPreview>() {
+                                                        if let Some(popup) = preview.popup_window {
+                                                            popup.update(cx, |_, window, _| {
+                                                                window.remove_window();
+                                                            }).ok();
+                                                        }
+                                                        let preview = cx.global_mut::<CrossWindowDragPreview>();
+                                                        preview.popup_window = None;
+                                                        preview.source_window_id = None;
+                                                        preview.last_position = None;
+                                                        preview.stored_drag = None;
+                                                    }
+
+                                                    let dragged_tab = cx.active_drag_value::<DraggedTab>()
+                                                        .cloned()
+                                                        .or(stored_drag);
+
+                                                    let Some(dragged_tab) = dragged_tab else {
+                                                        return;
+                                                    };
+
+                                                    let pos = event.position;
+                                                    let is_outside = pos.x < px(0.)
+                                                        || pos.y < px(0.)
+                                                        || pos.x > viewport_size.width
+                                                        || pos.y > viewport_size.height;
+
+                                                    if !is_outside {
+                                                        return;
+                                                    }
+
+                                                    let screen_position = Point {
+                                                        x: window_bounds.origin.x + pos.x,
+                                                        y: window_bounds.origin.y + pos.y,
+                                                    };
+
+                                                    cx.clear_active_drag_of_type::<DraggedTab>();
+
+                                                    Workspace::open_dragged_tab_in_new_window(
+                                                        &dragged_tab,
+                                                        screen_position,
+                                                        window,
+                                                        cx,
+                                                    );
+
+                                                    cx.stop_propagation();
+                                                    window.refresh();
+                                                },
+                                            );
+                                        },
                                     )
                                     .absolute()
                                     .size_full()
@@ -7135,6 +7491,29 @@ impl Render for Workspace {
                                         },
                                     ))
                                 })
+                                .drag_over::<DraggedTab>(|workspace_div, _, _, cx| {
+                                    workspace_div
+                                        .bg(cx.theme().colors().drop_target_background)
+                                        .border_4()
+                                        .border_color(cx.theme().colors().border_focused)
+                                })
+                                .on_drop(cx.listener(
+                                    |workspace, dragged_tab: &DraggedTab, window, cx| {
+                                        let item = dragged_tab.item.boxed_clone();
+                                        let item_id = item.item_id();
+                                        let source_pane = dragged_tab.pane.clone();
+
+                                        source_pane.update(cx, |pane, cx| {
+                                            pane.remove_item(item_id, false, true, window, cx);
+                                        });
+
+                                        let pane = workspace.active_pane().clone();
+                                        pane.update(cx, |pane, cx| {
+                                            pane.add_item(item, true, true, None, window, cx);
+                                        });
+                                        window.activate_window();
+                                    },
+                                ))
                                 .child({
                                     match bottom_dock_layout {
                                         BottomDockLayout::Full => div()

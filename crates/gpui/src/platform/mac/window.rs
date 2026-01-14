@@ -5,8 +5,9 @@ use crate::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     SharedString, Size, SystemWindowTab, Timer, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
-    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams,
+    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
+    px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -595,6 +596,7 @@ impl MacWindow {
             show,
             display_id,
             window_min_size,
+            window_decorations,
             tabbing_identifier,
         }: WindowParams,
         executor: ForegroundExecutor,
@@ -626,6 +628,8 @@ impl MacWindow {
                 if titlebar.appears_transparent {
                     style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
                 }
+            } else if window_decorations == Some(WindowDecorations::Client) {
+                style_mask = NSWindowStyleMask::NSBorderlessWindowMask;
             } else {
                 style_mask = NSWindowStyleMask::NSTitledWindowMask
                     | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
@@ -1028,6 +1032,30 @@ impl PlatformWindow for MacWindow {
                         width: size.width.0 as f64,
                         height: size.height.0 as f64,
                     });
+                }
+            })
+            .detach();
+    }
+
+    fn set_position(&mut self, position: Point<Pixels>) {
+        let this = self.0.lock();
+        let window = this.native_window;
+        let screen_frame = unsafe {
+            let screen: id = msg_send![window, screen];
+            if screen.is_null() {
+                return;
+            }
+            NSScreen::frame(screen)
+        };
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    let frame: NSRect = msg_send![window, frame];
+                    let new_origin = NSPoint {
+                        x: position.x.0 as f64,
+                        y: screen_frame.size.height - position.y.0 as f64 - frame.size.height,
+                    };
+                    window.setFrameOrigin_(new_origin);
                 }
             })
             .detach();

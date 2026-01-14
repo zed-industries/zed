@@ -1070,6 +1070,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                window_decorations,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
@@ -1836,6 +1837,11 @@ impl Window {
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
+    }
+
+    /// Set the position of the window on screen in pixels.
+    pub fn set_position(&mut self, position: Point<Pixels>) {
+        self.platform_window.set_position(position);
     }
 
     /// Returns whether or not the window is currently fullscreen

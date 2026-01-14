@@ -2087,6 +2087,44 @@ impl App {
         }
     }
 
+    /// Returns a reference to the value of the currently active drag operation,
+    /// if one exists and its value is of type `T`.
+    pub fn active_drag_value<T: 'static>(&self) -> Option<&T> {
+        self.active_drag
+            .as_ref()
+            .and_then(|drag| drag.value.downcast_ref::<T>())
+    }
+
+    /// Returns the cursor offset of the currently active drag operation, if one exists.
+    pub fn active_drag_cursor_offset(&self) -> Option<Point<Pixels>> {
+        self.active_drag.as_ref().map(|drag| drag.cursor_offset)
+    }
+
+    /// Clears the active drag if its value is of type `T`.
+    /// Returns `true` if the drag was cleared.
+    pub fn clear_active_drag_of_type<T: 'static>(&mut self) -> bool {
+        if self
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.value.is::<T>())
+        {
+            self.active_drag = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Takes ownership of the currently active drag operation, if one exists.
+    pub fn take_active_drag(&mut self) -> Option<AnyDrag> {
+        self.active_drag.take()
+    }
+
+    /// Restores a previously taken drag operation as the active drag.
+    pub fn restore_active_drag(&mut self, drag: AnyDrag) {
+        self.active_drag = Some(drag);
+    }
+
     /// Sets the cursor style for the currently active drag operation.
     pub fn set_active_drag_cursor_style(
         &mut self,

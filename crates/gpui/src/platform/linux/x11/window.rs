@@ -1299,6 +1299,23 @@ impl PlatformWindow for X11Window {
         xcb_flush(&self.0.xcb);
     }
 
+    fn set_position(&mut self, position: Point<Pixels>) {
+        let state = self.0.state.borrow();
+        let scale_factor = state.scale_factor;
+        let x = (position.x.0 * scale_factor).round() as i32;
+        let y = (position.y.0 * scale_factor).round() as i32;
+
+        check_reply(
+            || format!("X11 ConfigureWindow failed. x: {}, y: {}", x, y),
+            self.0.xcb.configure_window(
+                self.0.x_window,
+                &xproto::ConfigureWindowAux::new().x(x).y(y),
+            ),
+        )
+        .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.state.borrow().scale_factor
     }
