@@ -1499,7 +1499,7 @@ fn run_subagent_visual_tests(
     });
 
     cx.background_executor.allow_parking();
-    cx.foreground_executor
+    cx.background_executor
         .block_test(add_worktree_task)
         .context("Failed to add worktree")?;
     cx.background_executor.forbid_parking();
@@ -1557,7 +1557,7 @@ fn run_subagent_visual_tests(
         cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
-        .foreground_executor
+        .background_executor
         .block_test(AgentPanel::load(
             weak_workspace,
             prompt_builder,
@@ -1579,7 +1579,7 @@ fn run_subagent_visual_tests(
 
     // Open the stub thread
     cx.update_window(workspace_window.into(), |_, window, cx| {
-        panel.update(cx, |panel, cx| {
+        panel.update(cx, |panel: &mut agent_ui::AgentPanel, cx| {
             panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
         });
     })?;
@@ -1596,12 +1596,12 @@ fn run_subagent_visual_tests(
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the subagent response
-    let send_future = thread.update(cx, |thread, cx| {
+    let send_future = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
         thread.send(vec!["Run two subagents".into()], cx)
     });
 
     cx.background_executor.allow_parking();
-    cx.foreground_executor
+    cx.background_executor
         .block_test(send_future)
         .context("Failed to send message")?;
     cx.background_executor.forbid_parking();
@@ -1669,7 +1669,7 @@ fn run_subagent_visual_tests(
     });
 
     // Inject subagent threads into the tool call
-    thread.update(cx, |thread, cx| {
+    thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
         thread
             .update_tool_call(
                 ToolCallUpdateSubagentThread {
@@ -1707,7 +1707,7 @@ fn run_subagent_visual_tests(
     )?;
 
     // Now mark the tool call as completed by updating it through the thread
-    thread.update(cx, |thread, cx| {
+    thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
         thread
             .handle_session_update(
                 acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
@@ -1736,7 +1736,7 @@ fn run_subagent_visual_tests(
     )?;
 
     // Expand the first subagent
-    thread_view.update(cx, |view, cx| {
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpThreadView, cx| {
         view.expand_subagent(acp::SessionId::new("subagent-1"), cx);
     });
 
