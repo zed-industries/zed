@@ -1650,7 +1650,7 @@ impl LocalLspStore {
                     let diff = Self::format_via_external_command(
                         buffer,
                         &command,
-                        Some(&arguments[..]),
+                        arguments.as_deref(),
                         cx,
                     )
                     .await

@@ -8,23 +8,25 @@ use std::sync::Arc;
 
 use crate::{ExtendingVec, merge_from};
 
-/// Keyboard modifier keys configuration for settings.
-/// This is a content type that mirrors `gpui::Modifiers` but without the gpui dependency.
+/// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ModifiersContent {
-    /// Whether the control key is pressed.
+    /// The control key
     #[serde(default)]
     pub control: bool,
-    /// Whether the alt key is pressed.
+    /// The alt key
+    /// Sometimes also known as the 'meta' key
     #[serde(default)]
     pub alt: bool,
-    /// Whether the shift key is pressed.
+    /// The shift key
     #[serde(default)]
     pub shift: bool,
-    /// Whether the platform key (Cmd on macOS, Win on Windows) is pressed.
+    /// The command key, on macos
+    /// the windows key, on windows
+    /// the super key, on linux
     #[serde(default)]
     pub platform: bool,
-    /// Whether the function key is pressed.
+    /// The function key
     #[serde(default)]
     pub function: bool,
 }
@@ -791,7 +793,7 @@ pub enum Formatter {
         /// The external program to run.
         command: String,
         /// The arguments to pass to the program.
-        arguments: Vec<String>,
+        arguments: Option<Vec<String>>,
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),

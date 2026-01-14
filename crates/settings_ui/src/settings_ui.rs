@@ -15,7 +15,9 @@ use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsContent, SettingsStore, initial_project_settings_content};
+use settings::{
+    IntoGpui, Settings, SettingsContent, SettingsStore, initial_project_settings_content,
+};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -3777,12 +3779,12 @@ fn render_font_picker(
         .get_value_from_file(file.to_settings(), field.pick)
         .1
         .cloned()
-        .unwrap_or_else(|| String::new().into());
+        .map_or_else(|| SharedString::default(), |value| value.into_gpui());
 
     PopoverMenu::new("font-picker")
         .trigger(render_picker_trigger_button(
             "font_family_picker_trigger".into(),
-            SharedString::from(current_value.as_ref().to_string()),
+            current_value.clone(),
         ))
         .menu(move |window, cx| {
             let file = file.clone();
@@ -3790,7 +3792,7 @@ fn render_font_picker(
 
             Some(cx.new(move |cx| {
                 font_picker(
-                    SharedString::from(current_value.as_ref().to_string()),
+                    current_value,
                     move |font_name, cx| {
                         update_settings_file(
                             file.clone(),

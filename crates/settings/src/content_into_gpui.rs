@@ -1,9 +1,10 @@
 use gpui::{
-    FontFeatures, FontStyle, FontWeight, Modifiers, Pixels, WindowBackgroundAppearance, px,
+    FontFeatures, FontStyle, FontWeight, Modifiers, Pixels, SharedString,
+    WindowBackgroundAppearance, px,
 };
 use settings_content::{
-    FontFeaturesContent, FontSize, FontStyleContent, FontWeightContent, ModifiersContent,
-    WindowBackgroundContent,
+    FontFamilyName, FontFeaturesContent, FontSize, FontStyleContent, FontWeightContent,
+    ModifiersContent, WindowBackgroundContent,
 };
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ impl IntoGpui for FontWeightContent {
     type Output = FontWeight;
 
     fn into_gpui(self) -> Self::Output {
-        FontWeight(self.0)
+        FontWeight(self.0.clamp(100., 950.))
     }
 }
 
@@ -72,5 +73,13 @@ impl IntoGpui for FontSize {
 
     fn into_gpui(self) -> Self::Output {
         px(self.0)
+    }
+}
+
+impl IntoGpui for FontFamilyName {
+    type Output = SharedString;
+
+    fn into_gpui(self) -> Self::Output {
+        SharedString::from(self.0)
     }
 }
