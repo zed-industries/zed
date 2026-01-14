@@ -1,7 +1,7 @@
 use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
-use copilot::{Copilot, CopilotEditPredictionDelegate};
+use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{
     MercuryFeatureFlag, SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag,
 };
@@ -165,7 +165,14 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(None, window, cx);
         }
         EditPredictionProvider::Copilot => {
-            if let Some(copilot) = Copilot::global(cx) {
+            let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
+            let Some(project) = editor.project().cloned() else {
+                return;
+            };
+            let copilot =
+                ep_store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx));
+
+            if let Some(copilot) = copilot {
                 if let Some(buffer) = singleton_buffer
                     && buffer.read(cx).file().is_some()
                 {

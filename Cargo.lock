@@ -3669,13 +3669,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
- "chrono",
  "client",
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot_chat",
  "ctor",
- "dirs 4.0.0",
  "edit_prediction_types",
  "editor",
  "fs",
@@ -3683,11 +3682,9 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.14.0",
  "language",
  "log",
  "lsp",
- "menu",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -3698,13 +3695,45 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
- "task",
  "theme",
+ "util",
+ "zlog",
+]
+
+[[package]]
+name = "copilot_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "dirs 4.0.0",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "itertools 0.14.0",
+ "log",
+ "paths",
+ "serde",
+ "serde_json",
+ "settings",
+]
+
+[[package]]
+name = "copilot_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "gpui",
+ "log",
+ "lsp",
+ "menu",
+ "serde_json",
  "ui",
- "url",
  "util",
  "workspace",
- "zlog",
 ]
 
 [[package]]
@@ -5199,6 +5228,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "copilot",
+ "copilot_ui",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5349,6 +5379,8 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
  "editor",
@@ -8960,6 +8992,8 @@ dependencies = [
  "component",
  "convert_case 0.8.0",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "credentials_provider",
  "deepseek",
  "editor",
@@ -9041,7 +9075,7 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "copilot",
+ "edit_prediction",
  "editor",
  "futures 0.3.31",
  "gpui",
@@ -14939,7 +14973,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
- "copilot",
+ "copilot_ui",
  "edit_prediction",
  "editor",
  "feature_flags",
@@ -20732,6 +20766,8 @@ dependencies = [
  "component",
  "component_preview",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "crashes",
  "dap",
  "dap_adapters",

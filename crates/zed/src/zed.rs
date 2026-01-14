@@ -407,6 +407,7 @@ pub fn initialize_workspace(
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
                 app_state.client.clone(),
+                workspace.project().clone(),
                 cx,
             )
         });
@@ -4922,10 +4923,10 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(
+            copilot_chat::init(
                 app_state.fs.clone(),
                 app_state.client.http_client(),
-                copilot::copilot_chat::CopilotChatConfiguration::default(),
+                copilot_chat::CopilotChatConfiguration::default(),
                 cx,
             );
             image_viewer::init(cx);
