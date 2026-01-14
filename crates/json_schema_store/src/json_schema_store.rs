@@ -3,7 +3,10 @@ use std::sync::{Arc, LazyLock};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
-use language::{LanguageRegistry, LspAdapterDelegate, language_settings::AllLanguageSettings};
+use language::{
+    LanguageRegistry, LanguageServerName, LspAdapterDelegate,
+    language_settings::{AllLanguageSettings, all_language_settings},
+};
 use parking_lot::RwLock;
 use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::{LSP_SETTINGS_SCHEMA_URL_PREFIX, Settings as _, SettingsLocation};
@@ -222,6 +225,9 @@ async fn resolve_dynamic_schema(
                 .all_lsp_adapters()
                 .into_iter()
                 .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
+                .or_else(|| {
+                    languages.load_available_lsp_adapter(&LanguageServerName::from(lsp_name))
+                })
                 .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
 
             let delegate: Arc<dyn LspAdapterDelegate> = cx
@@ -255,11 +261,18 @@ async fn resolve_dynamic_schema(
                 })
         }
         "settings" => {
-            let lsp_adapter_names = languages
+            let mut lsp_adapter_names: Vec<String> = languages
                 .all_lsp_adapters()
                 .into_iter()
                 .map(|adapter| adapter.name().to_string())
-                .collect::<Vec<_>>();
+                .collect();
+
+            for name in languages.available_lsp_adapter_names() {
+                let name_str = name.to_string();
+                if !lsp_adapter_names.contains(&name_str) {
+                    lsp_adapter_names.push(name_str);
+                }
+            }
 
             cx.update(|cx| {
                 let font_names = &cx.text_system().all_font_names();
