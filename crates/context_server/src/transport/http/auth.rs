@@ -102,12 +102,6 @@ impl OAuthClient {
                 client_secret_expires_at: None,
             }
         } else if let Some(registration_endpoint) = server.registration_endpoint.as_ref() {
-            if !server
-                .token_endpoint_auth_methods_supported
-                .supports(TokenEndpointAuthMethod::None)
-            {
-                anyhow::bail!(InitError::UnsupportedTokenEndpointAuthMethod);
-            }
             Self::register(registration_endpoint, http_client).await?
         } else {
             // TODO: Support custom registration
