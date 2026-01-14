@@ -330,7 +330,6 @@ impl ProjectDropdown {
 
         menu.custom_entry_with_docs(
             {
-                let name = name.clone();
                 let menu_shell_for_delete = menu_shell;
                 let recent_projects_for_delete = recent_projects;
 
@@ -375,21 +374,16 @@ impl ProjectDropdown {
                         .into_any_element()
                 }
             },
-            {
-                let paths = paths;
-                let workspace = workspace;
-
-                move |window, cx| {
-                    let create_new_window = window.modifiers().platform;
-                    Self::open_recent_project(
-                        workspace.clone(),
-                        paths.clone(),
-                        create_new_window,
-                        window,
-                        cx,
-                    );
-                    window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-                }
+            move |window, cx| {
+                let create_new_window = window.modifiers().platform;
+                Self::open_recent_project(
+                    workspace.clone(),
+                    paths.clone(),
+                    create_new_window,
+                    window,
+                    cx,
+                );
+                window.dispatch_action(menu::Cancel.boxed_clone(), cx);
             },
             Some(docs_aside),
         )
