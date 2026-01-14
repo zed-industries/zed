@@ -899,7 +899,9 @@ impl PlanEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub max_tokens: u64,
+    pub max_output_tokens: u64,
     pub used_tokens: u64,
+    pub input_tokens: u64,
     pub output_tokens: u64,
 }
 

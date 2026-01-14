@@ -273,6 +273,10 @@ impl LanguageModel for XAiLanguageModel {
         }
     }
 
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("x_ai/{}", self.model.id())
     }
