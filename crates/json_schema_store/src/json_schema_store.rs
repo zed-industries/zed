@@ -10,13 +10,9 @@ use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::LSP_SETTINGS_SCHEMA_URL_PREFIX;
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
-// Bundled from https://github.com/SchemaStore/schemastore at compile time.
-// These are snapshots that ship with Zed - they don't update at runtime.
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("schemas/package.json");
 
-// Derived from Rust types via schemars - the schema is determined by the
-// type definition which is fixed at compile time.
 static TASKS_SCHEMA: LazyLock<String> = LazyLock::new(|| {
     serde_json::to_string(&task::TaskTemplates::generate_json_schema())
         .expect("TaskTemplates schema should serialize")
@@ -31,22 +27,17 @@ static JSONC_SCHEMA: LazyLock<String> = LazyLock::new(|| {
     serde_json::to_string(&generate_jsonc_schema()).expect("JSONC schema should serialize")
 });
 
-// Derived from gpui::StyleRefinement Rust type - fixed at compile time.
 #[cfg(debug_assertions)]
 static INSPECTOR_STYLE_SCHEMA: LazyLock<String> = LazyLock::new(|| {
     serde_json::to_string(&generate_inspector_style_schema())
         .expect("Inspector style schema should serialize")
 });
 
-// Actions are registered at compile/link time via the `inventory` crate.
-// Extensions cannot register new actions, so keymap schema is effectively static.
 static KEYMAP_SCHEMA: LazyLock<String> = LazyLock::new(|| {
     serde_json::to_string(&settings::KeymapFile::generate_json_schema_from_inventory())
         .expect("Keymap schema should serialize")
 });
 
-// Individual action schemas - also static since actions are registered at compile/link
-// time. We use a cache rather than pre-generating all ~500 action schemas upfront.
 static ACTION_SCHEMA_CACHE: LazyLock<RwLock<HashMap<String, String>>> =
     LazyLock::new(|| RwLock::new(HashMap::default()));
 
@@ -123,25 +114,13 @@ pub fn handle_schema_request(
     let (schema_name, rest) = path.split_once('/').unzip();
     let schema_name = schema_name.unwrap_or(path);
 
-    // Handle static schemas - no foreground work needed, return immediately.
-    // These schemas are "static" because they don't depend on runtime state that can change.
     match schema_name {
-        // Bundled from SchemaStore at compile time via include_str!. These are snapshots
-        // that ship with Zed and don't update at runtime (would need a Zed update).
         "tsconfig" => return Task::ready(Ok(TSCONFIG_SCHEMA.to_string())),
         "package_json" => return Task::ready(Ok(PACKAGE_JSON_SCHEMA.to_string())),
-
-        // Derived from Rust types via schemars - the schema is determined by the type
-        // definition which is fixed at compile time.
         "tasks" => return Task::ready(Ok(TASKS_SCHEMA.clone())),
         "snippets" => return Task::ready(Ok(SNIPPETS_SCHEMA.clone())),
         "jsonc" => return Task::ready(Ok(JSONC_SCHEMA.clone())),
-
-        // Actions are registered at compile/link time via the `inventory` crate.
-        // Extensions cannot register new actions, so this is effectively static.
         "keymap" => return Task::ready(Ok(KEYMAP_SCHEMA.clone())),
-
-        // Derived from gpui::StyleRefinement Rust type - fixed at compile time.
         "zed_inspector_style" => {
             #[cfg(debug_assertions)]
             return Task::ready(Ok(INSPECTOR_STYLE_SCHEMA.clone()));
@@ -151,21 +130,16 @@ pub fn handle_schema_request(
             )
             .expect("true schema should serialize")));
         }
-        // Individual action schemas - also static since actions are registered at
-        // compile/link time via `inventory`. Cached after first generation.
         "action" => {
             let normalized_action_name = match rest {
                 Some(name) => name,
                 None => return Task::ready(Err(anyhow::anyhow!("No action name provided"))),
             };
             let action_name = denormalize_action_name(normalized_action_name);
-
-            // Check cache first
             if let Some(cached) = ACTION_SCHEMA_CACHE.read().get(&action_name).cloned() {
                 return Task::ready(Ok(cached));
             }
 
-            // Generate and cache the schema
             let schema = settings::KeymapFile::get_action_schema_by_name(&action_name);
             let mut generator = settings::KeymapFile::action_schema_generator();
             let json = serde_json::to_string(
@@ -181,7 +155,6 @@ pub fn handle_schema_request(
         _ => {}
     }
 
-    // Dynamic schemas that need runtime data
     let schema_name = schema_name.to_string();
     let rest = rest.map(|s| s.to_string());
     cx.spawn(async move |cx| {
