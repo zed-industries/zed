@@ -615,7 +615,7 @@ impl AgentPanel {
             let agent_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
                     if let Some(panel) = panel.upgrade() {
-                        if let Some(kind) = panel.read(cx).history_kind_for_selected_agent() {
+                        if let Some(kind) = panel.read(cx).history_kind_for_selected_agent(cx) {
                             menu =
                                 Self::populate_recently_updated_menu_section(menu, panel, kind, cx);
                             menu = menu.action("View All", Box::new(OpenHistory));
@@ -969,19 +969,25 @@ impl AgentPanel {
         }
     }
 
-    fn history_kind_for_selected_agent(&self) -> Option<HistoryKind> {
+    fn history_kind_for_selected_agent(&self, cx: &App) -> Option<HistoryKind> {
         match self.selected_agent {
             AgentType::NativeAgent => Some(HistoryKind::AgentThreads),
             AgentType::TextThread => Some(HistoryKind::TextThreads),
             AgentType::Gemini
             | AgentType::ClaudeCode
             | AgentType::Codex
-            | AgentType::Custom { .. } => None,
+            | AgentType::Custom { .. } => {
+                if self.acp_history.read(cx).has_session_list() {
+                    Some(HistoryKind::AgentThreads)
+                } else {
+                    None
+                }
+            }
         }
     }
 
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(kind) = self.history_kind_for_selected_agent() else {
+        let Some(kind) = self.history_kind_for_selected_agent(cx) else {
             return;
         };
 
@@ -1079,7 +1085,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.history_kind_for_selected_agent().is_none() {
+        if self.history_kind_for_selected_agent(cx).is_none() {
             return;
         }
         self.agent_navigation_menu_handle.toggle(window, cx);
@@ -2410,7 +2416,7 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
-        let show_history_menu = self.history_kind_for_selected_agent().is_some();
+        let show_history_menu = self.history_kind_for_selected_agent(cx).is_some();
 
         h_flex()
             .id("agent-panel-toolbar")
