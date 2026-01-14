@@ -1192,7 +1192,7 @@ pub struct Editor {
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
-    beam_jump_highlights: Vec<BeamJumpHighlight>,
+    beam_jump_highlights: Arc<Vec<BeamJumpHighlight>>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -2385,7 +2385,7 @@ impl Editor {
             highlighted_rows: HashMap::default(),
             background_highlights: HashMap::default(),
             gutter_highlights: HashMap::default(),
-            beam_jump_highlights: Vec::new(),
+            beam_jump_highlights: Arc::new(Vec::new()),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -23143,13 +23143,13 @@ impl Editor {
             highlights.sort_by_key(|highlight| highlight.range.start);
         }
 
-        self.beam_jump_highlights = highlights;
+        self.beam_jump_highlights = Arc::new(highlights);
         cx.notify();
     }
 
     pub fn clear_beam_jump_highlights(&mut self, cx: &mut Context<Self>) {
         if !self.beam_jump_highlights.is_empty() {
-            self.beam_jump_highlights.clear();
+            self.beam_jump_highlights = Arc::new(Vec::new());
             cx.notify();
         }
     }
@@ -23162,13 +23162,11 @@ impl Editor {
             return &[];
         }
 
-        let start_ix = self
-            .beam_jump_highlights
-            .partition_point(|highlight| highlight.range.end <= range.start);
-        let end_ix = self
-            .beam_jump_highlights
-            .partition_point(|highlight| highlight.range.start < range.end);
-        &self.beam_jump_highlights[start_ix..end_ix]
+        let highlights = self.beam_jump_highlights.as_slice();
+
+        let start_ix = highlights.partition_point(|highlight| highlight.range.end <= range.start);
+        let end_ix = highlights.partition_point(|highlight| highlight.range.start < range.end);
+        &highlights[start_ix..end_ix]
     }
 
     pub fn highlight_background<T: 'static>(

@@ -1983,11 +1983,14 @@ impl EditorElement {
         let visible_end_offset = DisplayPoint::new(visible_row_range.end, 0)
             .to_offset(&snapshot.display_snapshot, Bias::Right);
 
-        let highlights = self
-            .editor
-            .read(cx)
-            .beam_jump_highlights_in_range(visible_start_offset..visible_end_offset)
-            .to_vec();
+        let highlights = self.editor.read(cx).beam_jump_highlights.clone();
+        let highlights = highlights.as_slice();
+
+        let start_ix =
+            highlights.partition_point(|highlight| highlight.range.end <= visible_start_offset);
+        let end_ix =
+            highlights.partition_point(|highlight| highlight.range.start < visible_end_offset);
+        let highlights = &highlights[start_ix..end_ix];
         if highlights.is_empty() {
             return Vec::new();
         }
