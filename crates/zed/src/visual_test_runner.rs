@@ -1595,27 +1595,16 @@ import { AiPaneTabContext } from 'context';
         &test8_result,
     ];
 
-    let all_passed = all_results.iter().all(|r| matches!(r, TestResult::Passed));
-    let baseline_updated = all_results.iter().find_map(|r| {
-        if let TestResult::BaselineUpdated(p) = r {
-            Some(p.clone())
-        } else {
-            None
-        }
-    });
-
-    // Note: Individual test failures return Err via the ? operator above,
-    // so we only reach here if all tests either passed or updated baselines.
-    // If not all passed, at least one must be BaselineUpdated.
-    if all_passed {
-        Ok(TestResult::Passed)
-    } else if let Some(path) = baseline_updated {
-        Ok(TestResult::BaselineUpdated(path))
-    } else {
-        // This branch is logically unreachable: if all_passed is false,
-        // at least one result must be BaselineUpdated (the only other variant).
-        unreachable!("All tests should be either Passed or BaselineUpdated")
-    }
+    // Combine results: if any test updated a baseline, return BaselineUpdated;
+    // otherwise return Passed. The exhaustive match ensures the compiler
+    // verifies we handle all TestResult variants.
+    let result = all_results
+        .iter()
+        .fold(TestResult::Passed, |acc, r| match r {
+            TestResult::Passed => acc,
+            TestResult::BaselineUpdated(p) => TestResult::BaselineUpdated(p.clone()),
+        });
+    Ok(result)
 }
 
 /// A stub AgentServer for visual testing that returns a pre-programmed connection.
