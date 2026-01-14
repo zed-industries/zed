@@ -1782,6 +1782,101 @@ async fn test_beam_jump_labels_forward(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_beam_jump_filters_overlapping_viewport_matches(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    // Regression for overlapping matches (e.g. `aa` in `aaaaa`): viewport candidates must match the
+    // non-overlapping enumeration used by the counted Beam Jump motion.
+    cx.set_state("ˇaaaaa", Mode::Normal);
+    cx.simulate_keystrokes("s a a");
+    cx.assert_state("ˇaaaaa", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+
+    assert_eq!(
+        highlights.len(),
+        2,
+        "expected overlapping matches to be filtered out. {}",
+        cx.assertion_context()
+    );
+    assert!(
+        highlights.iter().all(|highlight| highlight.label.is_some()),
+        "expected labels to be visible once pattern length >= 2. {}",
+        cx.assertion_context()
+    );
+    assert!(
+        highlights[0].range.end <= highlights[1].range.start,
+        "expected non-overlapping matches in start order. {}",
+        cx.assertion_context()
+    );
+    assert_eq!(
+        highlights[0].range,
+        MultiBufferOffset(1)..MultiBufferOffset(3),
+        "unexpected first match. {}",
+        cx.assertion_context()
+    );
+    assert_eq!(
+        highlights[1].range,
+        MultiBufferOffset(3)..MultiBufferOffset(5),
+        "unexpected second match. {}",
+        cx.assertion_context()
+    );
+
+    let label = highlights[1]
+        .label
+        .clone()
+        .expect("missing label for second match");
+    let keystrokes = label.chars().map(|ch| ch.to_string()).join(" ");
+    cx.simulate_keystrokes(&keystrokes);
+
+    cx.assert_state("aaaˇaa", Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+
+    // Jumping to the first match is still correct.
+    cx.set_state("ˇaaaaa", Mode::Normal);
+    cx.simulate_keystrokes("s a a");
+    cx.assert_state("ˇaaaaa", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+
+    let label = highlights[0]
+        .label
+        .clone()
+        .expect("missing label for first match");
+    let keystrokes = label.chars().map(|ch| ch.to_string()).join(" ");
+    cx.simulate_keystrokes(&keystrokes);
+
+    cx.assert_state("aˇaaaa", Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+}
+
+#[perf]
+#[gpui::test]
 async fn test_beam_jump_viewport_range_includes_before_and_after_cursor(
     cx: &mut gpui::TestAppContext,
 ) {
