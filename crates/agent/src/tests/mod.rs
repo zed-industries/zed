@@ -22,7 +22,6 @@ use gpui::{
     http_client::FakeHttpClient,
 };
 use indoc::indoc;
-
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
@@ -2992,7 +2991,10 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         acp::ToolCall::new("1", "Thinking")
             .kind(acp::ToolKind::Think)
             .raw_input(json!({}))
-            .meta(acp_thread::meta_with_tool_name("thinking"))
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "thinking".into()
+            )]))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
@@ -3969,47 +3971,6 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 }
 
 #[gpui::test]
-async fn test_subagent_tool_is_absent_when_feature_flag_disabled(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(false, vec![]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment { handle });
-
-    let thread = cx.new(|cx| {
-        let mut thread = Thread::new(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model),
-            cx,
-        );
-        thread.add_default_tools(environment, cx);
-        thread
-    });
-
-    thread.read_with(cx, |thread, _| {
-        assert!(
-            !thread.has_registered_tool("subagent"),
-            "subagent tool should not be present when feature flag is disabled"
-        );
-    });
-}
-
-#[gpui::test]
 async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -4042,6 +4003,7 @@ async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4089,6 +4051,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         );
         thread.add_default_tools(environment, cx);
@@ -4135,6 +4098,7 @@ async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4193,6 +4157,7 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4267,6 +4232,7 @@ async fn test_allowed_tools_restricts_subagent_capabilities(cx: &mut TestAppCont
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         );
         thread.add_tool(EchoTool);
@@ -4348,6 +4314,7 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4375,6 +4342,95 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
             "subagent should be cancelled when parent cancels"
         );
     });
+}
+
+#[gpui::test]
+async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
+    // This test verifies that the subagent tool properly handles user cancellation
+    // via `event_stream.cancelled_by_user()` and stops all running subagents.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
+        std::collections::BTreeMap::new();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(SubagentTool::new(
+        parent.downgrade(),
+        project.clone(),
+        project_context,
+        context_server_registry,
+        Templates::new(),
+        0,
+        parent_tools,
+    ));
+
+    let (event_stream, _rx, mut cancellation_tx) =
+        crate::ToolCallEventStream::test_with_cancellation();
+
+    // Start the subagent tool
+    let task = cx.update(|cx| {
+        tool.run(
+            SubagentToolInput {
+                subagents: vec![crate::SubagentConfig {
+                    label: "Long running task".to_string(),
+                    task_prompt: "Do a very long task that takes forever".to_string(),
+                    summary_prompt: "Summarize".to_string(),
+                    context_low_prompt: "Context low".to_string(),
+                    timeout_ms: None,
+                    allowed_tools: None,
+                }],
+            },
+            event_stream.clone(),
+            cx,
+        )
+    });
+
+    cx.run_until_parked();
+
+    // Signal cancellation via the event stream
+    crate::ToolCallEventStream::signal_cancellation_with_sender(&mut cancellation_tx);
+
+    // The task should complete promptly with a cancellation error
+    let timeout = cx.background_executor.timer(Duration::from_secs(5));
+    let result = futures::select! {
+        result = task.fuse() => result,
+        _ = timeout.fuse() => {
+            panic!("subagent tool did not respond to cancellation within timeout");
+        }
+    };
+
+    // Verify we got a cancellation error
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("cancelled by user"),
+        "expected cancellation error, got: {}",
+        err
+    );
 }
 
 #[gpui::test]
@@ -4408,6 +4464,7 @@ async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContex
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4466,6 +4523,7 @@ async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context.clone(),
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4547,6 +4605,7 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4614,8 +4673,13 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         thread
     });
 
-    let parent_tool_names: Vec<gpui::SharedString> = vec!["echo".into()];
+    let mut parent_tools: std::collections::BTreeMap<
+        gpui::SharedString,
+        Arc<dyn crate::AnyAgentTool>,
+    > = std::collections::BTreeMap::new();
+    parent_tools.insert("echo".into(), EchoTool.erase());
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project,
@@ -4623,10 +4687,18 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         context_server_registry,
         Templates::new(),
         0,
-        parent_tool_names,
+        parent_tools,
     ));
 
-    let result = tool.validate_allowed_tools(&Some(vec!["nonexistent_tool".to_string()]));
+    let subagent_configs = vec![crate::SubagentConfig {
+        label: "Test".to_string(),
+        task_prompt: "Do something".to_string(),
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+        timeout_ms: None,
+        allowed_tools: Some(vec!["nonexistent_tool".to_string()]),
+    }];
+    let result = tool.validate_subagents(&subagent_configs);
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4635,8 +4707,8 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         err_msg
     );
     assert!(
-        err_msg.contains("not available"),
-        "error should explain the tool is not available: {}",
+        err_msg.contains("do not exist"),
+        "error should explain the tool does not exist: {}",
         err_msg
     );
 }
@@ -4672,6 +4744,7 @@ async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4727,6 +4800,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             depth_1_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4752,6 +4826,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             depth_2_context,
+            std::collections::BTreeMap::new(),
             cx,
         )
     });
@@ -4810,6 +4885,7 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
             Templates::new(),
             model.clone(),
             subagent_context,
+            std::collections::BTreeMap::new(),
             cx,
         );
         thread.add_tool(EchoTool);
@@ -4906,6 +4982,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
                 Templates::new(),
                 model.clone(),
                 subagent_context,
+                std::collections::BTreeMap::new(),
                 cx,
             )
         });
@@ -4924,8 +5001,10 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         );
     });
 
-    let parent_tool_names: Vec<gpui::SharedString> = vec![];
+    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
+        std::collections::BTreeMap::new();
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
@@ -4933,7 +5012,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         context_server_registry,
         Templates::new(),
         0,
-        parent_tool_names,
+        parent_tools,
     ));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
@@ -4941,12 +5020,14 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     let result = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                label: "Test".to_string(),
-                task_prompt: "Do something".to_string(),
-                summary_prompt: "Summarize".to_string(),
-                context_low_prompt: "Context low".to_string(),
-                timeout_ms: None,
-                allowed_tools: None,
+                subagents: vec![crate::SubagentConfig {
+                    label: "Test".to_string(),
+                    task_prompt: "Do something".to_string(),
+                    summary_prompt: "Summarize".to_string(),
+                    context_low_prompt: "Context low".to_string(),
+                    timeout_ms: None,
+                    allowed_tools: None,
+                }],
             },
             event_stream,
             cx,
@@ -4995,8 +5076,13 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         thread
     });
 
-    let parent_tool_names: Vec<gpui::SharedString> = vec!["echo".into()];
+    let mut parent_tools: std::collections::BTreeMap<
+        gpui::SharedString,
+        Arc<dyn crate::AnyAgentTool>,
+    > = std::collections::BTreeMap::new();
+    parent_tools.insert("echo".into(), EchoTool.erase());
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
@@ -5004,7 +5090,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         context_server_registry,
         Templates::new(),
         0,
-        parent_tool_names,
+        parent_tools,
     ));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
@@ -5012,12 +5098,14 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                label: "Research task".to_string(),
-                task_prompt: "Find all TODOs in the codebase".to_string(),
-                summary_prompt: "Summarize what you found".to_string(),
-                context_low_prompt: "Context low, wrap up".to_string(),
-                timeout_ms: None,
-                allowed_tools: None,
+                subagents: vec![crate::SubagentConfig {
+                    label: "Research task".to_string(),
+                    task_prompt: "Find all TODOs in the codebase".to_string(),
+                    summary_prompt: "Summarize what you found".to_string(),
+                    context_low_prompt: "Context low, wrap up".to_string(),
+                    timeout_ms: None,
+                    allowed_tools: None,
+                }],
             },
             event_stream,
             cx,
