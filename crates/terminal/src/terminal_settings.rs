@@ -9,24 +9,12 @@ use serde::{Deserialize, Serialize};
 pub use settings::AlternateScroll;
 
 use settings::{
-    FontFeaturesContent, FontWeightContent, PathHyperlinkRegex, RegisterSetting, ShowScrollbar,
-    TerminalBlink, TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
+    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
+    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
     merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
-
-fn font_size_to_pixels(value: settings::FontSize) -> Pixels {
-    px(value.0)
-}
-
-fn font_features_content_to_font_features(value: FontFeaturesContent) -> FontFeatures {
-    FontFeatures(std::sync::Arc::new(value.0.into_iter().collect()))
-}
-
-fn font_weight_content_to_font_weight(value: FontWeightContent) -> FontWeight {
-    FontWeight(value.0)
-}
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
@@ -97,7 +85,7 @@ impl settings::Settings for TerminalSettings {
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
-            font_size: user_content.font_size.map(font_size_to_pixels),
+            font_size: user_content.font_size.map(|s| s.into_gpui()),
             font_family: user_content.font_family,
             font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
@@ -107,12 +95,8 @@ impl settings::Settings for TerminalSettings {
                         .collect(),
                 )
             }),
-            font_features: user_content
-                .font_features
-                .map(font_features_content_to_font_features),
-            font_weight: user_content
-                .font_weight
-                .map(font_weight_content_to_font_weight),
+            font_features: user_content.font_features.map(|f| f.into_gpui()),
+            font_weight: user_content.font_weight.map(|w| w.into_gpui()),
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),

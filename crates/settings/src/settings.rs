@@ -1,4 +1,5 @@
 mod base_keymap_setting;
+mod content_into_gpui;
 mod editable_setting_control;
 mod keymap_file;
 mod settings_file;
@@ -30,6 +31,7 @@ use util::asset_str;
 
 pub use ::settings_content::*;
 pub use base_keymap_setting::*;
+pub use content_into_gpui::IntoGpui;
 pub use editable_setting_control::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,

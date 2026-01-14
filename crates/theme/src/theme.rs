@@ -23,6 +23,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ::settings::DEFAULT_DARK_THEME;
+use ::settings::IntoGpui;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use anyhow::Result;
@@ -273,10 +274,8 @@ impl ThemeFamily {
                             .background_color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(font_style_content_to_font_style),
-                        font_weight: highlight
-                            .font_weight
-                            .map(font_weight_content_to_font_weight),
+                        font_style: highlight.font_style.map(|s| s.into_gpui()),
+                        font_weight: highlight.font_weight.map(|w| w.into_gpui()),
                         ..Default::default()
                     },
                 )
@@ -287,7 +286,7 @@ impl ThemeFamily {
         let window_background_appearance = theme
             .style
             .window_background_appearance
-            .map(window_background_content_to_appearance)
+            .map(|w| w.into_gpui())
             .unwrap_or_default();
 
         Theme {

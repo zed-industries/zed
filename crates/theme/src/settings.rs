@@ -5,57 +5,18 @@ use crate::{
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, Window, WindowBackgroundAppearance, px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
-use settings::{
-    FontFeaturesContent, FontSize, FontStyleContent, FontWeightContent, RegisterSetting, Settings,
-    SettingsContent, WindowBackgroundContent,
-};
+use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
-
-/// Converts a [`FontSize`] to [`Pixels`].
-pub fn font_size_to_pixels(value: FontSize) -> Pixels {
-    px(value.0)
-}
-
-/// Converts a [`FontStyleContent`] to [`FontStyle`].
-pub fn font_style_content_to_font_style(value: FontStyleContent) -> FontStyle {
-    match value {
-        FontStyleContent::Normal => FontStyle::Normal,
-        FontStyleContent::Italic => FontStyle::Italic,
-        FontStyleContent::Oblique => FontStyle::Oblique,
-    }
-}
-
-/// Converts a [`FontWeightContent`] to [`FontWeight`].
-pub fn font_weight_content_to_font_weight(value: FontWeightContent) -> FontWeight {
-    FontWeight(value.0)
-}
-
-/// Converts a [`FontFeaturesContent`] to [`FontFeatures`].
-pub fn font_features_content_to_font_features(value: FontFeaturesContent) -> FontFeatures {
-    FontFeatures(std::sync::Arc::new(value.0.into_iter().collect()))
-}
-
-/// Converts a [`WindowBackgroundContent`] to [`WindowBackgroundAppearance`].
-pub fn window_background_content_to_appearance(
-    value: WindowBackgroundContent,
-) -> WindowBackgroundAppearance {
-    match value {
-        WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
-        WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
-        WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
-    }
-}
 
 #[derive(
     Debug,
@@ -596,7 +557,7 @@ impl ThemeSettings {
     fn modify_theme(base_theme: &mut Theme, theme_overrides: &settings::ThemeStyleContent) {
         if let Some(window_background_appearance) = theme_overrides.window_background_appearance {
             base_theme.styles.window_background_appearance =
-                window_background_content_to_appearance(window_background_appearance);
+                window_background_appearance.into_gpui();
         }
         let status_color_refinement = status_colors_refinement(&theme_overrides.status);
 
@@ -744,14 +705,12 @@ impl settings::Settings for ThemeSettings {
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
         Self {
-            ui_font_size: clamp_font_size(font_size_to_pixels(content.ui_font_size.unwrap())),
+            ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
             ui_font: Font {
                 family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
-                features: font_features_content_to_font_features(
-                    content.ui_font_features.clone().unwrap(),
-                ),
+                features: content.ui_font_features.clone().unwrap().into_gpui(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: font_weight_content_to_font_weight(content.ui_font_weight.unwrap()),
+                weight: content.ui_font_weight.unwrap().into_gpui(),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -762,19 +721,15 @@ impl settings::Settings for ThemeSettings {
                     .0
                     .clone()
                     .into(),
-                features: font_features_content_to_font_features(
-                    content.buffer_font_features.clone().unwrap(),
-                ),
+                features: content.buffer_font_features.clone().unwrap().into_gpui(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: font_weight_content_to_font_weight(content.buffer_font_weight.unwrap()),
+                weight: content.buffer_font_weight.unwrap().into_gpui(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: clamp_font_size(font_size_to_pixels(
-                content.buffer_font_size.unwrap(),
-            )),
+            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            agent_ui_font_size: content.agent_ui_font_size.map(font_size_to_pixels),
-            agent_buffer_font_size: content.agent_buffer_font_size.map(font_size_to_pixels),
+            agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
+            agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
