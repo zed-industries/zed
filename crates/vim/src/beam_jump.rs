@@ -198,6 +198,7 @@ impl BeamJumpState {
         }
 
         self.extend_matches(ch, buffer);
+        self.retain_non_overlapping_matches_in_start_order();
 
         if self.labels.is_some() {
             self.retain_labels_for_matches();
@@ -357,6 +358,17 @@ impl BeamJumpState {
 
             m.end = new_end;
             true
+        });
+    }
+
+    fn retain_non_overlapping_matches_in_start_order(&mut self) {
+        let mut last_kept_end: Option<MultiBufferOffset> = None;
+        self.matches.retain(|m| {
+            let keep = last_kept_end.map_or(true, |end| m.start >= end);
+            if keep {
+                last_kept_end = Some(m.end);
+            }
+            keep
         });
     }
 
