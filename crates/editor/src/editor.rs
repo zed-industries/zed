@@ -23135,7 +23135,14 @@ impl Editor {
         mut highlights: Vec<BeamJumpHighlight>,
         cx: &mut Context<Self>,
     ) {
-        highlights.sort_by_key(|highlight| highlight.range.start);
+        let highlights_are_sorted = highlights.windows(2).all(|adjacent_highlights| {
+            adjacent_highlights[0].range.start <= adjacent_highlights[1].range.start
+        });
+
+        if !highlights_are_sorted {
+            highlights.sort_by_key(|highlight| highlight.range.start);
+        }
+
         self.beam_jump_highlights = highlights;
         cx.notify();
     }
