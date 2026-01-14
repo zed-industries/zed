@@ -3817,7 +3817,11 @@ impl AcpThreadView {
 
         let display_lines = lines.into_iter().take(max_lines);
 
+        let command_group =
+            SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
+
         v_flex()
+            .group(command_group.clone())
             .bg(self.tool_card_header_bg(cx))
             .child(
                 v_flex()
@@ -3843,7 +3847,14 @@ impl AcpThreadView {
                         };
 
                         Label::new(text).buffer_font(cx).size(LabelSize::Small)
-                    })),
+                    }))
+                    .child(
+                        div().absolute().top_1().right_1().child(
+                            CopyButton::new(command_source.to_string())
+                                .tooltip_label("Copy Command")
+                                .visible_on_hover(command_group),
+                        ),
+                    ),
             )
             .when(show_expand_button, |this| {
                 let expand_icon = if expanded {
