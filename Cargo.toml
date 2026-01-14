@@ -381,6 +381,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf7
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
+scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }

@@ -219,7 +219,9 @@ impl Sub for Line {
 pub struct RawCompletionRequest {
     pub model: String,
     pub prompt: String,
-    pub max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     pub stop: Vec<Cow<'static, str>>,
 }

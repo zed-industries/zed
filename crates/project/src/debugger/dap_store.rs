@@ -396,11 +396,12 @@ impl DapStore {
                 // Pre-resolve args with existing environment.
                 let locators = DapRegistry::global(cx).locators();
                 let locator = locators.get(locator_name);
+                let executor = cx.background_executor().clone();
 
                 if let Some(locator) = locator.cloned() {
                     cx.background_spawn(async move {
                         let result = locator
-                            .run(build_command.clone())
+                            .run(build_command.clone(), executor)
                             .await
                             .log_with_level(log::Level::Error);
                         if let Some(result) = result {

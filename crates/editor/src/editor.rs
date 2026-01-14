@@ -1116,6 +1116,7 @@ pub struct Editor {
     code_actions_task: Option<Task<Result<()>>>,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    debounced_selection_highlight_complete: bool,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1643,7 +1644,15 @@ impl ClipboardSelection {
             project.absolute_path(&project_path, cx)
         });
 
-        let line_range = file_path.as_ref().map(|_| range.start.row..=range.end.row);
+        let line_range = file_path.as_ref().and_then(|_| {
+            let (_, start_point, start_excerpt_id) = buffer.point_to_buffer_point(range.start)?;
+            let (_, end_point, end_excerpt_id) = buffer.point_to_buffer_point(range.end)?;
+            if start_excerpt_id == end_excerpt_id {
+                Some(start_point.row..=end_point.row)
+            } else {
+                None
+            }
+        });
 
         Self {
             len,
@@ -2285,6 +2294,7 @@ impl Editor {
             code_actions_task: None,
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
+            debounced_selection_highlight_complete: false,
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
@@ -7290,7 +7300,12 @@ impl Editor {
             let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
-                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                    if use_debounce {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor.debounced_selection_highlight_complete = true;
+                    } else if editor.debounced_selection_highlight_complete {
+                        return;
+                    }
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &match_ranges,
@@ -7387,15 +7402,18 @@ impl Editor {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             self.quick_selection_highlight_task.take();
             self.debounced_selection_highlight_task.take();
+            self.debounced_selection_highlight_complete = false;
             return;
         };
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        if on_buffer_edit
-            || self
-                .quick_selection_highlight_task
-                .as_ref()
-                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
-        {
+        let query_changed = self
+            .quick_selection_highlight_task
+            .as_ref()
+            .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range);
+        if query_changed {
+            self.debounced_selection_highlight_complete = false;
+        }
+        if on_buffer_edit || query_changed {
             let multi_buffer_visible_start = self
                 .scroll_manager
                 .anchor()
@@ -11283,7 +11301,14 @@ impl Editor {
             .to_path_buf();
             Some(parent)
         }) {
-            window.dispatch_action(OpenTerminal { working_directory }.boxed_clone(), cx);
+            window.dispatch_action(
+                OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
+                cx,
+            );
         }
     }
 
@@ -13272,13 +13297,14 @@ impl Editor {
                     trimmed_selections.push(start..end);
                 }
 
+                let is_multiline_trim = trimmed_selections.len() > 1;
                 for trimmed_range in trimmed_selections {
                     if is_first {
                         is_first = false;
-                    } else if !prev_selection_was_entire_line {
+                    } else if is_multiline_trim || !prev_selection_was_entire_line {
                         text += "\n";
                     }
-                    prev_selection_was_entire_line = is_entire_line;
+                    prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
                     let mut len = 0;
                     for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
                         text.push_str(chunk);
@@ -16365,6 +16391,119 @@ impl Editor {
                 },
             );
         }
+    }
+
+    pub fn move_to_start_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToStartOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, false);
+    }
+
+    pub fn move_to_end_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToEndOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, true);
+    }
+
+    fn move_cursors_to_syntax_nodes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        move_to_end: bool,
+    ) -> bool {
+        let old_selections: Box<[_]> = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .into();
+        if old_selections.is_empty() {
+            return false;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut any_cursor_moved = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                if !selection.is_empty() {
+                    return selection.clone();
+                }
+
+                let selection_pos = selection.head();
+                let old_range = selection_pos..selection_pos;
+
+                let mut new_pos = selection_pos;
+                let mut search_range = old_range;
+                while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
+                    search_range = range.clone();
+                    if !node.is_named()
+                        || display_map.intersects_fold(range.start)
+                        || display_map.intersects_fold(range.end)
+                        // If cursor is already at the end of the syntax node, continue searching
+                        || (move_to_end && range.end == selection_pos)
+                        // If cursor is already at the start of the syntax node, continue searching
+                        || (!move_to_end && range.start == selection_pos)
+                    {
+                        continue;
+                    }
+
+                    // If we found a string_content node, find the largest parent that is still string_content
+                    // Enables us to skip to the end of strings without taking multiple steps inside the string
+                    let (_, final_range) = if node.kind() == "string_content" {
+                        let mut current_node = node;
+                        let mut current_range = range;
+                        while let Some((parent, parent_range)) =
+                            buffer.syntax_ancestor(current_range.clone())
+                        {
+                            if parent.kind() == "string_content" {
+                                current_node = parent;
+                                current_range = parent_range;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        (current_node, current_range)
+                    } else {
+                        (node, range)
+                    };
+
+                    new_pos = if move_to_end {
+                        final_range.end
+                    } else {
+                        final_range.start
+                    };
+
+                    break;
+                }
+
+                any_cursor_moved |= new_pos != selection_pos;
+
+                Selection {
+                    id: selection.id,
+                    start: new_pos,
+                    end: new_pos,
+                    goal: SelectionGoal::None,
+                    reversed: false,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select(new_selections);
+        });
+        self.request_autoscroll(Autoscroll::newest(), cx);
+
+        any_cursor_moved
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -22148,6 +22287,7 @@ impl Editor {
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
+                self.refresh_selected_text_highlights(true, window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
