@@ -29,34 +29,38 @@ impl RenderOnce for DiffStat {
         h_flex()
             .id(self.id)
             .gap_1()
-            .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::XSmall)
-                            .color(Color::Success),
-                    )
-                    .child(
-                        Label::new(self.added.to_string())
-                            .color(Color::Success)
-                            .size(self.label_size),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Dash)
-                            .size(IconSize::XSmall)
-                            .color(Color::Error),
-                    )
-                    .child(
-                        Label::new(self.removed.to_string())
-                            .color(Color::Error)
-                            .size(self.label_size),
-                    ),
-            )
+            .when(self.added > 0, |this| {
+                this.child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Icon::new(IconName::Plus)
+                                .size(IconSize::XSmall)
+                                .color(Color::Success),
+                        )
+                        .child(
+                            Label::new(self.added.to_string())
+                                .color(Color::Success)
+                                .size(self.label_size),
+                        ),
+                )
+            })
+            .when(self.removed > 0, |this| {
+                this.child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Icon::new(IconName::Dash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Error),
+                        )
+                        .child(
+                            Label::new(self.removed.to_string())
+                                .color(Color::Error)
+                                .size(self.label_size),
+                        ),
+                )
+            })
     }
 }
 
