@@ -269,6 +269,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
+ "chrono",
  "client",
  "collections",
  "env_logger 0.11.8",
