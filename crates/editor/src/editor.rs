@@ -1116,6 +1116,7 @@ pub struct Editor {
     code_actions_task: Option<Task<Result<()>>>,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    debounced_selection_highlight_complete: bool,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1643,7 +1644,15 @@ impl ClipboardSelection {
             project.absolute_path(&project_path, cx)
         });
 
-        let line_range = file_path.as_ref().map(|_| range.start.row..=range.end.row);
+        let line_range = file_path.as_ref().and_then(|_| {
+            let (_, start_point, start_excerpt_id) = buffer.point_to_buffer_point(range.start)?;
+            let (_, end_point, end_excerpt_id) = buffer.point_to_buffer_point(range.end)?;
+            if start_excerpt_id == end_excerpt_id {
+                Some(start_point.row..=end_point.row)
+            } else {
+                None
+            }
+        });
 
         Self {
             len,
@@ -2285,6 +2294,7 @@ impl Editor {
             code_actions_task: None,
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
+            debounced_selection_highlight_complete: false,
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
@@ -7290,7 +7300,12 @@ impl Editor {
             let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
-                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                    if use_debounce {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor.debounced_selection_highlight_complete = true;
+                    } else if editor.debounced_selection_highlight_complete {
+                        return;
+                    }
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &match_ranges,
@@ -7387,15 +7402,18 @@ impl Editor {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             self.quick_selection_highlight_task.take();
             self.debounced_selection_highlight_task.take();
+            self.debounced_selection_highlight_complete = false;
             return;
         };
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        if on_buffer_edit
-            || self
-                .quick_selection_highlight_task
-                .as_ref()
-                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
-        {
+        let query_changed = self
+            .quick_selection_highlight_task
+            .as_ref()
+            .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range);
+        if query_changed {
+            self.debounced_selection_highlight_complete = false;
+        }
+        if on_buffer_edit || query_changed {
             let multi_buffer_visible_start = self
                 .scroll_manager
                 .anchor()
@@ -22269,6 +22287,7 @@ impl Editor {
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
+                self.refresh_selected_text_highlights(true, window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,

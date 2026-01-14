@@ -30,7 +30,8 @@
 //! ```
 
 use crate::remote_client::{
-    ChannelClient, CommandTemplate, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
+    RemoteConnectionOptions,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -97,7 +98,7 @@ unsafe impl Sync for SendableCx {}
 /// it retrieves the connection from this registry.
 #[derive(Default)]
 pub struct MockConnectionRegistry {
-    pending: HashMap<MockConnectionOptions, (oneshot::Receiver<()>, Arc<MockRemoteConnection>)>,
+    pending: HashMap<u64, (oneshot::Receiver<()>, Arc<MockRemoteConnection>)>,
 }
 
 impl Global for MockConnectionRegistry {}
@@ -108,7 +109,7 @@ impl MockConnectionRegistry {
         &mut self,
         opts: &MockConnectionOptions,
     ) -> Option<impl Future<Output = Arc<MockRemoteConnection>> + use<>> {
-        let (guard, con) = self.pending.remove(opts)?;
+        let (guard, con) = self.pending.remove(&opts.id)?;
         Some(async move {
             _ = guard.await;
             con
@@ -161,7 +162,7 @@ impl MockConnection {
         client_cx.update(|cx| {
             cx.default_global::<MockConnectionRegistry>()
                 .pending
-                .insert(opts.clone(), (rx, connection));
+                .insert(opts.id, (rx, connection));
         });
 
         (opts, server_client.into(), tx)
@@ -185,6 +186,7 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
+        _interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();

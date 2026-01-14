@@ -85,8 +85,9 @@ impl AgentTool for DelayTool {
     where
         Self: Sized,
     {
+        let executor = cx.background_executor().clone();
         cx.foreground_executor().spawn(async move {
-            smol::Timer::after(Duration::from_millis(input.ms)).await;
+            executor.timer(Duration::from_millis(input.ms)).await;
             Ok("Ding".to_string())
         })
     }
