@@ -8,9 +8,9 @@ use gpui::{
 };
 use menu;
 use project::{Project, Worktree, git_store::Repository};
-use recent_projects::{RecentProjectEntry, get_recent_projects};
+use recent_projects::{RecentProjectEntry, delete_recent_project, get_recent_projects};
 use settings::WorktreeId;
-use ui::{ContextMenu, ContextMenuEntry, Divider, DocumentationSide, Tooltip, prelude::*};
+use ui::{ContextMenu, DocumentationAside, DocumentationSide, Tooltip, prelude::*};
 use workspace::{CloseIntent, Workspace};
 
 actions!(project_dropdown, [RemoveSelectedFolder]);
@@ -224,12 +224,13 @@ impl ProjectDropdown {
                 let cmd_enter_hint = window.keystroke_text_for(&menu::SecondaryConfirm);
 
                 let inline_count = recent.len().min(RECENT_PROJECTS_INLINE_LIMIT);
-
                 for entry in recent.iter().take(inline_count) {
                     menu = Self::add_recent_project_entry(
                         menu,
                         entry.clone(),
                         workspace.clone(),
+                        menu_shell.clone(),
+                        recent_projects.clone(),
                         &enter_hint,
                         &cmd_enter_hint,
                     );
@@ -242,6 +243,8 @@ impl ProjectDropdown {
                         .cloned()
                         .collect();
                     let workspace_for_submenu = workspace.clone();
+                    let menu_shell_for_submenu = menu_shell.clone();
+                    let recent_projects_for_submenu = recent_projects.clone();
 
                     menu = menu.submenu("View More…", move |submenu, window, _cx| {
                         let enter_hint = window.keystroke_text_for(&menu::Confirm);
@@ -253,6 +256,8 @@ impl ProjectDropdown {
                                 submenu,
                                 entry.clone(),
                                 workspace_for_submenu.clone(),
+                                menu_shell_for_submenu.clone(),
+                                recent_projects_for_submenu.clone(),
                                 &enter_hint,
                                 &cmd_enter_hint,
                             );
@@ -276,47 +281,28 @@ impl ProjectDropdown {
         menu: ContextMenu,
         entry: RecentProjectEntry,
         workspace: WeakEntity<Workspace>,
+        menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
+        recent_projects: Rc<RefCell<Vec<RecentProjectEntry>>>,
         enter_hint: &str,
         cmd_enter_hint: &str,
     ) -> ContextMenu {
         let name = entry.name.clone();
         let full_path = entry.full_path.clone();
         let paths = entry.paths.clone();
+        let workspace_id = entry.workspace_id;
         let workspace_for_click = workspace.clone();
+
+        let element_id = format!("remove-recent-{}", full_path);
 
         let enter_hint = enter_hint.to_string();
         let cmd_enter_hint = cmd_enter_hint.to_string();
-
-        let paths_for_secondary = paths.clone();
-        let workspace_for_secondary = workspace.clone();
-
-        let menu_entry = ContextMenuEntry::new(name)
-            .handler(move |window, cx| {
-                let create_new_window_w_modifier = window.modifiers().platform;
-
-                Self::open_recent_project(
-                    workspace_for_click.clone(),
-                    paths.clone(),
-                    create_new_window_w_modifier,
-                    window,
-                    cx,
-                );
-                window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-            })
-            .secondary_handler(move |window, cx| {
-                Self::open_recent_project(
-                    workspace_for_secondary.clone(),
-                    paths_for_secondary.clone(),
-                    true,
-                    window,
-                    cx,
-                );
-                window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-            })
-            .documentation_aside(DocumentationSide::Right, move |cx| {
+        let full_path_for_docs = full_path.clone();
+        let docs_aside = DocumentationAside {
+            side: DocumentationSide::Right,
+            render: Rc::new(move |cx| {
                 v_flex()
                     .gap_1()
-                    .child(Label::new(full_path.clone()).size(LabelSize::Small))
+                    .child(Label::new(full_path_for_docs.clone()).size(LabelSize::Small))
                     .child(
                         h_flex()
                             .pt_1()
@@ -328,7 +314,6 @@ impl ProjectDropdown {
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Divider::vertical())
                             .child(
                                 Label::new(format!("{} opens a new one", cmd_enter_hint))
                                     .size(LabelSize::Small)
@@ -336,9 +321,74 @@ impl ProjectDropdown {
                             ),
                     )
                     .into_any_element()
-            });
+            }),
+        };
 
-        menu.item(menu_entry)
+        menu.custom_entry_with_docs(
+            {
+                let name = name.clone();
+                let menu_shell_for_delete = menu_shell.clone();
+                let recent_projects_for_delete = recent_projects.clone();
+
+                move |_window, _cx| {
+                    let name = name.clone();
+                    let menu_shell = menu_shell_for_delete.clone();
+                    let recent_projects = recent_projects_for_delete.clone();
+
+                    h_flex()
+                        .group(name.clone())
+                        .w_full()
+                        .justify_between()
+                        .child(Label::new(name.clone()))
+                        .child(
+                            IconButton::new(element_id.clone(), IconName::Close)
+                                .visible_on_hover(name)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Remove from Recent Projects"))
+                                .on_click({
+                                    move |_, window, cx| {
+                                        let menu_shell = menu_shell.clone();
+                                        let recent_projects = recent_projects.clone();
+
+                                        recent_projects
+                                            .borrow_mut()
+                                            .retain(|p| p.workspace_id != workspace_id);
+
+                                        if let Some(menu_entity) = menu_shell.borrow().clone() {
+                                            menu_entity.update(cx, |menu, cx| {
+                                                menu.rebuild(window, cx);
+                                            });
+                                        }
+
+                                        cx.background_spawn(async move {
+                                            delete_recent_project(workspace_id).await;
+                                        })
+                                        .detach();
+                                    }
+                                }),
+                        )
+                        .into_any_element()
+                }
+            },
+            {
+                let paths = paths.clone();
+                let workspace = workspace_for_click.clone();
+
+                move |window, cx| {
+                    let create_new_window = window.modifiers().platform;
+                    Self::open_recent_project(
+                        workspace.clone(),
+                        paths.clone(),
+                        create_new_window,
+                        window,
+                        cx,
+                    );
+                    window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+                }
+            },
+            Some(docs_aside),
+        )
     }
 
     fn open_recent_project(

@@ -97,6 +97,10 @@ pub async fn get_recent_projects(
     }
 }
 
+pub async fn delete_recent_project(workspace_id: WorkspaceId) {
+    let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+}
+
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "windows")]
     cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {

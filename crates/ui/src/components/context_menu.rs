@@ -667,6 +667,21 @@ impl ContextMenu {
         self
     }
 
+    pub fn custom_entry_with_docs(
+        mut self,
+        entry_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        documentation_aside: Option<DocumentationAside>,
+    ) -> Self {
+        self.items.push(ContextMenuItem::CustomEntry {
+            entry_render: Box::new(entry_render),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            selectable: true,
+            documentation_aside,
+        });
+        self
+    }
+
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Label(label.into()));
         self
