@@ -30554,9 +30554,14 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
         let key1 = test_hunk_key_with_anchor("file1.rs", anchor1);
         let key2 = test_hunk_key_with_anchor("file2.rs", anchor2);
 
-        add_test_comment(editor, key1.clone(), "Comment 1", 0, cx);
-        add_test_comment(editor, key1, "Comment 2", 1, cx);
-        add_test_comment(editor, key2, "Comment 3", 10, cx);
+        let id1 = add_test_comment(editor, key1.clone(), "Comment 1", 0, cx);
+        let id2 = add_test_comment(editor, key1.clone(), "Comment 2", 1, cx);
+        let id3 = add_test_comment(editor, key2.clone(), "Comment 3", 10, cx);
+
+        // IDs should be sequential starting from 0
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(id3, 2);
 
         assert_eq!(editor.total_review_comment_count(), 3);
 
@@ -30574,6 +30579,14 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
 
         // Storage should be empty
         assert_eq!(editor.total_review_comment_count(), 0);
+
+        // After taking all comments, ID counter should reset
+        // New comments should get IDs starting from 0 again
+        let new_id1 = add_test_comment(editor, key1.clone(), "New Comment 1", 0, cx);
+        let new_id2 = add_test_comment(editor, key2.clone(), "New Comment 2", 0, cx);
+
+        assert_eq!(new_id1, 0, "ID counter should reset after take_all");
+        assert_eq!(new_id2, 1, "IDs should be sequential after reset");
     });
 }
 
