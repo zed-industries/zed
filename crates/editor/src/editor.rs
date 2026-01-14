@@ -21471,6 +21471,8 @@ impl Editor {
         // Dismiss all overlays when taking comments (e.g., when sending to agent)
         self.dismiss_all_diff_review_overlays(cx);
         let comments = std::mem::take(&mut self.stored_review_comments);
+        // Reset the ID counter since all comments have been taken
+        self.next_review_comment_id = 0;
         cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
         cx.notify();
         comments
