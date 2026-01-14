@@ -8,6 +8,7 @@ members = [
     "crates/agent",
     "crates/agent_servers",
     "crates/agent_settings",
+    "crates/agent_skills",
     "crates/agent_ui",
     "crates/agent_ui_v2",
     "crates/ai_onboarding",
@@ -249,6 +250,7 @@ activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_ui_v2 = { path = "crates/agent_ui_v2" }
 agent_settings = { path = "crates/agent_settings" }
+agent_skills = { path = "crates/agent_skills" }
 agent_servers = { path = "crates/agent_servers" }
 ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
@@ -630,6 +632,7 @@ schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
+serde_yaml = "0.9"
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",

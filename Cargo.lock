@@ -326,6 +326,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "paths",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "util",
+ "worktree",
+]
+
+[[package]]
 name = "agent_ui"
 version = "0.1.0"
 dependencies = [
