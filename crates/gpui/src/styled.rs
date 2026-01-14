@@ -1,5 +1,5 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
+    self as gpui, AbsoluteLength, AlignContent, AlignItems, BlendMode, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
     FontWeight, GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle,
     StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
@@ -391,6 +391,15 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().background = Some(fill.into());
+        self
+    }
+
+    /// Sets the blend mode of the element.
+    fn blend_mode(mut self, mode: BlendMode) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().blend_mode = Some(mode);
         self
     }
 
