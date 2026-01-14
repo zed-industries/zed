@@ -10413,12 +10413,42 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let git_gutter_width = Self::gutter_strip_width(line_height)
+                        + gutter_dimensions
+                            .git_blame_entries_width
+                            .unwrap_or_default();
+                    let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
+                    let max_line_number_length = self
+                        .editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .widest_line_number()
+                        .ilog10()
+                        + 1;
+
                     let diff_review_button = self
                         .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
-                        .map(|(display_row, _buffer_row)| {
+                        .map(|(display_row, buffer_row)| {
+                            let is_wide = max_line_number_length
+                                >= EditorSettings::get_global(cx).gutter.min_line_number_digits
+                                    as u32
+                                && buffer_row.is_some_and(|row| {
+                                    (row + 1).ilog10() + 1 == max_line_number_length
+                                })
+                                || gutter_dimensions.right_padding == px(0.);
+
+                            let button_width = if is_wide {
+                                available_width - px(6.)
+                            } else {
+                                available_width + em_width - px(6.)
+                            };
+
                             let button = self.editor.update(cx, |editor, cx| {
                                 editor
-                                    .render_diff_review_button(display_row, cx)
+                                    .render_diff_review_button(display_row, button_width, cx)
                                     .into_any_element()
                             });
                             prepaint_gutter_button(

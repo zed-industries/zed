@@ -20968,14 +20968,27 @@ impl Editor {
     pub fn render_diff_review_button(
         &self,
         display_row: DisplayRow,
+        width: Pixels,
         cx: &mut Context<Self>,
-    ) -> IconButton {
-        IconButton::new("diff_review_button", IconName::Plus)
-            .icon_size(IconSize::XSmall)
-            .size(ButtonSize::None)
-            .icon_color(ui::Color::Default)
-            .style(ButtonStyle::Filled)
-            .layer(ui::ElevationIndex::Surface)
+    ) -> impl IntoElement {
+        let text_color = cx.theme().colors().text;
+        let icon_color = cx.theme().colors().icon_accent;
+
+        h_flex()
+            .id("diff_review_button")
+            .cursor_pointer()
+            .w(width - px(1.))
+            .h(relative(0.9))
+            .justify_center()
+            .rounded_sm()
+            .border_1()
+            .border_color(text_color.opacity(0.1))
+            .bg(text_color.opacity(0.15))
+            .hover(|s| {
+                s.bg(icon_color.opacity(0.4))
+                    .border_color(icon_color.opacity(0.5))
+            })
+            .child(Icon::new(IconName::Plus).size(IconSize::Small))
             .tooltip(Tooltip::text("Add Review"))
             .on_click(cx.listener(move |editor, _event: &ClickEvent, window, cx| {
                 editor.show_diff_review_overlay(display_row, window, cx);
