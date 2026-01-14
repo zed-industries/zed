@@ -2766,6 +2766,23 @@ impl AcpThreadView {
                 ContextMenu::build(window, cx, move |menu, _, cx| {
                     let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
 
+                    let copy_this_agent_response =
+                        ContextMenuEntry::new("Copy This Agent Response").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    if let Some(thread) = this.thread() {
+                                        let entries = thread.read(cx).entries();
+                                        if let Some(text) =
+                                            Self::get_agent_message_content(entries, entry_ix, cx)
+                                        {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                        }
+                                    }
+                                });
+                            }
+                        });
+
                     let scroll_item = if is_at_top {
                         ContextMenuEntry::new("Scroll to Bottom").handler({
                             let entity = entity.clone();
@@ -2802,7 +2819,8 @@ impl AcpThreadView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
-                        .action("Copy", Box::new(markdown::CopyAsMarkdown))
+                        .action("Copy Selection", Box::new(markdown::CopyAsMarkdown))
+                        .item(copy_this_agent_response)
                         .separator()
                         .item(scroll_item)
                         .item(open_thread_as_markdown)
@@ -7644,6 +7662,59 @@ impl AcpThreadView {
         } else {
             self.message_editor.clone()
         }
+    }
+
+    fn get_agent_message_content(
+        entries: &[AgentThreadEntry],
+        entry_index: usize,
+        cx: &App,
+    ) -> Option<String> {
+        let entry = entries.get(entry_index)?;
+        if matches!(entry, AgentThreadEntry::UserMessage(_)) {
+            return None;
+        }
+
+        let start_index = (0..entry_index)
+            .rev()
+            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let end_index = (entry_index + 1..entries.len())
+            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|i| i - 1)
+            .unwrap_or(entries.len() - 1);
+
+        let parts: Vec<String> = (start_index..=end_index)
+            .filter_map(|i| entries.get(i))
+            .filter_map(|entry| {
+                if let AgentThreadEntry::AssistantMessage(message) = entry {
+                    let text: String = message
+                        .chunks
+                        .iter()
+                        .filter_map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block } => {
+                                let markdown = block.to_markdown(cx);
+                                if markdown.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(markdown.to_string())
+                                }
+                            }
+                            AssistantMessageChunk::Thought { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+
+                    if text.is_empty() { None } else { Some(text) }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let text = parts.join("\n\n");
+        if text.is_empty() { None } else { Some(text) }
     }
 }
 
