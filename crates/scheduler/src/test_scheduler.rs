@@ -36,6 +36,7 @@ pub struct TestScheduler {
     rng: Arc<Mutex<StdRng>>,
     state: Arc<Mutex<SchedulerState>>,
     thread: Thread,
+    unparked: AtomicBool,
 }
 
 impl TestScheduler {
@@ -101,6 +102,7 @@ impl TestScheduler {
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
+            unparked: AtomicBool::new(false),
         }
     }
 
@@ -423,9 +425,8 @@ impl TestScheduler {
                     return true;
                 }
 
-                // Check if we were woken up (not just timed out)
-                // If there's work to do, the caller will find it
-                if elapsed < park_duration {
+                // Check if we were woken up by a different thread
+                if self.unparked.swap(false, SeqCst) {
                     return true;
                 }
             }
@@ -570,6 +571,7 @@ impl Scheduler for TestScheduler {
             },
         );
         drop(state);
+        self.unparked.store(true, SeqCst);
         self.thread.unpark();
     }
 
@@ -594,6 +596,7 @@ impl Scheduler for TestScheduler {
             },
         );
         drop(state);
+        self.unparked.store(true, SeqCst);
         self.thread.unpark();
     }
 
