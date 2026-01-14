@@ -468,21 +468,10 @@ mod tests {
             mcp_tool_id("my-custom-server", "do_something"),
             "mcp:my-custom-server:do_something"
         );
-    }
-
-    #[test]
-    fn test_mcp_tool_id_with_underscores_in_names() {
+        // Underscores in names
         assert_eq!(mcp_tool_id("my_server", "my_tool"), "mcp:my_server:my_tool");
     }
 
-    #[test]
-    fn test_mcp_tool_id_does_not_collide_with_builtin_tools() {
-        let tool_id = mcp_tool_id("some-server", "terminal");
-        assert_eq!(tool_id, "mcp:some-server:terminal");
-        assert_ne!(tool_id, "terminal");
-
-        let tool_id = mcp_tool_id("some-server", "edit_file");
-        assert_eq!(tool_id, "mcp:some-server:edit_file");
-        assert_ne!(tool_id, "edit_file");
-    }
+    // Note: Tests for MCP tool ID collision with built-in tools and permission
+    // decisions are in crates/agent/src/tool_permissions.rs to avoid duplication.
 }

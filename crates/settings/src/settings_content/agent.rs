@@ -561,3 +561,115 @@ pub enum ToolPermissionMode {
     #[default]
     Confirm,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_set_tool_default_mode_creates_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.tool_permissions.is_none());
+
+        settings.set_tool_default_mode("terminal", ToolPermissionMode::Allow);
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal_rules.default_mode, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_set_tool_default_mode_updates_existing() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.set_tool_default_mode("terminal", ToolPermissionMode::Confirm);
+        settings.set_tool_default_mode("terminal", ToolPermissionMode::Allow);
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal_rules.default_mode, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_set_tool_default_mode_for_mcp_tool() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.set_tool_default_mode("mcp:github:create_issue", ToolPermissionMode::Allow);
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let mcp_rules = tool_permissions
+            .tools
+            .get("mcp:github:create_issue")
+            .unwrap();
+        assert_eq!(mcp_rules.default_mode, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_creates_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.tool_permissions.is_none());
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(always_allow.0.len(), 1);
+        assert_eq!(always_allow.0[0].pattern, "^cargo\\s");
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_appends_to_existing() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("terminal", "^npm\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(always_allow.0.len(), 2);
+        assert_eq!(always_allow.0[0].pattern, "^cargo\\s");
+        assert_eq!(always_allow.0[1].pattern, "^npm\\s");
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_does_not_duplicate() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(
+            always_allow.0.len(),
+            1,
+            "Duplicate patterns should not be added"
+        );
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_for_different_tools() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("fetch", "^https?://github\\.com".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        assert_eq!(
+            terminal_rules.always_allow.as_ref().unwrap().0[0].pattern,
+            "^cargo\\s"
+        );
+
+        let fetch_rules = tool_permissions.tools.get("fetch").unwrap();
+        assert_eq!(
+            fetch_rules.always_allow.as_ref().unwrap().0[0].pattern,
+            "^https?://github\\.com"
+        );
+    }
+}

@@ -1,7 +1,16 @@
 use url::Url;
 
+/// Extracts a regex pattern from a terminal command based on the first token (command name).
+///
+/// Returns `None` for commands starting with `./`, `/`, or other path-like prefixes.
+/// This is a deliberate security decision: we only allow pattern-based "always allow"
+/// rules for well-known command names (like `cargo`, `npm`, `git`), not for arbitrary
+/// scripts or absolute paths which could be manipulated by an attacker.
 pub fn extract_terminal_pattern(command: &str) -> Option<String> {
     let first_token = command.split_whitespace().next()?;
+    // Only allow alphanumeric commands with hyphens/underscores.
+    // Reject paths like "./script.sh" or "/usr/bin/python" to prevent
+    // users from accidentally allowing arbitrary script execution.
     if first_token
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
