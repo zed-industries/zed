@@ -31,12 +31,25 @@ pub use crate::image_viewer_settings::*;
 
 actions!(
     image_viewer,
-    [ZoomIn, ZoomOut, ResetZoom, FitToView, ZoomToActualSize]
+    [
+        /// Zoom in the image.
+        ZoomIn,
+        /// Zoom out the image.
+        ZoomOut,
+        /// Reset zoom to 100%.
+        ResetZoom,
+        /// Fit the image to view.
+        FitToView,
+        /// Zoom to actual size (100%).
+        ZoomToActualSize
+    ]
 );
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 20.0;
 const ZOOM_STEP: f32 = 1.1;
+const SCROLL_LINE_MULTIPLIER: f32 = 20.0;
+const BASE_SQUARE_SIZE: f32 = 48.0;
 
 pub struct ImageView {
     image_item: Entity<ImageItem>,
@@ -44,13 +57,16 @@ pub struct ImageView {
     focus_handle: FocusHandle,
     zoom_level: f32,
     pan_offset: Point<Pixels>,
-    is_dragging: bool,
     last_mouse_position: Option<Point<Pixels>>,
     container_bounds: Option<Bounds<Pixels>>,
     image_size: Option<(u32, u32)>,
 }
 
 impl ImageView {
+    fn is_dragging(&self) -> bool {
+        self.last_mouse_position.is_some()
+    }
+
     pub fn new(
         image_item: Entity<ImageItem>,
         project: Entity<Project>,
@@ -77,8 +93,7 @@ impl ImageView {
             project,
             focus_handle: cx.focus_handle(),
             zoom_level: 1.0,
-            pan_offset: point(px(0.0), px(0.0)),
-            is_dragging: false,
+            pan_offset: Point::default(),
             last_mouse_position: None,
             container_bounds: None,
             image_size,
@@ -117,20 +132,19 @@ impl ImageView {
 
     fn reset_zoom(&mut self, _: &ResetZoom, _window: &mut Window, cx: &mut Context<Self>) {
         self.zoom_level = 1.0;
-        self.pan_offset = point(px(0.0), px(0.0));
+        self.pan_offset = Point::default();
         cx.notify();
     }
 
     fn fit_to_view(&mut self, _: &FitToView, _window: &mut Window, cx: &mut Context<Self>) {
-        if let (Some(bounds), Some((img_width, img_height))) =
-            (self.container_bounds, self.image_size)
+        if let Some((bounds, (img_width, img_height))) = self.container_bounds.zip(self.image_size)
         {
             let container_width: f32 = bounds.size.width.into();
             let container_height: f32 = bounds.size.height.into();
             let scale_x = container_width / img_width as f32;
             let scale_y = container_height / img_height as f32;
             self.zoom_level = scale_x.min(scale_y).min(1.0);
-            self.pan_offset = point(px(0.0), px(0.0));
+            self.pan_offset = Point::default();
             cx.notify();
         }
     }
@@ -142,7 +156,7 @@ impl ImageView {
         cx: &mut Context<Self>,
     ) {
         self.zoom_level = 1.0;
-        self.pan_offset = point(px(0.0), px(0.0));
+        self.pan_offset = Point::default();
         cx.notify();
     }
 
@@ -155,18 +169,17 @@ impl ImageView {
         let old_zoom = self.zoom_level;
         self.zoom_level = new_zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
-        if let Some(center) = zoom_center {
-            if let Some(bounds) = self.container_bounds {
-                let relative_center = point(
-                    center.x - bounds.origin.x - bounds.size.width / 2.0,
-                    center.y - bounds.origin.y - bounds.size.height / 2.0,
-                );
-                let zoom_ratio = self.zoom_level / old_zoom;
-                self.pan_offset = point(
-                    (self.pan_offset.x + relative_center.x) * zoom_ratio - relative_center.x,
-                    (self.pan_offset.y + relative_center.y) * zoom_ratio - relative_center.y,
-                );
-            }
+        if let Some((center, bounds)) = zoom_center.zip(self.container_bounds) {
+            let relative_center = point(
+                center.x - bounds.origin.x - bounds.size.width / 2.0,
+                center.y - bounds.origin.y - bounds.size.height / 2.0,
+            );
+
+            let mouse_offset_from_image = relative_center - self.pan_offset;
+
+            let zoom_ratio = self.zoom_level / old_zoom;
+
+            self.pan_offset += mouse_offset_from_image * (1.0 - zoom_ratio);
         }
 
         cx.notify();
@@ -181,7 +194,7 @@ impl ImageView {
         if event.modifiers.control || event.modifiers.platform {
             let delta: f32 = match event.delta {
                 ScrollDelta::Pixels(pixels) => pixels.y.into(),
-                ScrollDelta::Lines(lines) => lines.y * 20.0,
+                ScrollDelta::Lines(lines) => lines.y * SCROLL_LINE_MULTIPLIER,
             };
             let zoom_factor = if delta > 0.0 {
                 1.0 + delta.abs() * 0.01
@@ -192,9 +205,9 @@ impl ImageView {
         } else {
             let delta = match event.delta {
                 ScrollDelta::Pixels(pixels) => pixels,
-                ScrollDelta::Lines(lines) => point(px(lines.x * 20.0), px(lines.y * 20.0)),
+                ScrollDelta::Lines(lines) => lines.map(|d| px(d * SCROLL_LINE_MULTIPLIER)),
             };
-            self.pan_offset = point(self.pan_offset.x + delta.x, self.pan_offset.y + delta.y);
+            self.pan_offset += delta;
             cx.notify();
         }
     }
@@ -206,7 +219,6 @@ impl ImageView {
         cx: &mut Context<Self>,
     ) {
         if event.button == MouseButton::Left || event.button == MouseButton::Middle {
-            self.is_dragging = true;
             self.last_mouse_position = Some(event.position);
             cx.notify();
         }
@@ -218,7 +230,6 @@ impl ImageView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.is_dragging = false;
         self.last_mouse_position = None;
         cx.notify();
     }
@@ -229,10 +240,10 @@ impl ImageView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_dragging {
+        if self.is_dragging() {
             if let Some(last_pos) = self.last_mouse_position {
-                let delta = point(event.position.x - last_pos.x, event.position.y - last_pos.y);
-                self.pan_offset = point(self.pan_offset.x + delta.x, self.pan_offset.y + delta.y);
+                let delta = event.position - last_pos;
+                self.pan_offset += delta;
             }
             self.last_mouse_position = Some(event.position);
             cx.notify();
@@ -358,7 +369,6 @@ impl Item for ImageView {
             focus_handle: cx.focus_handle(),
             zoom_level: self.zoom_level,
             pan_offset: self.pan_offset,
-            is_dragging: false,
             last_mouse_position: None,
             container_bounds: None,
             image_size: self.image_size,
@@ -478,7 +488,7 @@ impl Render for ImageView {
         let image = self.image_item.read(cx).image.clone();
         let zoom_level = self.zoom_level;
         let pan_offset = self.pan_offset;
-
+        let is_dragging = self.is_dragging();
         let entity = cx.entity().downgrade();
 
         let scaled_size = self
@@ -488,23 +498,18 @@ impl Render for ImageView {
         let border_color = cx.theme().colors().border;
 
         let (mut left, mut top) = (px(0.0), px(0.0));
-        let mut is_centered_by_flex = true;
+        let mut scaled_w = px(0.0);
+        let mut scaled_h = px(0.0);
 
-        if let (Some(bounds), Some((scaled_w, scaled_h))) = (self.container_bounds, scaled_size) {
-            is_centered_by_flex = false;
+        if let Some((bounds, (w, h))) = self.container_bounds.zip(scaled_size) {
+            scaled_w = w;
+            scaled_h = h;
 
-            // Convert Pixels to f32 for calculation
-            let bounds_w_f32 = f32::from(bounds.size.width);
-            let bounds_h_f32 = f32::from(bounds.size.height);
-            let scaled_w_f32 = f32::from(scaled_w);
-            let scaled_h_f32 = f32::from(scaled_h);
+            let center_x = bounds.size.width / 2.0;
+            let center_y = bounds.size.height / 2.0;
 
-            let center_x = bounds_w_f32 / 2.0;
-            let center_y = bounds_h_f32 / 2.0;
-
-            // Calculate offset and wrap back in px()
-            left = px(center_x - scaled_w_f32 / 2.0) + pan_offset.x;
-            top = px(center_y - scaled_h_f32 / 2.0) + pan_offset.y;
+            left = center_x - (scaled_w / 2.0) + pan_offset.x;
+            top = center_y - (scaled_h / 2.0) + pan_offset.y;
         }
 
         div()
@@ -523,7 +528,7 @@ impl Render for ImageView {
                     .id("image-container")
                     .size_full()
                     .overflow_hidden()
-                    .cursor(if self.is_dragging {
+                    .cursor(if is_dragging {
                         gpui::CursorStyle::ClosedHand
                     } else {
                         gpui::CursorStyle::OpenHand
@@ -554,17 +559,12 @@ impl Render for ImageView {
                     .child(
                         div()
                             .relative()
-                            .when(is_centered_by_flex, |div| {
-                                div.flex().justify_center().items_center().size_full()
-                            })
-                            .when(!is_centered_by_flex, |div| {
-                                div.absolute().left(left).top(top)
-                            })
-                            .when_some(scaled_size, |div, (scaled_width, scaled_height)| {
-                                div.w(scaled_width).h(scaled_height)
-                            })
-                            .child({
-                                // draw checkerboard pattern behind the image for transparency
+                            .absolute()
+                            .left(left)
+                            .top(top)
+                            .w(scaled_w)
+                            .h(scaled_h)
+                            .child(
                                 canvas(
                                     |_, _, _| {},
                                     move |bounds, _, window, _cx| {
@@ -573,8 +573,7 @@ impl Render for ImageView {
                                         let bounds_width: f32 = bounds.size.width.into();
                                         let bounds_height: f32 = bounds.size.height.into();
 
-                                        // muchh larger squares
-                                        let square_size = 48.0 * zoom_level;
+                                        let square_size = BASE_SQUARE_SIZE * zoom_level;
 
                                         let cols = (bounds_width / square_size).ceil() as i32 + 1;
                                         let rows = (bounds_height / square_size).ceil() as i32 + 1;
@@ -582,13 +581,12 @@ impl Render for ImageView {
                                         for row in 0..rows {
                                             for col in 0..cols {
                                                 if (row + col) % 2 == 0 {
-                                                    continue; // skipping alternate squares
+                                                    continue;
                                                 }
 
                                                 let x = bounds_x + col as f32 * square_size;
                                                 let y = bounds_y + row as f32 * square_size;
 
-                                                // clamp to bounds
                                                 let w =
                                                     square_size.min(bounds_x + bounds_width - x);
                                                 let h =
@@ -608,7 +606,6 @@ impl Render for ImageView {
                                             }
                                         }
 
-                                        // draw border
                                         let border_rect = Bounds::new(
                                             point(px(bounds_x), px(bounds_y)),
                                             size(px(bounds_width), px(bounds_height)),
@@ -624,40 +621,39 @@ impl Render for ImageView {
                                 .absolute()
                                 .top_0()
                                 .left_0()
-                                .bg(gpui::rgb(0xCCCCCD))
-                            })
+                                .bg(gpui::rgb(0xCCCCCD)),
+                            )
                             .child({
                                 let image_element = img(image).id("img");
-
-                                if let Some((scaled_width, scaled_height)) = scaled_size {
-                                    image_element.w(scaled_width).h(scaled_height)
-                                } else {
-                                    image_element.max_w_full().max_h_full()
-                                }
+                                image_element.size_full()
                             }),
                     ),
             )
-            .child({
-                canvas(
-                    move |_, _, _| {},
-                    move |_, _, window, _cx| {
-                        window.on_mouse_event(move |_event: &MouseUpEvent, phase, _window, cx| {
-                            if phase == DispatchPhase::Bubble {
-                                if let Some(entity) = entity.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        if this.is_dragging {
-                                            this.is_dragging = false;
-                                            this.last_mouse_position = None;
-                                            cx.notify();
+            .when(is_dragging, move |div| {
+                let entity = entity.clone();
+                div.child(
+                    canvas(
+                        move |_, _, _| {},
+                        move |_, _, window, _cx| {
+                            window.on_mouse_event(
+                                move |_event: &MouseUpEvent, phase, _window, cx| {
+                                    if phase == DispatchPhase::Bubble {
+                                        if let Some(entity) = entity.upgrade() {
+                                            entity.update(cx, |this, cx| {
+                                                if this.is_dragging() {
+                                                    this.last_mouse_position = None;
+                                                    cx.notify();
+                                                }
+                                            });
                                         }
-                                    });
-                                }
-                            }
-                        });
-                    },
+                                    }
+                                },
+                            );
+                        },
+                    )
+                    .absolute()
+                    .size_0(),
                 )
-                .absolute()
-                .size_0()
             })
     }
 }
@@ -793,15 +789,13 @@ impl ToolbarItemView for ImageViewToolbarControls {
         self.image_view = None;
         self._subscription = None;
 
-        if let Some(item) = active_pane_item {
-            if let Some(image_view) = item.downcast::<ImageView>() {
-                self._subscription = Some(cx.observe(&image_view, |_, _, cx| {
-                    cx.notify();
-                }));
-                self.image_view = Some(image_view.downgrade());
+        if let Some(item) = active_pane_item.and_then(|i| i.downcast::<ImageView>()) {
+            self._subscription = Some(cx.observe(&item, |_, _, cx| {
                 cx.notify();
-                return ToolbarItemLocation::PrimaryRight;
-            }
+            }));
+            self.image_view = Some(item.downgrade());
+            cx.notify();
+            return ToolbarItemLocation::PrimaryRight;
         }
 
         ToolbarItemLocation::Hidden
