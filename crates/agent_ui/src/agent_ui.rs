@@ -129,6 +129,8 @@ actions!(
         SendNextQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
+        /// Opens the permission granularity dropdown for the current tool call.
+        OpenPermissionDropdown,
     ]
 );
 

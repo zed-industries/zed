@@ -309,6 +309,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
+    permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     login: Option<task::SpawnInTerminal>,
     session_list: Option<Rc<dyn AgentSessionList>>,
     session_list_state: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
@@ -486,6 +487,7 @@ impl AcpThreadView {
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
+            permission_dropdown_handle: PopoverMenuHandle::default(),
             thread_state: Self::initial_state(
                 agent.clone(),
                 resume_thread.clone(),
@@ -3734,6 +3736,7 @@ impl AcpThreadView {
             .collect();
 
         PopoverMenu::new(("permission-granularity", entry_ix))
+            .with_handle(self.permission_dropdown_handle.clone())
             .trigger(
                 Button::new(("granularity-trigger", entry_ix), current_label)
                     .icon(IconName::ChevronDown)
@@ -3745,7 +3748,7 @@ impl AcpThreadView {
                         if is_first {
                             btn.key_binding(
                                 KeyBinding::for_action_in(
-                                    &AllowAlways as &dyn Action,
+                                    &crate::OpenPermissionDropdown as &dyn Action,
                                     &self.focus_handle,
                                     cx,
                                 )
@@ -5720,6 +5723,15 @@ impl AcpThreadView {
         self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx);
     }
 
+    fn open_permission_dropdown(
+        &mut self,
+        _: &crate::OpenPermissionDropdown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.permission_dropdown_handle.toggle(window, cx);
+    }
+
     fn handle_authorize_tool_call(
         &mut self,
         action: &AuthorizeToolCall,
@@ -7408,6 +7420,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
             .on_action(cx.listener(Self::handle_authorize_tool_call))
+            .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
