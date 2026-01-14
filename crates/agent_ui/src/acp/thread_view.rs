@@ -3677,24 +3677,23 @@ impl AcpThreadView {
         scroll_handle.scroll_to_bottom();
 
         div()
+            .id(format!("subagent-content-{}", session_id))
             .w_full()
             .max_h_56()
+            .p_2()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .bg(cx.theme().colors().panel_background)
-            .child(
-                div()
-                    .id(format!("subagent-content-{}", session_id))
-                    .size_full()
-                    .p_2()
-                    .track_scroll(&scroll_handle)
-                    .when_some(last_assistant_markdown, |this, markdown| {
-                        this.child(self.render_markdown(
-                            markdown,
-                            default_markdown_style(false, false, window, cx),
-                        ))
-                    }),
-            )
+            .bg(cx.theme().colors().editor_background.opacity(0.2))
+            .overflow_hidden()
+            .track_scroll(&scroll_handle)
+            .when_some(last_assistant_markdown, |this, markdown| {
+                this.child(
+                    self.render_markdown(
+                        markdown,
+                        default_markdown_style(false, false, window, cx),
+                    ),
+                )
+            })
     }
 
     fn render_markdown_output(
