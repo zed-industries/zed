@@ -845,8 +845,10 @@ mod macos {
         pub fn new() -> Self {
             unsafe {
                 let process_info = NSProcessInfo::processInfo(nil);
+                #[allow(clippy::disallowed_methods)]
                 let reason = NSString::alloc(nil).init_str("Audio playback in progress");
                 let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
+                let _: () = msg_send![reason, release];
                 let _: () = msg_send![activity, retain];
                 Self { activity }
             }
