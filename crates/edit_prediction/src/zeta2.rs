@@ -19,7 +19,9 @@ use zeta_prompt::format_zeta_prompt;
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
-pub const MAX_EDITABLE_TOKENS: usize = 150;
+// todo! make a version for this change. briefly tried this,
+// but it would require more cli commands to take a version
+pub const MAX_EDITABLE_TOKENS: usize = 180;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
