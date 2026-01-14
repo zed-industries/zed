@@ -15,6 +15,10 @@ use crate::{
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePaneModifiers>,
+    /// The text rendering mode to use.
+    ///
+    /// Default: platform_default
+    pub text_rendering_mode: Option<TextRenderingMode>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -409,6 +413,11 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_tab_bar_buttons: Option<bool>,
+    /// Whether or not to show pinned tabs in a separate row.
+    /// When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    ///
+    /// Default: false
+    pub show_pinned_tabs_in_separate_row: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -431,6 +440,44 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: false
     pub line_endings_button: Option<bool>,
+    /// Whether to show the active encoding button in the status bar.
+    ///
+    /// Default: non_utf8
+    pub active_encoding_button: Option<EncodingDisplayOptions>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantNames,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EncodingDisplayOptions {
+    Enabled,
+    Disabled,
+    #[default]
+    NonUtf8,
+}
+impl EncodingDisplayOptions {
+    pub fn should_show(&self, is_utf8: bool, has_bom: bool) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::Enabled => true,
+            Self::NonUtf8 => {
+                let is_standard_utf8 = is_utf8 && !has_bom;
+                !is_standard_utf8
+            }
+        }
+    }
 }
 
 #[derive(
@@ -543,6 +590,31 @@ pub enum OnLastWindowClosed {
     PlatformDefault,
     /// Quit the application the last window is closed
     QuitApp,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TextRenderingMode {
+    /// Use platform default behavior.
+    #[default]
+    PlatformDefault,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 impl OnLastWindowClosed {

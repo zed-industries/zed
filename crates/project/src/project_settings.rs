@@ -59,6 +59,9 @@ pub struct ProjectSettings {
     /// Settings for context servers used for AI-related features.
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
+    /// Default timeout for context server requests in seconds.
+    pub context_server_timeout: u64,
+
     /// Configuration for Diagnostics-related features.
     pub diagnostics: DiagnosticsSettings,
 
@@ -141,6 +144,8 @@ pub enum ContextServerSettings {
         /// Optional authentication configuration for the remote server.
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
+        /// Timeout for tool calls in milliseconds.
+        timeout: Option<u64>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -167,10 +172,12 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
                 enabled,
                 url,
                 headers,
+                timeout,
             } => ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             },
         }
     }
@@ -188,10 +195,12 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
                 enabled,
                 url,
                 headers,
+                timeout,
             } => settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             },
         }
     }
@@ -560,6 +569,7 @@ impl Settings for ProjectSettings {
                 .into_iter()
                 .map(|(key, value)| (key, value.into()))
                 .collect(),
+            context_server_timeout: project.context_server_timeout.unwrap_or(60),
             lsp: project
                 .lsp
                 .clone()
@@ -608,7 +618,7 @@ impl Settings for ProjectSettings {
 
 pub enum SettingsObserverMode {
     Local(Arc<dyn Fs>),
-    Remote,
+    Remote { via_collab: bool },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -729,6 +739,7 @@ impl SettingsObserver {
         worktree_store: Entity<WorktreeStore>,
         task_store: Entity<TaskStore>,
         upstream_client: Option<AnyProtoClient>,
+        via_collab: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut user_settings_watcher = None;
@@ -758,7 +769,7 @@ impl SettingsObserver {
         Self {
             worktree_store,
             task_store,
-            mode: SettingsObserverMode::Remote,
+            mode: SettingsObserverMode::Remote { via_collab },
             downstream_client: None,
             project_id: REMOTE_SERVER_PROJECT_ID,
             _trusted_worktrees_watcher: None,
@@ -835,6 +846,10 @@ impl SettingsObserver {
         };
         let path = RelPath::from_proto(&envelope.payload.path)?;
         this.update(&mut cx, |this, cx| {
+            let is_via_collab = match &this.mode {
+                SettingsObserverMode::Local(..) => false,
+                SettingsObserverMode::Remote { via_collab } => *via_collab,
+            };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             let Some(worktree) = this
                 .worktree_store
@@ -851,9 +866,10 @@ impl SettingsObserver {
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
+                is_via_collab,
                 cx,
             );
-        })?;
+        });
         Ok(())
     }
 
@@ -868,7 +884,7 @@ impl SettingsObserver {
                 .result()
                 .context("setting new user settings")?;
             anyhow::Ok(())
-        })??;
+        })?;
         Ok(())
     }
 
@@ -1044,6 +1060,7 @@ impl SettingsObserver {
                         settings_contents.into_iter().map(|(path, kind, content)| {
                             (path, kind, content.and_then(|c| c.log_err()))
                         }),
+                        false,
                         cx,
                     )
                 })
@@ -1056,12 +1073,17 @@ impl SettingsObserver {
         &mut self,
         worktree: Entity<Worktree>,
         settings_contents: impl IntoIterator<Item = (Arc<RelPath>, LocalSettingsKind, Option<String>)>,
+        is_via_collab: bool,
         cx: &mut Context<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
         let task_store = self.task_store.clone();
-        let can_trust_worktree = OnceCell::new();
+        let can_trust_worktree = if is_via_collab {
+            OnceCell::from(true)
+        } else {
+            OnceCell::new()
+        };
         for (directory, kind, file_content) in settings_contents {
             let mut applied = true;
             match kind {
@@ -1069,7 +1091,7 @@ impl SettingsObserver {
                     if *can_trust_worktree.get_or_init(|| {
                         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.can_trust(worktree_id, cx)
+                                trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
                             })
                         } else {
                             true
@@ -1172,7 +1194,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
@@ -1181,7 +1203,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
                             TaskSettingsLocation::Global(&file_path),
@@ -1189,20 +1211,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_tasks(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {
@@ -1227,7 +1245,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
@@ -1236,7 +1254,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_debug_scenarios(
                             TaskSettingsLocation::Global(&file_path),
@@ -1244,20 +1262,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_debug_scenarios(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {

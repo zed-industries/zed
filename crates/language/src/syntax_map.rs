@@ -4,7 +4,6 @@ mod syntax_map_tests;
 use crate::{
     Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
-use anyhow::Context as _;
 use collections::HashMap;
 use futures::FutureExt;
 use gpui::SharedString;
@@ -13,8 +12,9 @@ use std::{
     cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
     fmt, iter,
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
@@ -421,11 +421,38 @@ impl SyntaxSnapshot {
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
     ) {
+        self.reparse_(text, registry, root_language, None).ok();
+    }
+
+    pub fn reparse_with_timeout(
+        &mut self,
+        text: &BufferSnapshot,
+        registry: Option<Arc<LanguageRegistry>>,
+        root_language: Arc<Language>,
+        budget: Duration,
+    ) -> Result<(), ParseTimeout> {
+        self.reparse_(text, registry, root_language, Some(budget))
+    }
+
+    fn reparse_(
+        &mut self,
+        text: &BufferSnapshot,
+        registry: Option<Arc<LanguageRegistry>>,
+        root_language: Arc<Language>,
+        mut budget: Option<Duration>,
+    ) -> Result<(), ParseTimeout> {
+        let budget = &mut budget;
         let edit_ranges = text
             .edits_since::<usize>(&self.parsed_version)
             .map(|edit| edit.new)
             .collect::<Vec<_>>();
-        self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
+        self.reparse_with_ranges(
+            text,
+            root_language.clone(),
+            edit_ranges,
+            registry.as_ref(),
+            budget,
+        )?;
 
         if let Some(registry) = registry
             && registry.version() != self.language_registry_version
@@ -460,12 +487,14 @@ impl SyntaxSnapshot {
                     root_language,
                     resolved_injection_ranges,
                     Some(&registry),
-                );
+                    budget,
+                )?;
             }
             self.language_registry_version = registry.version();
         }
 
         self.update_count += 1;
+        Ok(())
     }
 
     fn reparse_with_ranges(
@@ -474,7 +503,8 @@ impl SyntaxSnapshot {
         root_language: Arc<Language>,
         invalidated_ranges: Vec<Range<usize>>,
         registry: Option<&Arc<LanguageRegistry>>,
-    ) {
+        budget: &mut Option<Duration>,
+    ) -> Result<(), ParseTimeout> {
         log::trace!(
             "reparse. invalidated ranges:{:?}",
             LogOffsetRanges(&invalidated_ranges, text),
@@ -670,11 +700,15 @@ impl SyntaxSnapshot {
                             step_start_byte,
                             &included_ranges,
                             Some(old_tree.clone()),
+                            budget,
                         );
                         match result {
                             Ok(t) => tree = t,
+                            Err(e) if e.downcast_ref::<ParseTimeout>().is_some() => {
+                                return Err(ParseTimeout);
+                            }
                             Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
+                                log::error!("error parsing text: {e:?}");
                                 continue;
                             }
                         };
@@ -723,11 +757,15 @@ impl SyntaxSnapshot {
                             step_start_byte,
                             &included_ranges,
                             None,
+                            budget,
                         );
                         match result {
                             Ok(t) => tree = t,
+                            Err(e) if e.downcast_ref::<ParseTimeout>().is_some() => {
+                                return Err(ParseTimeout);
+                            }
                             Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
+                                log::error!("error parsing text: {e:?}");
                                 continue;
                             }
                         };
@@ -805,6 +843,7 @@ impl SyntaxSnapshot {
         self.parsed_version = text.version.clone();
         #[cfg(debug_assertions)]
         self.check_invariants(text);
+        Ok(())
     }
 
     #[cfg(debug_assertions)]
@@ -1372,14 +1411,41 @@ fn join_ranges(
     result
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct ParseTimeout;
+
+impl std::error::Error for ParseTimeout {}
+
+impl std::fmt::Display for ParseTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "parse timeout")
+    }
+}
+
 fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
     ranges: &[tree_sitter::Range],
     old_tree: Option<Tree>,
+    parse_budget: &mut Option<Duration>,
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {
+        let mut timed_out = false;
+        let now = Instant::now();
+        let mut progress_callback = parse_budget.map(|budget| {
+            let timed_out = &mut timed_out;
+            move |_: &_| {
+                let elapsed = now.elapsed();
+                if elapsed > budget {
+                    *timed_out = true;
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+        });
+
         let mut chunks = text.chunks_in_range(start_byte..text.len());
         parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
@@ -1390,9 +1456,21 @@ fn parse_text(
                     chunks.next().unwrap_or("").as_bytes()
                 },
                 old_tree.as_ref(),
-                None,
+                progress_callback
+                    .as_mut()
+                    .map(|progress_callback| tree_sitter::ParseOptions {
+                        progress_callback: Some(progress_callback),
+                    }),
             )
-            .context("failed to parse")
+            .inspect(|_| {
+                if let Some(parse_budget) = parse_budget {
+                    *parse_budget = parse_budget.saturating_sub(now.elapsed());
+                }
+            })
+            .ok_or_else(|| match timed_out {
+                true => anyhow::anyhow!(ParseTimeout),
+                false => anyhow::anyhow!("parsing failed"),
+            })
     })
 }
 

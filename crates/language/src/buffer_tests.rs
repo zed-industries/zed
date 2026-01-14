@@ -622,9 +622,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    buffer.update(cx, |buffer, _| {
-        buffer.set_sync_parse_timeout(Duration::ZERO)
-    });
+    buffer.update(cx, |buffer, _| buffer.set_sync_parse_timeout(None));
 
     // Perform some edits (add parameter and variable reference)
     // Parsing doesn't begin until the transaction is complete
@@ -736,7 +734,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local("{}", cx).with_language(rust_lang(), cx);
-        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer.set_sync_parse_timeout(None);
         buffer
     });
 
@@ -2359,7 +2357,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
 
         // This causes autoindent to be async.
-        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer.set_sync_parse_timeout(None);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         buffer.refresh_preview();
@@ -2964,8 +2962,8 @@ fn test_serialization(cx: &mut gpui::App) {
 
     let state = buffer1.read(cx).to_proto(cx);
     let ops = cx
-        .background_executor()
-        .block(buffer1.read(cx).serialize_ops(None, cx));
+        .foreground_executor()
+        .block_on(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
         let mut buffer =
             Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap();
@@ -3302,8 +3300,8 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
         let buffer = cx.new(|cx| {
             let state = base_buffer.read(cx).to_proto(cx);
             let ops = cx
-                .background_executor()
-                .block(base_buffer.read(cx).serialize_ops(None, cx));
+                .foreground_executor()
+                .block_on(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer =
                 Buffer::from_proto(ReplicaId::new(i as u16), Capability::ReadWrite, state, None)
                     .unwrap();
@@ -3417,8 +3415,8 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer_state = buffer.read(cx).to_proto(cx);
                 let old_buffer_ops = cx
-                    .background_executor()
-                    .block(buffer.read(cx).serialize_ops(None, cx));
+                    .foreground_executor()
+                    .block_on(buffer.read(cx).serialize_ops(None, cx));
                 let new_replica_id = (0..=replica_ids.len() as u16)
                     .map(ReplicaId::new)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())

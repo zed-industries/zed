@@ -6,23 +6,21 @@ use std::{
     path::{Path, PathBuf},
     pin::pin,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
+use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
-use smol::{
-    channel::{Receiver, Sender, bounded, unbounded},
-    future::FutureExt,
-};
+use smol::channel::{Receiver, Sender, bounded, unbounded};
 
-use text::BufferId;
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
@@ -67,14 +65,22 @@ pub struct SearchResultsHandle {
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
+pub struct SearchResults<T> {
+    pub _task_handle: Task<()>,
+    pub rx: Receiver<T>,
+}
 impl SearchResultsHandle {
-    pub fn results(self, cx: &mut App) -> Receiver<SearchResult> {
-        (self.trigger_search)(cx).detach();
-        self.results
+    pub fn results(self, cx: &mut App) -> SearchResults<SearchResult> {
+        SearchResults {
+            _task_handle: (self.trigger_search)(cx),
+            rx: self.results,
+        }
     }
-    pub fn matching_buffers(self, cx: &mut App) -> Receiver<Entity<Buffer>> {
-        (self.trigger_search)(cx).detach();
-        self.matching_buffers
+    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<Entity<Buffer>> {
+        SearchResults {
+            _task_handle: (self.trigger_search)(cx),
+            rx: self.matching_buffers,
+        }
     }
 }
 
@@ -165,6 +171,7 @@ impl Search {
                 unnamed_buffers.push(handle)
             };
         }
+        let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
@@ -180,10 +187,7 @@ impl Search {
                 let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
-                        let Ok(open_buffers) = cx.update(|cx| self.all_loaded_buffers(&query, cx))
-                        else {
-                            return;
-                        };
+                        let open_buffers = cx.update(|cx| self.all_loaded_buffers(&query, cx));
                         let fill_requests = cx
                             .background_spawn(async move {
                                 for buffer in open_buffers {
@@ -215,7 +219,7 @@ impl Search {
                             ))
                             .boxed_local(),
                             Self::open_buffers(
-                                &self.buffer_store,
+                                self.buffer_store,
                                 get_buffer_for_full_scan_rx,
                                 grab_buffer_snapshot_tx,
                                 cx.clone(),
@@ -243,37 +247,72 @@ impl Search {
                         remote_id,
                         models,
                     } => {
+                        let (handle, rx) = self
+                            .buffer_store
+                            .update(cx, |this, _| this.register_project_search_result_handle());
+
+                        let cancel_ongoing_search = util::defer({
+                            let client = client.clone();
+                            move || {
+                                _ = client.send(proto::FindSearchCandidatesCancelled {
+                                    project_id: remote_id,
+                                    handle,
+                                });
+                            }
+                        });
                         let request = client.request(proto::FindSearchCandidates {
                             project_id: remote_id,
                             query: Some(query.to_proto()),
                             limit: self.limit as _,
+                            handle,
                         });
-                        let Ok(guard) = cx.update(|cx| {
+
+                        let buffer_store = self.buffer_store;
+                        let guard = cx.update(|cx| {
                             Project::retain_remotely_created_models_impl(
                                 &models,
-                                &self.buffer_store,
+                                &buffer_store,
                                 &self.worktree_store,
                                 cx,
                             )
-                        }) else {
-                            return;
-                        };
-                        let buffer_store = self.buffer_store.downgrade();
+                        });
+
                         let issue_remote_buffers_request = cx
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
-                                    let response = request.await?;
-                                    for buffer_id in response.buffer_ids {
-                                        let buffer_id = BufferId::new(buffer_id)?;
-                                        let buffer = buffer_store
-                                            .update(cx, |buffer_store, cx| {
-                                                buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                                            })?
-                                            .await?;
-                                        let _ = grab_buffer_snapshot_tx.send(buffer).await;
-                                    }
+                                    request.await?;
+
+                                    let (buffer_tx, buffer_rx) = bounded(24);
+
+                                    let wait_for_remote_buffers = cx.spawn(async move |cx| {
+                                        while let Ok(buffer_id) = rx.recv().await {
+                                            let buffer =
+                                                buffer_store.update(cx, |buffer_store, cx| {
+                                                    buffer_store
+                                                        .wait_for_remote_buffer(buffer_id, cx)
+                                                });
+                                            buffer_tx.send(buffer).await?;
+                                        }
+                                        anyhow::Ok(())
+                                    });
+
+                                    let forward_buffers = cx.background_spawn(async move {
+                                        while let Ok(buffer) = buffer_rx.recv().await {
+                                            let _ =
+                                                grab_buffer_snapshot_tx.send(buffer.await?).await;
+                                        }
+                                        anyhow::Ok(())
+                                    });
+                                    let (left, right) = futures::future::join(
+                                        wait_for_remote_buffers,
+                                        forward_buffers,
+                                    )
+                                    .await;
+                                    left?;
+                                    right?;
 
                                     drop(guard);
+                                    cancel_ongoing_search.abort();
                                     anyhow::Ok(())
                                 })
                                 .await
@@ -289,22 +328,27 @@ impl Search {
 
                 let should_find_all_matches = !tx.is_closed();
 
-                let worker_pool = executor.scoped(|scope| {
-                    let num_cpus = executor.num_cpus();
+                let _executor = executor.clone();
+                let worker_pool = executor.spawn(async move {
+                    let num_cpus = _executor.num_cpus();
 
                     assert!(num_cpus > 0);
-                    for _ in 0..executor.num_cpus() - 1 {
-                        let worker = Worker {
-                            query: &query,
-                            open_buffers: &open_buffers,
-                            candidates: candidate_searcher.clone(),
-                            find_all_matches_rx: find_all_matches_rx.clone(),
-                        };
-                        scope.spawn(worker.run());
-                    }
+                    _executor
+                        .scoped(|scope| {
+                            for _ in 0..num_cpus - 1 {
+                                let worker = Worker {
+                                    query: query.clone(),
+                                    open_buffers: open_buffers.clone(),
+                                    candidates: candidate_searcher.clone(),
+                                    find_all_matches_rx: find_all_matches_rx.clone(),
+                                };
+                                scope.spawn(worker.run());
+                            }
 
-                    drop(find_all_matches_rx);
-                    drop(candidate_searcher);
+                            drop(find_all_matches_rx);
+                            drop(candidate_searcher);
+                        })
+                        .await;
                 });
 
                 let (sorted_matches_tx, sorted_matches_rx) = unbounded();
@@ -366,11 +410,12 @@ impl Search {
         async move |cx| {
             _ = maybe!(async move {
                 let gitignored_tracker = PathInclusionMatcher::new(query.clone());
+                let include_ignored = query.include_ignored();
                 for worktree in worktrees {
                     let (mut snapshot, worktree_settings) = worktree
                         .read_with(cx, |this, _| {
                             Some((this.snapshot(), this.as_local()?.settings()))
-                        })?
+                        })
                         .context("The worktree is not local")?;
                     if query.include_ignored() {
                         // Pre-fetch all of the ignored directories as they're going to be searched.
@@ -392,33 +437,34 @@ impl Search {
                                 .map(|path| local.add_path_prefix_to_scan(path).into_future())
                                 .collect::<Vec<_>>();
                             Some(barrier)
-                        })?;
+                        });
                         if let Some(barriers) = barrier {
                             futures::future::join_all(barriers).await;
                         }
-                        snapshot = worktree.read_with(cx, |this, _| this.snapshot())?;
+                        snapshot = worktree.read_with(cx, |this, _| this.snapshot());
                     }
-                    cx.background_executor()
-                        .scoped(|scope| {
-                            scope.spawn(async {
-                                for entry in snapshot.files(query.include_ignored(), 0) {
-                                    let (should_scan_tx, should_scan_rx) = oneshot::channel();
+                    let tx = tx.clone();
+                    let results = results.clone();
 
-                                    let Ok(_) = tx
-                                        .send(InputPath {
-                                            entry: entry.clone(),
-                                            snapshot: snapshot.clone(),
-                                            should_scan_tx,
-                                        })
-                                        .await
-                                    else {
-                                        return;
-                                    };
-                                    if results.send(should_scan_rx).await.is_err() {
-                                        return;
-                                    };
-                                }
-                            })
+                    cx.background_executor()
+                        .spawn(async move {
+                            for entry in snapshot.files(include_ignored, 0) {
+                                let (should_scan_tx, should_scan_rx) = oneshot::channel();
+
+                                let Ok(_) = tx
+                                    .send(InputPath {
+                                        entry: entry.clone(),
+                                        snapshot: snapshot.clone(),
+                                        should_scan_tx,
+                                    })
+                                    .await
+                                else {
+                                    return;
+                                };
+                                if results.send(should_scan_rx).await.is_err() {
+                                    return;
+                                };
+                            }
                         })
                         .await;
                 }
@@ -452,7 +498,7 @@ impl Search {
 
     /// Background workers cannot open buffers by themselves, hence main thread will do it on their behalf.
     async fn open_buffers(
-        buffer_store: &Entity<BufferStore>,
+        buffer_store: Entity<BufferStore>,
         rx: Receiver<ProjectPath>,
         find_all_matches_tx: Sender<Entity<Buffer>>,
         mut cx: AsyncApp,
@@ -465,7 +511,7 @@ impl Search {
                         .into_iter()
                         .map(|path| this.open_buffer(path, cx))
                         .collect::<FuturesOrdered<_>>()
-                })?;
+                });
 
                 while let Some(buffer) = buffers.next().await {
                     if let Some(buffer) = buffer.log_err() {
@@ -490,7 +536,7 @@ impl Search {
     ) {
         _ = maybe!(async move {
             while let Ok(buffer) = rx.recv().await {
-                let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot())?;
+                let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot());
                 let (tx, rx) = oneshot::channel();
                 find_all_matches_tx.send((buffer, snapshot, tx)).await?;
                 results.send(rx).await?;
@@ -570,9 +616,9 @@ impl Search {
     }
 }
 
-struct Worker<'search> {
-    query: &'search SearchQuery,
-    open_buffers: &'search HashSet<ProjectEntryId>,
+struct Worker {
+    query: Arc<SearchQuery>,
+    open_buffers: Arc<HashSet<ProjectEntryId>>,
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
@@ -583,7 +629,7 @@ struct Worker<'search> {
     )>,
 }
 
-impl Worker<'_> {
+impl Worker {
     async fn run(self) {
         let (
             input_paths_rx,
@@ -614,7 +660,7 @@ impl Worker<'_> {
 
         loop {
             let handler = RequestHandler {
-                query: self.query,
+                query: &self.query,
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
@@ -701,7 +747,7 @@ impl RequestHandler<'_> {
                 return Ok(());
             }
 
-            if self.query.detect(file).unwrap_or(false) {
+            if self.query.detect(file).await.unwrap_or(false) {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send(entry.path).await?;
             }
@@ -878,6 +924,104 @@ impl PathInclusionMatcher {
         } else {
             false
         }
+    }
+}
+
+type IsTerminating = bool;
+/// Adaptive batcher that starts eager (small batches) and grows batch size
+/// when items arrive quickly, reducing RPC overhead while preserving low latency
+/// for slow streams.
+pub struct AdaptiveBatcher<T> {
+    items: Sender<T>,
+    flush_batch: Sender<IsTerminating>,
+    _batch_task: Task<()>,
+}
+
+impl<T: 'static + Send> AdaptiveBatcher<T> {
+    pub fn new(cx: &BackgroundExecutor) -> (Self, Receiver<Vec<T>>) {
+        let (items, rx) = unbounded();
+        let (batch_tx, batch_rx) = unbounded();
+        let (flush_batch_tx, flush_batch_rx) = unbounded();
+        let flush_batch = flush_batch_tx.clone();
+        let executor = cx.clone();
+        let _batch_task = cx.spawn_with_priority(gpui::Priority::High, async move {
+            let mut current_batch = vec![];
+            let mut items_produced_so_far = 0_u64;
+
+            let mut _schedule_flush_after_delay: Option<Task<()>> = None;
+            let _time_elapsed_since_start_of_search = std::time::Instant::now();
+            let mut flush = pin!(flush_batch_rx);
+            let mut terminating = false;
+            loop {
+                select_biased! {
+                    item = rx.recv().fuse() => {
+                        match item {
+                            Ok(new_item) => {
+                                let is_fresh_batch = current_batch.is_empty();
+                                items_produced_so_far += 1;
+                                current_batch.push(new_item);
+                                if is_fresh_batch {
+                                    // Chosen arbitrarily based on some experimentation with plots.
+                                    let desired_duration_ms = (20 * (items_produced_so_far + 2).ilog2() as u64).min(300);
+                                    let desired_duration = Duration::from_millis(desired_duration_ms);
+                                    let _executor = executor.clone();
+                                    let _flush = flush_batch_tx.clone();
+                                    let new_timer = executor.spawn_with_priority(Priority::High, async move {
+                                        _executor.timer(desired_duration).await;
+                                        _ = _flush.send(false).await;
+                                    });
+                                    _schedule_flush_after_delay = Some(new_timer);
+                                }
+                            }
+                            Err(_) => {
+                                // Items channel closed - send any remaining batch before exiting
+                                if !current_batch.is_empty() {
+                                    _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    should_break_afterwards = flush.next() => {
+                        if !current_batch.is_empty() {
+                            _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                            _schedule_flush_after_delay = None;
+                        }
+                        if should_break_afterwards.unwrap_or_default() {
+                            terminating = true;
+                        }
+                    }
+                    complete => {
+                        break;
+                    }
+                }
+                if terminating {
+                    // Drain any remaining items before exiting
+                    while let Ok(new_item) = rx.try_recv() {
+                        current_batch.push(new_item);
+                    }
+                    if !current_batch.is_empty() {
+                        _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                    }
+                    break;
+                }
+            }
+        });
+        let this = Self {
+            items,
+            _batch_task,
+            flush_batch,
+        };
+        (this, batch_rx)
+    }
+
+    pub async fn push(&self, item: T) {
+        _ = self.items.send(item).await;
+    }
+
+    pub async fn flush(self) {
+        _ = self.flush_batch.send(true).await;
+        self._batch_task.await;
     }
 }
 

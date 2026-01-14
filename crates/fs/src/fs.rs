@@ -63,9 +63,6 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
@@ -335,12 +332,11 @@ impl FileHandle for std::fs::File {
         let mut path_buf = MaybeUninit::<[u8; libc::PATH_MAX as usize]>::uninit();
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the path buffer.
         let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr().cast()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -372,12 +368,11 @@ impl FileHandle for std::fs::File {
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the kif.
         let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -398,18 +393,21 @@ impl FileHandle for std::fs::File {
         // Query required buffer size (in wide chars)
         let required_len =
             unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
-        if required_len == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
-        }
+        anyhow::ensure!(
+            required_len != 0,
+            "GetFinalPathNameByHandleW returned 0 length"
+        );
 
         // Allocate buffer and retrieve the path
         let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
         let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
-        if written == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
-        }
+        anyhow::ensure!(
+            written != 0,
+            "GetFinalPathNameByHandleW failed to write path"
+        );
 
         let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        anyhow::ensure!(!os_str.is_empty(), "Could find a path for the file handle");
         Ok(PathBuf::from(os_str))
     }
 }
@@ -885,22 +883,25 @@ impl Fs for RealFs {
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = if is_symlink {
             let path_buf = path.to_path_buf();
-            let path_exists = self
+            // Read target metadata, if the target exists
+            match self
                 .executor
-                .spawn(async move {
-                    path_buf
-                        .try_exists()
-                        .with_context(|| format!("checking existence for path {path_buf:?}"))
-                })
-                .await?;
-            if path_exists {
-                let path_buf = path.to_path_buf();
-                self.executor
-                    .spawn(async move { std::fs::metadata(path_buf) })
-                    .await
-                    .with_context(|| "accessing symlink for path {path}")?
-            } else {
-                symlink_metadata
+                .spawn(async move { std::fs::metadata(path_buf) })
+                .await
+            {
+                Ok(target_metadata) => target_metadata,
+                Err(err) => {
+                    if err.kind() != io::ErrorKind::NotFound {
+                        // TODO: Also FilesystemLoop when that's stable
+                        log::warn!(
+                            "Failed to read symlink target metadata for path {path:?}: {err}"
+                        );
+                    }
+                    // For a broken or recursive symlink, return the symlink metadata. (Or
+                    // as edge cases, a symlink into a directory we can't read, which is hard
+                    // to distinguish from just being broken.)
+                    symlink_metadata
+                }
             }
         } else {
             symlink_metadata
@@ -1026,6 +1027,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use util::{ResultExt as _, paths::SanitizedPath};
+        let executor = self.executor.clone();
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -1064,11 +1066,13 @@ impl Fs for RealFs {
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
+                let executor = executor.clone();
                 move |_| {
                     let _ = watcher.clone();
                     let pending_paths = pending_paths.clone();
+                    let executor = executor.clone();
                     async move {
-                        smol::Timer::after(latency).await;
+                        executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());
                         (!paths.is_empty()).then_some(paths)
                     }
@@ -1853,6 +1857,18 @@ impl FakeFs {
             let branch = branch.map(Into::into);
             state.branches.extend(branch.clone());
             state.current_branch_name = branch
+        })
+        .unwrap();
+    }
+
+    pub fn set_remote_for_repo(
+        &self,
+        dot_git: &Path,
+        name: impl Into<String>,
+        url: impl Into<String>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.remotes.insert(name.into(), url.into());
         })
         .unwrap();
     }
@@ -3482,5 +3498,55 @@ mod tests {
                 PathBuf::from(path!("/root/src/new/renamed_a.txt")),
             ]
         );
+    }
+
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
+        let tempdir = TempDir::new().unwrap();
+        let path = tempdir.path();
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let symlink_path = path.join("symlink");
+        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+        let metadata = fs
+            .metadata(&symlink_path)
+            .await
+            .expect("metadata call succeeds")
+            .expect("metadata returned");
+        assert!(metadata.is_symlink);
+        assert!(!metadata.is_dir);
+        assert!(!metadata.is_fifo);
+        assert!(!metadata.is_executable);
+        // don't care about len or mtime on symlinks?
+    }
+
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
+        let tempdir = TempDir::new().unwrap();
+        let path = tempdir.path();
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let symlink_path = path.join("symlink");
+        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+        let metadata = fs
+            .metadata(&symlink_path)
+            .await
+            .expect("metadata call succeeds")
+            .expect("metadata returned");
+        assert!(metadata.is_symlink);
+        assert!(!metadata.is_dir);
+        assert!(!metadata.is_fifo);
+        assert!(!metadata.is_executable);
+        // don't care about len or mtime on symlinks?
     }
 }

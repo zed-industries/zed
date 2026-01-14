@@ -10,13 +10,16 @@ dependencies = [
  "agent-client-protocol",
  "agent_settings",
  "anyhow",
+ "base64 0.22.1",
  "buffer_diff",
+ "chrono",
  "collections",
  "editor",
  "env_logger 0.11.8",
  "file_icons",
  "futures 0.3.31",
  "gpui",
+ "image",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -157,7 +160,6 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
- "assistant_text_thread",
  "chrono",
  "client",
  "clock",
@@ -170,6 +172,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "eval_utils",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "git",
@@ -226,9 +229,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e527d7dfe0f334313d42d1d9318f0a79665f6f21c440d0798f230a77a7ed6c"
+checksum = "1ea4b85f3bcd56ebe65f830321d34bc939af1b5a33b9dcb683195a3b72de0cdb"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -243,9 +246,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.10.5"
+version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6903a00e8ac822f9bacac59a1932754d7387c72ebb7c9c7439ad021505591da4"
+checksum = "70829a300bd178abe42836ac779cd3eb3b0dd3881250c752b2621b5324735df1"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
@@ -265,9 +268,11 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
+ "chrono",
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -286,7 +291,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "tempfile",
  "terminal",
@@ -309,8 +313,10 @@ dependencies = [
  "fs",
  "gpui",
  "language_model",
+ "log",
  "paths",
  "project",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -337,6 +343,7 @@ dependencies = [
  "assistant_text_thread",
  "async-fs",
  "audio",
+ "base64 0.22.1",
  "buffer_diff",
  "chrono",
  "client",
@@ -356,6 +363,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git_ui",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",
@@ -421,28 +429,23 @@ dependencies = [
 name = "agent_ui_v2"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
+ "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
- "assistant_text_thread",
- "chrono",
  "db",
- "editor",
  "feature_flags",
  "fs",
- "fuzzy",
  "gpui",
- "menu",
+ "log",
  "project",
  "prompt_store",
  "serde",
  "serde_json",
  "settings",
- "text",
- "time",
- "time_format",
  "ui",
  "util",
  "workspace",
@@ -778,9 +781,9 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cbdf310d77fd3aaee6ea2093db7011dc2d35d2eb3481e5607f1f8d942ed99df"
+checksum = "618a409b91d5265798a99e3d1d0b226911605e581c4e7255e83c1e397b172bce"
 dependencies = [
  "async-fs",
  "async-net",
@@ -794,24 +797,6 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
- "zbus",
-]
-
-[[package]]
-name = "ashpd"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0986d5b4f0802160191ad75f8d33ada000558757db3defb70299ca95d9fcbd"
-dependencies = [
- "async-fs",
- "async-net",
- "enumflags2",
- "futures-channel",
- "futures-util",
- "rand 0.9.2",
- "serde",
- "serde_repr",
- "url",
  "zbus",
 ]
 
@@ -1399,7 +1384,6 @@ dependencies = [
  "client",
  "editor",
  "gpui",
- "http_client",
  "markdown_preview",
  "release_channel",
  "semver",
@@ -1471,9 +1455,9 @@ dependencies = [
 
 [[package]]
 name = "aws-credential-types"
-version = "1.2.8"
+version = "1.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf26925f4a5b59eb76722b63c2892b1d70d06fa053c72e4a100ec308c1d47bc"
+checksum = "b01c9521fa01558f750d183c8c68c81b0155b9d193a4ba7f84c36bd1b6d04a06"
 dependencies = [
  "aws-smithy-async",
  "aws-smithy-runtime-api",
@@ -1507,9 +1491,9 @@ dependencies = [
 
 [[package]]
 name = "aws-runtime"
-version = "1.5.13"
+version = "1.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f2402da1a5e16868ba98725e5d73f26b8116eaa892e56f2cd0bf5eec7985f70"
+checksum = "7ce527fb7e53ba9626fc47824f25e256250556c40d8f81d27dd92aa38239d632"
 dependencies = [
  "aws-credential-types",
  "aws-sigv4",
@@ -1532,9 +1516,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-bedrockruntime"
-version = "1.112.0"
+version = "1.113.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06c037e6823696d752702ec2bad758d3cf95d1b92b712c8ac7e93824b5e2391"
+checksum = "d5d2b8f081b9e8ff455b8dd7387b6b02263c3dac73172d188d2b523ff1e775e9"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1557,9 +1541,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-kinesis"
-version = "1.91.0"
+version = "1.95.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699a3d645a2ab5cb12ca02eb23979753953414429fd6584ea8841af6bc4e0516"
+checksum = "9c3b2ce941308de56f5c2f69490497610e1a815ce968c9ac0796ab165f25205d"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1580,9 +1564,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "1.108.0"
+version = "1.112.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "200be4aed61e3c0669f7268bacb768f283f1c32a7014ce57225e1160be2f6ccb"
+checksum = "eee73a27721035c46da0572b390a69fbdb333d0177c24f3d8f7ff952eeb96690"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1720,9 +1704,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-checksums"
-version = "0.63.9"
+version = "0.63.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "165d8583d8d906e2fb5511d29201d447cc710864f075debcdd9c31c265412806"
+checksum = "95bd108f7b3563598e4dc7b62e1388c9982324a2abd622442167012690184591"
 dependencies = [
  "aws-smithy-http",
  "aws-smithy-types",
@@ -2186,8 +2170,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4deb8f595ce7f00dee3543ebf6fd9a20ea86fc421ab79600dac30876250bdae"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "ash",
  "ash-window",
@@ -2221,8 +2204,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27142319e2f4c264581067eaccb9f80acccdde60d8b4bf57cc50cd3152f109ca"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2232,8 +2214,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a6be3a82c001ba7a17b6f8e413ede5d1004e6047213f8efaf0ffc15b5c4904c"
+source = "git+https://github.com/kvark/blade?rev=e3cf011ca18a6dfd907d1dedd93e85e21f005fe3#e3cf011ca18a6dfd907d1dedd93e85e21f005fe3"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2336,12 +2317,9 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "itertools 0.14.0",
- "settings",
  "theme",
  "ui",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -2380,7 +2358,6 @@ dependencies = [
 name = "buffer_diff"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clock",
  "ctor",
  "futures 0.3.31",
@@ -3279,7 +3256,6 @@ dependencies = [
  "mistral",
  "serde",
  "serde_json",
- "smol",
  "text",
 ]
 
@@ -3287,7 +3263,10 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "agent",
+ "agent-client-protocol",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "assistant_slash_command",
  "assistant_text_thread",
@@ -3354,7 +3333,6 @@ dependencies = [
  "remote",
  "remote_server",
  "reqwest 0.11.27",
- "reqwest_client",
  "rpc",
  "scrypt",
  "sea-orm",
@@ -3369,12 +3347,12 @@ dependencies = [
  "sqlx",
  "strum 0.27.2",
  "subtle",
- "supermaven_api",
  "task",
  "telemetry_events",
  "text",
  "theme",
  "time",
+ "title_bar",
  "tokio",
  "toml 0.8.23",
  "tower 0.4.13",
@@ -3691,13 +3669,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
- "chrono",
  "client",
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot_chat",
  "ctor",
- "dirs 4.0.0",
  "edit_prediction_types",
  "editor",
  "fs",
@@ -3705,11 +3682,9 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.14.0",
  "language",
  "log",
  "lsp",
- "menu",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -3720,13 +3695,45 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
- "task",
  "theme",
+ "util",
+ "zlog",
+]
+
+[[package]]
+name = "copilot_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "dirs 4.0.0",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "itertools 0.14.0",
+ "log",
+ "paths",
+ "serde",
+ "serde_json",
+ "settings",
+]
+
+[[package]]
+name = "copilot_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "gpui",
+ "log",
+ "lsp",
+ "menu",
+ "serde_json",
  "ui",
- "url",
  "util",
  "workspace",
- "zlog",
 ]
 
 [[package]]
@@ -4175,15 +4182,15 @@ checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
 name = "crc-fast"
-version = "1.3.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bf62af4cc77d8fe1c22dde4e721d87f2f54056139d8c412e1366b740305f56f"
+checksum = "6ddc2d09feefeee8bd78101665bd8645637828fa9317f9f292496dbbd8c65ff3"
 dependencies = [
  "crc",
  "digest",
- "libc",
  "rand 0.9.2",
  "regex",
+ "rustversion",
 ]
 
 [[package]]
@@ -4892,6 +4899,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.9.2",
+ "search",
  "serde",
  "serde_json",
  "settings",
@@ -4901,6 +4909,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+ "zed_actions",
  "zlog",
 ]
 
@@ -5212,12 +5221,14 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "brotli",
+ "buffer_diff",
  "client",
  "clock",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "copilot",
+ "copilot_ui",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5238,7 +5249,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -5249,7 +5260,10 @@ dependencies = [
  "strum 0.27.2",
  "telemetry",
  "telemetry_events",
+ "text",
  "thiserror 2.0.17",
+ "time",
+ "toml 0.8.23",
  "ui",
  "util",
  "uuid",
@@ -5293,19 +5307,23 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "rand 0.9.2",
  "release_channel",
  "reqwest_client",
  "serde",
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
+ "similar",
  "smol",
  "sqlez",
  "sqlez_macros",
+ "tempfile",
  "terminal_view",
  "util",
  "wasmtime",
  "watch",
+ "workspace",
  "zeta_prompt",
 ]
 
@@ -5314,6 +5332,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "cloud_llm_client",
  "collections",
  "env_logger 0.11.8",
@@ -5354,28 +5373,34 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "client",
+ "clock",
  "cloud_llm_client",
  "codestral",
+ "collections",
  "command_palette_hooks",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
  "editor",
  "feature_flags",
  "fs",
  "futures 0.3.31",
- "git",
  "gpui",
  "indoc",
  "language",
- "log",
+ "language_model",
  "lsp",
  "markdown",
  "menu",
  "multi_buffer",
  "paths",
+ "pretty_assertions",
  "project",
  "regex",
+ "release_channel",
+ "semver",
  "serde_json",
  "settings",
  "supermaven",
@@ -5388,6 +5413,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta_prompt",
+ "zlog",
 ]
 
 [[package]]
@@ -5571,6 +5597,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "encoding_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "encoding_rs",
+ "gpui",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -6110,7 +6147,6 @@ version = "0.1.0"
 dependencies = [
  "futures 0.3.31",
  "gpui",
- "smol",
 ]
 
 [[package]]
@@ -6424,7 +6460,7 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ashpd 0.11.0",
+ "ashpd",
  "async-tar",
  "async-trait",
  "cocoa 0.26.0",
@@ -7083,6 +7119,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
@@ -7309,7 +7346,7 @@ version = "0.2.2"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
- "ashpd 0.11.0",
+ "ashpd",
  "async-task",
  "backtrace",
  "bindgen 0.71.1",
@@ -7322,6 +7359,7 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
+ "chrono",
  "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
@@ -7338,7 +7376,6 @@ dependencies = [
  "env_logger 0.11.8",
  "etagere",
  "filedescriptor",
- "flume",
  "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui_macros",
@@ -7371,6 +7408,7 @@ dependencies = [
  "refineable",
  "reqwest_client",
  "resvg",
+ "scheduler",
  "schemars",
  "seahash",
  "semver",
@@ -7383,6 +7421,7 @@ dependencies = [
  "stacksafe",
  "strum 0.27.2",
  "sum_tree",
+ "swash",
  "taffy",
  "thiserror 2.0.17",
  "unicode-segmentation",
@@ -8645,7 +8684,6 @@ dependencies = [
  "extension",
  "gpui",
  "language",
- "lsp",
  "paths",
  "project",
  "schemars",
@@ -8954,11 +8992,14 @@ dependencies = [
  "component",
  "convert_case 0.8.0",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "credentials_provider",
  "deepseek",
  "editor",
  "extension",
  "extension_host",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -8975,6 +9016,7 @@ dependencies = [
  "open_ai",
  "open_router",
  "partial-json-fixer",
+ "pretty_assertions",
  "project",
  "release_channel",
  "schemars",
@@ -9033,7 +9075,7 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "copilot",
+ "edit_prediction",
  "editor",
  "futures 0.3.31",
  "gpui",
@@ -9434,6 +9476,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "audio",
+ "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -9698,7 +9741,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "settings",
  "sum_tree",
  "theme",
@@ -9722,7 +9765,7 @@ dependencies = [
  "log",
  "markup5ever_rcdom",
  "pretty_assertions",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "settings",
  "theme",
  "ui",
@@ -10963,7 +11006,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3299dd401feaf1d45afd8fd1c0586f10fcfb22f244bb9afa942cec73503b89d"
 dependencies = [
  "aes",
- "ashpd 0.12.0",
+ "ashpd",
  "async-fs",
  "async-io",
  "async-lock 3.4.1",
@@ -12569,6 +12612,7 @@ name = "project_benchmarks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "clap",
  "client",
  "futures 0.3.31",
@@ -12577,6 +12621,10 @@ dependencies = [
  "language",
  "node_runtime",
  "project",
+ "release_channel",
+ "remote",
+ "rpassword",
+ "semver",
  "settings",
  "watch",
 ]
@@ -12864,9 +12912,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.12.2"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86ba2052aebccc42cbbb3ed234b8b13ce76f75c3551a303cb2bcffcff12bb14"
+checksum = "1e8bbe1a966bd2f362681a44f6edce3c2310ac21e4d5067a6e7ec396297a6ea0"
 dependencies = [
  "bitflags 2.9.4",
  "memchr",
@@ -13268,11 +13316,14 @@ dependencies = [
  "dap",
  "db",
  "editor",
+ "extension",
  "extension_host",
  "file_finder",
+ "fs",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "http_client",
  "indoc",
  "language",
  "log",
@@ -13285,6 +13336,7 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
+ "remote_server",
  "semver",
  "serde",
  "serde_json",
@@ -13559,6 +13611,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
+ "async-task",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -13739,7 +13792,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
- "pulldown-cmark 0.12.2",
+ "pulldown-cmark 0.13.0",
  "theme",
  "ui",
  "util",
@@ -13849,6 +13902,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rpassword"
+version = "7.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d4c8b64f049c6721ec8ccec37ddfc3d641c4a7fca57e8f2a89de509c73df39"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "rpc"
 version = "0.1.0"
 dependencies = [
@@ -13875,9 +13939,9 @@ dependencies = [
 
 [[package]]
 name = "rsa"
-version = "0.9.9"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40a0376c50d0358279d9d643e4bf7b7be212f1f4ff1da9070a7b54d22ef75c88"
+checksum = "b8573f03f5883dcaebdfcf4725caa1ecb9c15b2ef50c43a07b816e06799bb12d"
 dependencies = [
  "const-oid",
  "digest",
@@ -13891,6 +13955,16 @@ dependencies = [
  "spki 0.7.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7cc970b249fbe527d6e02e0a227762c9108b2f49d81094fe357ffc6d14d7f6f"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -14320,6 +14394,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "chrono",
+ "flume",
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.2",
@@ -14898,7 +14973,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
- "copilot",
+ "copilot_ui",
  "edit_prediction",
  "editor",
  "feature_flags",
@@ -15072,6 +15147,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "simple_asn1"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15203,6 +15284,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
+ "log",
  "parking_lot",
  "paths",
  "schemars",
@@ -16494,6 +16576,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "parking_lot",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -16873,11 +16956,14 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "db",
+ "git_ui",
  "gpui",
  "http_client",
+ "menu",
  "notifications",
  "pretty_assertions",
  "project",
+ "recent_projects",
  "remote",
  "rpc",
  "schemars",
@@ -18245,6 +18331,7 @@ dependencies = [
  "task",
  "text",
  "theme",
+ "title_bar",
  "tokio",
  "ui",
  "util",
@@ -20644,15 +20731,20 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.219.0"
+version = "0.221.0"
 dependencies = [
+ "acp_thread",
  "acp_tools",
+ "action_log",
  "activity_indicator",
+ "agent",
+ "agent-client-protocol",
+ "agent_servers",
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",
  "anyhow",
- "ashpd 0.11.0",
+ "ashpd",
  "askpass",
  "assets",
  "audio",
@@ -20666,6 +20758,7 @@ dependencies = [
  "clap",
  "cli",
  "client",
+ "clock",
  "codestral",
  "collab_ui",
  "collections",
@@ -20673,6 +20766,8 @@ dependencies = [
  "component",
  "component_preview",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "crashes",
  "dap",
  "dap_adapters",
@@ -20684,6 +20779,7 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
+ "encoding_selector",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -20700,6 +20796,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "image",
  "image_viewer",
  "inspector_ui",
  "install_cli",
@@ -20766,11 +20863,14 @@ dependencies = [
  "task",
  "tasks_ui",
  "telemetry",
+ "telemetry_events",
+ "tempfile",
  "terminal_view",
  "theme",
  "theme_extension",
  "theme_selector",
  "time",
+ "time_format",
  "title_bar",
  "toolchain_selector",
  "tracing",
@@ -20956,7 +21056,7 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20970,7 +21070,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]
@@ -21110,7 +21210,9 @@ dependencies = [
 name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
+ "strum 0.27.2",
 ]
 
 [[package]]

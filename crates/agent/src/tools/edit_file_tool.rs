@@ -1,5 +1,6 @@
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream,
+    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
+    decide_permission_from_settings,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -7,6 +8,7 @@ use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields}
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
@@ -18,7 +20,6 @@ use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::stream::StreamExt as _;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -149,8 +150,16 @@ impl EditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
+        let path_str = input.path.to_string_lossy();
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+
+        match decision {
+            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {}
         }
 
         // If any path component matches the local settings folder, then this could affect
@@ -301,7 +310,7 @@ impl AgentTool for EditFileTool {
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
-                })?
+                })
                 .await?;
 
             // Check if the file has been modified since the agent last read it
@@ -357,7 +366,7 @@ impl AgentTool for EditFileTool {
                 }
             }
 
-            let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
+            let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
             event_stream.update_diff(diff.clone());
             let _finalize_diff = util::defer({
                let diff = diff.downgrade();
@@ -367,7 +376,7 @@ impl AgentTool for EditFileTool {
                }
             });
 
-            let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
             let old_text = cx
                 .background_spawn({
                     let old_snapshot = old_snapshot.clone();
@@ -395,13 +404,22 @@ impl AgentTool for EditFileTool {
             let mut hallucinated_old_text = false;
             let mut ambiguous_ranges = Vec::new();
             let mut emitted_location = false;
-            while let Some(event) = events.next().await {
+            loop {
+                let event = futures::select! {
+                    event = events.next().fuse() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Edit cancelled by user");
+                    }
+                };
                 match event {
                     EditAgentOutputEvent::Edited(range) => {
                         if !emitted_location {
-                            let line = buffer.update(cx, |buffer, _cx| {
+                            let line = Some(buffer.update(cx, |buffer, _cx| {
                                 range.start.to_point(&buffer.snapshot()).row
-                            }).ok();
+                            }));
                             if let Some(abs_path) = abs_path.clone() {
                                 event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path).line(line)]));
                             }
@@ -411,7 +429,7 @@ impl AgentTool for EditFileTool {
                     EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
                     EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                     EditAgentOutputEvent::ResolvingEditRange(range) => {
-                        diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx))?;
+                        diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx));
                         // if !emitted_location {
                         //     let line = buffer.update(cx, |buffer, _cx| {
                         //         range.start.to_point(&buffer.snapshot()).row
@@ -428,23 +446,21 @@ impl AgentTool for EditFileTool {
             }
 
             // If format_on_save is enabled, format the buffer
-            let format_on_save_enabled = buffer
-                .read_with(cx, |buffer, cx| {
-                    let settings = language_settings::language_settings(
-                        buffer.language().map(|l| l.name()),
-                        buffer.file(),
-                        cx,
-                    );
-                    settings.format_on_save != FormatOnSave::Off
-                })
-                .unwrap_or(false);
+            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
+                let settings = language_settings::language_settings(
+                    buffer.language().map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                );
+                settings.format_on_save != FormatOnSave::Off
+            });
 
             let edit_agent_output = output.await?;
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
                     log.buffer_edited(buffer.clone(), cx);
-                })?;
+                });
 
                 let format_task = project.update(cx, |project, cx| {
                     project.format(
@@ -454,30 +470,30 @@ impl AgentTool for EditFileTool {
                         FormatTrigger::Save,
                         cx,
                     )
-                })?;
+                });
                 format_task.await.log_err();
             }
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
                 .await?;
 
             action_log.update(cx, |log, cx| {
                 log.buffer_edited(buffer.clone(), cx);
-            })?;
+            });
 
             // Update the recorded read time after a successful edit so consecutive edits work
             if let Some(abs_path) = abs_path.as_ref() {
                 if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
                     buffer.file().and_then(|file| file.disk_state().mtime())
-                })? {
+                }) {
                     self.thread.update(cx, |thread, _| {
                         thread.file_read_times.insert(abs_path.to_path_buf(), new_mtime);
                     })?;
                 }
             }
 
-            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
             let (new_text, unified_diff) = cx
                 .background_spawn({
                     let new_snapshot = new_snapshot.clone();

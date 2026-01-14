@@ -1,11 +1,12 @@
 use crate::{
+    acp::AcpThreadHistory,
     context::load_context,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
     },
     terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 
@@ -61,8 +62,9 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -88,6 +90,7 @@ impl TerminalInlineAssistant {
                 self.fs.clone(),
                 thread_store.clone(),
                 prompt_store.clone(),
+                history,
                 project.clone(),
                 workspace.clone(),
                 window,

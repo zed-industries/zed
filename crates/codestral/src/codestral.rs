@@ -230,7 +230,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 log::debug!("Codestral: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
-                smol::Timer::after(DEBOUNCE_TIMEOUT).await;
+                cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
 
             let cursor_offset = cursor_position.to_offset(&snapshot);
@@ -283,7 +283,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
             let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
                 vec![(cursor_position..cursor_position, completion_text.into())].into();
             let edit_preview = buffer
-                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
                 .await;
 
             this.update(cx, |this, cx| {

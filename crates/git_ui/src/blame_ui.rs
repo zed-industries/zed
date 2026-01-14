@@ -13,7 +13,7 @@ use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
-use ui::{ContextMenu, Divider, prelude::*, tooltip_container};
+use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -335,18 +335,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                     cx.stop_propagation();
                                                 }),
                                             )
+                                            .child(Divider::vertical())
                                             .child(
-                                                IconButton::new("copy-sha-button", IconName::Copy)
-                                                    .icon_size(IconSize::Small)
-                                                    .icon_color(Color::Muted)
-                                                    .on_click(move |_, _, cx| {
-                                                        cx.stop_propagation();
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                sha.to_string(),
-                                                            ),
-                                                        )
-                                                    }),
+                                                CopyButton::new(sha.to_string())
+                                                    .tooltip_label("Copy SHA"),
                                             ),
                                     ),
                             ),
