@@ -3622,18 +3622,7 @@ impl AcpThreadView {
             .justify_between()
             .gap_2()
             .child(
-                // Left side: Granularity dropdown
-                self.render_permission_granularity_dropdown(
-                    &allow_options,
-                    dropdown_label,
-                    entry_ix,
-                    tool_call_id.clone(),
-                    is_first,
-                    cx,
-                ),
-            )
-            .child(
-                // Right side: Allow and Deny buttons
+                // Left side: Allow and Deny buttons
                 h_flex()
                     .gap_1()
                     .child(
@@ -3712,6 +3701,17 @@ impl AcpThreadView {
                                 }
                             })),
                     ),
+            )
+            .child(
+                // Right side: Granularity dropdown
+                self.render_permission_granularity_dropdown(
+                    &allow_options,
+                    dropdown_label,
+                    entry_ix,
+                    tool_call_id.clone(),
+                    is_first,
+                    cx,
+                ),
             )
     }
 
