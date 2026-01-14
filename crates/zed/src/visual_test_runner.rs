@@ -478,8 +478,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 7: Tool Permissions Settings UI visual tests
-    println!("\n--- Test 7: tool_permissions_settings (2 variants) ---");
+    // Run Test 7: Tool Permissions Settings UI visual test
+    println!("\n--- Test 7: tool_permissions_settings ---");
     match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ tool_permissions_settings: PASSED");
@@ -2017,16 +2017,14 @@ fn run_subagent_visual_tests(
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
 /// Visual test for the Tool Permissions Settings UI page
 ///
-/// Tests two variants:
-/// 1. Collapsed view - all tools collapsed showing the list
-/// 2. Expanded view - Terminal tool expanded showing rule sections with sample rules
+/// Shows the "Configure Tool Rules" settings item with the Configure button
+/// in the AI > Agent Configuration section.
 #[cfg(target_os = "macos")]
 fn run_tool_permissions_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use gpui::MouseButton;
     use zed_actions::OpenSettingsAt;
 
     // Create a minimal workspace to dispatch the settings action from
@@ -2098,42 +2096,9 @@ fn run_tool_permissions_visual_tests(
         })
         .context("Failed to find settings window")?;
 
-    // Test 1: Tool permissions page view (collapsed)
-    let test1_result = run_visual_test(
-        "tool_permissions_collapsed",
-        settings_window,
-        cx,
-        update_baseline,
-    )?;
-
-    // Click on the first tool row (Terminal) to expand it
-    // The header takes about 60px, and the first tool row starts around y=70
-    // Click in the middle of the row (around y=90) and x=100 to hit the row
-    let click_position = point(px(100.0), px(90.0));
-    cx.simulate_mouse_down(
-        settings_window,
-        click_position,
-        MouseButton::Left,
-        Modifiers::default(),
-    );
-    cx.simulate_mouse_up(
-        settings_window,
-        click_position,
-        MouseButton::Left,
-        Modifiers::default(),
-    );
-
-    cx.run_until_parked();
-
-    // Give UI time to re-render with expanded state
-    for _ in 0..5 {
-        cx.advance_clock(Duration::from_millis(50));
-        cx.run_until_parked();
-    }
-
-    // Test 2: Tool permissions page view (expanded)
-    let test2_result = run_visual_test(
-        "tool_permissions_expanded",
+    // Test: Settings page showing "Configure Tool Rules" item with Configure button
+    let test_result = run_visual_test(
+        "tool_permissions_settings_item",
         settings_window,
         cx,
         update_baseline,
@@ -2151,13 +2116,7 @@ fn run_tool_permissions_visual_tests(
 
     cx.run_until_parked();
 
-    // Return success if both tests passed or baselines were updated
-    match (test1_result, test2_result) {
-        (TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _) | (_, TestResult::BaselineUpdated(p)) => {
-            Ok(TestResult::BaselineUpdated(p))
-        }
-    }
+    Ok(test_result)
 }
 
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
