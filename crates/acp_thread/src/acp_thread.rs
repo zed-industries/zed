@@ -227,7 +227,9 @@ impl ToolCall {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+        let title = if tool_call.kind == acp::ToolKind::Execute {
+            tool_call.title
+        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
             tool_call.title
@@ -298,8 +300,10 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx)
+                if self.kind == acp::ToolKind::Execute {
+                    label.replace(title, cx);
+                } else if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx);
                 } else {
                     label.replace(title, cx);
                 }

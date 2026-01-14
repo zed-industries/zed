@@ -78,6 +78,8 @@ use crate::{
     ToggleBurnMode, ToggleProfileSelector,
 };
 
+/// Maximum number of lines to show for a collapsed terminal command preview.
+const MAX_COLLAPSED_LINES: usize = 3;
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
 const TOKEN_THRESHOLD: u64 = 1;
 
@@ -337,7 +339,14 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
+    /// Tracks which tool calls have their content/output expanded.
+    /// Used for showing/hiding tool call results, terminal output, etc.
     expanded_tool_calls: HashSet<acp::ToolCallId>,
+    /// Tracks which terminal commands have their command text expanded.
+    /// This is separate from `expanded_tool_calls` because command text expansion
+    /// (showing all lines of a long command) is independent from output expansion
+    /// (showing the terminal output).
+    expanded_terminal_commands: HashSet<acp::ToolCallId>,
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
@@ -524,6 +533,7 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
+            expanded_terminal_commands: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
@@ -3142,34 +3152,10 @@ impl AcpThreadView {
             .mr_5()
             .map(|this| {
                 if is_terminal_tool {
-                    this.child(
-                        v_flex()
-                            .p_1p5()
-                            .gap_0p5()
-                            .text_ui_sm(cx)
-                            .bg(self.tool_card_header_bg(cx))
-                            .child(
-                                Label::new("Run Command")
-                                    .buffer_font(cx)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                MarkdownElement::new(
-                                    tool_call.label.clone(),
-                                    terminal_command_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
-                                        copy_button_on_hover: false,
-                                        border: false,
-                                    },
-                                )
-                            ),
-                    )
+                    let label_source = tool_call.label.read(cx).source();
+                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
                 } else {
-                   this.child(
+                    this.child(
                         h_flex()
                             .group(&card_header_id)
                             .relative()
@@ -4118,6 +4104,120 @@ impl AcpThreadView {
             .into_any()
     }
 
+    /// Renders command lines with an optional expand/collapse button depending
+    /// on the number of lines in `command_source`.
+    fn render_collapsible_command(
+        &self,
+        is_preview: bool,
+        command_source: &str,
+        tool_call_id: &acp::ToolCallId,
+        cx: &Context<Self>,
+    ) -> Div {
+        let expand_button_bg = self.tool_card_header_bg(cx);
+        let expanded = self.expanded_terminal_commands.contains(tool_call_id);
+
+        let lines: Vec<&str> = command_source.lines().collect();
+        let line_count = lines.len();
+        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
+
+        let show_expand_button = extra_lines > 0;
+
+        let max_lines = if expanded || !show_expand_button {
+            usize::MAX
+        } else {
+            MAX_COLLAPSED_LINES
+        };
+
+        let display_lines = lines.into_iter().take(max_lines);
+
+        let command_group =
+            SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
+
+        v_flex()
+            .group(command_group.clone())
+            .bg(self.tool_card_header_bg(cx))
+            .child(
+                v_flex()
+                    .p_1p5()
+                    .when(is_preview, |this| {
+                        this.pt_1().child(
+                            // Wrapping this label on a container with 24px height to avoid
+                            // layout shift when it changes from being a preview label
+                            // to the actual path where the command will run in
+                            h_flex().h_6().child(
+                                Label::new("Run Command")
+                                    .buffer_font(cx)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                    })
+                    .children(display_lines.map(|line| {
+                        let text: SharedString = if line.is_empty() {
+                            " ".into()
+                        } else {
+                            line.to_string().into()
+                        };
+
+                        Label::new(text).buffer_font(cx).size(LabelSize::Small)
+                    }))
+                    .child(
+                        div().absolute().top_1().right_1().child(
+                            CopyButton::new(command_source.to_string())
+                                .tooltip_label("Copy Command")
+                                .visible_on_hover(command_group),
+                        ),
+                    ),
+            )
+            .when(show_expand_button, |this| {
+                let expand_icon = if expanded {
+                    IconName::ChevronUp
+                } else {
+                    IconName::ChevronDown
+                };
+
+                this.child(
+                    h_flex()
+                        .id(format!("expand-command-btn-{}", tool_call_id))
+                        .cursor_pointer()
+                        .when(!expanded, |s| s.absolute().bottom_0())
+                        .when(expanded, |s| s.mt_1())
+                        .w_full()
+                        .h_6()
+                        .gap_1()
+                        .justify_center()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(expand_button_bg.opacity(0.95))
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
+                        .when(!expanded, |this| {
+                            let label = match extra_lines {
+                                1 => "1 more line".to_string(),
+                                _ => format!("{} more lines", extra_lines),
+                            };
+
+                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                        })
+                        .child(
+                            Icon::new(expand_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if expanded {
+                                    this.expanded_terminal_commands.remove(&tool_call_id);
+                                } else {
+                                    this.expanded_terminal_commands.insert(tool_call_id.clone());
+                                }
+                                cx.notify();
+                            }
+                        })),
+                )
+            })
+    }
+
     fn render_terminal_tool_call(
         &self,
         entry_ix: usize,
@@ -4169,10 +4269,24 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
+        // Since the command's source is wrapped in a markdown code block
+        // (```\n...\n```), we need to strip that so we're left with only the
+        // command's content.
+        let command_source = command.read(cx).source();
+        let command_content = command_source
+            .strip_prefix("```\n")
+            .and_then(|s| s.strip_suffix("\n```"))
+            .unwrap_or(&command_source);
+
+        let command_element =
+            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
+
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
+            .px_1p5()
+            .pt_1()
             .flex_none()
             .gap_1()
             .justify_between()
@@ -4316,7 +4430,6 @@ impl AcpThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(terminal));
-        let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
             .my_1p5()
@@ -4329,28 +4442,12 @@ impl AcpThreadView {
             .child(
                 v_flex()
                     .group(&header_group)
-                    .py_1p5()
-                    .pr_1p5()
-                    .pl_2()
-                    .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
                     .child(header)
-                    .child(
-                        MarkdownElement::new(
-                            command.clone(),
-                            terminal_command_markdown_style(window, cx),
-                        )
-                        .code_block_renderer(
-                            markdown::CodeBlockRenderer::Default {
-                                copy_button: false,
-                                copy_button_on_hover: true,
-                                border: false,
-                            },
-                        ),
-                    ),
+                    .child(command_element),
             )
-            .when(show_output, |this| {
+            .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
                         .pt_2()
@@ -7940,18 +8037,6 @@ fn plan_label_markdown_style(
             ..default_md_style.base_text_style
         },
         ..default_md_style
-    }
-}
-
-fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(true, false, window, cx);
-
-    MarkdownStyle {
-        base_text_style: TextStyle {
-            ..default_md_style.base_text_style
-        },
-        selection_background_color: cx.theme().colors().element_selection_background,
-        ..Default::default()
     }
 }
 
