@@ -94,6 +94,7 @@ pub struct SubagentConfig {
     pub allowed_tools: Option<Vec<String>>,
 }
 
+/// Tool that spawns subagent threads to work on tasks in parallel.
 pub struct SubagentTool {
     parent_thread: WeakEntity<Thread>,
     project: Entity<Project>,
@@ -101,6 +102,9 @@ pub struct SubagentTool {
     context_server_registry: Entity<ContextServerRegistry>,
     templates: Arc<Templates>,
     current_depth: u8,
+    /// The tools available to the parent thread, captured before SubagentTool was added.
+    /// Subagents inherit from this set (or a subset via `allowed_tools` in the config).
+    /// This is captured early so subagents don't get the subagent tool themselves.
     parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
 }
 
