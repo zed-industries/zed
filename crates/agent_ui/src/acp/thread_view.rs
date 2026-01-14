@@ -6750,6 +6750,28 @@ impl AcpThreadView {
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let error_type = match self.thread_error.as_ref()? {
+            ThreadError::PaymentRequired => "payment_required",
+            ThreadError::ModelRequestLimitReached(_) => "model_request_limit_reached",
+            ThreadError::ToolUseLimitReached => "tool_use_limit_reached",
+            ThreadError::Refusal => "refusal",
+            ThreadError::AuthenticationRequired(_) => "authentication_required",
+            ThreadError::Other(_) => "other",
+        };
+
+        let thread = self.thread();
+        let agent_telemetry_id = thread
+            .as_ref()
+            .map(|t| t.read(cx).connection().telemetry_id());
+        let session_id = thread.map(|t| t.read(cx).session_id().clone());
+
+        telemetry::event!(
+            "Agent Thread Error Displayed",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            error_type = error_type,
+        );
+
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
             ThreadError::Refusal => self.render_refusal_error(cx),
