@@ -4921,7 +4921,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         let subagent = cx.new(|cx| {
             Thread::new_subagent(
                 project.clone(),
-                project_context,
+                project_context.clone(),
                 Arc::new(Vec::new()),
                 context_server_registry.clone(),
                 Templates::new(),
@@ -5023,6 +5023,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
+        Arc::new(Vec::new()),
         project_context,
         context_server_registry,
         Templates::new(),

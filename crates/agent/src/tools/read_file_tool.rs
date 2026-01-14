@@ -338,6 +338,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),
@@ -384,6 +385,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),
@@ -427,6 +429,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),
@@ -512,6 +515,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),
@@ -553,6 +557,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),
@@ -667,6 +672,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),
@@ -894,6 +900,7 @@ mod test {
             Thread::new(
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(model),

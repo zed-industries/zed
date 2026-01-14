@@ -160,3 +160,161 @@ impl AgentTool for SkillTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_skills::{SkillSource, parse_skill};
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn create_test_skill(name: &str, description: &str, content: &str) -> Skill {
+        let skill_content = format!(
+            "---\nname: {}\ndescription: {}\n---\n\n{}",
+            name, description, content
+        );
+        parse_skill(
+            Path::new(&format!("/skills/{}/SKILL.md", name)),
+            &skill_content,
+            SkillSource::Global,
+        )
+        .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_returns_content(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "file.txt": "hello"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/test")], cx).await;
+
+        let skill = create_test_skill(
+            "test-skill",
+            "A test skill for testing",
+            "# Instructions\n\nDo the thing.",
+        );
+        let skills = Arc::new(vec![skill]);
+
+        let tool = Arc::new(SkillTool::new(skills, project));
+
+        let input = SkillToolInput {
+            name: "test-skill".to_string(),
+        };
+
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let result = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = result.await.unwrap();
+
+        assert_eq!(output.source, "global");
+        assert!(output.worktree.is_none());
+        assert!(output.content.contains("# Instructions"));
+        assert!(output.content.contains("Do the thing."));
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_returns_source(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/test", json!({})).await;
+
+        let project = Project::test(fs, [Path::new("/test")], cx).await;
+
+        let global_skill = create_test_skill("global-skill", "A global skill", "Global content");
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let project_skill_content =
+            "---\nname: project-skill\ndescription: A project skill\n---\n\nProject content";
+        let project_skill = parse_skill(
+            Path::new("/test/.zed/skills/project-skill/SKILL.md"),
+            project_skill_content,
+            SkillSource::ProjectLocal { worktree_id },
+        )
+        .unwrap();
+
+        let skills = Arc::new(vec![global_skill, project_skill]);
+
+        let tool = Arc::new(SkillTool::new(skills, project));
+
+        // Test global skill
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let result = cx.update(|cx| {
+            tool.clone().run(
+                SkillToolInput {
+                    name: "global-skill".to_string(),
+                },
+                event_stream,
+                cx,
+            )
+        });
+        let output = result.await.unwrap();
+        assert_eq!(output.source, "global");
+        assert!(output.worktree.is_none());
+
+        // Test project-local skill
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let result = cx.update(|cx| {
+            tool.run(
+                SkillToolInput {
+                    name: "project-skill".to_string(),
+                },
+                event_stream,
+                cx,
+            )
+        });
+        let output = result.await.unwrap();
+        assert_eq!(output.source, "project-local");
+        assert!(output.worktree.is_some());
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_unknown_skill(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/test", json!({})).await;
+
+        let project = Project::test(fs, [Path::new("/test")], cx).await;
+
+        let skill = create_test_skill("existing-skill", "An existing skill", "Content");
+        let skills = Arc::new(vec![skill]);
+
+        let tool = Arc::new(SkillTool::new(skills, project));
+
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let result = cx.update(|cx| {
+            tool.run(
+                SkillToolInput {
+                    name: "nonexistent-skill".to_string(),
+                },
+                event_stream,
+                cx,
+            )
+        });
+        let err = result.await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+        assert!(err.to_string().contains("existing-skill"));
+    }
+}
