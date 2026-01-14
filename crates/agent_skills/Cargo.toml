@@ -19,7 +19,6 @@ gpui.workspace = true
 paths.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
-util.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
