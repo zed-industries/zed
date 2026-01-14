@@ -1602,7 +1602,8 @@ impl TextThreadEditor {
         // Focus the agent panel
         workspace.focus_panel::<crate::AgentPanel>(window, cx);
 
-        // Now insert the creases - use a single defer to ensure the panel is ready
+        // Defer inserting creases until after the current update cycle completes,
+        // allowing the newly created thread (if any) to fully initialize.
         cx.defer_in(window, move |workspace, window, cx| {
             let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
                 workspace.show_toast(
