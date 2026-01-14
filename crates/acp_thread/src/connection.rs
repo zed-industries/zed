@@ -27,6 +27,12 @@ impl UserMessageId {
     }
 }
 
+impl std::fmt::Display for UserMessageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 pub trait AgentConnection {
     fn telemetry_id(&self) -> SharedString;
 

@@ -119,6 +119,18 @@ pub enum AssistantMessageChunk {
 }
 
 impl AssistantMessageChunk {
+    /// Serialize this chunk for persistence.
+    pub fn to_serialized(&self, cx: &App) -> SerializedAssistantChunk {
+        match self {
+            Self::Message { block } => SerializedAssistantChunk::Message {
+                markdown: block.to_markdown(cx).to_string(),
+            },
+            Self::Thought { block } => SerializedAssistantChunk::Thought {
+                markdown: block.to_markdown(cx).to_string(),
+            },
+        }
+    }
+
     pub fn from_str(
         chunk: &str,
         language_registry: &Arc<LanguageRegistry>,
@@ -148,6 +160,35 @@ pub enum AgentThreadEntry {
 }
 
 impl AgentThreadEntry {
+    /// Serialize this entry for persistence.
+    pub fn to_serialized(&self, cx: &App) -> SerializedAgentThreadEntry {
+        match self {
+            Self::UserMessage(msg) => SerializedAgentThreadEntry::UserMessage {
+                id: msg.id.as_ref().map(|id| id.to_string()),
+                content: msg.to_markdown(cx),
+                indented: msg.indented,
+            },
+            Self::AssistantMessage(msg) => SerializedAgentThreadEntry::AssistantMessage {
+                chunks: msg
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.to_serialized(cx))
+                    .collect(),
+                indented: msg.indented,
+            },
+            Self::ToolCall(call) => SerializedAgentThreadEntry::ToolCall {
+                id: call.id.to_string(),
+                tool_name: call.tool_name.as_ref().map(|n| n.to_string()),
+                label: call.label.read(cx).source().to_string(),
+                kind: call.kind.into(),
+                status: (&call.status).into(),
+                content: call.content.iter().map(|c| c.to_serialized(cx)).collect(),
+                raw_input: call.raw_input.clone(),
+                raw_output: call.raw_output.clone(),
+            },
+        }
+    }
+
     pub fn is_indented(&self) -> bool {
         match self {
             Self::UserMessage(message) => message.indented,
@@ -763,6 +804,46 @@ impl ToolCallContent {
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
             Self::SubagentThread(thread) => thread.read(cx).to_markdown(cx),
+        }
+    }
+
+    /// Serialize this content for persistence.
+    pub fn to_serialized(&self, cx: &App) -> SerializedToolCallContent {
+        match self {
+            Self::ContentBlock(content) => {
+                SerializedToolCallContent::Markdown(content.to_markdown(cx).to_string())
+            }
+            Self::Diff(diff) => {
+                let diff = diff.read(cx);
+                SerializedToolCallContent::Diff {
+                    path: match diff {
+                        Diff::Pending(pending) => pending
+                            .buffer()
+                            .read(cx)
+                            .file()
+                            .map(|f| f.path().display(f.path_style(cx)))
+                            .unwrap_or_else(|| "untitled".into())
+                            .to_string(),
+                        Diff::Finalized(finalized) => finalized.path().to_string(),
+                    },
+                    old_text: Some(diff.base_text().to_string()),
+                    new_text: diff.buffer().read(cx).text(),
+                }
+            }
+            Self::Terminal(terminal) => {
+                let terminal = terminal.read(cx);
+                SerializedToolCallContent::Terminal {
+                    id: terminal.id().to_string(),
+                    command: terminal.command().read(cx).source().to_string(),
+                    output: terminal
+                        .output()
+                        .map(|o| o.content.clone())
+                        .unwrap_or_default(),
+                }
+            }
+            Self::SubagentThread(thread) => SerializedToolCallContent::SubagentThread(Box::new(
+                thread.read(cx).to_serialized(cx),
+            )),
         }
     }
 
@@ -2501,6 +2582,16 @@ impl AcpThread {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         self.entries.iter().map(|e| e.to_markdown(cx)).collect()
+    }
+
+    /// Serialize the thread for persistence.
+    /// This captures the display state so it can be restored when reloading.
+    pub fn to_serialized(&self, cx: &App) -> SerializedAcpThread {
+        SerializedAcpThread {
+            title: self.title.to_string(),
+            session_id: self.session_id.to_string(),
+            entries: self.entries.iter().map(|e| e.to_serialized(cx)).collect(),
+        }
     }
 
     pub fn emit_load_error(&mut self, error: LoadError, cx: &mut Context<Self>) {

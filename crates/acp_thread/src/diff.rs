@@ -382,6 +382,20 @@ pub struct FinalizedDiff {
     _update_diff: Task<Result<()>>,
 }
 
+impl FinalizedDiff {
+    /// Returns the path of the file being diffed.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl PendingDiff {
+    /// Returns the buffer being edited.
+    pub fn buffer(&self) -> &Entity<Buffer> {
+        &self.new_buffer
+    }
+}
+
 async fn build_buffer_diff(
     old_text: Arc<str>,
     buffer: &Entity<Buffer>,
