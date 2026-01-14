@@ -3684,7 +3684,6 @@ dependencies = [
  "language",
  "log",
  "lsp",
- "menu",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -3695,7 +3694,6 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
- "url",
  "util",
  "zlog",
 ]
@@ -14975,7 +14973,6 @@ dependencies = [
  "assets",
  "bm25",
  "client",
- "copilot",
  "copilot_ui",
  "edit_prediction",
  "editor",

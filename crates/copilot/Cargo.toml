@@ -35,7 +35,6 @@ edit_prediction_types.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
-menu.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
@@ -46,7 +45,6 @@ serde_json.workspace = true
 settings.workspace = true
 sum_tree.workspace = true
 util.workspace = true
-url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
