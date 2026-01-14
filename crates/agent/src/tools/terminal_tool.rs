@@ -105,8 +105,11 @@ impl AgentTool for TerminalTool {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                // Use authorize_required since permission rules already determined confirmation is needed
-                Some(event_stream.authorize_required(self.initial_title(Ok(input.clone()), cx), cx))
+                let context = crate::ToolPermissionContext {
+                    tool_name: "terminal".to_string(),
+                    input_value: input.command.clone(),
+                };
+                Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
             }
         };
         cx.spawn(async move |cx| {

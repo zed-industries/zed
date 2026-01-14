@@ -217,6 +217,7 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "unindent",
+ "url",
  "util",
  "uuid",
  "watch",
