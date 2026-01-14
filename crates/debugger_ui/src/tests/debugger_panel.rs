@@ -314,6 +314,8 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
+    // needed because the debugger launches a terminal which starts a background PTY
+    cx.executor().allow_parking();
     init_test(cx);
 
     let send_response = Arc::new(AtomicBool::new(false));
